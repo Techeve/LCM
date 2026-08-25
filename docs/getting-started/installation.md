@@ -148,6 +148,31 @@ grep 'LCM-Dienst' /var/lib/lcm/logs/lcm.log   # jeder Start/Stopp
 
 ## Variante 2: Docker / Docker Compose
 
+### Fertiges Image von Docker Hub (empfohlen)
+
+Die Releases liegen als Multi-Arch-Images (amd64/arm64) auf Docker Hub:
+[`techeve/lcm`](https://hub.docker.com/r/techeve/lcm) - `:latest` ist das
+aktuelle stabile Release, `:beta` die Vorabversion, dazu jede Version als
+eigenes Tag. Der CVE-Scanner-Sidecar heißt
+[`techeve/lcm-trivyd`](https://hub.docker.com/r/techeve/lcm-trivyd).
+
+```sh
+mkdir -p data && sudo chown 1000 data   # der Container schreibt als UID 1000
+docker run -d --name lcm \
+  -p 9310:9310 -v "$PWD/data:/data" \
+  --read-only --tmpfs /tmp --cap-drop ALL \
+  --restart unless-stopped \
+  techeve/lcm:latest
+docker logs -f lcm     # Erststart: hier steht das generierte Admin-Passwort
+```
+
+Mit Docker Compose: in der mitgelieferten
+[`docker/docker-compose.yml`](https://gitlab.techeve.de/techeve/lcm-ce/-/blob/community/docker/docker-compose.yml)
+den `build:`-Block entfernen und `image: techeve/lcm:latest` eintragen -
+alle Härtungs-Flags bleiben erhalten.
+
+### Selbst bauen
+
 ```sh
 make docker-build          # Linux-Binary bauen (inkl. Audits) + Image erzeugen
 docker compose up -d

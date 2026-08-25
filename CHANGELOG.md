@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.30.8-beta.1 - 2026-08-26
+
+### 🔧 Sonstiges
+
+- **mirror**: Pipelines nur im privaten Repo, GitHub-Issues in den Briefkasten (6263f024)
+
 ## v1.30.7-beta.1 - 2026-08-25
 
 ### 🐛 Bugfixes
