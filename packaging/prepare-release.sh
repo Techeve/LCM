@@ -48,6 +48,23 @@ fi
 echo ">> Tags aktualisieren"
 git fetch --tags --quiet origin
 
+# develop führt ausschließlich Vorabversionen. Das Werkzeug liest die
+# Release-Reihe aus dem Suffix der VERSION-Datei - und genau das Suffix geht
+# verloren, sobald ein Aufwärtsmerge (enterprise -> community -> beta ->
+# develop) eine finale Version mitbringt. Ohne diesen Riegel schlüge das
+# nächste Release auf develop still als FINALE Version vor; sie liefe durch
+# beta bis community und nähme dort den Tag vorweg, der dem Community-Kanal
+# gehört. Genau so passiert nach dem Enterprise-Release v1.30.6.
+if [ "$BRANCH" = "develop" ] && [ -z "${1:-}" ]; then
+  case "$(tr -d ' \n' < VERSION)" in
+    *-*) ;;
+    *)
+      echo ">> VERSION trägt kein Prerelease-Suffix (Aufwärtsmerge?) - ergänze -beta.1 für die Ableitung."
+      printf '%s-beta.1\n' "$(tr -d ' \n' < VERSION)" > VERSION
+      ;;
+  esac
+fi
+
 VER_ARG="${1:-}"
 TMP_ENV=$(mktemp)
 TMP_SNIP=$(mktemp)

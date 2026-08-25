@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.30.7-beta.1 - 2026-08-25
+
+### 🐛 Bugfixes
+
+- **ci**: Gegenprobe des Enterprise-Deploys kann grün werden (ae878744)
+- **release**: develop leitet keine finale Version mehr ab (21768050)
+
+### 🔧 Sonstiges
+
+- **mirror**: öffentlicher Spiegel als Schnappschuss statt Commit-Graph (a6a07dc2)
+
 ## v1.30.6 - 2026-08-25
 
 ### 🔧 Sonstiges

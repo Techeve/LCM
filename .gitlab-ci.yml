@@ -768,11 +768,16 @@ deploy:apt:
 
 # Öffentlicher Spiegel: community und beta werden nach grünen Tests (und nach
 # dem release-Job, damit frische Release-Tags mitkommen) in das öffentliche
-# Repo gepusht - das ist der Quellcode der Community-Edition. Der Spiegel ist
-# reine Auslage plus Briefkasten: dort wird nie direkt gearbeitet; MRs dort
-# werden reviewt und per Cherry-pick nach develop übernommen (CONTRIBUTING.md).
-# Es werden nur Tags gespiegelt, die auf dem gespiegelten Branch liegen -
-# enterprise-Commits und -Tags bleiben privat.
+# Repo übertragen - das ist der Quellcode der Community-Edition. Der Spiegel
+# ist reine Auslage plus Briefkasten: dort wird nie direkt gearbeitet; MRs
+# dort werden reviewt und per Cherry-pick nach develop übernommen
+# (CONTRIBUTING.md).
+#
+# Übertragen wird ein SCHNAPPSCHUSS, kein Commit-Graph: je Push EIN Commit
+# mit dem vollständigen Stand. Ein Push echter Commits nähme zwangsläufig
+# ihre gesamte Abstammung mit - die interne Historie (Zwischenstände,
+# Arbeitsweise, enterprise-Bezüge in Merge-Nachrichten) bleibt so privat.
+# Tags des gespiegelten Standes zeigen im Spiegel auf den Schnappschuss.
 #
 # Voraussetzung: CI-Variablen MIRROR_URL (https://…/techeve/lcm-ce.git) und
 # MIRROR_TOKEN (Project Access Token des Spiegel-Repos, Scope write_repository,
@@ -794,14 +799,36 @@ mirror:public:
       fi
     - git fetch --tags --quiet origin
     - PUSH_URL="https://mirror:${MIRROR_TOKEN}@${MIRROR_URL#https://}"
-    - echo "Spiegele ${CI_COMMIT_BRANCH} (${CI_COMMIT_SHA}) in das öffentliche Repo"
-    - git push "$PUSH_URL" "${CI_COMMIT_SHA}:refs/heads/${CI_COMMIT_BRANCH}"
-    # Nur Tags mitgeben, die auf dem gespiegelten Stand liegen.
     - |
-      TAGS=$(git tag --merged "$CI_COMMIT_SHA")
+      VERSION=$(cat VERSION)
+      echo "Schnappschuss ${CI_COMMIT_BRANCH} @ ${VERSION} (${CI_COMMIT_SHORT_SHA}) in das öffentliche Repo"
+      # Öffentlichen Zweig holen; existiert er noch nicht (frisches Repo),
+      # beginnt er als Wurzel-Commit ohne Eltern.
+      if git clone --quiet --depth 1 --branch "$CI_COMMIT_BRANCH" "$PUSH_URL" /tmp/mirror 2>/dev/null; then
+        cd /tmp/mirror
+      else
+        git clone --quiet --depth 1 "$PUSH_URL" /tmp/mirror
+        cd /tmp/mirror
+        git checkout --quiet --orphan "$CI_COMMIT_BRANCH"
+      fi
+      # Arbeitsfläche leeren und den vollständigen Stand hineinlegen.
+      find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+      git -C "$CI_PROJECT_DIR" archive "$CI_COMMIT_SHA" | tar -x
+      git add -A
+      if git -c user.name="Techeve CI" -c user.email="ci@techeve.de" \
+           commit --quiet -m "Spiegelstand: ${CI_COMMIT_BRANCH} @ v${VERSION} (${CI_COMMIT_SHORT_SHA})"; then
+        git push --quiet "$PUSH_URL" "HEAD:refs/heads/${CI_COMMIT_BRANCH}"
+        echo "Schnappschuss übertragen."
+      else
+        echo "Keine Änderungen gegenüber dem letzten Schnappschuss."
+      fi
+      # Tags, die auf dem gespiegelten Stand liegen, zeigen im Spiegel auf den
+      # Schnappschuss (typisch: der frische Release-Tag dieses Pushs).
+      TAGS=$(git -C "$CI_PROJECT_DIR" tag --points-at "$CI_COMMIT_SHA")
       [ -n "$TAGS" ] || { echo "Keine Tags zu spiegeln."; exit 0; }
       for t in $TAGS; do
-        git push "$PUSH_URL" "refs/tags/${t}:refs/tags/${t}"
+        git -c user.name="Techeve CI" -c user.email="ci@techeve.de" tag -f -a "$t" -m "LCM $t"
+        git push --quiet --force "$PUSH_URL" "refs/tags/${t}:refs/tags/${t}"
       done
       echo "Gespiegelte Tags: $(echo "$TAGS" | tr '\n' ' ')"
 
