@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.30.8 - 2026-08-26
+
+### 🔧 Sonstiges
+
+- **images**: Releases zusätzlich nach Docker Hub veröffentlichen (bea08b2d)
+- **install**: Docker Hub als empfohlener Container-Weg (DE und EN) (f3e4ed3e)
+- **mirror**: Pipelines nur im privaten Repo, GitHub-Issues in den Briefkasten (6263f024)
+- v1.30.8-beta.1 - Version & Changelog vorbereitet (e2e54143)
+
 ## v1.30.8-beta.1 - 2026-08-26
 
 ### 🔧 Sonstiges
