@@ -1,0 +1,41 @@
+# LCM - Trivy-Sidecar.
+#
+# Das offizielle Trivy-Image plus ein winziges Binary von uns (cmd/trivyd),
+# das Trivys Kommandozeile über HTTP für LCM bedient. Warum nicht Trivys
+# eigener Client/Server-Modus: Dessen Client ist wieder das Trivy-Binary
+# (~90 MB) - es müsste also doch ins LCM-Image und läge dann doppelt vor.
+#
+# Wie beim Hauptimage gibt es hier KEIN RUN. Damit ist auch dieses Image ohne
+# QEMU für mehrere Architekturen baubar; die Basis bringt Trivy je Plattform
+# selbst mit.
+#
+#   make build-trivyd            # Binaries nach bin/
+#   docker build -f Dockerfile.trivyd -t lcm-trivyd .
+#
+# Betrieb: im internen Container-Netz, OHNE veröffentlichten Port, mit
+# Pflicht-Token (LCM_TRIVY_TOKEN). Details: docs/reference/packaging.md
+
+# Version bewusst gepinnt: Trivys Ausgabeformat ist der Vertrag zu LCMs
+# Auswertung. Renovate hält den Pin aktuell (renovate.json, Manager
+# "dockerfile") - ohne das veraltet der Scanner still.
+FROM aquasec/trivy:0.74.0
+
+ARG TARGETARCH
+COPY bin/lcm-trivyd-linux-${TARGETARCH} /usr/local/bin/trivyd
+
+# /cache nimmt die Schwachstellen-Datenbank auf - als eigenes Volume, damit
+# sie einen Neustart überlebt. Ohne das lädt der Sidecar bei jedem Start
+# mehrere hundert MB neu.
+ENV TRIVY_CACHE_DIR=/cache
+VOLUME /cache
+
+# Kein veröffentlichter Port: erreichbar nur im Container-Netz.
+EXPOSE 9330
+
+# Der Dienst prüft sich selbst - das Trivy-Image bringt kein curl mit, und
+# der Healthcheck läuft bewusst ohne Token (sonst stünde es im Klartext in
+# jedem `docker inspect`).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD ["/usr/local/bin/trivyd", "-healthcheck"]
+
+ENTRYPOINT ["/usr/local/bin/trivyd"]

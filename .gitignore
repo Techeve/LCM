@@ -1,0 +1,43 @@
+# Build-Artefakte
+bin/
+# kompiliertes lcm-agent-Binary im Repo-Wurzelverzeichnis (Build-Artefakt)
+/agent
+# dist wird generiert; .gitkeep bleibt, damit go:embed in frischen
+# Checkouts kompiliert (all:dist braucht mindestens eine Datei)
+frontend/dist/*
+!frontend/dist/.gitkeep
+frontend/e2e/.run/
+
+# Laufzeit-Dateien (enthalten Secrets bzw. Daten)
+config.json
+config.dev.json
+version.json
+*.db
+*.db-wal
+*.db-shm
+data/
+# Master-Key (AES-GCM at-rest) und TLS-Material - NIE committen
+lcm.key
+*.pem
+# System-Backups lokaler Läufe (enthalten DB + Master-Key)
+backup/
+*.lcmbak
+
+# Node
+frontend/node_modules/
+frontend/test-results/
+frontend/playwright-report/
+/test-results/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+.claude/
+
+# Build-Zähler lokaler Builds - das Makefile zählt ihn bei jedem Build hoch
+# und legt ihn bei Bedarf neu an; im Repo wäre er nur Dauer-Rauschen im Diff
+.buildnumber
+
+# Interne Entwicklungs-Artefakte (liegen lokal in ~/GolandProjects/lcm-dev-docs)
+dev-docs/

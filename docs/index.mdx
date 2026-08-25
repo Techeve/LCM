@@ -1,0 +1,57 @@
+---
+title: LCM - Linux Centralized Management
+description: Beliebig viele Linux-Server zentral über SSH verwalten - Monitoring, CVE-Scans, Docker, Backups und Automatisierung in einem einzigen Binary.
+template: splash
+hero:
+  image:
+    alt: LCM-Logo
+    file: ./logo.svg
+  tagline: Einmal installieren, beliebig viele Linux-Server remote über SSH verwalten. Ein einziges Binary, keine Agents auf den Zielsystemen.
+  actions:
+    - text: Loslegen
+      link: /getting-started/overview/
+      icon: right-arrow
+      variant: primary
+    - text: Auf GitLab ansehen
+      link: https://gitlab.techeve.de/techeve/lcm
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Was ist LCM?
+
+**LCM (Linux Centralized Management)** ist ein zentrales Management-Werkzeug für
+Linux-Server: Go-Backend (Fiber v3, GORM, SQLite) und Svelte-5-Frontend in
+**einem einzigen Binary**, lauffähig unter Linux, Windows und macOS - ohne
+externe Abhängigkeiten auf den verwalteten Servern. Die Kommunikation läuft
+ausschließlich über SSH (agentless).
+
+<CardGrid stagger>
+  <Card title="Agentless über SSH" icon="setting">
+    Server werden mit Host-Key-Bestätigung angebunden; jeder bekommt einen
+    dedizierten Service-User und ein eigenes Schlüsselpaar (Zero Trust).
+  </Card>
+  <Card title="Monitoring & Ampel" icon="approve-check">
+    Pakete, Updates, Hardware und Speicher-Verlauf - Status 🟢🟡🔴 pro Server,
+    inklusive CVE-getriebener Bewertung.
+  </Card>
+  <Card title="Sicherheit eingebaut" icon="shield">
+    AES-256-GCM at-rest, TOTP-2FA, SSH-Hardening, Firewall, verschlüsselte
+    Backups und lückenloses Audit-Log.
+  </Card>
+  <Card title="Automatisierung" icon="rocket">
+    Servergruppen mit zeitgesteuerten Regeln und Grundsatz-Regeln, die bei
+    jeder Verbindung durchgesetzt werden.
+  </Card>
+</CardGrid>
+
+## Schnell einsteigen
+
+<CardGrid>
+  <LinkCard title="Überblick" href="/getting-started/overview/" description="Was LCM kann und wie es aufgebaut ist." />
+  <LinkCard title="Installation" href="/getting-started/installation/" description="Binary, .deb-Paket oder Docker." />
+  <LinkCard title="Schnellstart" href="/getting-started/quickstart/" description="Ersten Server in 5 Minuten anbinden." />
+  <LinkCard title="Beispiele" href="/examples/" description="Typische Arbeitsabläufe Schritt für Schritt." />
+</CardGrid>

@@ -1,0 +1,105 @@
+---
+sidebar:
+  order: 3
+title: Quickstart
+description: Onboard and monitor your first server in a few minutes.
+---
+
+This quickstart onboards your first server and shows where to go next.
+Prerequisite: LCM is running and you are logged in as `admin` (see
+[Installation](/en/getting-started/installation/)).
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Add the onboarding SSH key (recommended).**
+
+   LCM generated its own key pair on first start. Copy the **public key** from
+   *Settings → General* and add it to the new server's
+   `~/.ssh/authorized_keys` for `root`. This lets you onboard without a
+   password. (Onboarding via password works too.)
+
+2. **Onboard the server (join).**
+
+   On the dashboard choose **“+ Add server”** and walk through the guided
+   dialog:
+
+   - Enter host/IP, SSH port and credentials (password **or** system SSH key).
+     The **login user** is `root` or - if root SSH is disabled - a user with
+     `sudo` rights; its password is passed to `sudo` for the one-time setup (via
+     `sudo -S` over stdin, never in the plaintext log).
+
+     <details>
+     <summary>Root SSH is disabled and there is no sudo user? - Open it step by step</summary>
+
+     Many distributions do not let `root` in via SSH (Ubuntu does not even set
+     a root password by default). This is how to open root login briefly for
+     onboarding:
+
+     1. **Sign in on the server console** (VM/cloud console or directly at the
+        machine) - root cannot get in via SSH yet.
+     2. If root has no password yet: run `sudo passwd root` and set a strong
+        password.
+     3. **Allow root login for SSH** - as a drop-in that can be removed
+        cleanly later:
+
+        ```sh
+        echo 'PermitRootLogin yes' | sudo tee /etc/ssh/sshd_config.d/00-root-onboarding.conf
+        ```
+
+        On older systems without `/etc/ssh/sshd_config.d`, edit
+        `/etc/ssh/sshd_config` and set `PermitRootLogin yes` there instead
+        (sshd takes the **first** value found per option - change the existing
+        line, do not append).
+     4. **Restart the SSH service**: `sudo systemctl restart ssh`
+        (Debian/Ubuntu) or `sudo systemctl restart sshd` (RHEL, Fedora,
+        openSUSE).
+     5. Onboard the server in LCM with login user `root` and the password.
+
+     **Close it again afterwards:** after onboarding, LCM no longer needs root
+     login (it uses its own service user). Either remove the drop-in
+     (`sudo rm /etc/ssh/sshd_config.d/00-root-onboarding.conf` and restart the
+     SSH service) - or more conveniently use the server action **“Disable SSH
+     root login”** in LCM.
+
+     </details>
+   - LCM shows the **SSH host key fingerprint** - confirm it to guard against
+     man-in-the-middle.
+   - LCM creates a dedicated **service user** on the server, installs a
+     **dedicated key pair** and takes a first inventory.
+
+3. **Check the status and details.**
+
+   The server appears with a 🟢🟡🔴 status in the overview. A click opens the
+   detail page with hardware, packages, repositories, Docker inventory and
+   storage history. The ⓘ next to the status explains *why* a server is amber
+   or red.
+
+4. **Put it in a group and automate.**
+
+   Under *Groups*, create a server group, assign the server and define a rule -
+   for example a daily update schedule or a firewall baseline rule. See
+   [Groups, schedules & rules](/en/guides/groups-rules/).
+
+5. **Optional: harden your account.**
+
+   Enable **2FA** for your account (My account → Two-factor) and set up the
+   [CVE scan](/en/guides/security-cve/) for central vulnerability checking
+   (Trivy required).
+
+</Steps>
+
+## What happens behind the scenes
+
+During onboarding and on every health check, LCM opens a **short-lived SSH
+connection**, reads the state and records each action as a **job** with exact
+console output. The system group already ships two baseline schedules for
+this: a **health check** every 15 minutes and a daily **system sync**
+(hardware, packages, Docker check).
+
+## Next steps
+
+- [Understand monitoring](/en/guides/monitoring/)
+- [Examples: typical workflows](/en/examples/)
+- [Set up backups](/en/guides/backups/)

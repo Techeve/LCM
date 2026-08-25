@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""lcm-channel-verify - check that each package channel really delivers what
+its repository contains.
+
+Runs on the repository server (repo.techeve.de), not on a customer machine.
+
+Why this exists: a publish call can succeed without achieving anything. If a
+publish point is bound to a SNAPSHOT instead of the local repository, aptly
+dutifully republishes the snapshot - HTTP 200, old packages. That is exactly
+how the enterprise channel kept serving 1.11.0 across four releases while
+every CI job reported success.
+
+The check compares, per channel and architecture, the published index against
+the repository behind it and reports both directions:
+
+  - in the index but not in the repository
+    -> would DISAPPEAR from the channel on the next publish
+  - in the repository but not in the index
+    -> delivered packages are missing; the channel needs a publish
+
+    lcm-channel-verify                 check all channels
+    lcm-channel-verify enterprise      check one channel
+    lcm-channel-verify --root /path    different aptly root
+
+Exit code 0 = everything consistent, 1 = differences found (usable in cron).
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+
+# Kanal -> (aptly-Repo, Publish-Pfad unterhalb von <root>/public)
+KANAELE = {
+    "community": ("techeve", "dists/stable"),
+    "beta": ("lcm-beta", "dists/beta"),
+    "enterprise": ("lcm-enterprise", "enterprise/dists/stable"),
+}
+
+ARCHS = ("amd64", "arm64")
+API = "http://127.0.0.1:8080/api"
+
+
+def run(args):
+    """Führt ein Kommando aus und liefert stdout (leer bei Fehlschlag)."""
+    p = subprocess.run(args, capture_output=True, text=True)
+    return p.stdout
+
+
+def repo_pakete(repo):
+    """(Architektur, Name, Version) aller Pakete eines aptly-Repos.
+
+    Die Referenzen kommen in der Form "Pamd64 lcm 1.16.0 <hash>" - das
+    führende P gehört zur Architektur-Angabe und wird abgeschnitten.
+    """
+    roh = run(["curl", "-s", f"{API}/repos/{repo}/packages"])
+    try:
+        refs = json.loads(roh)
+    except json.JSONDecodeError:
+        print(f"  FEHLER: Repo '{repo}' nicht abrufbar (läuft aptly api serve?)")
+        return None
+    out = set()
+    for r in refs:
+        teile = r.split()
+        if len(teile) >= 3:
+            out.add((teile[0][1:], teile[1], teile[2]))
+    return out
+
+
+def index_pakete(pfad):
+    """(Architektur, Name, Version) aus den veröffentlichten Packages-Dateien."""
+    out = set()
+    for arch in ARCHS:
+        datei = f"{pfad}/main/binary-{arch}/Packages"
+        text = run(["sudo", "cat", datei])
+        name = None
+        for zeile in text.splitlines():
+            if zeile.startswith("Package: "):
+                name = zeile.split(None, 1)[1].strip()
+            elif zeile.startswith("Version: ") and name:
+                out.add((arch, name, zeile.split(None, 1)[1].strip()))
+                name = None
+    return out
+
+
+def pruefe(kanal, root):
+    repo, unterpfad = KANAELE[kanal]
+    print(f"== {kanal} (Repo '{repo}') ==")
+
+    imrepo = repo_pakete(repo)
+    if imrepo is None:
+        return False
+    imindex = index_pakete(f"{root}/public/{unterpfad}")
+
+    if not imindex:
+        print("  FEHLER: kein veröffentlichter Index gefunden - Kanal nie publiziert?")
+        return False
+
+    # Pakete mit "Architecture: all" stehen im Repo EINMAL, erscheinen aber in
+    # jedem Architektur-Index - so sieht Debian das vor. Ohne diese Auffaltung
+    # meldete der Vergleich sie in beide Richtungen als Abweichung, und die
+    # ständigen Fehlalarme würden das Werkzeug wertlos machen.
+    entfaltet = set()
+    for a, n, v in imrepo:
+        if a == "all":
+            entfaltet.update((arch, n, v) for arch in ARCHS)
+        else:
+            entfaltet.add((a, n, v))
+    imrepo = entfaltet
+
+    verschwindet = sorted(imindex - imrepo)
+    fehlt = sorted(imrepo - imindex)
+
+    print(f"  Repo: {len(imrepo)} Pakete | Index: {len(imindex)} Pakete")
+    if verschwindet:
+        print("  Im Index, aber NICHT im Repo - verschwände beim nächsten Publish:")
+        for a, n, v in verschwindet:
+            print(f"    {a:<6} {n:<16} {v}")
+    if fehlt:
+        print("  Im Repo, aber NICHT im Index - Kanal braucht ein Publish:")
+        for a, n, v in fehlt:
+            print(f"    {a:<6} {n:<16} {v}")
+    if not verschwindet and not fehlt:
+        print("  in Ordnung")
+    return not (verschwindet or fehlt)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("kanal", nargs="?", choices=sorted(KANAELE),
+                    help="nur diesen Kanal prüfen (Vorgabe: alle)")
+    ap.add_argument("--root", default="/var/lib/aptly/.aptly",
+                    help="aptly rootDir (Vorgabe: /var/lib/aptly/.aptly)")
+    args = ap.parse_args()
+
+    kanaele = [args.kanal] if args.kanal else sorted(KANAELE)
+    ok = True
+    for k in kanaele:
+        if not pruefe(k, args.root.rstrip("/")):
+            ok = False
+        print()
+
+    if not ok:
+        print("Es gibt Abweichungen - siehe oben.")
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()

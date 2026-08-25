@@ -1,0 +1,1 @@
+# Platzhalter: hält dist/ im Git-Checkout existent (go:embed braucht mindestens eine Datei). Wird von Vite bei jedem Build aus public/ nach dist/ kopiert.

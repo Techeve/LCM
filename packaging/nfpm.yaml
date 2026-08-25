@@ -1,0 +1,68 @@
+# nfpm-Konfiguration für das LCM-Debian-Paket.
+# arch und version kommen aus der Umgebung (LCM_ARCH, LCM_VERSION), damit
+# dieselbe Datei amd64- und arm64-Pakete erzeugt. Siehe Makefile-Target
+# `deb` und den CI-Job `packages:deb`.
+name: lcm
+arch: "${LCM_ARCH}"
+platform: linux
+version: "${LCM_VERSION}"
+section: admin
+priority: optional
+maintainer: "Techeve <claude@techeve.de>"
+vendor: "Techeve"
+homepage: "https://gitlab.techeve.de/techeve/lcm"
+license: "proprietary"
+description: |
+  LCM - zentrale Verwaltung von Linux-Servern über SSH.
+  Einzelne, CGO-freie Go-Binary mit eingebettetem Web-UI. Läuft als
+  unprivilegierter systemd-Dienst; Konfiguration in /etc/lcm, Zustand
+  (verschlüsselte SQLite-DB, Master-Key, TLS-Zertifikat) in /var/lib/lcm.
+
+# adduser/addgroup werden im postinstall-Skript benötigt.
+depends:
+  - adduser
+
+# Trivy ist eine WEICHE Abhängigkeit: LCM nutzt es für den CVE-Scan des
+# Paketbestands. Fehlt es, deaktiviert sich das Feature sauber (graceful
+# degrade) - der Rest von LCM läuft normal weiter.
+#
+# Bewusst KEIN "recommends: trivy": Trivy liegt in keiner Standard-Paketquelle
+# von Debian oder Ubuntu. apt installiert ein unerfüllbares Recommends
+# stillschweigend nicht mit und warnt auch nicht - nach einer lehrbuchmäßigen
+# Installation war der CVE-Scan damit stumm deaktiviert, während die Doku den
+# Eindruck erweckte, er sei einsatzbereit (BUG-001). Die Einrichtung von Trivy
+# ist deshalb ein eigener, ausdrücklicher Schritt in der Installationsanleitung.
+
+contents:
+  # Das arch-passende Binary wird vor dem Packen auf diesen festen Namen
+  # gestaged (nfpm expandiert ${LCM_ARCH} in arch/version, aber nicht im
+  # src-Glob). Siehe Makefile-Target `deb` und CI-Job `packages:deb`.
+  - src: ./bin/lcm-pkg
+    dst: /usr/bin/lcm
+    file_info:
+      mode: 0755
+  - src: ./packaging/lcm.service
+    dst: /lib/systemd/system/lcm.service
+    file_info:
+      mode: 0644
+  # LCM Remote: der Server liefert die Agent-Binaries selbst aus
+  # (GET /api/v1/agent/download/<arch>) - für die manuelle Installation
+  # ohne konfiguriertes Debian-Repo. Beide Architekturen in jedem Paket,
+  # damit ein amd64-LCM auch arm64-Clients versorgen kann.
+  - src: ./bin/lcm-agent-linux-amd64
+    dst: /usr/share/lcm/agent/lcm-agent-linux-amd64
+    file_info:
+      mode: 0644
+  - src: ./bin/lcm-agent-linux-arm64
+    dst: /usr/share/lcm/agent/lcm-agent-linux-arm64
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: ./packaging/scripts/postinstall.sh
+  preremove: ./packaging/scripts/preremove.sh
+  postremove: ./packaging/scripts/postremove.sh
+
+deb:
+  # Signieren wäre möglich (deb.signature), lassen wir für interne Pakete weg.
+  compression: xz

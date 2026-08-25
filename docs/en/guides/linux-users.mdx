@@ -1,0 +1,464 @@
+---
+sidebar:
+  order: 16
+title: Linux Users
+description: Manage OS users centrally, distribute SSH keys, and activate them via self-service.
+---
+
+LCM manages **Linux users** (OS accounts on the target servers) as its own
+data model and automatically distributes their SSH public keys to assigned
+servers and groups.
+
+## Concept
+
+A Linux user in LCM is a catalog entry with a username, optional
+email, and one or more **SSH public keys**. When assigned to a server (or
+a group), the next sync creates the OS account **idempotently**
+and writes its keys into an LCM-managed block of the
+`authorized_keys`. This lets the user log in directly via key.
+
+:::note[Tenant separation]
+The Linux user catalog is a global, cross-group resource and
+therefore **admin-only**. Managers still provision OS users on their
+own (scope-checked) servers, but cannot manage the global catalog.
+:::
+
+## Privilege profiles
+
+For a long time a Linux user knew only two states: **sudo** or **no sudo**.
+Anyone who merely had to restart a service got full `NOPASSWD:ALL` - which is
+why far too many accounts carry root privileges in practice.
+
+A **privilege profile** (Linux users → Privilege profiles) instead describes
+exactly what someone may do:
+
+| Kind of rule | Example | Effect |
+|---|---|---|
+| **Command as root** | `/usr/bin/systemctl --no-pager restart nginx` | exactly this invocation, nothing else |
+| **Edit file** | `/etc/nginx/sites-available/kunde.conf` | edit as root via `sudoedit` |
+| **Directory permission** | `/srv/www` - read and write | additional access via a POSIX ACL |
+
+Two unchangeable profiles ship with LCM and mirror the previous state:
+**Full administrator** (unrestricted root) and **Standard user** (none).
+
+:::caution[The argument is part of the rule]
+sudo matches the **entire** command line. `/usr/bin/systemctl restart nginx`
+allows exactly that - `/usr/bin/systemctl` allows every subcommand on every
+unit, including `systemctl edit`, which opens an editor as root. LCM therefore
+rejects bare commands without arguments and allows no wildcards: `apt-get
+install *` looks narrow but permits installing any package - and package
+scripts run as root.
+:::
+
+Two further safeguards sit in the input validation:
+
+- **`--no-pager` is added.** Without it, `systemctl` and `journalctl` send
+  their output through a pager that then runs as root - in `less`, `!sh` is
+  enough for a root shell. A seemingly read-only `status` command would be a
+  full privilege escalation.
+- **Editors do not belong in the command list.** `sudo nano /etc/…` is
+  effectively a root shell. That is what the "edit file" rule is for: it uses
+  `sudoedit`, which runs the editor **as the user** and writes the file back as
+  root afterwards.
+
+Programs such as shells, interpreters, editors and pagers grant full privileges
+regardless of their arguments. LCM does not forbid them, but requires an
+explicit acknowledgement per rule - so nobody grants by accident what they did
+not mean to grant.
+
+### Profile blocks
+
+Writing sudo rules by hand is tedious - and that is exactly where privilege
+concepts collapse: someone enters `/usr/bin/systemctl` because a colleague
+should "manage services", and has granted full root. **Linux users → Profile
+blocks** therefore holds ready-made templates to tick.
+
+Every block carries name and description once in German and once in English -
+the catalog lives in the database, not in the language catalog of the
+interface. The built-in blocks carry both; for your own the English version is
+optional, and without it the English interface shows the German text as well.
+
+A block brings three things:
+
+- **Variants per distribution family.** The unit is `apache2` on Debian/Ubuntu
+  and `httpd` on RHEL and SUSE; binary paths differ as well. For the common
+  case of identical lines, the "All" variant is enough.
+- **Parameters.** A block "Operate systemd service" covers nginx, postgresql
+  and your own units through the `{service}` placeholder, instead of forcing a
+  new block per application.
+- **Directory permissions.** One `mode path` per line (`read`, `readwrite` or
+  `deny`). This is what turns "operate the service" into "administer the
+  application": the difference between being allowed to restart nginx and
+  looking after it is access to `/etc/nginx` and `/var/www`. Applied via
+  POSIX ACLs - without the `acl` package on the target they stay ineffective
+  and the reconciliation says so.
+
+#### The built-in catalogue
+
+LCM ships around 70 blocks, for the services that actually run on Linux
+servers. Where both make sense, each service comes with **two roles**:
+
+| Role | What it can do | For whom |
+|---|---|---|
+| **… betreiben** (operate) | start/stop/reload the service, status, journal, read the log directory, edit the main configuration | on-call, first level |
+| **… verwalten** (administer) | additionally the application's own tools (config check, reload) and write access to its configuration and data directories | the person looking after the service |
+
+Alongside the widely used services, Techeve's **own applications** are in
+the catalogue: **LCM** itself, the **Form Gateway** and the **DNS Editor**
+including its two agents (certificate agent, DynDNS client).
+
+Also covered: **nginx**, **Apache**, **Caddy**, **HAProxy**, **PostgreSQL**,
+**MariaDB/MySQL**, **Redis/Valkey**, **Docker** and **Podman** (one named
+container each), **Postfix**, **Dovecot**, **BIND (named)**, **AdGuard
+Home**, **Pi-hole**, **WireGuard**, **Samba**, **Fail2ban**, **certbot**,
+**Jellyfin**, **Grafana**, **Prometheus**, **Nextcloud**, **Seafile**,
+**k3s** and **Kubernetes nodes** (kubelet/containerd) plus a read-only
+cluster view via `kubectl`, **Odoo**, **Intrexx**, **Gitea/Forgejo**,
+**GitLab** (Omnibus), **Aptly**, **MinIO**, **RustDesk**, **mailcow** and a
+read-only view of the ACLs actually set - plus the generic blocks for operating a systemd
+service, restarting only, reading logs, updating packages and inspecting the
+firewall.
+
+A block can run its commands **as a user other than root**. That is not a
+detail: running Nextcloud's `occ` as root breaks the file permissions of the
+whole installation - the application warns about it itself. The Nextcloud
+block therefore runs as the web user, and because that user is named
+differently per distribution (`www-data`, `apache`, `wwwrun`), it belongs to
+the variant.
+
+Three places where the catalogue deliberately gives less than you might
+expect, each for the same reason - the rule would otherwise be root:
+
+- **WireGuard** gets no configuration access. A WireGuard configuration
+  contains `PostUp`; whoever may write it runs arbitrary commands as root.
+- **Docker** covers exactly ONE named container. Anyone allowed to run
+  `docker` in general is effectively root - a container with the root
+  filesystem mounted is enough.
+- **HAProxy** has no configuration check: it is spelled `haproxy -c`, and
+  `-c` is the flag shells use to execute arbitrary code. LCM rejects it on
+  principle; a restart reports a broken configuration anyway.
+
+Built-in blocks are **read-only but maintained**: a new LCM release brings
+corrected rules and new paths to existing installations too. To adapt one,
+**clone** it - the copy is yours and is never overwritten.
+
+If no variant exists for a server's family, the block does **not** apply there -
+and the reconciliation says so. A missing rule means missing privileges; if it
+were skipped silently, you would spend a long time wondering why the service
+restart only works on the Debian servers.
+
+Blocks are **referenced, not copied**: if a missing `--no-pager` is added to a
+block later, every profile gets the correction. Conversely, a change alters
+privileges on all affected servers - so before saving you are told which
+profiles use it.
+
+### Assigning
+
+Every Linux user has a **default profile** that applies everywhere. It can be
+overridden per server group - the same person may hold different privileges on
+the web servers than on the databases.
+
+If a user reaches the same server through **several** groups, the group's
+[priority](/en/guides/groups-rules/) decides: the lower number wins. Resolution
+runs from the most specific statement to the most general:
+
+1. a profile set explicitly on the direct assignment,
+2. the profile of the server group with the strongest priority,
+3. the user's default profile.
+
+So exactly **one** profile applies per user and server - privileges from
+several profiles never add up.
+
+### What happens on the server
+
+A profile of your own takes effect through its own Linux group:
+
+```
+Group:    lcm-prof-webserver
+sudoers:  /etc/sudoers.d/lcm-prof-webserver
+          %lcm-prof-webserver ALL=(root) NOPASSWD: /usr/bin/systemctl --no-pager restart nginx
+Account:  anna is a member of lcm-prof-webserver
+```
+
+Privileges therefore hang off the profile rather than the individual account:
+assigning means setting group membership, revoking means removing it. An
+account always belongs to **exactly one** profile group; on a switch the others
+are removed.
+
+The sudoers file is checked with `visudo` before being swapped in atomically -
+a syntax error there otherwise disables sudo on the entire system. Profiles no
+longer needed on a server are cleaned up on every reconciliation; a group with
+members that LCM did not add stays untouched.
+
+### Directory permissions
+
+Path rules are applied through **POSIX ACLs**, issued to the profile group:
+
+```
+setfacl -RP    -m g:lcm-prof-webserver:rwX /srv/www
+setfacl -RP -d -m g:lcm-prof-webserver:rwX /srv/www
+```
+
+The second line is the **inheritance**: whatever is newly created under the
+path inherits the permissions automatically. The first one brings the existing
+contents up to date - the same thing a NAS calls "apply permissions to existing
+files".
+
+Two subtleties sit in the flags: `-P` keeps setfacl from following symlinks
+(otherwise a user with write access could point a link at `/etc` and have its
+target shared along), and the capital `X` grants the execute/traverse bit only
+on directories - a lower-case `x` would make every text file in the tree
+executable.
+
+:::caution[ACLs are not available everywhere]
+Directory permissions require the **`acl`** package and a filesystem that
+carries ACLs. On Debian/Ubuntu the library and the tools are separate packages -
+the tools are usually missing. And on **ZFS**, POSIX ACLs only work with
+`acltype=posixacl`.
+
+LCM therefore does not guess, it **checks**: during the scan an ACL entry is set
+on a throwaway directory and removed again immediately. If support is missing,
+the reconciliation says so explicitly and the path rules stay ineffective - the
+server then offers to install the package. When assigning a profile with path
+rules, the server group also shows how many of its servers support ACLs.
+:::
+
+Paths removed from a profile are revoked on the next reconciliation. Unlike the
+sudoers files this cannot be read off the server - ACL entries carry neither a
+comment nor a naming convention. LCM therefore records which paths it has set
+per server.
+
+### Hardening the baseline
+
+A profile **grants** privileges - it does not take any away. The baseline of a
+fresh Linux is reading-friendly: `/srv`, `/opt` and the configuration
+directories of individual services usually sit at 755 because that is how the
+package ships them. So if you want a data area to be open only to those
+entitled, you harden the baseline **first** and then grant selectively through
+a profile.
+
+This is a separate server action, not part of a profile - it applies whether or
+not a profile ever points at the path.
+
+:::caution[Hardening can take services down]
+`/var/www` typically sits at 755 `root:root`, and the nginx worker reads as
+`www-data` through exactly the world permission that is to be removed. 750
+`root:root` kills the site; 750 `root:www-data` is correct.
+
+The action therefore optionally takes a **group** (applied *before* the world
+permission drops) and optionally a **systemd unit**: if it is no longer running
+afterwards, the hardening is rolled back immediately. The previous state is
+recorded in every case - nobody dares apply a hardening they cannot undo.
+:::
+
+Hardening is **not recursive**: if the head of a tree lacks the traverse
+permission, everything below is unreachable. A `chmod -R` would instead touch
+every file and be near-impossible to undo.
+
+### Permission state against drift
+
+Setting it once is not enough. Package upgrades bring along the permissions of
+the files they ship and reset a hardening, `systemd-tmpfiles` restores modes at
+boot, and a file **replaced** during an update is a new inode - its ACL is gone.
+
+That is what the baseline rule **permission state** (`perm-sync`) is for: it
+compares on every connection and intervenes **only on deviation**. For hardened
+directories the state is restored; for directory permissions a sample check at
+the root path verifies the ACL entry is still there - the full reconciliation
+runs during the user sync anyway. Every actual intervention shows up in the
+audit log.
+
+Alongside it, **set up ACL** (`acl-setup`): if ACL support is missing, the
+package is installed - otherwise nothing happens. A group thus equips new
+members without anyone lifting a finger. If the installation fails (no repo
+access), it is retried after 24 hours at the earliest instead of on every ping.
+
+Neither type carries a contradictory target state - if several groups demand the
+same thing, it is **deduplicated** rather than resolved by priority.
+
+### Account type "file access only"
+
+A profile can specify that its members get **no shell**: sign-in via SFTP only,
+no programs. That answers the question "which programs may someone run" for
+good - none. What stays visible is what the directory permissions allow.
+
+Two bolts implement it: an sshd drop-in with `ForceCommand internal-sftp` for
+the profile group, and `nologin` as the account's login shell. `internal-sftp`
+lives inside sshd itself - nothing needs to be copied or maintained.
+
+:::note[No chroot - on purpose]
+A `ChrootDirectory` hides exactly the directories the profile grants via ACL;
+the data would have to be mirrored or bind-mounted into the jail. Without a
+chroot the filesystem sets the limit - the same yardstick as for every other
+profile permission.
+:::
+
+The drop-in ends with `Match all`. That is not cosmetic: the include line sits
+at the very top of `sshd_config`, and a `Match` block applies until the next
+`Match` - without the terminator the entire remaining configuration would slip
+into the block. `sshd -t` runs before the reload; if sshd rejects the
+configuration, it is rolled back. An error there would lock out not only the
+users but LCM's own access.
+
+### In restricted sudo mode
+
+On hardened servers LCM's service user has no root shell, only a sudo allowlist
+and the LCM helper. Profiles still take effect there: group, sudoers file and
+membership run through dedicated helper subcommands.
+
+The helper does **not** take the content on trust. It checks that every line is
+issued to its own profile group and carries no `ALL` as a command, and runs
+`visudo` over it. Without that check a compromised LCM could hand the restricted
+service user full privileges back through a profile file - exactly what
+restricted mode is meant to prevent.
+
+:::note[Still outstanding]
+The **built-in** profiles still use the previous mechanism (a per-user entry
+with `NOPASSWD:ALL`, or none) - so the update changes nothing on existing
+servers.
+:::
+
+## Self-service activation
+
+Instead of knowing keys in advance, LCM can send a user an
+**activation link** by email. Via a public page (`/linux-aktivierung`,
+reachable even without login) the user themselves sets their password and/or
+provides their public key. Only then are they distributed to the servers.
+
+## Deprovisioning before deletion
+
+A user can only be deleted once they are no longer provisioned on **any**
+server - while assignments remain, LCM refuses the deletion with a hint
+(HTTP&nbsp;409). The path is deliberately two-step: first **“Remove from all
+servers”** (deprovisions account and key block on the target systems), then
+delete. This way even a careless delete cannot leave an orphaned OS account
+behind - and a server that is offline during deprovisioning becomes visible
+instead of being skipped silently. Deleting the user also removes their
+stored keys and any open activation links.
+
+## Typical workflow
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. Under *Linux Users*, create an entry via **"+ Linux User"**
+   (username, optional email).
+2. Provide SSH keys - paste directly or generate a key pair in LCM
+   (the private part is offered for download **once**). Alternatively leave it
+   to the user via activation link.
+3. Assign the user to a server or a group.
+4. LCM sets the account up on the affected servers **immediately** - no need to
+   wait for the next system sync.
+
+</Steps>
+
+## Automatic reconciliation
+
+Every change that affects a user's entitlement takes effect at once:
+
+- added or removed SSH key, changed `sudo`, a password set (including via the
+  activation link) → all servers of that user are updated,
+- assignment to a group or a server → the account is set up there,
+- assignment **released** → the account is **removed** from the affected
+  servers (`userdel -r`) - unless the user is still entitled there through
+  another group or directly,
+- a server joining or leaving a group → it inherits that group's users, or
+  loses the accounts only that group entitled it to.
+
+### Backlog for unreachable servers
+
+If a server is unreachable at the moment of the change, the job is not lost: it
+stays in the **backlog** (surviving an LCM restart) and is caught up on the next
+successful contact - at the latest with the health check, which opens a
+connection regularly anyway. Open jobs are listed in the server's **Users** tab
+together with the cause of the last failed attempt.
+
+This matters most for **revoked** access: an account that only disappeared with
+the next scheduled sync would remain usable until then.
+
+## Per-server user overview
+
+The **Users** tab on the server detail page shows the **actual state** of the
+target system: every account that can sign in via SSH or shell. System
+accounts (UID below `UID_MIN`, `nologin`/`false` shell) are hidden; `root` is
+shown on purpose. Data is collected during the full scan ("Refresh all",
+system sync) and on demand ("Rescan now").
+
+Per account you see:
+
+- **Login**: does the account still use a **password**, or does it already
+  sign in with an **SSH key only** (password state from `/etc/shadow`)
+- Number of **SSH keys** (`authorized_keys`)
+- **2FA**: has the user set up their TOTP
+  (see [SSH 2FA](/en/guides/security-tools#ssh-2fa-totp-alongside-the-ssh-key))
+- **Last login** according to `lastlog`/`lastlog2` - counts interactive
+  logins only; automated connections (including LCM's own) do not show up
+  here. On systems without lastlog the column stays empty (best effort).
+- **LCM badge**: the account matches a Linux user distributed by LCM
+
+Accounts can be managed right from the overview:
+
+- **Disable** locks the password **and** expires the account - only the
+  expiry date blocks SSH key logins too (`usermod -L` alone does not).
+  Reversible via **Enable**.
+- **Remove** deletes the account permanently, including its home directory.
+- **Sync LCM users**: assign a catalog user to this server and provision it
+  immediately.
+
+`root`, the LCM service user and **LCM-managed accounts** are protected -
+the latter are maintained on this page (Linux users); otherwise the next
+sync would silently restore the old state.
+
+## Built-in guide at /doku
+
+LCM ships a short end-user guide, reachable at `https://<host>/#/doku` -
+**without signing in**, because the SSH key instructions are needed precisely
+when someone does not have access yet. The link is therefore safe to put in an
+invitation e-mail.
+
+Currently five pages: setting up the SSH key, enrolling in two-factor login,
+and three guides for onboarding devices - [LCM agent](/en/guides/remote),
+[MikroTik RouterOS](/en/guides/routeros) and [Synology DSM](/en/guides/dsm).
+They address whoever performs the setup and each names the spot that trips
+people up: the agent port, the read-only user on the router, enforced 2FA on
+the NAS.
+
+The first page covers setting up the SSH key and, for servers with
+[SSH 2FA](/en/guides/security-tools#ssh-2fa-totp-alongside-the-ssh-key) enabled,
+setting up the second factor by the user themselves (authenticator app,
+emergency codes, verifying in a second session).
+
+The key page covers setting up the key on **Linux, macOS and Windows** - for
+the latter both with the bundled OpenSSH and with **PuTTY**: how to extract the
+public key in the right format from an existing `.ppk`, how to make it the
+default via Pageant, and how to convert it for OpenSSH.
+
+The docs are maintained as Markdown in the repository under
+`internal/appdocs/pages/<language>/`. The files are embedded into the binary;
+adding a page means dropping in a file with a number prefix (`20-….md`, the
+number sets the order) - the first heading becomes the title. Rendering uses a
+small in-house Markdown renderer that escapes raw HTML rather than passing it
+through (rationale: [Dependencies](/en/reference/dependencies)).
+
+### Blocking, syncing and the login history
+
+Next to **"Rescan now"** there is **"Sync LCM users"**: it distributes the users
+maintained in LCM to this server right away, without waiting for a schedule.
+
+**Distributed accounts can be blocked on a single server.** The user stays
+assigned in LCM and usable on every other server; here they are shut down. The
+important part: the block is **remembered** and survives the next sync -
+without that, LCM would silently undo it minutes later. It applies regardless
+of whether the user is assigned directly or through a server group.
+
+What distributed accounts cannot do here is **permanent removal** - the next
+sync would recreate them anyway. Deprovisioning through the catalogue is the
+way for that. `root` and the LCM service user stay untouchable in any case: the
+latter is how LCM manages the server in the first place.
+
+The **Last login** column can be expanded to show the **individual logins**
+with time, origin, terminal and duration - sessions still running are marked as
+such. The source is `wtmp` on the server (collected via `last` in the same scan
+pass). How far back the history reaches is up to the system: `wtmp` is usually
+rotated monthly, and older logins are gone by then.

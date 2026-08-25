@@ -1,0 +1,41 @@
+#!/sbin/openrc-run
+# OpenRC-Dienst des LCM-Agents - das Gegenstueck zu packaging/lcm-agent.service
+# fuer Alpine und andere Systeme ohne systemd.
+#
+# Inhaltlich dasselbe: Der Agent laeuft als root (er fuehrt die
+# Verwaltungs-Kommandos des LCM-Servers aus, wie eine SSH-Root-Session),
+# startet nach dem Netz und wird bei einem Absturz neu gestartet. Und er
+# startet NICHT ohne Konfiguration: Erst `lcm-agent enroll <url> <token>`
+# schreibt sie - das entspricht dem ConditionPathExists der systemd-Unit.
+
+name="lcm-agent"
+description="LCM Remote Agent (verbindet diesen Server ausgehend mit dem LCM-Server)"
+
+command="/usr/bin/lcm-agent"
+command_args="run"
+command_user="root"
+output_log="/var/log/lcm-agent.log"
+error_log="/var/log/lcm-agent.log"
+
+# supervise-daemon statt start-stop-daemon: Nur damit wirken respawn_delay und
+# respawn_max - das ist das Gegenstueck zum Restart=always der systemd-Unit.
+# Mit command_background=true haette OpenRC den Agent nur gestartet und danach
+# vergessen; nach einem Absturz waere er einfach weg gewesen.
+supervisor="supervise-daemon"
+pidfile="/run/supervise-lcm-agent.pid"
+respawn_delay=10
+respawn_max=0
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	if [ ! -e /etc/lcm-agent/agent.json ]; then
+		eerror "lcm-agent ist noch nicht eingerichtet."
+		eerror "Zuerst ausfuehren: lcm-agent enroll <lcm-server-url> <token>"
+		return 1
+	fi
+	checkpath --directory --mode 0755 /run
+}

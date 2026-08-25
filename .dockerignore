@@ -1,0 +1,27 @@
+# Build-Kontext klein halten und keine lokalen Laufzeitdaten/Secrets
+# ins Image lassen.
+.git
+.idea
+.vscode
+.claude
+# bin/ ausschließen - AUSSER den Linux-Binaries, die die Dockerfiles ins
+# Runtime-Image kopieren: das Hauptbinary (make docker-build) und den
+# Trivy-Sidecar (make docker-build-trivyd).
+bin/
+!bin/lcm-linux-*
+!bin/lcm-trivyd-linux-*
+frontend/node_modules/
+frontend/dist/
+frontend/e2e/.run/
+frontend/test-results/
+frontend/playwright-report/
+config.json
+config.dev.json
+version.json
+*.db
+*.db-wal
+*.db-shm
+data/
+# docker/ selbst gehört nicht in den Kontext - die Dockerfiles kommen per -f
+docker/
+.dockerignore

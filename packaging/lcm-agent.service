@@ -1,0 +1,25 @@
+[Unit]
+# Description shows up in `systemctl status` and journal output. It is a
+# static string that cannot follow the system language, so English is used -
+# and plain ASCII, because service metadata travels through terminals and log
+# pipelines whose encoding we do not control.
+Description=LCM Remote Agent (connects this server outbound to the LCM server)
+Documentation=https://gitlab.techeve.de/techeve/lcm
+After=network-online.target
+Wants=network-online.target
+# Without enrollment (lcm-agent enroll <url> <token>) the service does not
+# start - so the package can safely be pre-installed.
+ConditionPathExists=/etc/lcm-agent/agent.json
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/lcm-agent run
+Restart=always
+RestartSec=10
+# The agent runs management commands from the LCM server as root (package
+# management, Docker, firewall) - just like an SSH root session. Sandbox
+# hardening as done for the lcm server is therefore not possible here.
+User=root
+
+[Install]
+WantedBy=multi-user.target

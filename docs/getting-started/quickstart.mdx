@@ -1,0 +1,107 @@
+---
+sidebar:
+  order: 3
+title: Schnellstart
+description: In wenigen Minuten den ersten Server anbinden und überwachen.
+---
+
+Dieser Schnellstart bindet den ersten Server an und zeigt, wo du danach
+weitermachst. Voraussetzung: LCM läuft und du bist als `admin` angemeldet
+(siehe [Installation](/getting-started/installation/)).
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Onboarding-SSH-Key hinterlegen (empfohlen).**
+
+   LCM hat beim ersten Start ein eigenes Schlüsselpaar erzeugt. Kopiere den
+   **Public Key** aus *Einstellungen → Allgemein* und trage ihn auf dem neuen
+   Server in `~/.ssh/authorized_keys` von `root` ein. So kannst du den Server
+   ohne Passwort anbinden. (Alternativ geht das Onboarding auch per Passwort.)
+
+2. **Server anbinden (Join).**
+
+   Auf dem Dashboard **„+ Server hinzufügen“** wählen und den geführten Dialog
+   durchlaufen:
+
+   - Host/IP, SSH-Port und Zugangsdaten (Passwort **oder** System-SSH-Key)
+     eingeben. Als **Login-Benutzer** dient `root` oder - wenn Root-SSH
+     deaktiviert ist - ein Benutzer mit `sudo`-Rechten; dessen Passwort wird für
+     die einmalige Einrichtung an `sudo` übergeben (per `sudo -S` über stdin,
+     nie im Klartext-Log).
+
+     <details>
+     <summary>Root-SSH ist deaktiviert und es gibt keinen sudo-Benutzer? - Schritt für Schritt öffnen</summary>
+
+     Viele Distributionen lassen `root` nicht per SSH herein (Ubuntu vergibt
+     standardmäßig nicht einmal ein root-Passwort). So öffnest du den
+     Root-Login kurz für die Aufnahme:
+
+     1. **An der Konsole des Servers anmelden** (VM-/Cloud-Konsole oder direkt
+        am Gerät) - per SSH kommt root ja noch nicht herein.
+     2. Falls root noch kein Passwort hat: `sudo passwd root` ausführen und
+        ein starkes Passwort vergeben.
+     3. **Root-Login für SSH erlauben** - als Drop-in, das sich später
+        rückstandsfrei entfernen lässt:
+
+        ```sh
+        echo 'PermitRootLogin yes' | sudo tee /etc/ssh/sshd_config.d/00-root-onboarding.conf
+        ```
+
+        Auf älteren Systemen ohne `/etc/ssh/sshd_config.d` stattdessen in
+        `/etc/ssh/sshd_config` die Zeile `PermitRootLogin yes` setzen (sshd
+        nimmt je Option den **zuerst** gefundenen Wert - die vorhandene Zeile
+        ändern, nicht ergänzen).
+     4. **SSH-Dienst neu starten**: `sudo systemctl restart ssh`
+        (Debian/Ubuntu) bzw. `sudo systemctl restart sshd` (RHEL, Fedora,
+        openSUSE).
+     5. Den Server in LCM mit Login-Benutzer `root` und dem Passwort aufnehmen.
+
+     **Danach wieder schließen:** Nach der Aufnahme braucht LCM den
+     Root-Login nicht mehr (eigener Service-User). Entweder das Drop-in
+     entfernen (`sudo rm /etc/ssh/sshd_config.d/00-root-onboarding.conf` und
+     SSH-Dienst neu starten) - oder bequemer die Server-Aktion
+     **„SSH-Root-Login deaktivieren"** in LCM nutzen.
+
+     </details>
+   - LCM zeigt den **SSH-Host-Key-Fingerprint** an - bestätige ihn, um
+     Man-in-the-Middle abzusichern.
+   - LCM legt auf dem Server einen dedizierten **Service-User** an, hinterlegt
+     ein **eigenes Schlüsselpaar** und nimmt eine erste Bestandsaufnahme vor.
+
+3. **Ampel & Details ansehen.**
+
+   Der Server erscheint mit Status 🟢🟡🔴 in der Übersicht. Ein Klick öffnet die
+   Detailseite mit Hardware, Paketen, Repositories, Docker-Inventar und
+   Speicher-Verlauf. Über das ⓘ am Status siehst du, *warum* ein Server gelb
+   oder rot ist.
+
+4. **In eine Gruppe stecken und automatisieren.**
+
+   Lege unter *Gruppen* eine Servergruppe an, weise ihr den Server zu und
+   definiere eine Regel - z.&nbsp;B. einen täglichen Update-Schedule oder eine
+   Firewall-Grundsatz-Regel. Siehe
+   [Gruppen, Schedules & Regeln](/guides/groups-rules/).
+
+5. **Optional: Sicherheit erhöhen.**
+
+   Aktiviere für dein Konto **2FA** (Mein Konto → Zwei-Faktor) und richte für
+   die zentrale Schwachstellenprüfung den [CVE-Scan](/guides/security-cve/)
+   ein (Trivy vorausgesetzt).
+
+</Steps>
+
+## Was im Hintergrund passiert
+
+Beim Onboarding und bei jedem Health-Check baut LCM eine **kurzlebige
+SSH-Verbindung** auf, liest den Zustand aus und protokolliert jede Aktion als
+**Job** mit exaktem Konsolen-Output. Die System-Gruppe bringt dafür bereits
+zwei Basis-Zeitpläne mit: einen **Health-Check** alle 15 Minuten und einen
+täglichen **System-Sync** (Hardware, Pakete, Docker-Check).
+
+## Nächste Schritte
+
+- [Monitoring verstehen](/guides/monitoring/)
+- [Beispiele: typische Arbeitsabläufe](/examples/)
+- [Backups einrichten](/guides/backups/)

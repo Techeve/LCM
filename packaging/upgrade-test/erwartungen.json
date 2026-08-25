@@ -1,0 +1,9 @@
+[
+  {
+    "ab_version": "1.19.0",
+    "betrifft": "rules",
+    "art": "umgezogen",
+    "nach": "schedules",
+    "begruendung": "Regeln haengen seit 1.19 an Zeitplaenen statt direkt an der Gruppe (migrateRulesToSchedules). Was in rules fehlt, muss in schedules angekommen sein - genau das prueft der Vergleich nach."
+  }
+]

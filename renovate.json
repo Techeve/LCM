@@ -1,0 +1,60 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "timezone": "Europe/Berlin",
+  "baseBranches": ["develop"],
+  "onboarding": false,
+  "requireConfig": "optional",
+  "enabledManagers": ["gomod", "npm", "dockerfile"],
+  "labels": ["dependencies"],
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 0,
+  "postUpdateOptions": ["gomodTidy", "npmDedupe"],
+  "platformAutomerge": true,
+  "automerge": false,
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": false,
+    "minimumReleaseAge": null
+  },
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Go-Abhängigkeiten (minor/patch)"
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "npm-Abhängigkeiten (minor/patch)"
+    },
+    {
+      "description": "Selbsttätig mergen nur Herausgeber mit belastbarem Release-Prozess (Trägerschaft Stufe 4-5, siehe docs/reference/dependencies.md). Alles andere braucht einen Menschenblick, auch Patches: ein Supply-Chain-Angriff kommt immer als neue Version.",
+      "matchPackageNames": [
+        "golang.org/x/**",
+        "github.com/google/**",
+        "github.com/gofiber/**",
+        "github.com/golang-jwt/**",
+        "github.com/eclipse/**",
+        "gorm.io/**",
+        "svelte",
+        "vite",
+        "@sveltejs/**",
+        "@playwright/**",
+        "bootstrap"
+      ],
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "groupName": "Vertrauenswürdige Patch-Updates",
+      "automerge": true
+    }
+  ]
+}

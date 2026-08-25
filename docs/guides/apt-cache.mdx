@@ -1,0 +1,157 @@
+---
+sidebar:
+  order: 14
+title: APT-Cache (apt-cacher-ng)
+description: Einen zentralen Paket-Cache aufsetzen und Server per Aktion oder Regel anbinden.
+---
+
+LCM kann alle verwalteten Server ihre APT-Anfragen über einen zentralen
+**apt-cacher-ng** leiten lassen: Jedes Paket wird nur **einmal** aus dem
+Internet geladen und danach aus dem lokalen Netz bedient. Das spart Bandbreite
+und beschleunigt Update-Läufe über viele Server.
+
+:::tip[Empfehlung]
+apt-cacher-ng auf demselben System betreiben wie LCM - genügsam (ein Paket, ein
+Port, Cache auf der Platte) und im selben Netz-Segment wie das Management.
+:::
+
+:::note[Nur für apt-Systeme]
+Der APT-Cache ist ein reiner apt-Proxy - die Aktion „APT-Cache verwenden"
+erscheint deshalb nur auf Servern mit **apt** (Debian/Ubuntu). Server mit
+dnf/yum, zypper, pacman oder apk werden von LCM ebenfalls vollständig verwaltet
+(Bestand, Updates, Repositories, CVE-Bewertung), nur eben ohne diesen Cache.
+:::
+
+## 1. Installation (Debian/Ubuntu)
+
+```sh
+sudo apt-get update
+sudo apt-get install apt-cacher-ng
+sudo systemctl enable --now apt-cacher-ng
+```
+
+## 2. Konfiguration
+
+In `/etc/apt-cacher-ng/acng.conf` sind drei Einstellungen relevant:
+
+```ini
+# Port des Caches (Default 3142)
+Port: 3142
+
+# EMPFOHLEN: https-Quellen werden als CONNECT-Tunnel durchgereicht und damit
+# ebenfalls gecacht. Ohne diese Zeile lehnt acng CONNECT ab - LCM erkennt das
+# beim Anbinden und leitet https dann am Cache vorbei (siehe unten).
+PassThroughPattern: .*
+
+# Aufbewahrung: Der Expiration-Lauf entfernt nur Pakete, die in keinem
+# aktuellen Index mehr referenziert sind UND länger als ExThreshold Tage
+# nicht angefragt wurden. Default 4 - großzügiger:
+ExThreshold: 30
+```
+
+Danach `sudo systemctl restart apt-cacher-ng`.
+
+**Persistenz:** Der Cache liegt als normale Dateien unter
+`/var/cache/apt-cacher-ng` und überlebt Neustarts automatisch.
+
+**Zu https:** Durch den Tunnel bleiben https-Quellen Ende-zu-Ende verschlüsselt
+- der Cache reicht sie nur durch, ohne sie zu speichern. Den vollen Cache-Nutzen
+bringen http-Quellen (die Debian-/Ubuntu-Hauptarchive); deren Integrität sichert
+apt unabhängig vom Transport über GPG.
+
+## 3. Firewall
+
+Port 3142 nur fürs interne Netz freigeben (ein offener Proxy wäre
+missbrauchbar):
+
+```sh
+sudo ufw allow from 192.168.0.0/16 to any port 3142 proto tcp
+```
+
+## 4. Funktionstest
+
+Die Report-Seite muss aus dem Server-Netz erreichbar sein - dort gibt es später
+auch Cache-Statistiken:
+
+```
+http://<cache-host>:3142/acng-report.html
+```
+
+## 5. In LCM einrichten
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Cache-URL hinterlegen.** *Einstellungen → APT-Cache*: die
+   URL eintragen (z.&nbsp;B. `http://192.168.1.10:3142`) und mit **„Verbindung
+   prüfen“** verifizieren - grünes Badge „läuft“ = bereit. Auf derselben Seite
+   liegen die Transfer-Statistiken, der Dienst-Neustart, das permanente Caching
+   und der Status der Überwachung.
+
+2. **Einzelnen Server anbinden.** Server-Detail → Tab „Repositories“ →
+   **„APT-Cache verwenden“**. LCM schreibt das Drop-in
+   `/etc/apt/apt.conf.d/02lcm-apt-cache` (http- und https-Proxy) und prüft die
+   Anbindung sofort per `apt-get update`. Schlägt der Test fehl, wird das
+   Drop-in automatisch entfernt - der Server bleibt arbeitsfähig.
+   **„APT-Cache trennen“** macht es rückgängig.
+
+3. **Ganze Gruppe anbinden.** Gruppen-Regel „**APT-Cache anbinden**“ (am
+   Schedule) oder „**APT-Cache erzwingen**“ (Grundsatz-Regel). Die
+   Grundsatz-Regel prüft bei jeder Verbindung, ob das Drop-in auf die aktuelle
+   Cache-URL zeigt, und schreibt es bei Abweichung neu - so wirkt auch eine
+   später geänderte URL automatisch auf alle Server.
+
+</Steps>
+
+Der Anbindungs-Status ist im Repositories-Tab sichtbar (Badge „APT-Cache aktiv“)
+und wird bei **„Alles aktualisieren“** live ausgelesen.
+
+## Anbindung wieder lösen (deaktivieren)
+
+Zwei Wege führen zurück zu direkten Repository-Anfragen:
+
+- **Je Server:** Server-Detail → Tab „Repositories“ → **„APT-Cache trennen“**.
+  LCM entfernt das Drop-in; `apt` spricht sofort wieder direkt mit den
+  Paketquellen.
+- **Zentral:** *Einstellungen → APT-Cache* listet unter **„Angebundene
+  Server“** alle Server, die aktuell über den Cache laufen - mit
+  **Trennen**-Button direkt in der Liste. So musst du nicht jeden Server
+  einzeln aufsuchen.
+
+:::caution[Grundsatz-Regel gewinnt]
+Ist in einer Gruppe die Grundsatz-Regel **„APT-Cache erzwingen“** aktiv,
+bindet der nächste Health-Check (alle 15&nbsp;Minuten) getrennte Server
+**automatisch wieder an** - die Trennung hält dann nur wenige Minuten. LCM
+weist beim Trennen im Konsolen-Output ausdrücklich darauf hin. Für eine
+dauerhafte Trennung zuerst die Grundsatz-Regel in der Gruppe deaktivieren
+oder löschen, dann die Server trennen.
+:::
+
+## 6. Statistik, Einstellungen & Überwachung
+
+Die Seite *Einstellungen → APT-Cache* bündelt den Betrieb des Caches:
+
+- **Transfer-Statistiken** - wie viel aus dem Internet geladen und wie viel aus
+  dem Cache ausgeliefert wurde (seit Dienst-Start und in jüngster Zeit). Die
+  Differenz ist die eingesparte Bandbreite.
+- **Erweiterte Einstellungen** - **Dienst neu starten** und **permanentes
+  Caching** (schaltet den nächtlichen Ablauf-Job ab, `NO_CRON_RUN`). Diese
+  Aktionen stehen nur zur Verfügung, wenn apt-cacher-ng auf dem LCM-Host selbst
+  läuft; Statistik und Erreichbarkeit gelten für jede konfigurierte Cache-URL.
+- **Überwachung** - LCM prüft den Cache im Rahmen der Alarm-Auswertung (alle
+  30&nbsp;Minuten). Die Prüfung akzeptiert nicht schon jede HTTP-200-Antwort,
+  sondern nur eine echte apt-cacher-ng-Report-Seite - so fällt auch ein fremder
+  Dienst auf dem Port oder ein stiller Fehlstart auf. Den Alarm richtest du als
+  Regel vom Typ **„apt-cacher-ng nicht erreichbar“** unter *Einstellungen →
+  Alarme* ein und weist ihr einen Benachrichtigungskanal zu.
+
+## Störungsbilder
+
+| Symptom | Ursache / Lösung |
+|---|---|
+| Job meldet „nur HTTP - der Cache erlaubt keine HTTPS-Tunnel" | `PassThroughPattern: .*` fehlt. Kein Fehler: LCM leitet https direkt (ungecacht), alle Quellen bleiben erreichbar. Für gecachtes https die Zeile setzen und den Dienst neu starten |
+| Anbindung schlägt fehl, `Err:`-Zeilen im Output | Eine Paketquelle antwortet über den Cache nicht → LCM entfernt das Drop-in wieder, der Server bleibt arbeitsfähig. Die genannten Quellen prüfen |
+| „Verbindung prüfen“ rot | Dienst läuft nicht / Port 3142 gefiltert → `systemctl status apt-cacher-ng`, Firewall prüfen |
+| „erreichbar, aber unerwartete Antwort“ | Unter der URL antwortet ein anderer Dienst - Port/Host prüfen |
+| Server hängt nach Cache-Ausfall | „APT-Cache trennen“ (oder Drop-in löschen) - APT spricht wieder direkt |
