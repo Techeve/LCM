@@ -1,0 +1,134 @@
+#!/bin/sh
+# lcm-channel - maintain the two package channels of the TechEve repository.
+#
+# DEPRECATED: the snapshot freeze/promote model below is superseded by the
+# branch/channel model (develop -> beta -> community -> enterprise). The
+# enterprise channel is now fed by the CI from the *enterprise branch* with
+# its own builds (aptly repo "lcm-enterprise"), see README.md for the layout
+# and the one-time migration. This script stays only to operate the legacy
+# snapshot publish until that migration has happened.
+#
+# The community channel is published by the CI on every release and is always
+# the newest state (packaging/publish-deb.sh, unchanged). The enterprise
+# channel points at a SNAPSHOT - a frozen state that is moved forward by hand
+# once a release has proven itself in the community channel.
+#
+# That is the whole difference between the channels: same packages, same
+# signing key, the enterprise one just arrives later. Security fixes are the
+# exception - promote those the moment they are published (see README.md).
+#
+# Everything goes through the aptly HTTP API rather than the aptly CLI on
+# purpose: aptly locks its database for a single process, so CLI commands fail
+# while `aptly api serve` is running. Using the API works either way and reuses
+# the credentials the CI already has.
+#
+# Required environment:
+#   REPO_URL   base URL of the aptly API, e.g. https://repo.techeve.de
+#   REPO_USER  API user (NOT a customer subscription key)
+#   REPO_PASS  API password
+# Optional:
+#   REPO_NAME  aptly repo name         (default: techeve)
+#   DISTRO     suite in both channels  (default: stable)
+#   PREFIX     enterprise prefix       (default: enterprise)
+#   GPG_KEY    signing key             (default: repo@techeve.de)
+#
+# Usage:
+#   lcm-channel freeze <version>    snapshot the current community state
+#   lcm-channel init <version>      publish the enterprise channel the first time
+#   lcm-channel promote <version>   move the enterprise channel to that snapshot
+#   lcm-channel status              show snapshots and what is published
+set -eu
+
+: "${REPO_URL:?REPO_URL required}"
+: "${REPO_USER:?REPO_USER required}"
+: "${REPO_PASS:?REPO_PASS required}"
+REPO_NAME="${REPO_NAME:-techeve}"
+DISTRO="${DISTRO:-stable}"
+PREFIX="${PREFIX:-enterprise}"
+GPG_KEY="${GPG_KEY:-repo@techeve.de}"
+COMPONENT="${COMPONENT:-main}"
+
+api() {
+	_method="$1"
+	_path="$2"
+	shift 2
+	curl -fsS --retry 3 --retry-delay 2 -u "${REPO_USER}:${REPO_PASS}" \
+		-X "$_method" "${REPO_URL}${_path}" "$@"
+}
+
+die() {
+	echo "ERROR: $*" >&2
+	exit 1
+}
+
+usage() {
+	sed -n '29,34p' "$0" | sed 's/^# \{0,1\}//'
+	exit "${1:-0}"
+}
+
+# snap_name keeps the naming scheme in one place: lcm-<version>.
+snap_name() {
+	case "$1" in
+	'' | -*) die "version required, e.g. 1.9.1" ;;
+	esac
+	echo "lcm-$1"
+}
+
+signing='"Signing":{"Batch":true,"GpgKey":"'"$GPG_KEY"'"}'
+
+# freeze pins the CURRENT content of the community repo under a snapshot name.
+# Run it right after a release so the state can be promoted later, unchanged,
+# no matter what has been published to the community channel in the meantime.
+cmd_freeze() {
+	name=$(snap_name "${1:-}")
+	echo ">> Freezing '${REPO_NAME}' as snapshot '${name}'"
+	api POST "/api/repos/${REPO_NAME}/snapshots" \
+		-H "Content-Type: application/json" \
+		--data "{\"Name\":\"${name}\"}" > /dev/null
+	echo "   done - promote it with: lcm-channel promote ${1}"
+}
+
+# init publishes the enterprise channel for the first time. Only ever needed
+# once; afterwards use promote.
+cmd_init() {
+	name=$(snap_name "${1:-}")
+	echo ">> Publishing snapshot '${name}' as ${REPO_URL}/${PREFIX} (${DISTRO})"
+	api POST "/api/publish/${PREFIX}" \
+		-H "Content-Type: application/json" \
+		--data "{\"SourceKind\":\"snapshot\",\"Sources\":[{\"Name\":\"${name}\",\"Component\":\"${COMPONENT}\"}],\"Distribution\":\"${DISTRO}\",${signing}}" \
+		> /dev/null
+	echo "   done - the channel is live but stays closed until a key exists."
+}
+
+# promote switches the already published enterprise channel to another
+# snapshot. apt clients see the new version at their next `apt update`.
+cmd_promote() {
+	name=$(snap_name "${1:-}")
+	echo ">> Switching ${PREFIX}/${DISTRO} to snapshot '${name}'"
+	api PUT "/api/publish/${PREFIX}/${DISTRO}" \
+		-H "Content-Type: application/json" \
+		--data "{\"Snapshots\":[{\"Component\":\"${COMPONENT}\",\"Name\":\"${name}\"}],${signing}}" \
+		> /dev/null
+	echo "   done - enterprise customers receive ${1} from now on."
+}
+
+cmd_status() {
+	echo "== Snapshots =="
+	api GET "/api/snapshots" || true
+	echo
+	echo "== Published channels =="
+	api GET "/api/publish" || true
+	echo
+}
+
+[ $# -ge 1 ] || usage 1
+cmd="$1"
+shift
+case "$cmd" in
+freeze) cmd_freeze "${1:-}" ;;
+init) cmd_init "${1:-}" ;;
+promote) cmd_promote "${1:-}" ;;
+status) cmd_status ;;
+help | -h | --help) usage 0 ;;
+*) die "unknown command: $cmd (try 'help')" ;;
+esac

@@ -1,0 +1,91 @@
+---
+sidebar:
+  order: 90
+title: Beispiele
+description: Typische Arbeitsabläufe Schritt für Schritt - vom Server-Onboarding bis zur API-Nutzung.
+---
+
+Eine Sammlung typischer Abläufe. Sie setzen eine laufende LCM-Instanz voraus
+(siehe [Installation](/getting-started/installation/)).
+
+## Einen Server anbinden und täglich aktualisieren
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Onboarding-Key hinterlegen:** Public Key aus *Einstellungen → Allgemein*
+   in `~/.ssh/authorized_keys` von `root` auf dem Zielserver eintragen.
+2. **Join:** Dashboard → „+ Server hinzufügen“, Host/Zugang eingeben,
+   Host-Key-Fingerprint bestätigen.
+3. **Gruppe:** Unter *Gruppen* eine Gruppe „Produktion“ anlegen, den Server
+   zuweisen.
+4. **Schedule + Regel:** Schedule „Nächtlich“ mit `0 2 * * *` anlegen, dann eine
+   Regel vom Typ **Update** hinzufügen.
+5. Fertig - die Updates laufen jede Nacht und erscheinen als Jobs mit
+   Konsolen-Output.
+
+</Steps>
+
+## Eine Firewall als Grundsatz-Regel erzwingen
+
+Ziel: Auf allen Webservern sind dauerhaft nur 80, 443 (und SSH) offen.
+
+<Steps>
+
+1. Gruppe „Webserver“ anlegen, Server zuweisen.
+2. Neue Regel: Typ **Firewall**, Ziel **Grundsatz-Regel (Enforce)**, Ports
+   `80,443`.
+3. Beim nächsten Health-Ping wird ufw geprüft und - falls abweichend -
+   angewendet. Ändert später jemand die Firewall am Server, stellt der nächste
+   Ping den Soll-Zustand wieder her.
+
+</Steps>
+
+## Zentralen APT-Cache einrichten
+
+<Steps>
+
+1. Auf dem LCM-Host `apt-cacher-ng` installieren und `PassThroughPattern: .*`
+   in der `acng.conf` setzen (siehe [APT-Cache](/guides/apt-cache/)).
+2. In LCM unter *Einstellungen → Repositories → APT-Cache* die URL
+   `http://<host>:3142` eintragen und „Verbindung prüfen“.
+3. Als Gruppen-Regel „**APT-Cache erzwingen**“ hinzufügen - alle Server der
+   Gruppe leiten ihre APT-Anfragen künftig über den Cache.
+
+</Steps>
+
+## Backup erstellen und auf frischer Instanz wiederherstellen
+
+<Steps>
+
+1. `LCM_BACKUP_PASSPHRASE` setzen und unter *Einstellungen → Backups* ein
+   Backup erstellen (oder Intervall aktivieren).
+2. Das `.lcmbak` herunterladen und sicher ablegen.
+3. Auf einer **neuen** Instanz das Archiv unter *Backups → Wiederherstellen*
+   hochladen und (mit derselben Passphrase) anwenden - die Instanz übernimmt
+   Daten, Schlüssel, Konfiguration und Zertifikat.
+
+</Steps>
+
+## Die API mit einem read-only-Key nutzen
+
+Für Monitoring-Skripte, die nur lesen dürfen:
+
+<Steps>
+
+1. *Einstellungen → API-Keys* → neuen Key mit Scope **read** anlegen. Der
+   Klartext-Key (`lcm_…`) erscheint **nur einmal** - kopieren.
+2. Abfragen mit dem `X-API-Key`-Header:
+
+   ```sh
+   curl -s https://<host>:9310/api/v1/servers \
+     -H "X-API-Key: lcm_dein_key" | jq '.[].name'
+   ```
+
+3. Schreibende Requests (POST/PUT/DELETE) werden mit einem read-Key serverseitig
+   mit **403** abgelehnt - der Key kann selbst im Admin-Kontext nichts ändern.
+
+</Steps>
+
+Mehr zu Endpunkten und Auth: [Frontend- & API-Referenz](/reference/api/).

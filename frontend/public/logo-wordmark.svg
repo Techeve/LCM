@@ -1,0 +1,14 @@
+<svg width="346" height="128" viewBox="0 0 346 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LCM">
+  <title>LCM</title>
+  <defs>
+    <linearGradient id="t" x1="64" y1="8" x2="64" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#171c24"/><stop offset="1" stop-color="#0a0c11"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="29" fill="url(#t)"/>
+  <rect x="8.5" y="8.5" width="111" height="111" rx="28.5" fill="none" stroke="#0dcaf0" stroke-opacity="0.22" stroke-width="1"/>
+  <path d="M44 44 L72 64 L44 84" stroke="#0dcaf0" stroke-width="11.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="61" y="79" width="31" height="10" rx="5" fill="#7fe9f7"/>
+  <path d="M197.61 92L156.29 92L156.29 33.78L168.14 33.78L168.14 82.11L197.61 82.11" fill="#0dcaf0"/>
+  <path d="M241.61 70.42L253.10 74.06Q250.46 83.67 244.31 88.34Q238.17 93 228.72 93Q217.03 93 209.50 85.01Q201.97 77.03 201.97 63.17Q201.97 48.52 209.54 40.41Q217.11 32.30 229.44 32.30Q240.21 32.30 246.94 38.67Q250.94 42.43 252.94 49.48L241.21 52.28Q240.17 47.72 236.87 45.07Q233.56 42.43 228.84 42.43Q222.31 42.43 218.25 47.12Q214.18 51.80 214.18 62.29Q214.18 73.42 218.19 78.15Q222.19 82.87 228.60 82.87Q233.32 82.87 236.73 79.87Q240.13 76.87 241.61 70.42M274.12 92L263.11 92L263.11 33.30L280.85 33.30L291.50 73.34L302.03 33.30L319.81 33.30L319.81 92L308.80 92L308.80 45.79L297.15 92L285.73 92L274.12 45.79" fill="#e7e9ee"/>
+</svg>

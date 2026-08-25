@@ -1,0 +1,116 @@
+# LCM - Beispiel für den Betrieb mit Docker Compose.
+# Anleitung: docs/reference/packaging.md
+#
+#   make docker-build             # Linux-Binary + Image bauen
+#   docker compose up -d
+#   docker compose logs -f        # Erststart: Admin-Passwort steht hier!
+#
+# Das Dockerfile kopiert standardmäßig das fertig gebaute Binary aus bin/ -
+# vor `docker compose build` also `make build-linux` (bzw. das passende
+# ARM-Target) ausführen. Ohne Host-Toolchain: unten BIN_SOURCE=source
+# eintragen, dann wird alles im Container gebaut.
+#
+# Laufzeitdateien (config.json, app.db, version.json) liegen über den
+# Bind-Mount in ./data auf dem Host - dort kann man sie einsehen, sichern
+# und anpassen (Neustart erforderlich).
+
+services:
+  lcm:
+    build:
+      # Kontext ist das Repo - die Images kopieren bin/ bzw. die Quellen.
+      context: ..
+      dockerfile: docker/Dockerfile
+      # args:
+      #   BIN_SOURCE: source   # <- Build komplett im Container
+    image: lcm:latest
+    container_name: lcm
+    ports:
+      - "9310:9310"
+    volumes:
+      # Mountpoint für config.json, Datenbank und Versionsdatei.
+      # Der Container schreibt als UID 1000 - falls dein Host-User eine
+      # andere UID hat: vorher `mkdir -p data && sudo chown 1000 data`.
+      # relativ zu dieser Datei - die Daten liegen also weiter unter <repo>/data
+      - ../data:/data
+    restart: unless-stopped
+
+    # ---- Sicherheits-Härtung ------------------------------------------
+    # Root-Dateisystem unveränderlich; geschrieben wird nur nach /data.
+    read_only: true
+    # …und nach /tmp: LCM legt dort Zwischendateien an (Backup-Archive beim
+    # Wiederherstellen, SBOM für den CVE-Scan). Ohne diese Zeile scheitern
+    # genau diese Wege am unveränderlichen Dateisystem - und zwar erst dann,
+    # wenn man sie braucht.
+    tmpfs:
+      - /tmp
+    # Keine Privilegien-Eskalation im Container (z.B. via setuid).
+    security_opt:
+      - no-new-privileges:true
+    # Alle Linux-Capabilities entfernen - der Service braucht keine.
+    cap_drop:
+      - ALL
+
+    environment:
+      # Zeitzone der Anwendung (Logs, Zeitstempel) - funktioniert dank
+      # eingebetteter Go-Zeitzonendaten ohne Zusatzpakete im Image.
+      TZ: Europe/Berlin
+      # CVE-Scan über den Sidecar. Ohne diese beiden Zeilen sucht LCM ein
+      # lokales Trivy-Binary - im Scratch-Image gibt es keines, der CVE-Scan
+      # bliebe also aus.
+      LCM_TRIVY_URL: http://trivy:9330
+      LCM_TRIVY_TOKEN: ${LCM_TRIVY_TOKEN:?bitte in .env setzen, z.B. LCM_TRIVY_TOKEN=$(openssl rand -hex 32)}
+      # Optional: weitere Overrides, ohne die config.json zu ändern:
+      # LCM_PORT: "9310"
+
+    depends_on:
+      trivy:
+        condition: service_healthy
+
+    # Ressourcen-Limits (optional, empfohlen für Shared Hosts):
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 256M
+
+  # ---- Trivy-Sidecar -------------------------------------------------
+  # Trivy läuft in einem EIGENEN Container: Das LCM-Image ist ein
+  # Scratch-Image ohne Shell und ohne Trivy-Binary. Der Container ist hier
+  # zugleich die Abschottung - er enthält weder LCMs Datenbank noch den
+  # Master-Key, es gibt also nichts zu erreichen.
+  trivy:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.trivyd
+    image: lcm-trivyd:latest
+    container_name: lcm-trivy
+    restart: unless-stopped
+
+    # BEWUSST KEIN ports:-Eintrag. Der Dienst führt Prozesse aus und lädt
+    # Images aus dem Netz - er gehört ins interne Container-Netz und nicht
+    # auf den Host.
+    expose:
+      - "9330"
+
+    environment:
+      # Dasselbe Token wie oben. Ohne Token startet der Dienst nicht.
+      LCM_TRIVY_TOKEN: ${LCM_TRIVY_TOKEN:?bitte in .env setzen}
+      TZ: Europe/Berlin
+
+    volumes:
+      # Die Schwachstellen-Datenbank ist mehrere hundert MB groß - ohne
+      # eigenes Volume lädt der Sidecar sie bei jedem Start neu.
+      - trivy-cache:/cache
+
+    # ---- Sicherheits-Härtung ------------------------------------------
+    # Trivy braucht ein beschreibbares /tmp für Zwischendateien und /cache
+    # für die Datenbank; sonst bleibt alles unveränderlich.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  trivy-cache:

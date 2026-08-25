@@ -1,0 +1,105 @@
+[Unit]
+# Description shows up in `systemctl status` and journal output. It is a
+# static string that cannot follow the system language, so English is used -
+# and plain ASCII, because service metadata travels through terminals and log
+# pipelines whose encoding we do not control.
+Description=LCM - central Linux server management over SSH
+Documentation=https://gitlab.techeve.de/techeve/lcm
+After=network-online.target
+Wants=network-online.target
+
+# Crash-loop brake: at most 5 start attempts within 5 minutes. If the service
+# still does not come up after that, it stays stopped - instead of straining
+# the machine with an endless loop and flooding the journal. The state is
+# clearly visible via `systemctl status lcm`.
+#
+# These two keys belong in [Unit], NOT in [Service]: systemd moved them with
+# v229 and ignores them in [Service] with a warning in the journal. Placed
+# there they silently fall back to the default of 10 s - a window so short
+# that the brake never engages.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+# Type=notify: LCM itself reports READY=1 once it is truly operational
+# (database open, listener bound) - only then does the service count as
+# started. Together with WatchdogSec this is the basis of self-healing.
+Type=notify
+NotifyAccess=main
+User=lcm
+Group=lcm
+# Configuration in /etc/lcm, state (DB, master key, TLS certificate) in
+# /var/lib/lcm. The service runs unprivileged - LCM manages OTHER servers over
+# SSH and needs no root rights on its own host.
+ExecStart=/usr/bin/lcm -config /etc/lcm/config.json -data /var/lib/lcm
+
+# --- Self-healing -------------------------------------------------------------
+# Restart=always instead of on-failure: even an exit with code 0 should bring
+# the service back - a management service has no legitimate reason to stay
+# down. A deliberate `systemctl stop` is unaffected.
+Restart=always
+RestartSec=5
+
+# WatchdogSec is the core of the runtime supervision: LCM sends a periodic
+# heartbeat (WATCHDOG=1) - but ONLY while it can reach its database. If the
+# heartbeat stops because the process hangs, blocks or is no longer able to
+# work, systemd terminates and restarts it. `Restart=` alone does NOT cover
+# these cases: a blocked process never crashes.
+WatchdogSec=90
+
+# On shutdown send SIGTERM first (graceful shutdown, LCM closes jobs and
+# listeners), then force after 30 s.
+TimeoutStopSec=30
+# Startup time including migrations: generous but bounded - otherwise a
+# Type=notify service without READY=1 would hang in "activating" forever.
+TimeoutStartSec=120
+
+# --- Hardening ----------------------------------------------------------------
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# PrivateDevices is deliberately NOT set: it blocks mounting filesystems and
+# with it the sandbox LCM runs the CVE scanner in (bubblewrap needs a fresh
+# /proc and /dev inside its own namespace; otherwise it fails with "Can't
+# mount proc on /newroot/proc: Operation not permitted"). Relaxing the syscall
+# filter does not help - verified.
+#
+# The loss is small: LCM runs as an unprivileged user without capabilities and
+# cannot reach devices anyway. The gain is large - device isolation moves to
+# where it actually matters: the scanner gets its own empty /dev and /proc and
+# therefore sees neither LCM's processes nor its files.
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# Namespaces are deliberately ALLOWED rather than blocked: they are the basis
+# of the sandbox LCM runs the CVE scanner in (bubblewrap, see the package
+# internal/infrastructure/sandbox). With RestrictNamespaces=true bubblewrap
+# failed silently and Trivy ran with the full rights of the lcm user - which
+# includes read access to /var/lib/lcm, where the database and the master key
+# live.
+#
+# The trade is clear: LCM is our own code, a third-party binary is not. Better
+# the service permits itself to create namespaces than to have the scanner run
+# unconfined next to the master key.
+#
+# The list currently covers every namespace type bubblewrap needs - and thus
+# effectively all of them. It is spelled out anyway so the REASON stays visible.
+RestrictNamespaces=user mnt pid net ipc uts cgroup
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# Only these paths are writable (everything else is read-only via ProtectSystem).
+ReadWritePaths=/var/lib/lcm /etc/lcm
+# No elevated capabilities - the service binds port 9310 (>1024).
+CapabilityBoundingSet=
+AmbientCapabilities=
+# AF_NETLINK belongs here since the CVE scanner runs sandboxed: when
+# bubblewrap detaches the network it brings up the loopback interface through a
+# NETLINK_ROUTE socket. Without the family it aborts with "Failed to create
+# NETLINK_ROUTE socket". LCM itself does not use netlink, and without
+# capabilities nothing could be reconfigured through it either.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

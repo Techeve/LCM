@@ -1,0 +1,57 @@
+---
+title: LCM - Linux Centralized Management
+description: Manage any number of Linux servers centrally over SSH - monitoring, CVE scans, Docker, backups and automation in a single binary.
+template: splash
+hero:
+  image:
+    alt: LCM logo
+    file: ../logo.svg
+  tagline: Install once, manage any number of Linux servers remotely over SSH. A single binary, no agents on the target systems.
+  actions:
+    - text: Get started
+      link: /en/getting-started/overview/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitLab
+      link: https://gitlab.techeve.de/techeve/lcm
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## What is LCM?
+
+**LCM (Linux Centralized Management)** is a central management tool for Linux
+servers: a Go backend (Fiber v3, GORM, SQLite) and a Svelte 5 frontend in **a
+single binary**, runnable on Linux, Windows and macOS - with no external
+dependencies on the managed servers. All communication happens over SSH
+(agentless).
+
+<CardGrid stagger>
+  <Card title="Agentless over SSH" icon="setting">
+    Servers are onboarded with host-key confirmation; each gets a dedicated
+    service user and its own key pair (zero trust).
+  </Card>
+  <Card title="Monitoring & status" icon="approve-check">
+    Packages, updates, hardware and storage history - a 🟢🟡🔴 status per
+    server, including CVE-driven assessment.
+  </Card>
+  <Card title="Security built in" icon="shield">
+    AES-256-GCM at rest, TOTP 2FA, SSH hardening, firewall, encrypted backups
+    and a tamper-evident audit log.
+  </Card>
+  <Card title="Automation" icon="rocket">
+    Server groups with scheduled rules and baseline rules that are enforced on
+    every connection.
+  </Card>
+</CardGrid>
+
+## Jump right in
+
+<CardGrid>
+  <LinkCard title="Overview" href="/en/getting-started/overview/" description="What LCM does and how it is built." />
+  <LinkCard title="Installation" href="/en/getting-started/installation/" description="Binary, .deb package or Docker." />
+  <LinkCard title="Quickstart" href="/en/getting-started/quickstart/" description="Onboard your first server in 5 minutes." />
+  <LinkCard title="Examples" href="/en/examples/" description="Typical workflows step by step." />
+</CardGrid>

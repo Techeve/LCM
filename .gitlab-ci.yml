@@ -1,0 +1,896 @@
+# LCM - GitLab CI/CD
+#
+# Branch-/Kanal-Modell (Details: docs/reference/ci-release.md):
+#
+#   feature/* → develop → beta → community → enterprise
+#
+#   - develop     Integration; Feature-Branches mergen hierher
+#   - beta        Release-Zug/Stabilisierung; Releases (x.y.z-beta.N)
+#                 → apt-Kanal "beta"
+#   - community   stabile Releases → apt-Kanal "stable"; wird zusammen mit
+#                 beta ins öffentliche Repo gespiegelt (Job mirror:public)
+#   - enterprise  Wartungszweig (voriges Feature-Release + Fixes) → apt-Kanal
+#                 "enterprise" (Subscription-Key); bleibt privat
+#
+#   Ein Community-Release ist immer der KOMPLETTE finale beta-Stand (Release-
+#   Zug, keine Feature-Auswahl). Bugfixes entstehen auf dem ältesten
+#   betroffenen Branch (fix/* → enterprise) und werden aufwärts gemerged:
+#   enterprise → community → beta → develop.
+#
+#   Der Wartungszweig wird von Hand nachgezogen: Sobald ein Feature-Release
+#   den Enterprise-Kunden zustehen soll, geht ein MR community → enterprise.
+#   Das ist der EINZIGE Weg abwärts und bewusst eine Einzelentscheidung -
+#   sonst wäre der Zweck des Zweigs (abgehangener Stand) hinfällig.
+#
+# Ablauf:
+#   check    MR-Regeln (erlaubte Quell-/Ziel-Branches, s. check:mr-source);
+#            Commit-Messages müssen Conventional Commits sein (feat:/fix:/...)
+#   test     npm audit + Frontend-Build, go vet/test, govulncheck, E2E
+#   build    Cross-Compile aller Plattform-Binaries + .deb-Pakete (amd64/arm64)
+#   release  auf beta/community/enterprise: liest die vorbereitete VERSION,
+#            taggt v<VERSION> und erzeugt das Release mit dem obersten
+#            Abschnitt aus CHANGELOG.md - nur wenn der Tag noch nicht existiert.
+#   deploy   bei einem Release: rollt die .deb-Pakete in den apt-Kanal des
+#            jeweiligen Branches aus und veröffentlicht die Container-Images
+#            (LCM + Trivy-Sidecar, amd64/arm64); community und beta werden
+#            zusätzlich in das öffentliche Repo gespiegelt. Die Images werden
+#            auch auf develop und in MRs GEBAUT - nur eben nicht gepusht.
+#
+# Version & Changelog werden NICHT in der CI erzeugt, sondern VOR dem Merge
+# vorbereitet (packaging/prepare-release.sh) und mit-committet. So trägt der
+# überführte Commit bereits den passenden Changelog, und die CI braucht keinen
+# Schreib-Token.
+#
+# Merge Requests auf die Release-Branches sind nur mergebar, wenn die Pipeline
+# grün ist (Projekt-Einstellung "Pipelines must succeed").
+
+stages: [check, test, build, release, deploy, maintenance]
+
+# Alle Jobs laufen auf dem Docker-Executor-Runner (Tag "docker").
+default:
+  tags: [docker]
+
+variables:
+  GO_IMAGE: golang:1-alpine
+  NODE_IMAGE: node:lts
+  # Playwright-Image mit vorinstallierten Browsern. Die Version MUSS zu
+  # @playwright/test in frontend/package.json passen -- laufen sie
+  # auseinander, laedt Playwright die Browser doch wieder selbst nach und der
+  # Vorteil ist weg. Renovate haelt beides zusammen (matchDepNames).
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.62.1-noble
+  # Volle Historie + Tags: die Versionsermittlung braucht beides.
+  GIT_DEPTH: "0"
+  # Caches im Projektverzeichnis, damit der Runner sie wiederverwenden kann.
+  GOMODCACHE: $CI_PROJECT_DIR/.cache/go-mod
+  GOCACHE: $CI_PROJECT_DIR/.cache/go-build
+  npm_config_cache: $CI_PROJECT_DIR/.cache/npm
+  # Dokumentation (docs/*.md → Astro-Starlight über das zentrale Builder-Image).
+  # DOCS_URL: volle Adresse, unter der die Doku erreichbar sein soll - daraus
+  # leitet das Image Domain (Sitemap/canonical), Unterpfad (CSS-/JS-Links) und
+  # das FTP-Zielverzeichnis automatisch ab.
+  DOCS_URL: "https://doc.techeve.de/lcm/"
+  DOCS_TITLE: "LCM - Linux Centralized Management"
+  # Repository-/Social-Link oben rechts in der Doku-Kopfzeile.
+  DOCS_REPO: "https://gitlab.techeve.de/techeve/lcm"
+
+# Branch-Pipelines + MR-Pipelines, ohne Duplikate bei offenem MR.
+workflow:
+  rules:
+    # Geplante Pipelines (u.a. der Dependency-Bot) laufen immer - auch wenn
+    # für den Branch bereits ein MR offen ist.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# Auf der Dependency-Bot-Pipeline (geplant mit RENOVATE_BOT=true) läuft NUR
+# der renovate-Job - alle regulären Test-/Build-Jobs werden übersprungen.
+# Diese Anker werden von den betroffenen Jobs eingebunden (die Validierung
+# der Bumps übernimmt ohnehin die Pipeline der von Renovate erzeugten MRs).
+.skip-on-renovate:
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - when: on_success
+
+# Der Cache wird pro Job EIN- UND AUSGEPACKT - bei ~75.000 Dateien und 2 GB
+# kostet allein das Einpacken 130-185s. Deshalb tragen nur die Jobs, die den
+# Cache tatsaechlich fuellen, "pull-push"; alle uebrigen lesen ihn nur
+# (policy: pull) und sparen sich das Zurueckschreiben eines Standes, an dem sie
+# nichts geaendert haben.
+.go-cache: &go-cache
+  key: go-$CI_DEFAULT_BRANCH
+  paths: [.cache/go-mod, .cache/go-build]
+
+# Nur-lesende Variante fuer Jobs, die den Cache nicht erweitern.
+.go-cache-ro: &go-cache-ro
+  key: go-$CI_DEFAULT_BRANCH
+  paths: [.cache/go-mod, .cache/go-build]
+  policy: pull
+
+# Eigener Schluessel fuer den Cross-Build. Jede Zielplattform legt eigene
+# Artefakte an; der Build-Cache waechst dadurch von ~330 MB auf ~1,6 GB.
+# Im gemeinsamen Schluessel schleppten backend, e2e und govulncheck diese
+# Windows- und macOS-Artefakte bei jedem Lauf mit, obwohl sie ausschliesslich
+# linux/amd64 brauchen. Getrennt bleibt der gemeinsame Cache klein -- und kein
+# Schluessel wird mehr von zwei Jobs geschrieben, was Wettlaeufe ausschliesst,
+# sobald ein Runner mehrere Jobs gleichzeitig annimmt.
+.go-cache-cross: &go-cache-cross
+  key: go-cross-$CI_DEFAULT_BRANCH
+  paths: [.cache/go-mod, .cache/go-build]
+
+.npm-cache: &npm-cache
+  key: npm-$CI_DEFAULT_BRANCH
+  paths: [.cache/npm]
+
+.npm-cache-ro: &npm-cache-ro
+  key: npm-$CI_DEFAULT_BRANCH
+  paths: [.cache/npm]
+  policy: pull
+
+## ---- check -------------------------------------------------------------------
+
+# Workflow-Regeln des Branch-Modells: Auf die Release-Branches fließt Code nur
+# aus den dafür vorgesehenen Quellen. Dieser Job lässt MR-Pipelines mit anderer
+# Quelle fehlschlagen - und da die Release-Branches nur mit grüner Pipeline
+# gemergt werden können, sind die Regeln bindend.
+#   beta       ← develop (Release-Zug) oder community (Fix-Aufwärtsmerge)
+#   community  ← beta (Release) oder enterprise (Fix-Aufwärtsmerge)
+#   enterprise ← fix/*- oder hotfix/*-Branches (Fixes entstehen hier zuerst)
+check:mr-source:
+  stage: check
+  image: alpine:3
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "community" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "beta" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "enterprise")
+  script:
+    - |
+      SRC="$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+      TGT="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      fail() { echo "FEHLER: $1"; echo "Quelle dieses MR: $SRC"; exit 1; }
+      case "$TGT" in
+        beta)
+          case "$SRC" in
+            develop|community) ;;
+            *) fail "MRs nach beta sind nur aus develop (Release-Zug) oder community (Fix-Aufwärtsmerge) erlaubt." ;;
+          esac ;;
+        community)
+          case "$SRC" in
+            beta|enterprise) ;;
+            *) fail "MRs nach community sind nur aus beta (Release) oder enterprise (Fix-Aufwärtsmerge) erlaubt." ;;
+          esac ;;
+        enterprise)
+          case "$SRC" in
+            fix/*|hotfix/*|community) ;;
+            *) fail "MRs nach enterprise sind nur aus fix/*-, hotfix/*-Branches oder community erlaubt." ;;
+          esac ;;
+      esac
+      echo "OK: $SRC -> $TGT ist erlaubt."
+
+# Ein Release-Zug ohne Versions-Bump lief bisher stillschweigend grün durch:
+# Der version-Job auf dem Ziel-Branch findet den Tag der unveränderten VERSION
+# vor, setzt RELEASE_NEEDED=false und lässt release/deploy leer laufen. Der
+# Code liegt dann auf dem Release-Branch, aber in keinem Artefakt - und
+# auffallen tut das erst, wenn jemand das fehlende Paket sucht.
+#
+# Dieser Job zieht die Prüfung nach vorn: Er rechnet dieselbe Bedingung wie der
+# version-Job schon in der MR-Pipeline durch und lässt den MR scheitern, bevor
+# er gemergt wird. Weil die Release-Branches nur mit grüner Pipeline mergebar
+# sind, ist das bindend.
+#
+# Nur für die beiden Richtungen, in denen der Merge selbst ein Release auslösen
+# SOLL. Fix-Aufwärtsmerges (community -> beta, enterprise -> community) tragen
+# bewusst keine neue Version und bleiben außen vor - ebenso fix/*-MRs nach
+# enterprise, wo der Release-Commit hinterher direkt gepusht wird.
+check:release-version:
+  stage: check
+  image: alpine:3
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "beta" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "community" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "beta"))
+  script:
+    - apk add --no-cache git
+    - git fetch --tags --quiet origin
+    - |
+      TGT="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      VERSION=$(cat VERSION)
+
+      # Notausgang für den seltenen bewussten Fall (z.B. ein Merge, der nur
+      # Doku nachzieht): ALLOW_NO_RELEASE=true als CI-Variable am MR setzen.
+      if [ "${ALLOW_NO_RELEASE:-false}" = "true" ]; then
+        echo "ALLOW_NO_RELEASE=true - Prüfung übersprungen (VERSION: $VERSION)."
+        exit 0
+      fi
+
+      # Eine finale Version auf beta ist kein Fehler: Der Release-Zug führt sie
+      # dort entlang, getaggt und ausgerollt wird sie erst auf community.
+      case "$TGT:$VERSION" in
+        beta:*-*) ;;
+        beta:*)
+          echo "OK: finale Version v${VERSION} auf beta - Release/Deploy übernimmt community."
+          exit 0
+          ;;
+      esac
+
+      if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+        echo "FEHLER: Tag v${VERSION} existiert bereits - dieser Merge nach ${TGT} würde KEIN Release erzeugen."
+        echo "Der Code läge danach auf ${TGT}, aber in keinem Paket."
+        echo
+        echo "Version und Changelog gehören vor den Merge auf den Quell-Branch:"
+        echo "  git switch $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME && git pull"
+        echo "  ./packaging/prepare-release.sh            # Version aus den Commits"
+        echo "  ./packaging/prepare-release.sh 1.24.0-beta.1   # oder explizit"
+        echo "  git push origin $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+        echo
+        echo "War der fehlende Release Absicht: ALLOW_NO_RELEASE=true als CI-Variable setzen."
+        exit 1
+      fi
+      echo "OK: v${VERSION} ist noch nicht getaggt - der Merge nach ${TGT} erzeugt ein Release."
+
+# Commit-Messages müssen Conventional Commits sein - daraus entstehen
+# Versionsnummer und Changelog. Format: typ(scope)?: beschreibung
+check:commits:
+  stage: check
+  image: alpine:3
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - apk add --no-cache git
+    - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - |
+      PATTERN='^(feat|fix|perf|refactor|docs|test|ci|chore|build|style|revert)(\([^)]*\))?!?: .+'
+      git log --no-merges --format='%h%x09%s' "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME..HEAD" | while IFS="$(printf '\t')" read -r hash subject; do
+        # Release-Commits sind administrativ/generiert (Version+Changelog) und
+        # vom feat/fix-Schema ausgenommen - sowohl "release:" als auch das vom
+        # Release-Bot genutzte "chore(release):" (letzteres passt ohnehin).
+        if echo "$subject" | grep -qE '^release(\([^)]*\))?!?: '; then
+          echo "SKIP (Release-Commit): $hash $subject"
+          continue
+        fi
+        if ! echo "$subject" | grep -qE "$PATTERN"; then
+          echo "FEHLER: Commit $hash folgt nicht Conventional Commits: '$subject'"
+          echo "  Erwartet: typ(scope): beschreibung - z.B. 'feat(api): notes-endpunkt'"
+          exit 1
+        fi
+        echo "OK: $hash $subject"
+      done
+
+## ---- test ----------------------------------------------------------------------
+
+# Frontend: Audit als Sicherheits-Gate, dann Vite-Build. Das dist/ wird
+# als Artefakt an die Build-Jobs weitergereicht (go:embed braucht es).
+#
+# --ignore-scripts ist Absicht: postinstall-Skripte sind der meistgenutzte
+# Angriffsweg in npm und liefen hier mit Zugriff auf die CI-Variablen.
+# Details: docs/reference/dependencies.md
+frontend:
+  stage: test
+  extends: .skip-on-renovate
+  image: $NODE_IMAGE
+  cache: *npm-cache
+  script:
+    - cd frontend
+    - npm ci --no-audit --ignore-scripts
+    - npm audit --audit-level=high
+    - npm run build
+  artifacts:
+    paths: [frontend/dist]
+    expire_in: 1 week
+
+backend:
+  stage: test
+  extends: .skip-on-renovate
+  image: $GO_IMAGE
+  cache: *go-cache
+  script:
+    # Formatierung zuerst: gofmt-Abweichungen sind billig zu beheben, aber sie
+    # verrauschen jeden späteren Diff. `go vet` prüft das nicht mit.
+    # Nur eigene Quellen prüfen: GOMODCACHE liegt unter .cache/ im
+    # Projektverzeichnis, und Abhängigkeiten enthalten absichtlich nicht
+    # übersetzbare Testdaten, an denen gofmt scheitern würde.
+    - |
+      UNFORMATTED=$(find . -name '*.go' -not -path './.cache/*' -exec gofmt -l {} +)
+      if [ -n "$UNFORMATTED" ]; then
+        echo "FEHLER: folgende Dateien sind nicht gofmt-formatiert:"
+        echo "$UNFORMATTED"
+        echo "Bitte 'gofmt -w .' ausführen."
+        exit 1
+      fi
+      echo "OK: alle Go-Dateien sind gofmt-formatiert."
+    - go vet ./...
+    - go test ./...
+
+govulncheck:
+  stage: test
+  extends: .skip-on-renovate
+  image: $GO_IMAGE
+  cache: *go-cache-ro
+  script:
+    - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+# E2E (Playwright gegen das echte Binary) - nur wo es zählt: auf develop,
+# main und in MR-Pipelines. Installiert Go + Chromium im Node-Image.
+e2e:
+  stage: test
+  # Playwright-Image statt Node + Browser-Nachinstallation: "playwright install
+  # --with-deps chromium" lud bei JEDEM Lauf 656 MB Browser und
+  # Systempakete -- gemessen 60s. Im Image sind sie enthalten.
+  image: $PLAYWRIGHT_IMAGE
+  # Nie zwei E2E-Suiten gleichzeitig auf dem Runner: Bei parallelen Pipelines
+  # (z.B. Fix-Aufwärtsmerge auf mehrere Branches) hungerten sich zwei
+  # Playwright-Läufe gegenseitig aus - der Login riss dann selbst großzügige
+  # Timeouts. resource_group serialisiert den Job projektweit.
+  resource_group: e2e
+  # Sowohl npm- als auch Go-Build-Cache: run-server.sh kompiliert das
+  # echte Binary, der Go-Cache verkürzt den Erst-Build in Folgeläufen.
+  cache:
+    - <<: *npm-cache-ro
+    - <<: *go-cache-ro
+  needs: [frontend]
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "enterprise"
+  script:
+    # Go-Toolchain passend zu go.mod nachinstallieren (sed statt grep:
+    # liefert auch ohne Treffer Exit-Code 0 - wichtig unter set -e).
+    - GO_VERSION=$(sed -n 's/^toolchain go//p' go.mod)
+    - '[ -n "$GO_VERSION" ] || GO_VERSION=$(sed -n "s/^go //p" go.mod | head -1)'
+    - echo "Installiere Go $GO_VERSION"
+    - curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
+    - export PATH=/usr/local/go/bin:$PATH && go version
+    - cd frontend
+    # --ignore-scripts: siehe frontend-Job. Die Browser bringt das Image mit.
+    - npm ci --no-audit --ignore-scripts
+    - npx playwright test
+  artifacts:
+    when: on_failure
+    paths: [frontend/test-results]
+    expire_in: 3 days
+
+## ---- build ---------------------------------------------------------------------
+
+# Auf den Release-Branches (beta/community/enterprise): die vorbereitete
+# VERSION lesen und prüfen, ob dafür schon ein Tag existiert. Version +
+# Changelog werden NICHT hier berechnet, sondern stammen aus dem Commit
+# (packaging/prepare-release.sh). Liefert NEXT_VERSION/RELEASE_NEEDED als
+# dotenv und den obersten CHANGELOG.md-Abschnitt als Release-Beschreibung.
+version:
+  stage: check
+  image: alpine:3
+  rules:
+    - if: $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "enterprise"
+  script:
+    - apk add --no-cache git
+    - git fetch --tags --quiet origin
+    # Sicherung der Release-Herkunft: Es darf ausschließlich Code releast und
+    # ins apt-Repository ausgerollt werden, der nachweislich auf einem der
+    # Release-Branches liegt. Die rules oben binden diesen Job zwar bereits
+    # daran - diese Prüfung hält das auch dann, wenn die Pipeline später
+    # umgebaut wird (Tag-Pipeline, manueller Lauf, geänderte rules) und macht
+    # die Herkunft im Log belegbar.
+    - git fetch --quiet origin "$CI_COMMIT_BRANCH"
+    - |
+      if ! git merge-base --is-ancestor "$CI_COMMIT_SHA" "origin/$CI_COMMIT_BRANCH"; then
+        echo "FEHLER: Commit $CI_COMMIT_SHA liegt nicht auf origin/$CI_COMMIT_BRANCH."
+        echo "Ein Release/Deploy aus einem anderen Stand ist nicht zulässig."
+        exit 1
+      fi
+      echo "OK: Release-Commit $CI_COMMIT_SHA liegt auf origin/$CI_COMMIT_BRANCH."
+    - NEXT_VERSION=$(cat VERSION)
+    - |
+      if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
+        RELEASE_NEEDED=false
+        echo "Tag v${NEXT_VERSION} existiert bereits - kein neues Release."
+      else
+        RELEASE_NEEDED=true
+        echo "Neue Version v${NEXT_VERSION} - Release wird erstellt."
+      fi
+    # beta releast ausschließlich Vorabversionen (1.12.0-beta.1). Eine finale
+    # Version durchläuft beta zwar (der Release-Zug führt dort entlang), wird
+    # aber erst auf community getaggt und ausgerollt. Ohne diese Regel nimmt
+    # beta den Tag v<final> vorweg - und community fände ihn beim Merge bereits
+    # vor, würde RELEASE_NEEDED=false setzen und läge damit ohne Paket im
+    # stable-Kanal. Der Tag darf nur einmal vergeben werden; er gehört dem
+    # Kanal, für den die Version bestimmt ist.
+    - |
+      case "$CI_COMMIT_BRANCH:$NEXT_VERSION" in
+        beta:*-*) ;;
+        beta:*)
+          RELEASE_NEEDED=false
+          echo "Finale Version v${NEXT_VERSION} auf beta - Release/Deploy übernimmt community."
+          ;;
+      esac
+    # Neuester Tag OHNE Pipe: Bei "git tag | head -1" schließt head die Pipe
+    # nach der ersten Zeile; schreibt git danach noch, bekommt es SIGPIPE und
+    # endet mit 141 - was der Job wegen pipefail als Fehlschlag wertet und den
+    # Release blockiert. Ob das passiert, ist ein Rennen zwischen beiden
+    # Prozessen: Passt die Ausgabe komplett in den Pipe-Puffer, ist git fertig,
+    # bevor head schließt. Mit wachsender Tag-Liste wird der Fehlschlag
+    # wahrscheinlicher - er trat erstmals bei 42 Tags auf (busybox head unter
+    # Alpine). for-each-ref begrenzt selbst und braucht die Pipe gar nicht.
+    - LAST_TAG=$(git for-each-ref --sort=-v:refname --format='%(refname:short)' --count=1 'refs/tags/v*')
+    # Obersten Abschnitt (## v… bis zum nächsten ## …) als Release-Beschreibung.
+    - awk '/^## /{c++} c==1{print} c==2{exit}' CHANGELOG.md > changelog-snippet.md
+    - printf 'NEXT_VERSION=%s\nRELEASE_NEEDED=%s\nLAST_TAG=%s\n' "$NEXT_VERSION" "$RELEASE_NEEDED" "$LAST_TAG" > release.env
+    - cat release.env
+  artifacts:
+    reports:
+      dotenv: release.env
+    paths: [changelog-snippet.md]
+    expire_in: 1 week
+
+# Cross-Compile aller Zielplattformen. Version: auf main die automatisch
+# ermittelte NEXT_VERSION, sonst der Stand aus der VERSION-Datei.
+# Build-Nummer ist die eindeutige Pipeline-Nummer.
+binaries:
+  stage: build
+  extends: .skip-on-renovate
+  image: $GO_IMAGE
+  cache: *go-cache-cross
+  needs:
+    - frontend
+    - backend
+    - govulncheck
+    - job: version
+      optional: true
+  script:
+    - APP_VERSION=${NEXT_VERSION:-$(cat VERSION)}
+    - echo "Baue Version ${APP_VERSION} (Build ${CI_PIPELINE_IID})"
+    # Commit-SHA mit einbrennen: Version + Build-Nummer sagen NICHT eindeutig,
+    # welcher Quellstand läuft - erst der Commit macht eine laufende Instanz
+    # einem Repository-Stand zuordenbar (sichtbar im Footer und /system/info).
+    - export LDFLAGS="-s -w
+        -X LCM/internal/version.Version=${APP_VERSION}
+        -X LCM/internal/version.Build=${CI_PIPELINE_IID}
+        -X LCM/internal/version.BuiltAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        -X LCM/internal/version.Commit=${CI_COMMIT_SHA}"
+    - mkdir -p bin
+    - GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-linux-amd64 ./cmd/app
+    - GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-linux-arm64 ./cmd/app
+    # Windows/macOS werden bewusst NICHT ausgeliefert: ungetestet, und
+    # zentrale Funktionen setzen Linux voraus (Sandbox des CVE-Scans,
+    # systemd-Einbindung, Einrichtung des LCM-Hosts). Ein Artefakt zum
+    # Herunterladen ist ein Versprechen - dieses konnten wir nie halten.
+    # Zum Entwickeln bleiben die Makefile-Ziele build-windows/build-macos.
+    # LCM Remote: lcm-agent (nur Linux - läuft auf den verwalteten Servern).
+    - GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-agent-linux-amd64 ./cmd/agent
+    - GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-agent-linux-arm64 ./cmd/agent
+    # Trivy-Sidecar (nur Container-Betrieb): bedient Trivys Kommandozeile über
+    # HTTP, damit das Scratch-Image ohne Trivy auskommt. Wird NICHT als
+    # Release-Artefakt angeboten - er ergibt nur im Sidecar-Image einen Sinn.
+    - GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-trivyd-linux-amd64 ./cmd/trivyd
+    - GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-trivyd-linux-arm64 ./cmd/trivyd
+    - ls -lh bin/
+  artifacts:
+    paths: [bin/]
+    expire_in: 1 month
+
+# Baut installierbare Debian-Pakete (.deb) mit systemd-Dienst für amd64 und
+# arm64 aus den zuvor cross-kompilierten Linux-Binaries (via nfpm). Auf
+# einem Ubuntu/Debian-Server: `apt install ./lcm_<version>_<arch>.deb`.
+packages:deb:
+  stage: build
+  extends: .skip-on-renovate
+  image: $GO_IMAGE
+  cache: *go-cache-ro
+  needs:
+    - binaries
+    - job: version
+      optional: true
+  script:
+    - apk add --no-cache git
+    - APP_VERSION=${NEXT_VERSION:-$(cat VERSION)}
+    # Debian-Versionsformat: SemVer-Prerelease "-beta.1" wird zu "~beta.1",
+    # damit die Beta laut apt VOR dem späteren Finale (1.0.0) sortiert.
+    - DEB_VERSION=$(echo "$APP_VERSION" | tr '-' '~')
+    - echo "Paketiere ${APP_VERSION} - Debian-Version ${DEB_VERSION}"
+    - |
+      for A in amd64 arm64; do
+        cp "bin/lcm-linux-${A}" bin/lcm-pkg
+        LCM_ARCH="$A" LCM_VERSION="$DEB_VERSION" \
+          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
+          --config packaging/nfpm.yaml --packager deb --target bin/
+      done
+    # LCM Remote: eigenständiges lcm-agent-Paket (apt install lcm-agent).
+    - |
+      for A in amd64 arm64; do
+        cp "bin/lcm-agent-linux-${A}" bin/lcm-agent-pkg
+        LCM_ARCH="$A" LCM_VERSION="$DEB_VERSION" \
+          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
+          --config packaging/nfpm-agent.yaml --packager deb --target bin/
+      done
+    # LCM Remote laeuft auf jeder Distribution - das Paket gab es aber nur als
+    # .deb, und damit war der Agent faktisch Debian-only. Dasselbe Paket
+    # zusaetzlich als RPM, APK und Arch-Paket: Der Agent ist ein statisches
+    # Binary, sein postinstall reines POSIX-sh. In den apt-Kanal wandern
+    # weiterhin nur die .deb; die uebrigen Formate haengen am Release.
+    - |
+      for A in amd64 arm64; do
+        cp "bin/lcm-agent-linux-${A}" bin/lcm-agent-pkg
+        for P in rpm apk archlinux; do
+          LCM_ARCH="$A" LCM_VERSION="$DEB_VERSION" \
+            go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
+            --config packaging/nfpm-agent.yaml --packager "$P" --target bin/
+        done
+      done
+    - rm -f bin/lcm-pkg bin/lcm-agent-pkg
+    - ls -lh bin/*.deb bin/*.rpm bin/*.apk bin/*.pkg.tar.zst
+  artifacts:
+    paths: [bin/*.deb, bin/*.rpm, bin/*.apk, bin/*.pkg.tar.zst]
+    expire_in: 1 month
+
+# Container-Images für amd64 und arm64: das LCM-Runtime-Image (scratch) und
+# der Trivy-Sidecar. Beide entstehen aus den zuvor cross-kompilierten Binaries
+# - im Dockerfile gibt es dafür kein RUN, und ohne RUN braucht Multi-Arch
+# KEINE QEMU-Emulation: Es wird nur kopiert.
+#
+# Auf develop und in MR-Pipelines wird gebaut, aber NICHT veröffentlicht. Ein
+# kaputtes Dockerfile fällt damit vor dem Release auf und nicht erst, wenn es
+# zählt. Gepusht wird ausschließlich, wenn auch ein Release ansteht
+# (RELEASE_NEEDED aus dem version-Job) - sonst entstünden Tags ohne Release
+# dahinter.
+#
+# Docker-in-Docker wie beim Doku-Builder-Image (Tool/docs-builder). Der
+# 29.6-Pin stammt von dort und ist dort begründet: Ab dem dind-Stand vom
+# August 2026 (>=29.7) meldet der Push gegen diese GitLab-Registry
+# „blob unknown to registry". Vor dem Anheben erst Registry/GitLab
+# aktualisieren und einen Push testen.
+images:
+  # In der deploy-Stage und NACH dem release-Job: So entsteht ein Image-Tag
+  # erst, wenn das Release wirklich existiert. Auf develop und in MRs gibt es
+  # keinen release-Job - dort greift `optional: true`, und der Lauf baut
+  # einfach ohne zu warten.
+  stage: deploy
+  extends: .skip-on-renovate
+  image: docker:29.6-cli
+  services:
+    - docker:29.6-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
+  needs:
+    - binaries
+    - job: version
+      optional: true
+    - job: release
+      optional: true
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "enterprise"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - APP_VERSION=${NEXT_VERSION:-$(cat VERSION)}
+    - LCM_IMAGE="$CI_REGISTRY_IMAGE"
+    - TRIVYD_IMAGE="$CI_REGISTRY_IMAGE/trivyd"
+    # Der Sidecar traegt die TRIVY-Version, nicht die von LCM. Er aendert sich
+    # nur, wenn Trivy hochgezogen wird oder der Adapter angefasst wird - mit
+    # der LCM-Version im Tag entstuende bei JEDEM Release ein neuer Digest fuer
+    # unveraenderten Inhalt, und die Tag-Liste saehe aus, als haette sich am
+    # Scanner etwas bewegt.
+    - TRIVY_VERSION=$(sed -n 's|^FROM aquasec/trivy:||p' docker/Dockerfile.trivyd)
+    - '[ -n "$TRIVY_VERSION" ] || { echo "FEHLER: Trivy-Version nicht aus Dockerfile.trivyd lesbar"; exit 1; }'
+    - echo "Sidecar-Tag -> ${TRIVYD_IMAGE}:${TRIVY_VERSION}"
+    # Kanal-Tags: die Version immer, dazu der bewegliche Zeiger des Kanals.
+    #   beta       -> :<version> + :beta
+    #   community  -> :<version> + :latest
+    #   enterprise -> :<version> + :enterprise   (bleibt in der privaten Registry)
+    - |
+      LCM_TAGS="--tag $LCM_IMAGE:$APP_VERSION"
+      TRIVYD_TAGS="--tag $TRIVYD_IMAGE:$TRIVY_VERSION"
+      case "$CI_COMMIT_BRANCH" in
+        beta)       MOVING=beta ;;
+        community)  MOVING=latest ;;
+        enterprise) MOVING=enterprise ;;
+        *)          MOVING="" ;;
+      esac
+      if [ -n "$MOVING" ]; then
+        LCM_TAGS="$LCM_TAGS --tag $LCM_IMAGE:$MOVING"
+        TRIVYD_TAGS="$TRIVYD_TAGS --tag $TRIVYD_IMAGE:$MOVING"
+      fi
+    # Veröffentlicht wird nur zusammen mit einem Release. Ohne Push landet das
+    # Ergebnis nirgends (cacheonly) - geprüft wird trotzdem alles: Dockerfile,
+    # Kontext und beide Architekturen.
+    - |
+      if [ "$RELEASE_NEEDED" = "true" ] && [ -n "$MOVING" ]; then
+        OUTPUT="--push"
+        echo "Release ${APP_VERSION} - Images werden veröffentlicht (${MOVING})."
+        echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+      else
+        OUTPUT="--output=type=cacheonly"
+        echo "Kein Release - Images werden nur gebaut, nicht veröffentlicht."
+      fi
+    # Multi-Arch braucht den container-Treiber; der docker-Treiber kann keine
+    # Manifest-Listen bauen.
+    #
+    # Der Treiber laesst sich aber nicht direkt gegen ein TLS-gesichertes dind
+    # anlegen: `buildx create` liest die Verbindung aus einem Docker-Kontext,
+    # nicht aus DOCKER_HOST/DOCKER_CERT_PATH, und bricht sonst mit "could not
+    # create a builder instance with TLS data loaded from environment" ab.
+    # Deshalb erst den Kontext aus genau diesen Variablen bauen und den Builder
+    # darauf setzen.
+    - |
+      docker context create lcm-dind --docker \
+        "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem"
+    - docker buildx create --use --name lcm --driver docker-container lcm-dind
+    # Ohne Attestationen bauen. buildx haengt seit 0.10 standardmaessig
+    # Provenance- und SBOM-Daten an; daraus entsteht je Plattform ein
+    # zusaetzliches Attestation-Manifest, das per `subject` auf das eigentliche
+    # Image-Manifest verweist. buildx laedt beide nebenlaeufig hoch, und trifft
+    # die Attestation zuerst ein, weist GitLabs Registry sie mit
+    # "400 MANIFEST_BLOB_UNKNOWN" ab -- der Verweis existiert dort noch nicht.
+    # Die Fehlermeldung nennt dann den fehlenden Verweis und sieht aus wie ein
+    # verlorener Layer. Weil es ein Wettlauf ist, schlaegt es nur manchmal zu:
+    # v1.25.0-beta.1 ging durch, v1.25.1-beta.1 scheiterte dreimal in Folge.
+    - BUILD_FLAGS="--provenance=false --sbom=false"
+    - docker buildx build --platform linux/amd64,linux/arm64 $BUILD_FLAGS $LCM_TAGS $OUTPUT -f docker/Dockerfile .
+    - docker buildx build --platform linux/amd64,linux/arm64 $BUILD_FLAGS $TRIVYD_TAGS $OUTPUT -f docker/Dockerfile.trivyd .
+    - echo "Fertig -> ${LCM_IMAGE}:${APP_VERSION} und ${TRIVYD_IMAGE}:${TRIVY_VERSION}"
+
+# Upgrade ueber viele Versionen: alte Fassung mit Demo-Daten, dann Sprung auf
+# den Pruefstand. Laeuft NICHT in jeder Pipeline - der Anlass ist der
+# Enterprise-Zug, wo der Stand an Kunden mit vertraglicher Zusage geht.
+#
+# Warum es ihn gibt: Am 20.08.2026 startete LCM nach dem Update auf
+# 1.24.0-beta.1 nicht mehr. Die Ursache war eine Migration, die ausschliesslich
+# auf einer BESTEHENDEN Datenbank zuschlaegt - waehrend die komplette
+# Testsuite gruen lief, weil sie gegen frische Datenbanken arbeitet.
+upgrade-test:
+  stage: test
+  image: $GO_IMAGE
+  cache:
+    - <<: *go-cache-ro
+  needs: []
+  variables:
+    # Startpunkt der Kette. Als Variable, damit ein Wegfall alter Release-
+    # Assets nicht den Job bricht, sondern eine Zeile Aenderung kostet.
+    ALT_VERSION: "1.11.0"
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    # Vor dem Enterprise-Zug Pflicht.
+    - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "enterprise"
+    # Sonst auf Anforderung - und ohne die Pipeline aufzuhalten.
+    - when: manual
+      allow_failure: true
+  before_script:
+    - apk add --no-cache bash curl >/dev/null
+  script:
+    - bash packaging/upgrade-test/upgrade-test.sh
+
+## ---- release -------------------------------------------------------------------
+
+# Läuft nach jedem Merge in einen Release-Branch (beta/community/enterprise).
+# Existiert für die committete VERSION noch kein Tag (RELEASE_NEEDED=true),
+# entsteht automatisch:
+#   1. Upload der Binaries in die Generic Package Registry
+#   2. Tag v<NEXT_VERSION> + Release mit dem obersten CHANGELOG.md-Abschnitt
+#      als Beschreibung.
+# Version & Changelog stehen bereits im getaggten Commit (auf develop mit
+# packaging/prepare-release.sh vorbereitet) - es wird nichts zurückgeschrieben,
+# daher braucht dieser Job KEINEN Schreib-Token.
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  # e2e explizit hier: binaries hängt bereits an frontend/backend/govulncheck,
+  # aber NICHT an e2e - ohne diese Zeile liefe das Release trotz rotem e2e.
+  # Damit ist das Release (und der davon abhängige Deploy) an ALLE Tests gebunden.
+  needs: [version, binaries, packages:deb, e2e]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "enterprise"
+  script:
+    - apk add --no-cache curl
+    - |
+      if [ "$RELEASE_NEEDED" != "true" ]; then
+        echo "Tag v${NEXT_VERSION} existiert bereits - kein neues Release."
+        exit 0
+      fi
+    - TAG="v${NEXT_VERSION}"
+    - echo "Neues Release ${TAG} (letztes war ${LAST_TAG:-keins})"
+    - PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/lcm/${NEXT_VERSION}"
+    # 1. Binaries in die Package Registry laden
+    - |
+      ASSET_LINKS=""
+      for f in bin/*; do
+        name=$(basename "$f")
+        # Der Trivy-Sidecar wird bewusst NICHT als Release-Asset angeboten:
+        # Er ergibt nur im Sidecar-Image einen Sinn (dort liegt Trivy) und
+        # wird auch nur so ausgeliefert. Ein Artefakt zum Herunterladen ist
+        # ein Versprechen - dieses wollen wir nicht geben.
+        case "$name" in lcm-trivyd-*) echo "Ueberspringe $name (nur im Sidecar-Image)"; continue ;; esac
+        echo "Lade $name hoch ..."
+        curl -fsS --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$f" "${PKG_URL}/${name}" > /dev/null
+        ASSET_LINKS="$ASSET_LINKS --assets-link {\"name\":\"${name}\",\"url\":\"${PKG_URL}/${name}\",\"link_type\":\"package\"}"
+      done
+    # 2. Tag + Release mit dem vorbereiteten Changelog als Beschreibung
+    - |
+      release-cli create \
+        --name "LCM ${TAG}" \
+        --tag-name "$TAG" \
+        --ref "$CI_COMMIT_SHA" \
+        --description changelog-snippet.md \
+        $ASSET_LINKS
+
+## ---- deploy --------------------------------------------------------------------
+
+# Rollt die gebauten .deb-Pakete (amd64 + arm64) beim Release auf den TechEve-
+# Repository-Server (aptly) aus - in den apt-Kanal des jeweiligen Branches:
+#   community  → aptly-Repo "techeve",        Suite "stable" (Wurzel, offen)
+#   beta       → aptly-Repo "lcm-beta",       Suite "beta"   (Wurzel, offen)
+#   enterprise → aptly-Repo "lcm-enterprise", Prefix "enterprise", Suite
+#                "stable" (Subscription-Key; Kanal-Layout s. packaging/repo-server/)
+# Läuft nur, wenn tatsächlich ein Release ansteht (RELEASE_NEEDED=true, aus dem
+# version-Job). Sequenziert nach dem release-Job, damit erst nach erfolgreichem
+# GitLab-Release publiziert wird.
+#
+# Voraussetzung: CI-Variablen REPO_URL, REPO_USER, REPO_PASS (masked).
+# Optional: GPG_KEY (Default repo@techeve.de). Details: packaging/publish-deb.sh.
+deploy:apt:
+  stage: deploy
+  image: debian:bookworm-slim
+  needs:
+    - version
+    - packages:deb
+    - e2e
+    - release
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $CI_COMMIT_BRANCH == "community"
+      variables:
+        REPO_NAME: techeve
+        DISTRO: stable
+        PUBLISH_PREFIX: ":."
+    - if: $CI_COMMIT_BRANCH == "beta"
+      variables:
+        REPO_NAME: lcm-beta
+        DISTRO: beta
+        PUBLISH_PREFIX: ":."
+    - if: $CI_COMMIT_BRANCH == "enterprise"
+      variables:
+        REPO_NAME: lcm-enterprise
+        DISTRO: stable
+        PUBLISH_PREFIX: enterprise
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates jq
+  script:
+    - |
+      if [ "$RELEASE_NEEDED" != "true" ]; then
+        echo "Kein Release ansteht (RELEASE_NEEDED != true) - .deb wird nicht ausgerollt."
+        exit 0
+      fi
+    - bash packaging/publish-deb.sh
+
+# Öffentlicher Spiegel: community und beta werden nach grünen Tests (und nach
+# dem release-Job, damit frische Release-Tags mitkommen) in das öffentliche
+# Repo gepusht - das ist der Quellcode der Community-Edition. Der Spiegel ist
+# reine Auslage plus Briefkasten: dort wird nie direkt gearbeitet; MRs dort
+# werden reviewt und per Cherry-pick nach develop übernommen (CONTRIBUTING.md).
+# Es werden nur Tags gespiegelt, die auf dem gespiegelten Branch liegen -
+# enterprise-Commits und -Tags bleiben privat.
+#
+# Voraussetzung: CI-Variablen MIRROR_URL (https://…/techeve/lcm-ce.git) und
+# MIRROR_TOKEN (Project Access Token des Spiegel-Repos, Scope write_repository,
+# masked).
+mirror:public:
+  stage: deploy
+  image: alpine:3
+  needs: [frontend, backend, govulncheck, e2e, release]
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "beta"
+  script:
+    - apk add --no-cache git
+    - |
+      if [ -z "${MIRROR_URL:-}" ] || [ -z "${MIRROR_TOKEN:-}" ]; then
+        echo "FEHLER: CI-Variablen MIRROR_URL/MIRROR_TOKEN fehlen (Spiegel-Repo)."
+        exit 1
+      fi
+    - git fetch --tags --quiet origin
+    - PUSH_URL="https://mirror:${MIRROR_TOKEN}@${MIRROR_URL#https://}"
+    - echo "Spiegele ${CI_COMMIT_BRANCH} (${CI_COMMIT_SHA}) in das öffentliche Repo"
+    - git push "$PUSH_URL" "${CI_COMMIT_SHA}:refs/heads/${CI_COMMIT_BRANCH}"
+    # Nur Tags mitgeben, die auf dem gespiegelten Stand liegen.
+    - |
+      TAGS=$(git tag --merged "$CI_COMMIT_SHA")
+      [ -n "$TAGS" ] || { echo "Keine Tags zu spiegeln."; exit 0; }
+      for t in $TAGS; do
+        git push "$PUSH_URL" "refs/tags/${t}:refs/tags/${t}"
+      done
+      echo "Gespiegelte Tags: $(echo "$TAGS" | tr '\n' ' ')"
+
+## ---- docs ----------------------------------------------------------------------
+
+# Dokumentation: die Markdown-Dateien unter docs/ werden vom zentralen
+# Builder-Image (Astro-Starlight) gebaut und auf den Webserver ausgeliefert.
+# Das Repo enthält NUR Markdown - kein Astro/Node/npm. `docs-build` und
+# `docs-deploy` sind Kommandos im Image; hier steht bewusst keine eigene
+# Build-/Upload-Logik. Zieladresse/Titel: Variablen DOCS_URL/DOCS_TITLE oben.
+#
+# Läuft nur auf dem Default-Branch. Die FTP-Zugangsdaten (DOC_FTP_HOST/USER/
+# PASSWORD) sind als *protected* geerbte techeve-Gruppenvariablen - der
+# Default-Branch MUSS daher ein geschützter Branch sein, sonst bricht
+# docs-deploy mit „Fehlende Umgebungsvariablen" ab.
+docs-build:
+  stage: build
+  image: registry.techeve.de/techeve/docs-builder:starlight-0.41.3
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    # CHANGELOG.md als immer-aktuelle Doku-Seite bereitstellen (DE-Wurzel + EN).
+    # Frontmatter-Titel ergänzen, die "# Changelog"-Kopfzeile (Zeile 1) entfällt.
+    - |
+      for dir in docs docs/en; do
+        {
+          echo '---'
+          echo 'title: Changelog'
+          echo 'description: Änderungen je Version.'
+          echo 'sidebar:'
+          echo '  order: 99'
+          echo '---'
+          echo
+          tail -n +2 CHANGELOG.md
+        } > "$dir/changelog.md"
+      done
+  script:
+    - docs-build
+  artifacts:
+    paths:
+      - public
+
+docs-deploy:
+  stage: deploy
+  image: registry.techeve.de/techeve/docs-builder:starlight-0.41.3
+  needs:
+    - docs-build
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - docs-deploy
+
+## ---- maintenance ---------------------------------------------------------------
+
+# Dependency-Bot: Renovate prüft Go-Module (gomod) und npm-Pakete auf neuere
+# Versionen und legt die Aktualisierungen automatisch als Merge Requests nach
+# develop an (Konfiguration: renovate.json im Repo-Root). Patch-Updates werden
+# nach grüner Pipeline automatisch gemergt; minor/major bleiben zur Review offen.
+#
+# Der Job läuft NICHT bei normalen Pushes, sondern nur:
+#   - über eine geplante Pipeline (Scheduler) mit der Variable RENOVATE_BOT=true
+#   - manuell über die Web-UI ("Run pipeline") mit RENOVATE_BOT=true
+# Auf dieser Pipeline sind alle regulären Test-/Build-Jobs stillgelegt
+# (.skip-on-renovate) - die eigentliche Prüfung der Bumps übernimmt die
+# Pipeline der von Renovate erzeugten Merge Requests.
+#
+# Voraussetzung: CI-Variable RENOVATE_TOKEN (Project/Group Access Token mit
+# Scope api + write_repository). Einrichtung siehe docs/reference/ci-release.md.
+renovate:
+  stage: maintenance
+  image: renovate/renovate:latest
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $RENOVATE_BOT == "true"
+    - if: $CI_PIPELINE_SOURCE == "web" && $RENOVATE_BOT == "true"
+  variables:
+    RENOVATE_PLATFORM: gitlab
+    RENOVATE_ENDPOINT: $CI_API_V4_URL
+    RENOVATE_TOKEN: $RENOVATE_TOKEN
+    RENOVATE_AUTODISCOVER: "false"
+    RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
+    # Changelogs/Release-Notes von GitHub-gehosteten Deps abrufen (optional,
+    # nur gesetzt wenn die Variable existiert - sonst leer, kein Fehler).
+    GITHUB_COM_TOKEN: $RENOVATE_GITHUB_TOKEN
+    LOG_LEVEL: info
+  script:
+    - |
+      if [ -z "$RENOVATE_TOKEN" ]; then
+        echo "FEHLER: CI-Variable RENOVATE_TOKEN fehlt (Scope api + write_repository)."
+        echo "Einrichtung siehe docs/reference/ci-release.md, Abschnitt 'Dependency-Bot (Renovate)'."
+        exit 1
+      fi
+    - renovate

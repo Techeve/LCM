@@ -1,0 +1,7 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LCM">
+  <title>LCM</title>
+  <rect width="64" height="64" rx="15" fill="#0a0c11"/>
+  <rect x="0.6" y="0.6" width="62.8" height="62.8" rx="14.4" fill="none" stroke="#0dcaf0" stroke-opacity="0.22" stroke-width="1.2"/>
+  <path d="M22 20.5 L36.5 32 L22 43.5" stroke="#0dcaf0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="31" y="39" width="17" height="6.5" rx="3.25" fill="#7fe9f7"/>
+</svg>

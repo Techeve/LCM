@@ -1,0 +1,244 @@
+#!/bin/sh
+# lcm-subscriptions - manage the subscription keys for the LCM enterprise
+# package channel.
+#
+# Runs on the repository server (repo.techeve.de), not on a customer machine.
+# It maintains two files:
+#
+#   /etc/lcm-repo/subscriptions.tsv    the key database (one line per key)
+#   /etc/lcm-repo/enterprise.htpasswd  generated from it, read by nginx
+#
+# Only the HASH of a key is stored. The key itself is shown exactly once, when
+# it is created - it cannot be recovered afterwards, only replaced.
+#
+# nginx reads the htpasswd file on every request, so revoking or renewing a key
+# takes effect immediately; no reload is required.
+#
+# Usage:
+#   lcm-subscriptions add <customer> <YYYY-MM-DD>   create a key
+#   lcm-subscriptions renew <key-id> <YYYY-MM-DD>   move the expiry date
+#   lcm-subscriptions revoke <key-id>               delete a key at once
+#   lcm-subscriptions list                          show all keys and status
+#   lcm-subscriptions sync                          rebuild the htpasswd file
+#
+# Put `lcm-subscriptions sync` in a daily cron job so that keys stop working
+# when their subscription runs out:
+#   0 4 * * * /usr/local/sbin/lcm-subscriptions sync >/dev/null
+set -eu
+
+CONF_DIR="${LCM_REPO_DIR:-/etc/lcm-repo}"
+DB="$CONF_DIR/subscriptions.tsv"
+HTPASSWD="$CONF_DIR/enterprise.htpasswd"
+# Group that needs to read the htpasswd file - the nginx worker user.
+WEB_GROUP="${LCM_REPO_WEB_GROUP:-www-data}"
+# Base URL handed to the customer in the instructions after `add`.
+REPO_URL="${LCM_REPO_URL:-https://repo.techeve.de}"
+
+TAB=$(printf '\t')
+
+die() {
+	echo "ERROR: $*" >&2
+	exit 1
+}
+
+usage() {
+	sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'
+	exit "${1:-0}"
+}
+
+# --- helpers ----------------------------------------------------------------
+
+# require_db makes sure the database exists before it is read or written, and
+# that the directory permissions are right.
+#
+# The directory MUST be traversable by the nginx worker. If it is not, nginx
+# cannot open the htpasswd file even when that file itself is readable, and
+# every request to the enterprise channel fails with HTTP 500 (the error log
+# says "Permission denied") instead of asking for credentials.
+require_db() {
+	mkdir -p "$CONF_DIR"
+	chgrp "$WEB_GROUP" "$CONF_DIR" 2> /dev/null || true
+	chmod 0750 "$CONF_DIR"
+	if [ ! -e "$DB" ]; then
+		printf '# key-id\texpires\tcustomer\thash\n' > "$DB"
+	fi
+	# The key database stays root-only - the web server has no business here,
+	# it only ever reads the generated htpasswd.
+	chown root:root "$DB" 2> /dev/null || true
+	chmod 0640 "$DB"
+}
+
+# valid_date accepts YYYY-MM-DD and rejects impossible dates (2026-02-31).
+valid_date() {
+	case "$1" in
+	[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]) ;;
+	*) return 1 ;;
+	esac
+	# `date -d` normalises: if the input is not a real day, the round trip
+	# differs (2026-02-31 -> 2026-03-03).
+	[ "$(date -d "$1" +%F 2>/dev/null)" = "$1" ]
+}
+
+# gen_id builds a readable key id. Ambiguous characters (0/O, 1/I/l) are left
+# out - these ids get typed off invoices and read out over the phone.
+gen_id() {
+	raw=$(LC_ALL=C tr -dc 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' < /dev/urandom |
+		dd bs=1 count=12 2>/dev/null)
+	[ ${#raw} -eq 12 ] || die "could not generate a key id"
+	printf 'LCM-E-%s-%s-%s' \
+		"$(echo "$raw" | cut -c1-4)" \
+		"$(echo "$raw" | cut -c5-8)" \
+		"$(echo "$raw" | cut -c9-12)"
+}
+
+# hash_secret turns a key into a password hash for nginx. bcrypt where
+# available; nginx also understands the apr1 fallback.
+hash_secret() {
+	_id="$1"
+	_secret="$2"
+	if command -v htpasswd > /dev/null 2>&1; then
+		htpasswd -nbB "$_id" "$_secret" | cut -d: -f2-
+	elif command -v openssl > /dev/null 2>&1; then
+		openssl passwd -apr1 "$_secret"
+	else
+		die "neither htpasswd (apache2-utils) nor openssl found"
+	fi
+}
+
+# lookup prints the database line of a key id, or nothing.
+lookup() {
+	awk -F"$TAB" -v id="$1" '$1 == id { print; exit }' "$DB"
+}
+
+# --- commands ---------------------------------------------------------------
+
+cmd_add() {
+	[ $# -eq 2 ] || usage 1
+	customer="$1"
+	expires="$2"
+	case "$customer" in
+	*"$TAB"* | '') die "customer must not be empty or contain a tab" ;;
+	esac
+	valid_date "$expires" || die "expiry date must be a real date as YYYY-MM-DD"
+	require_db
+
+	id=$(gen_id)
+	[ -z "$(lookup "$id")" ] || die "generated id already exists - run again"
+
+	secret=$(openssl rand -hex 24) || die "could not generate a key"
+	hash=$(hash_secret "$id" "$secret")
+
+	printf '%s\t%s\t%s\t%s\n' "$id" "$expires" "$customer" "$hash" >> "$DB"
+	cmd_sync quiet
+
+	cat <<EOF
+
+============================================================
+  Subscription created for: $customer
+  Valid until:              $expires
+
+  Key ID:  $id
+  Key:     $secret
+
+  The key is shown ONCE and is not stored in plain text.
+  Hand both values to the customer, for example:
+
+      curl -fsSL $REPO_URL/setup-enterprise.sh | sudo sh -s -- \\
+        $id $secret
+
+============================================================
+
+EOF
+}
+
+cmd_renew() {
+	[ $# -eq 2 ] || usage 1
+	id="$1"
+	expires="$2"
+	valid_date "$expires" || die "expiry date must be a real date as YYYY-MM-DD"
+	require_db
+	[ -n "$(lookup "$id")" ] || die "unknown key id: $id"
+
+	tmp="$DB.tmp.$$"
+	awk -F"$TAB" -v OFS="$TAB" -v id="$id" -v exp="$expires" \
+		'$1 == id { $2 = exp } { print }' "$DB" > "$tmp"
+	chmod 0640 "$tmp"
+	mv "$tmp" "$DB"
+	cmd_sync quiet
+	echo "Key $id now runs until $expires."
+}
+
+cmd_revoke() {
+	[ $# -eq 1 ] || usage 1
+	id="$1"
+	require_db
+	[ -n "$(lookup "$id")" ] || die "unknown key id: $id"
+
+	tmp="$DB.tmp.$$"
+	awk -F"$TAB" -v id="$id" '$1 != id { print }' "$DB" > "$tmp"
+	chmod 0640 "$tmp"
+	mv "$tmp" "$DB"
+	cmd_sync quiet
+	echo "Key $id revoked - it stops working with the next request."
+}
+
+cmd_list() {
+	require_db
+	today=$(date +%F)
+	# Keys expiring within 30 days are flagged so a subscription can be
+	# renewed before the customer's `apt update` starts failing.
+	soon=$(date -d '+30 days' +%F 2>/dev/null || echo '')
+
+	awk -F"$TAB" -v today="$today" -v soon="$soon" '
+		BEGIN { printf "%-22s %-12s %-10s %s\n", "KEY ID", "EXPIRES", "STATUS", "CUSTOMER" }
+		/^#/ || NF < 4 { next }
+		{
+			status = "active"
+			if ($2 < today)                  status = "EXPIRED"
+			else if (soon != "" && $2 <= soon) status = "expiring"
+			printf "%-22s %-12s %-10s %s\n", $1, $2, status, $3
+			n++
+		}
+		END { if (!n) print "(no subscriptions yet)" }
+	' "$DB"
+}
+
+# cmd_sync rebuilds the htpasswd file from the database, leaving out every key
+# whose subscription has run out. This is the step that actually enforces the
+# expiry date - run it daily from cron.
+cmd_sync() {
+	require_db
+	today=$(date +%F)
+	tmp="$HTPASSWD.tmp.$$"
+
+	awk -F"$TAB" -v today="$today" '
+		/^#/ || NF < 4 { next }
+		$2 >= today { print $1 ":" $4 }
+	' "$DB" > "$tmp"
+
+	chmod 0640 "$tmp"
+	# Readable by the nginx worker, writable only by root.
+	chgrp "$WEB_GROUP" "$tmp" 2> /dev/null || true
+	mv "$tmp" "$HTPASSWD"
+
+	if [ "${1:-}" != "quiet" ]; then
+		active=$(wc -l < "$HTPASSWD" | tr -d ' ')
+		total=$(awk -F"$TAB" '!/^#/ && NF >= 4' "$DB" | wc -l | tr -d ' ')
+		echo "$HTPASSWD written: $active of $total subscriptions active."
+	fi
+}
+
+# --- dispatch ---------------------------------------------------------------
+
+[ $# -ge 1 ] || usage 1
+cmd="$1"
+shift
+case "$cmd" in
+add) cmd_add "$@" ;;
+renew) cmd_renew "$@" ;;
+revoke) cmd_revoke "$@" ;;
+list) cmd_list "$@" ;;
+sync) cmd_sync "$@" ;;
+help | -h | --help) usage 0 ;;
+*) die "unknown command: $cmd (try 'help')" ;;
+esac

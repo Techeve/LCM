@@ -1,0 +1,157 @@
+---
+sidebar:
+  order: 14
+title: APT Cache (apt-cacher-ng)
+description: Set up a central package cache and bind servers via action or rule.
+---
+
+LCM can have all managed servers route their APT requests through a central
+**apt-cacher-ng**: each package is downloaded from the internet only **once**
+and served from the local network thereafter. This saves bandwidth
+and speeds up update runs across many servers.
+
+:::tip[Recommendation]
+Run apt-cacher-ng on the same system as LCM - frugal (one package, one
+port, cache on disk) and in the same network segment as the management.
+:::
+
+:::note[apt systems only]
+The APT cache is a pure apt proxy - the "Use APT cache" action therefore only
+appears on servers using **apt** (Debian/Ubuntu). Servers with dnf/yum, zypper,
+pacman or apk are still fully managed by LCM (inventory, updates, repositories,
+CVE assessment), just without this cache.
+:::
+
+## 1. Installation (Debian/Ubuntu)
+
+```sh
+sudo apt-get update
+sudo apt-get install apt-cacher-ng
+sudo systemctl enable --now apt-cacher-ng
+```
+
+## 2. Configuration
+
+In `/etc/apt-cacher-ng/acng.conf` three settings are relevant:
+
+```ini
+# Port des Caches (Default 3142)
+Port: 3142
+
+# RECOMMENDED: https sources are passed through as CONNECT tunnels and thus
+# cached as well. Without this line acng refuses CONNECT - LCM detects that
+# while binding and then routes https past the cache (see below).
+PassThroughPattern: .*
+
+# Aufbewahrung: Der Expiration-Lauf entfernt nur Pakete, die in keinem
+# aktuellen Index mehr referenziert sind UND länger als ExThreshold Tage
+# nicht angefragt wurden. Default 4 - großzügiger:
+ExThreshold: 30
+```
+
+Then `sudo systemctl restart apt-cacher-ng`.
+
+**Persistence:** the cache is stored as normal files under
+`/var/cache/apt-cacher-ng` and survives restarts automatically.
+
+**On https:** through the tunnel, https sources remain end-to-end encrypted
+- the cache only passes them through without storing them. The full cache benefit
+comes from http sources (the Debian/Ubuntu main archives); their integrity is
+secured by apt independently of the transport via GPG.
+
+## 3. Firewall
+
+Open port 3142 only for the internal network (an open proxy would be
+abusable):
+
+```sh
+sudo ufw allow from 192.168.0.0/16 to any port 3142 proto tcp
+```
+
+## 4. Functional test
+
+The report page must be reachable from the server network - it later also
+provides cache statistics there:
+
+```
+http://<cache-host>:3142/acng-report.html
+```
+
+## 5. Set up in LCM
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Configure the cache URL.** *Settings → APT Cache*: enter the
+   URL (e.g. `http://192.168.1.10:3142`) and verify it with **"Check
+   connection"** - a green "running" badge = ready. The same page holds the
+   transfer statistics, the service restart, permanent caching and the
+   monitoring status.
+
+2. **Bind an individual server.** Server detail → "Repositories" tab →
+   **"Use APT cache"**. LCM writes the drop-in
+   `/etc/apt/apt.conf.d/02lcm-apt-cache` (http and https proxy) and checks the
+   binding immediately via `apt-get update`. If the test fails, the
+   drop-in is automatically removed - the server stays operational.
+   **"Unbind APT cache"** reverts it.
+
+3. **Bind an entire group.** Group rule "**Bind APT cache**" (on the
+   schedule) or "**Enforce APT cache**" (baseline rule). The
+   baseline rule checks on every connection whether the drop-in points to the current
+   cache URL, and rewrites it on deviation - so a
+   URL changed later also takes effect automatically on all servers.
+
+</Steps>
+
+The binding status is visible in the Repositories tab (badge "APT cache active")
+and is read live during **"Refresh everything"**.
+
+## Undo the binding (deactivate)
+
+Two ways lead back to direct repository requests:
+
+- **Per server:** server detail → "Repositories" tab → **"Disconnect APT
+  cache"**. LCM removes the drop-in; `apt` immediately talks to the package
+  sources directly again.
+- **Centrally:** *Settings → APT Cache* lists all servers currently routed
+  through the cache under **"Connected servers"** - with a
+  **Disconnect** button right in the list. No need to visit every server
+  individually.
+
+:::caution[Policy rule wins]
+If a group has the policy rule **"Enforce APT cache"** active, the next
+health check (every 15&nbsp;minutes) **automatically re-connects**
+disconnected servers - the disconnect then only lasts a few minutes. LCM
+points this out explicitly in the console output when disconnecting. For a
+permanent disconnect, first disable or delete the policy rule in the group,
+then disconnect the servers.
+:::
+
+## 6. Statistics, settings & monitoring
+
+The *Settings → APT Cache* page bundles running the cache:
+
+- **Transfer statistics** - how much was fetched from the internet and how much
+  was served from the cache (since service start and recently). The difference
+  is the bandwidth saved.
+- **Advanced settings** - **restart the service** and **permanent caching**
+  (turns off the nightly expiration job, `NO_CRON_RUN`). These actions are only
+  available when apt-cacher-ng runs on the LCM host itself; statistics and
+  reachability apply to any configured cache URL.
+- **Monitoring** - LCM checks the cache as part of the alert evaluation (every
+  30&nbsp;minutes). The check does not accept just any HTTP 200 response, only a
+  genuine apt-cacher-ng report page - so a foreign service on the port or a
+  silent failed start is caught too. Set up the alert as a rule of type
+  **"apt-cacher-ng unreachable"** under *Settings → Alerts* and assign it a
+  notification channel.
+
+## Failure symptoms
+
+| Symptom | Cause / solution |
+|---|---|
+| Job reports "HTTP only - the cache does not allow HTTPS tunnels" | `PassThroughPattern: .*` missing. Not an error: LCM routes https directly (uncached), all sources stay reachable. For cached https set the line and restart the service |
+| Binding fails, `Err:` lines in output | A package source does not answer through the cache → LCM removes the drop-in again, the server stays operational. Check the sources listed |
+| "Check connection" red | Service not running / port 3142 filtered → `systemctl status apt-cacher-ng`, check firewall |
+| "reachable, but unexpected response" | A different service answers at the URL - check port/host |
+| Server hangs after cache outage | "Unbind APT cache" (or delete the drop-in) - APT talks directly again |

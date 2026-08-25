@@ -1,0 +1,53 @@
+# nfpm-Konfiguration für das lcm-agent-Debian-Paket (LCM Remote).
+# arch und version kommen aus der Umgebung (LCM_ARCH, LCM_VERSION) - wie
+# beim Server-Paket (nfpm.yaml). Siehe Makefile-Target `deb-agent` und den
+# CI-Job `packages:deb`.
+name: lcm-agent
+arch: "${LCM_ARCH}"
+platform: linux
+version: "${LCM_VERSION}"
+section: admin
+priority: optional
+maintainer: "Techeve <claude@techeve.de>"
+vendor: "Techeve"
+homepage: "https://gitlab.techeve.de/techeve/lcm"
+license: "proprietary"
+description: |
+  LCM Remote Agent - verbindet diesen Server AUSGEHEND mit einem LCM-Server
+  (MQTT über WebSocket auf dem HTTPS-Port des LCM). Für Server hinter NAT,
+  ohne feste IP oder unterwegs. Einrichtung nach der Installation:
+  sudo lcm-agent enroll <lcm-server-url> <token>
+  (Token aus dem LCM-Onboarding, Modus "Agent".)
+
+contents:
+  # Das arch-passende Binary wird vor dem Packen auf diesen festen Namen
+  # gestaged (nfpm expandiert ${LCM_ARCH} nicht im src-Glob).
+  - src: ./bin/lcm-agent-pkg
+    dst: /usr/bin/lcm-agent
+    file_info:
+      mode: 0755
+  # /usr/lib statt /lib: Auf Arch gehoert /lib dem Paket „filesystem" (es ist
+  # dort ein Symlink auf /usr/lib), und eine Datei darunter laesst pacman gar
+  # nicht erst zu - die Installation bricht mit „conflicting files" ab.
+  # /usr/lib/systemd/system ist der Standard-Suchpfad von systemd und
+  # funktioniert auf allen Distributionen.
+  - src: ./packaging/lcm-agent.service
+    dst: /usr/lib/systemd/system/lcm-agent.service
+    file_info:
+      mode: 0644
+  # Alpine hat kein systemd. Ohne dieses Init-Skript installierte das
+  # apk-Paket zwar das Binary, aber es gab keinen Dienst - und `enroll` wäre
+  # an `systemctl` gescheitert.
+  - src: ./packaging/lcm-agent.openrc
+    dst: /etc/init.d/lcm-agent
+    packager: apk
+    file_info:
+      mode: 0755
+
+scripts:
+  postinstall: ./packaging/scripts/agent-postinstall.sh
+  preremove: ./packaging/scripts/agent-preremove.sh
+  postremove: ./packaging/scripts/agent-postremove.sh
+
+deb:
+  compression: xz

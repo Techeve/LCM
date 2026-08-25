@@ -1,0 +1,90 @@
+---
+sidebar:
+  order: 90
+title: Examples
+description: Typical workflows step by step - from server onboarding to using the API.
+---
+
+A collection of typical workflows. They assume a running LCM instance
+(see [Installation](/en/getting-started/installation/)).
+
+## Onboard a server and update it daily
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Add the onboarding key:** Enter the public key from *Settings → General*
+   into `~/.ssh/authorized_keys` for `root` on the target server.
+2. **Join:** Dashboard → “+ Add server”, enter host/credentials, confirm the
+   host key fingerprint.
+3. **Group:** Under *Groups*, create a group “Production” and assign the
+   server.
+4. **Schedule + rule:** Create a schedule “Nightly” with `0 2 * * *`, then add a
+   rule of type **Update**.
+5. Done - the updates run every night and appear as jobs with console output.
+
+</Steps>
+
+## Enforce a firewall as a baseline rule
+
+Goal: On all web servers, only 80, 443 (and SSH) are permanently open.
+
+<Steps>
+
+1. Create a group “Web servers”, assign the servers.
+2. New rule: type **Firewall**, target **Baseline rule (Enforce)**, ports
+   `80,443`.
+3. On the next health ping, ufw is checked and - if it deviates - applied. If
+   someone later changes the firewall on the server, the next ping restores the
+   desired state.
+
+</Steps>
+
+## Set up a central APT cache
+
+<Steps>
+
+1. Install `apt-cacher-ng` on the LCM host and set `PassThroughPattern: .*`
+   in `acng.conf` (see [APT cache](/en/guides/apt-cache/)).
+2. In LCM under *Settings → Repositories → APT cache*, enter the URL
+   `http://<host>:3142` and click “Test connection”.
+3. Add “**Enforce APT cache**” as a group rule - all servers in the group route
+   their APT requests through the cache from now on.
+
+</Steps>
+
+## Create a backup and restore it on a fresh instance
+
+<Steps>
+
+1. Set `LCM_BACKUP_PASSPHRASE` and create a backup under *Settings → Backups*
+   (or enable an interval).
+2. Download the `.lcmbak` and store it safely.
+3. On a **new** instance, upload the archive under *Backups → Restore* and apply
+   it (with the same passphrase) - the instance takes over data, keys,
+   configuration and certificate.
+
+</Steps>
+
+## Use the API with a read-only key
+
+For monitoring scripts that may only read:
+
+<Steps>
+
+1. *Settings → API keys* → create a new key with scope **read**. The plaintext
+   key (`lcm_…`) appears **only once** - copy it.
+2. Query using the `X-API-Key` header:
+
+   ```sh
+   curl -s https://<host>:9310/api/v1/servers \
+     -H "X-API-Key: lcm_dein_key" | jq '.[].name'
+   ```
+
+3. Writing requests (POST/PUT/DELETE) are rejected server-side with **403** when
+   using a read key - the key cannot change anything, even in an admin context.
+
+</Steps>
+
+More on endpoints and auth: [Frontend & API reference](/en/reference/api/).
