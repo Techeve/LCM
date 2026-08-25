@@ -46,8 +46,10 @@ Entwicklungsmodells etwas vom Üblichen ab:
 2. **Review findet hier statt** - Diskussion und Änderungswünsche laufen ganz
    normal im MR.
 3. **Übernahme per Cherry-pick** - angenommene Commits werden in den internen
-   `develop`-Branch übernommen. **Deine Autorenschaft bleibt dabei erhalten**
-   und erscheint mit dem nächsten Release in der öffentlichen History.
+   `develop`-Branch übernommen. **Deine Autorenschaft bleibt dabei erhalten.**
+   Das öffentliche Repo führt je Release einen Schnappschuss-Commit statt der
+   vollständigen Historie; wer zu einem Release beigetragen hat, wird in
+   dessen Changelog-Eintrag genannt.
 4. **MR wird manuell geschlossen** - mit einem Kommentar, in welchem Release
    deine Änderung erscheint. (GitLab kann den MR nicht automatisch als
    „merged" markieren, weil sich der Commit-Hash beim Cherry-pick ändert.)

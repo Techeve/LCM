@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.30.8 - 2026-08-26
+
+### 🔧 Sonstiges
+
+- **images**: Releases zusätzlich nach Docker Hub veröffentlichen (bea08b2d)
+- **install**: Docker Hub als empfohlener Container-Weg (DE und EN) (f3e4ed3e)
+- **mirror**: Pipelines nur im privaten Repo, GitHub-Issues in den Briefkasten (6263f024)
+- v1.30.8-beta.1 - Version & Changelog vorbereitet (e2e54143)
+
+## v1.30.8-beta.1 - 2026-08-26
+
+### 🔧 Sonstiges
+
+- **mirror**: Pipelines nur im privaten Repo, GitHub-Issues in den Briefkasten (6263f024)
+
+## v1.30.7-beta.1 - 2026-08-25
+
+### 🐛 Bugfixes
+
+- **ci**: Gegenprobe des Enterprise-Deploys kann grün werden (ae878744)
+- **release**: develop leitet keine finale Version mehr ab (21768050)
+
+### 🔧 Sonstiges
+
+- **mirror**: öffentlicher Spiegel als Schnappschuss statt Commit-Graph (a6a07dc2)
+
 ## v1.30.6 - 2026-08-25
 
 ### 🔧 Sonstiges
