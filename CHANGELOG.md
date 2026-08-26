@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.32.0-beta.2 - 2026-08-26
+
+### 🐛 Bugfixes
+
+- **ci**: Mirror-Anstoß in release:public ist verzeihend (28d3e4ba)
+- **ci**: release:public läuft in busybox-sh, nicht bash (87c0d2ca)
+
 ## v1.32.0-beta.1 - 2026-08-26
 
 ### 🚀 Features
