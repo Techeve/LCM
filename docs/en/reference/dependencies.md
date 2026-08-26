@@ -88,7 +88,7 @@ Stewardship below level 3 is only taken on with an explicit justification.
 already depend on. **A supply chain attack therefore always arrives as a _new_
 version.** Three rules follow, and all three are wired into the repo:
 
-- **Cooling-off period.** [renovate.json](https://gitlab.techeve.de/techeve/lcm/-/blob/develop/renovate.json)
+- **Cooling-off period.** [renovate.json](https://gitlab.techeve.de/techeve/lcm-ce/-/blob/community/renovate.json)
   sets `minimumReleaseAge` to seven days - the window in which compromised
   packages are usually discovered and pulled.
 - **Automerge only for levels 4 and 5.** Patch updates merge on their own only

@@ -128,6 +128,12 @@ func RenderChangelog(version string, date time.Time, commits []Commit) string {
 	for _, section := range sections {
 		var entries []string
 		for _, c := range commits {
+			// Release-Vorbereitungs-Commits ("release: v… - Version &
+			// Changelog vorbereitet") sind Buchhaltung des Zugs selbst -
+			// als Changelog-Eintrag wären sie nur Rauschen unter Sonstiges.
+			if c.Type == "release" {
+				continue
+			}
 			if !section.Match(c) {
 				continue
 			}

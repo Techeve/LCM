@@ -71,7 +71,9 @@ variables:
   DOCS_URL: "https://doc.techeve.de/lcm/"
   DOCS_TITLE: "LCM - Linux Centralized Management"
   # Repository-/Social-Link oben rechts in der Doku-Kopfzeile.
-  DOCS_REPO: "https://gitlab.techeve.de/techeve/lcm"
+  # Bewusst der ÖFFENTLICHE Spiegel: das private Repo wäre für Leser der
+  # Doku ein 404.
+  DOCS_REPO: "https://gitlab.techeve.de/techeve/lcm-ce"
 
 # Branch-Pipelines + MR-Pipelines, ohne Duplikate bei offenem MR.
 workflow:
@@ -808,6 +810,86 @@ deploy:apt:
         exit 0
       fi
     - bash packaging/publish-deb.sh
+
+# Öffentliche Releases: Dieselben Artefakte wie am privaten Release hängen
+# auch am Spiegel lcm-ce und auf GitHub - als Komfort-Weg neben dem
+# empfohlenen apt-Repo (repo.techeve.de), über das Updates automatisch kommen.
+# Die Tags zeigen dort auf die Schnappschuss-Commits; deshalb läuft dieser Job
+# NACH mirror:public. Auf GitHub entsteht das Tag erst durch den asynchronen
+# Push-Mirror - der Job stößt den Sync an und wartet auf das Tag, statt es
+# GitHub auf dem falschen Commit anlegen zu lassen. Betas werden auf GitHub
+# als Prerelease markiert. Ohne hinterlegte Tokens läuft der jeweilige Teil
+# nicht - mit Ansage im Log statt stillem Auslassen.
+release:public:
+  stage: deploy
+  image: alpine:3
+  needs: [version, binaries, packages:deb, release, mirror:public]
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $GITHUB_ISSUE_SYNC == "true"
+      when: never
+    - if: $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "community"
+  script:
+    - apk add --no-cache curl jq >/dev/null
+    - |
+      if [ "$RELEASE_NEEDED" != "true" ]; then
+        echo "Kein Release ansteht - nichts zu veröffentlichen."
+        exit 0
+      fi
+    - TAG="v${NEXT_VERSION}"
+    - |
+      PRERELEASE=false
+      case "$NEXT_VERSION" in *-*) PRERELEASE=true ;; esac
+    # ---- lcm-ce: Dateien in die Package Registry, Release mit Links --------
+    - |
+      if [ -z "${LCMCE_RELEASE_TOKEN:-}" ]; then
+        echo "HINWEIS: LCMCE_RELEASE_TOKEN fehlt - kein Release am Spiegel."
+      else
+        CE="${CI_API_V4_URL}/projects/techeve%2Flcm-ce"
+        PKG_URL="${CE}/packages/generic/lcm/${NEXT_VERSION}"
+        LINKS='[]'
+        for f in bin/*; do
+          name=$(basename "$f")
+          case "$name" in lcm-trivyd-*) continue ;; esac
+          echo "lcm-ce: lade $name hoch ..."
+          curl -fsS -H "PRIVATE-TOKEN: $LCMCE_RELEASE_TOKEN" --upload-file "$f" "${PKG_URL}/${name}" > /dev/null
+          LINKS=$(jq -c --arg n "$name" --arg u "${PKG_URL}/${name}" '. + [{name:$n,url:$u,link_type:"package"}]' <<<"$LINKS")
+        done
+        jq -n --arg tag "$TAG" --arg name "LCM $TAG" --rawfile d changelog-snippet.md --argjson links "$LINKS"           '{tag_name:$tag, name:$name, description:$d, assets:{links:$links}}'           | curl -fsS -H "PRIVATE-TOKEN: $LCMCE_RELEASE_TOKEN" -H "Content-Type: application/json"               -d @- "${CE}/releases" > /dev/null
+        echo "lcm-ce: Release $TAG angelegt."
+      fi
+    # ---- GitHub: auf das gespiegelte Tag warten, Release + Assets ----------
+    - |
+      if [ -z "${GITHUB_RELEASE_TOKEN:-}" ]; then
+        echo "HINWEIS: GITHUB_RELEASE_TOKEN fehlt - kein Release auf GitHub."
+        exit 0
+      fi
+      GH="https://api.github.com/repos/Techeve/LCM"
+      AUTH="Authorization: Bearer $GITHUB_RELEASE_TOKEN"
+      # Spiegel-Sync anstoßen (falls Token es darf) und aufs Tag warten.
+      if [ -n "${LCMCE_RELEASE_TOKEN:-}" ]; then
+        MID=$(curl -fsS -H "PRIVATE-TOKEN: $LCMCE_RELEASE_TOKEN" "${CI_API_V4_URL}/projects/techeve%2Flcm-ce/remote_mirrors" | jq -r '.[0].id')
+        curl -fsS -X POST -H "PRIVATE-TOKEN: $LCMCE_RELEASE_TOKEN" "${CI_API_V4_URL}/projects/techeve%2Flcm-ce/remote_mirrors/${MID}/sync" -o /dev/null || true
+      fi
+      i=0
+      until curl -fsS -H "$AUTH" "${GH}/git/ref/tags/${TAG}" -o /dev/null 2>/dev/null; do
+        i=$((i+1))
+        if [ "$i" -gt 60 ]; then
+          echo "FEHLER: Tag $TAG ist nach 10 Minuten nicht auf GitHub angekommen (Push-Mirror prüfen)."
+          exit 1
+        fi
+        sleep 10
+      done
+      RELEASE_ID=$(jq -n --arg tag "$TAG" --arg name "LCM $TAG" --rawfile d changelog-snippet.md --argjson pre "$PRERELEASE"           '{tag_name:$tag, name:$name, body:$d, prerelease:$pre}'         | curl -fsS -H "$AUTH" -H "Content-Type: application/json" -d @- "${GH}/releases" | jq -r .id)
+      echo "GitHub: Release $TAG angelegt (id $RELEASE_ID)."
+      for f in bin/*; do
+        name=$(basename "$f")
+        case "$name" in lcm-trivyd-*) continue ;; esac
+        echo "GitHub: lade $name hoch ..."
+        curl -fsS -H "$AUTH" -H "Content-Type: application/octet-stream"           --data-binary @"$f"           "https://uploads.github.com/repos/Techeve/LCM/releases/${RELEASE_ID}/assets?name=${name}" > /dev/null
+      done
+      echo "GitHub: fertig."
 
 # Öffentlicher Spiegel: community und beta werden nach grünen Tests (und nach
 # dem release-Job, damit frische Release-Tags mitkommen) in das öffentliche

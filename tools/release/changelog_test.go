@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const betaChangelogBody = `## v1.30.8-beta.1 - 2026-08-25
@@ -93,4 +94,30 @@ func TestOhneFuehrendeBetasBleibtAllesBeimAlten(t *testing.T) {
 	if rest != body {
 		t.Errorf("ohne führende Betas darf sich der Rest nicht ändern:\n%s", rest)
 	}
+}
+
+// TestReleaseCommitsSindKeineEintraege: Die Buchhaltung des Zugs selbst
+// ("release: v… - Version & Changelog vorbereitet") gehört nicht ins
+// Changelog - sie stand bisher als Rauschen unter Sonstiges.
+func TestReleaseCommitsSindKeineEintraege(t *testing.T) {
+	commits := []Commit{
+		ParseCommit("aaaa1111bbbb", "release: v1.31.0-beta.1 - Version & Changelog vorbereitet", ""),
+		ParseCommit("cccc2222dddd", "fix(api): echter Fix", ""),
+	}
+	out := RenderChangelog("1.31.0", mustDate(t), commits)
+	if strings.Contains(out, "vorbereitet") {
+		t.Errorf("Release-Commit steht im Changelog:\n%s", out)
+	}
+	if !strings.Contains(out, "echter Fix") {
+		t.Errorf("der echte Eintrag fehlt:\n%s", out)
+	}
+}
+
+func mustDate(t *testing.T) (d time.Time) {
+	t.Helper()
+	d, err := time.Parse("2006-01-02", "2026-08-26")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
 }

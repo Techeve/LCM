@@ -19,7 +19,7 @@ Dienst läuft, startet beim Booten und liefert die Weboberfläche über HTTPS.
 
 ### Installation
 
-Das passende Paket aus dem [Release](https://gitlab.techeve.de/techeve/lcm/-/releases)
+Das passende Paket aus dem [Release](https://gitlab.techeve.de/techeve/lcm-ce/-/releases)
 laden (`lcm_<version>_amd64.deb` bzw. `..._arm64.deb`) und installieren:
 
 ```sh

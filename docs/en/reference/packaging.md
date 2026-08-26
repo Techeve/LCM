@@ -19,7 +19,7 @@ starts at boot, and serves the web interface over HTTPS.
 
 ### Installation
 
-Download the matching package from the [release](https://gitlab.techeve.de/techeve/lcm/-/releases)
+Download the matching package from the [release](https://gitlab.techeve.de/techeve/lcm-ce/-/releases)
 (`lcm_<version>_amd64.deb` or `..._arm64.deb`) and install it:
 
 ```sh

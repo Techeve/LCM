@@ -51,7 +51,7 @@ sudo apt update && sudo apt upgrade
 system.
 
 **Alternatively, without the repository** - download a single package from the
-[releases](https://gitlab.techeve.de/techeve/lcm/-/releases)
+[releases](https://gitlab.techeve.de/techeve/lcm-ce/-/releases)
 (`lcm_<version>_amd64.deb` or `..._arm64.deb`; check the architecture with
 `dpkg --print-architecture`) and install it:
 

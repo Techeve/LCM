@@ -1,8 +1,8 @@
 ---
 sidebar:
   order: 12
-title: Sicherheit-Tools (fail2ban / CrowdSec)
-description: fail2ban oder CrowdSec per Knopfdruck installieren und einrichten.
+title: Sicherheit-Tools (fail2ban / CrowdSec / SSH-2FA)
+description: fail2ban, CrowdSec oder SSH-2FA per Knopfdruck installieren und einrichten.
 ---
 
 LCM installiert und konfiguriert **fail2ban** oder **CrowdSec** per Knopfdruck auf
@@ -296,3 +296,40 @@ pacman. Auf **Alpine (apk)** ist die Option nicht verfügbar - dessen sshd ist
 standardmäßig ohne PAM gebaut. Beim Entfernen bleiben die TOTP-Secrets der
 Benutzer (`~/.google_authenticator`) liegen; beim erneuten Aktivieren gelten
 sie sofort wieder.
+
+## SSH-2FA (Einmalcode neben dem SSH-Key)
+
+Verlangt beim SSH-Login **zusätzlich zum Schlüssel einen TOTP-Einmalcode**,
+umgesetzt mit `google-authenticator-libpam` - dem in allen relevanten
+Distributionen paketierten PAM-Modul für TOTP (RFC 6238, funktioniert mit jeder
+Authenticator-App). sshd verlangt danach `publickey` **und**
+`keyboard-interactive`; der Passwort-Stack ist im auth-Bereich stillgelegt -
+**reine Passwort-Logins per SSH sind damit nicht mehr möglich**.
+
+Aktiviert wird wie bei den übrigen Tools: Server-Detail → **Aktionen →
+„Sicherheit-Tools" → SSH-2FA**. Die Aktion braucht vollen Sudo-Zugriff und
+läuft als protokollierter Job.
+
+**Sanfter Rollout.** Benutzer **ohne** eingerichtetes TOTP kommen weiterhin mit
+ihrem Key herein (`nullok`); wer eingerichtet ist, braucht den Code. Das
+Einrichten macht jeder Benutzer selbst: auf dem Server `google-authenticator`
+ausführen und den QR-Code mit der Authenticator-App scannen. Wer schon so weit
+ist, zeigt die Benutzer-Übersicht des Servers.
+
+**Aussperr-Schutz.** Der LCM-Zugangsbenutzer ist per `Match`-Block ausgenommen
+(reine Key-Anmeldung) - LCMs SSH-Client beantwortet keine Code-Abfragen, ohne
+die Ausnahme sperrte sich LCM mit dem Aktivieren selbst aus. Zusätzlich beweist
+eine **frische Verbindung nach dem Umbau**, dass der Zugang noch trägt;
+scheitert sie, wird alles zurückgerollt (fail-closed). Bestehende Sitzungen
+bleiben offen - den eigenen Code also einrichten, bevor man sich abmeldet.
+
+**Entfernen** stellt die ursprüngliche PAM-Konfiguration wieder her und nimmt
+das Drop-in zurück; die TOTP-Secrets der Benutzer bleiben erhalten - ein
+späteres Wieder-Aktivieren braucht kein neues Einrichten.
+
+Distributionen: Debian/Ubuntu und Arch (`libpam-google-authenticator`),
+Fedora direkt und RHEL-Klone über EPEL (`google-authenticator`), openSUSE
+(`google-authenticator-libpam`). **Alpine wird nicht unterstützt** - dessen
+sshd ist standardmäßig ohne PAM gebaut. Technisch landet die sshd-Anpassung im
+Drop-in `/etc/ssh/sshd_config.d/55-lcm-2fa.conf` (bewusst alphabetisch vor dem
+Härtungs-Drop-in), `/etc/pam.d/sshd` wird vor dem Umbau gesichert.
