@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.31.0-beta.1 - 2026-08-26
+## v1.31.0 - 2026-08-26
 
 ### 🚀 Features
 
@@ -10,6 +10,7 @@
 
 - **docker**: READMEs für die Docker-Hub-Repos, HTTPS-Korrektur (d9b32f6b)
 - v1.30.8 - Version & Changelog vorbereitet (0120aa3f)
+- v1.31.0-beta.1 - Version & Changelog vorbereitet (cf9aa8a1)
 
 ## v1.30.8 - 2026-08-26
 
