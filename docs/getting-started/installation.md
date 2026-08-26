@@ -181,8 +181,9 @@ docker compose logs -f     # Erststart: hier steht das generierte Admin-Passwort
 
 Beim ersten Start entstehen im Host-Ordner `./data` die Konfiguration, die
 SQLite-Datenbank und `version.json`. Das Runtime-Image ist minimal gehärtet
-(Alpine, non-root, `read-only`, `cap_drop: ALL`). Der Container spricht HTTP -
-für öffentliche Deployments einen Reverse-Proxy mit TLS davorschalten.
+(Alpine, non-root, `read-only`, `cap_drop: ALL`). Der Container spricht standardmäßig
+HTTPS mit selbstsigniertem Zertifikat - für öffentliche Deployments einen
+Reverse-Proxy mit echtem Zertifikat davorschalten.
 
 Details und alle Härtungs-Flags: [Docker-Betrieb](/guides/docker/) und
 [Paketierung](/reference/packaging/).

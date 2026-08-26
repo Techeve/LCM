@@ -35,6 +35,7 @@ import (
 func main() {
 	envOut := flag.String("env", "", "dotenv-Ausgabedatei (NEXT_VERSION, RELEASE_NEEDED, ...)")
 	changelogOut := flag.String("changelog", "", "Ausgabedatei für den Changelog-Abschnitt (Markdown)")
+	restOut := flag.String("rest", "", "Ausgabedatei für das Changelog OHNE Kopf und ohne die im Finale aufgegangenen Vorabversions-Abschnitte")
 	versionOverride := flag.String("version", "", "explizite Version statt Berechnung aus Commits (z.B. beim Beta->Final-Wechsel)")
 	flag.Parse()
 
@@ -86,6 +87,29 @@ func main() {
 	}
 
 	snippet := RenderChangelog(next, time.Now(), commits)
+
+	// Ein FINALES Release legt die führenden Vorabversions-Abschnitte des
+	// Changelogs mit in seinen Abschnitt (siehe changelog.go). Der Rest ohne
+	// die aufgegangenen Abschnitte geht an -rest, damit prepare-release.sh
+	// ihn statt des alten Changelog-Schwanzes einbaut.
+	if *restOut != "" {
+		body := ""
+		if raw, err := os.ReadFile("CHANGELOG.md"); err == nil {
+			// Kopfzeile "# Changelog" + Leerzeile abtrennen - eingefügt wird
+			// sie von prepare-release.sh wieder.
+			_, after, found := strings.Cut(string(raw), "\n")
+			if found {
+				body = strings.TrimLeft(after, "\n")
+			}
+		}
+		rest := body
+		if !strings.Contains(next, "-") {
+			snippet, rest = ConsolidateFinal(snippet, next, time.Now().Format("2006-01-02"), body)
+		}
+		if err := os.WriteFile(*restOut, []byte(rest), 0o644); err != nil {
+			fatal("changelog-rest schreiben: %v", err)
+		}
+	}
 
 	if *changelogOut != "" {
 		if err := os.WriteFile(*changelogOut, []byte(snippet), 0o644); err != nil {

@@ -176,8 +176,9 @@ docker compose logs -f     # first start: the generated admin password appears h
 
 On first start, the host folder `./data` gets the configuration, the SQLite
 database and `version.json`. The runtime image is minimally hardened (Alpine,
-non-root, `read-only`, `cap_drop: ALL`). The container speaks HTTP - put a
-reverse proxy with TLS in front for public deployments.
+non-root, `read-only`, `cap_drop: ALL`). The container speaks HTTPS with a
+self-signed certificate by default - put a reverse proxy with a real
+certificate in front for public deployments.
 
 Details and all hardening flags: [Docker operation](/en/guides/docker/) and
 [Packaging](/en/reference/packaging/).

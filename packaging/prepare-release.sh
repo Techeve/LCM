@@ -70,10 +70,14 @@ TMP_ENV=$(mktemp)
 TMP_SNIP=$(mktemp)
 trap 'rm -f "$TMP_ENV" "$TMP_SNIP"' EXIT
 
+# -rest liefert das bestehende Changelog ohne Kopfzeile - und bei einem
+# FINALEN Release ohne die führenden Vorabversions-Abschnitte: die gehen im
+# neuen Abschnitt auf (community sammelt die Betas ein, siehe
+# tools/release/changelog.go).
 if [ -n "$VER_ARG" ]; then
-  go run ./tools/release -version "$VER_ARG" -env "$TMP_ENV" -changelog "$TMP_SNIP"
+  go run ./tools/release -version "$VER_ARG" -env "$TMP_ENV" -changelog "$TMP_SNIP" -rest "${TMP_SNIP}.rest"
 else
-  go run ./tools/release -env "$TMP_ENV" -changelog "$TMP_SNIP"
+  go run ./tools/release -env "$TMP_ENV" -changelog "$TMP_SNIP" -rest "${TMP_SNIP}.rest"
 fi
 
 # shellcheck disable=SC1090
@@ -92,11 +96,9 @@ printf '%s\n' "$NEXT_VERSION" > VERSION
 
 # Neuen Abschnitt oben in CHANGELOG.md einfügen (bestehende Historie behalten).
 # tail -n +3 überspringt die "# Changelog"-Kopfzeile + Leerzeile.
-if [ -f CHANGELOG.md ]; then
-  tail -n +3 CHANGELOG.md > "${TMP_SNIP}.rest" || : > "${TMP_SNIP}.rest"
-else
-  : > "${TMP_SNIP}.rest"
-fi
+# Den Rest hat das Werkzeug geschrieben (siehe -rest oben); die Rückfalllinie
+# deckt nur den Fall ab, dass es gar kein Changelog gab.
+[ -f "${TMP_SNIP}.rest" ] || : > "${TMP_SNIP}.rest"
 {
   echo "# Changelog"
   echo
