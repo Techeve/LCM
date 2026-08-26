@@ -53,7 +53,7 @@ arm64); danach ist `lcm` ein normales apt-Paket. So kommen Updates automatisch
 mit dem System.
 
 **Alternativ ohne Repository** - ein einzelnes Paket aus den
-[Releases](https://gitlab.techeve.de/techeve/lcm/-/releases) laden
+[Releases](https://gitlab.techeve.de/techeve/lcm-ce/-/releases) laden
 (`lcm_<version>_amd64.deb` bzw. `..._arm64.deb`, Architektur via
 `dpkg --print-architecture`) und installieren:
 

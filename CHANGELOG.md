@@ -1,16 +1,23 @@
 # Changelog
 
-## v1.31.0 - 2026-08-26
+## v1.32.0 - 2026-08-26
 
 ### 🚀 Features
 
 - **release**: Betas gehen im Community-Finale auf (3a686e2f)
+- **release**: Release-Pakete auch am Spiegel und auf GitHub (a6c81b0f)
+
+### 🐛 Bugfixes
+
+- **ci**: Mirror-Anstoß in release:public ist verzeihend (28d3e4ba)
+- **ci**: release:public läuft in busybox-sh, nicht bash (87c0d2ca)
+- **release**: Release-Vorbereitungs-Commits sind keine Changelog-Einträge (37a44c32)
 
 ### 🔧 Sonstiges
 
 - **docker**: READMEs für die Docker-Hub-Repos, HTTPS-Korrektur (d9b32f6b)
+- Repo-Links auf den öffentlichen Spiegel, GitHub ergänzt, SSH-2FA dokumentiert (6491262b)
 - v1.30.8 - Version & Changelog vorbereitet (0120aa3f)
-- v1.31.0-beta.1 - Version & Changelog vorbereitet (cf9aa8a1)
 
 ## v1.30.8 - 2026-08-26
 

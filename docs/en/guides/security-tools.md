@@ -1,8 +1,8 @@
 ---
 sidebar:
   order: 12
-title: Security tools (fail2ban / CrowdSec)
-description: Install and configure fail2ban or CrowdSec at the push of a button.
+title: Security tools (fail2ban / CrowdSec / SSH 2FA)
+description: Install and configure fail2ban, CrowdSec or SSH 2FA at the push of a button.
 ---
 
 LCM installs and configures **fail2ban** or **CrowdSec** on a server at the push of
@@ -290,3 +290,38 @@ pacman. The option is not available on **Alpine (apk)** - its sshd is built
 without PAM by default. On removal, the users' TOTP secrets
 (`~/.google_authenticator`) are kept; they apply again immediately when the
 feature is re-enabled.
+
+## SSH 2FA (one-time code alongside the SSH key)
+
+Requires a **TOTP one-time code in addition to the key** for SSH logins,
+implemented with `google-authenticator-libpam` - the PAM module for TOTP
+packaged in every relevant distribution (RFC 6238, works with any
+authenticator app). sshd then requires `publickey` **and**
+`keyboard-interactive`; the password stack is silenced in the auth section -
+**plain password logins via SSH are no longer possible**.
+
+Enable it like the other tools: server detail → **Actions → "Security tools" →
+SSH 2FA**. The action needs full sudo access and runs as a logged job.
+
+**Soft rollout.** Users **without** enrolled TOTP still get in with their key
+(`nullok`); enrolled users need the code. Enrollment is done by each user
+themselves: run `google-authenticator` on the server and scan the QR code with
+an authenticator app. The server's user overview shows who is enrolled.
+
+**Lockout protection.** The LCM service user is exempted via a `Match` block
+(key-only login) - LCM's SSH client does not answer code prompts, and without
+the exemption LCM would lock itself out by enabling the feature. In addition, a
+**fresh connection after the change** proves that access still works; if it
+fails, everything is rolled back (fail-closed). Existing sessions stay open -
+so enroll your own code before logging out.
+
+**Removing** restores the original PAM configuration and withdraws the
+drop-in; the users' TOTP secrets are kept - re-enabling later needs no new
+enrollment.
+
+Distributions: Debian/Ubuntu and Arch (`libpam-google-authenticator`), Fedora
+directly and RHEL clones via EPEL (`google-authenticator`), openSUSE
+(`google-authenticator-libpam`). **Alpine is not supported** - its sshd is
+built without PAM by default. Technically the sshd change lives in the drop-in
+`/etc/ssh/sshd_config.d/55-lcm-2fa.conf` (deliberately sorted before the
+hardening drop-in), and `/etc/pam.d/sshd` is backed up before the change.
