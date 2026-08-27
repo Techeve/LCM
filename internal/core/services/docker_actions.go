@@ -309,7 +309,11 @@ func (s *ServerService) startDockerJob(server *domain.Server, name, script, acto
 // Ein leeres Skript bedeutet: nur Inventar-Rescan.
 func (s *ServerService) runDockerJob(job *domain.Job, server *domain.Server, script, actor string, rescanCVEs bool) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "demo-server: docker-aktion simuliert (kein ssh-kontakt)", ptrInt(0), nil)
+		output := "demo-server: docker-inventar aktualisiert (kein ssh-kontakt)"
+		if script != "" {
+			output = demoSimulateDockerUpdate(s.servers, server)
+		}
+		s.jobs.Complete(job, output, ptrInt(0), nil)
 		return
 	}
 	conn, err := s.connect(server)

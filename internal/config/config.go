@@ -59,6 +59,14 @@ type Config struct {
 	// Datenbank unbeabsichtigt mit Demodaten befüllen.
 	DemoMode bool `json:"-"`
 
+	// DemoPublic härtet den Demo-Modus für eine ÖFFENTLICHE Demo-Instanz
+	// (CLI-Flag --demo-public, impliziert --demo): Die Login-Seite zeigt die
+	// Demo-Zugänge an, und Endpunkte, die Zugänge verändern, Daten nach außen
+	// tragen oder ausgehende Verbindungen zu Besucher-Zielen aufbauen könnten,
+	// sind gesperrt (siehe middlewares.DemoGuard). Wie DemoMode bewusst nicht
+	// persistiert.
+	DemoPublic bool `json:"-"`
+
 	// DevMode ist der Entwicklungsmodus (CLI-Flag --dev): erlaubt
 	// unverschlüsseltes HTTP und schaltet die 2FA-Pflicht für Administratoren
 	// beim Erst-Seeding ab. Wie DemoMode bewusst NICHT persistiert (json:"-"),

@@ -182,6 +182,41 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			DiskTotalMB: 81920, DiskUsedMB: 22000, IPAddresses: "127.0.0.1",
 			Reachable: true, SSHHardened: true, FirewallActive: true, IsDemo: true,
 		},
+		{
+			// mail01: klassischer Mailserver mit anstehendem Security-Update -
+			// zusammen mit web01 das Ziel des "Nächtliche Updates"-Zeitplans.
+			Name: "mail01", Host: "10.10.0.14", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
+			HostKeyFingerprint: "SHA256:DEMOmail01gggggggggggggggggggggggggggggg", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO mail01",
+			OSName: "Debian GNU/Linux", OSVersion: "12 (bookworm)", OSID: "debian", OSVersionID: "12",
+			Virtualization: "kvm", PackageManager: "apt", KernelVersion: "6.1.0-13-amd64",
+			CPUModel: "Intel Xeon E5-2670", CPUCores: 2, MemTotalMB: 8192, MemUsedMB: 4100,
+			DiskTotalMB: 61440, DiskUsedMB: 23000, IPAddresses: "10.10.0.14",
+			ListeningPackages: "postfix, dovecot-core, openssh-server",
+			FirewallTool:      "nftables", FirewallAllowedPorts: "25,143,465,587,993",
+			Reachable: true, SSHHardened: true, FirewallActive: true, IsDemo: true,
+			Fail2banInstalled: true, Fail2banActive: true,
+		},
+		{
+			// backup01: Sicherungsziel mit großem, stetig wachsendem Volume -
+			// zweiter Kandidat für die Speicherprognose.
+			Name: "backup01", Host: "10.10.0.15", SSHPort: 2222, ServiceUser: domain.DefaultServiceUser,
+			HostKeyFingerprint: "SHA256:DEMObackup01hhhhhhhhhhhhhhhhhhhhhhhhhhhh", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO backup01",
+			OSName: "Ubuntu", OSVersion: "24.04 LTS", OSID: "ubuntu", OSVersionID: "24.04",
+			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.8.0-31-generic",
+			CPUModel: "Intel Core i3-N305", CPUCores: 8, MemTotalMB: 16384, MemUsedMB: 3900,
+			DiskTotalMB: 2097152, DiskUsedMB: 1650000, IPAddresses: "10.10.0.15",
+			Reachable: true, SSHHardened: true, FirewallActive: true, IsDemo: true,
+		},
+		{
+			// pi01: ARM-Kleinstrechner - zeigt, dass Architektur egal ist.
+			Name: "pi01", Host: "10.10.0.40", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
+			HostKeyFingerprint: "SHA256:DEMOpi01iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO pi01",
+			OSName: "Raspberry Pi OS", OSVersion: "12 (bookworm)", OSID: "raspbian", OSVersionID: "12",
+			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.6.20+rpt-rpi-v8",
+			CPUModel: "ARM Cortex-A76 (Raspberry Pi 5)", CPUCores: 4, MemTotalMB: 8192, MemUsedMB: 1200,
+			DiskTotalMB: 61440, DiskUsedMB: 8000, IPAddresses: "10.10.0.40",
+			Reachable: true, SSHHardened: false, FirewallActive: false, IsDemo: true,
+		},
 	}
 	for i := range demoServers {
 		if err := db.Create(&demoServers[i]).Error; err != nil {
@@ -216,6 +251,15 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		{ServerRef: domain.ServerRef(demoServers[6].ID), Name: "openssh-server", Version: "9.6p1-3"},
 		{ServerRef: domain.ServerRef(demoServers[7].ID), Name: "lcm", Version: "1.6.0"},
 		{ServerRef: domain.ServerRef(demoServers[7].ID), Name: "openssh-server", Version: "9.2p1-2"},
+		// mail01: Security-Update für postfix steht aus.
+		{ServerRef: domain.ServerRef(demoServers[8].ID), Name: "postfix", Version: "3.7.9-0", CandidateVersion: "3.7.11-0", Security: true},
+		{ServerRef: domain.ServerRef(demoServers[8].ID), Name: "dovecot-core", Version: "2.3.19.1-2"},
+		{ServerRef: domain.ServerRef(demoServers[8].ID), Name: "openssh-server", Version: "9.2p1-2"},
+		// backup01: normales Update verfügbar.
+		{ServerRef: domain.ServerRef(demoServers[9].ID), Name: "borgbackup", Version: "1.2.7-1", CandidateVersion: "1.2.8-1"},
+		{ServerRef: domain.ServerRef(demoServers[9].ID), Name: "openssh-server", Version: "9.6p1-3"},
+		{ServerRef: domain.ServerRef(demoServers[10].ID), Name: "raspberrypi-kernel", Version: "6.6.20-1"},
+		{ServerRef: domain.ServerRef(demoServers[10].ID), Name: "openssh-server", Version: "9.2p1-2"},
 	})
 	db.Create(&[]domain.AptRepository{
 		{ServerID: demoServers[0].ID, Line: "deb https://deb.debian.org/debian bookworm main"},
@@ -316,6 +360,13 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 				DiskTotalMB: 102400, DiskUsedMB: int64(82000 + d*310),
 				Samples: 24, LastSampleAt: day,
 			},
+			// backup01 wächst mit jeder Sicherung stetig - zweiter Kandidat
+			// für die Speicherprognose.
+			domain.StorageHistory{
+				ServerID: demoServers[9].ID, Day: day.Format("2006-01-02"),
+				DiskTotalMB: 2097152, DiskUsedMB: int64(1560000 + d*3000),
+				Samples: 24, LastSampleAt: day,
+			},
 		)
 	}
 	db.Create(&storageHist)
@@ -403,6 +454,56 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		}
 	}
 
+	// 5b. Aktivität der letzten zwei Wochen: nächtliche Update-Läufe,
+	// wöchentliche Skripte, ein Docker-Update und vereinzelte Fehlschläge -
+	// damit Jobs-Seite und Server-Historien nach Betrieb aussehen, nicht
+	// nach Erstinstallation.
+	db01 := demoServers[1].ID
+	mail01 := demoServers[8].ID
+	backup01 := demoServers[9].ID
+	var history []domain.Job
+	for d := 14; d >= 1; d-- {
+		night := base.AddDate(0, 0, -d).Add(15 * time.Hour) // 03:00 Folgetag rel. base 12:00
+		for _, sid := range []uint{web01, db01, mail01} {
+			id := sid
+			history = append(history, domain.Job{
+				ServerID: &id, Type: "update", Name: "Nächtliche Updates", Status: domain.JobStatusSuccess,
+				TriggeredBy: "scheduler", ExitCode: ptrInt(0),
+				Output:    "Reading package lists...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.",
+				StartedAt: ptrTime(night), FinishedAt: ptrTime(night.Add(25 * time.Second)),
+			})
+		}
+		if d%7 == 0 {
+			id := backup01
+			history = append(history, domain.Job{
+				ServerID: &id, Type: "script", Name: "Backup-Integritätsprüfung", Status: domain.JobStatusSuccess,
+				TriggeredBy: "scheduler", ExitCode: ptrInt(0),
+				Output:    "$ borg check /srv/backups/repo\nArchive consistency check complete, no problems found.",
+				StartedAt: ptrTime(night.Add(time.Hour)), FinishedAt: ptrTime(night.Add(time.Hour + 4*time.Minute)),
+			})
+		}
+	}
+	// Fehlschläge: cache01 fällt seit einer Woche bei jedem Health-Check durch.
+	for d := 7; d >= 1; d-- {
+		id := cache01
+		at := base.AddDate(0, 0, -d).Add(6 * time.Hour)
+		history = append(history, domain.Job{
+			ServerID: &id, Type: "health", Name: "Health-Check (Ping)", Status: domain.JobStatusFailed,
+			TriggeredBy: "scheduler", Output: "FEHLER: Verbindung abgelehnt (Host offline)",
+			StartedAt: ptrTime(at), FinishedAt: ptrTime(at.Add(5 * time.Second)),
+		})
+	}
+	dockerAt := base.AddDate(0, 0, -3).Add(9 * time.Hour)
+	history = append(history, domain.Job{
+		ServerID: &web01, Type: "docker-update", Name: "Compose-Update: webshop", Status: domain.JobStatusSuccess,
+		TriggeredBy: "admin", ExitCode: ptrInt(0),
+		Output:    "$ docker compose pull && docker compose up -d\nPulling redis:7 ... done\nRecreating webshop-cache-1 ... done",
+		StartedAt: ptrTime(dockerAt), FinishedAt: ptrTime(dockerAt.Add(40 * time.Second)),
+	})
+	if err := db.Create(&history).Error; err != nil {
+		return fmt.Errorf("demo-job-historie: %w", err)
+	}
+
 	// 6. Benachrichtigungskanal + Alarmregel (damit die Alarme-Seite im Demo
 	// bereits gefüllt ist und der Kanal beim Anlegen einer Regel wählbar ist).
 	channel := domain.NotificationChannel{
@@ -412,13 +513,49 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 	if err := db.Create(&channel).Error; err != nil {
 		return fmt.Errorf("demo-channel: %w", err)
 	}
-	db.Create(&[]domain.AlertRule{
+	alertRules := []domain.AlertRule{
 		{Name: "Kritische CVEs melden", Type: domain.AlertTypeSecurityCVE, Enabled: true,
 			ChannelID: &channel.ID, Severity: "critical", MinSeverity: domain.SeverityCritical},
 		{Name: "Festplatte fast voll", Type: domain.AlertTypeDiskCapacity, Enabled: true,
 			ChannelID: &channel.ID, Severity: "warning", ThresholdPercent: 90},
 		{Name: "Neustart erforderlich", Type: domain.AlertTypeRebootRequired, Enabled: true,
 			ChannelID: &channel.ID, Severity: "warning"},
+	}
+	db.Create(&alertRules)
+
+	// Ausgelöste Alarme der letzten Tage - die Alarm-Historie soll den
+	// Regelbestand in Aktion zeigen.
+	db.Create(&[]domain.AlertEvent{
+		{RuleID: alertRules[0].ID, ServerID: &web01, RuleName: alertRules[0].Name, ServerName: "web01",
+			Type: domain.AlertTypeSecurityCVE, Severity: "critical", Code: "cve:CVE-2023-0286",
+			Description: "Kritische Sicherheitslücke CVE-2023-0286 in openssl (Fix verfügbar: 3.0.14-1)",
+			Notified:    true, CreatedAt: base.AddDate(0, 0, -2)},
+		{RuleID: alertRules[1].ID, ServerID: &db01, RuleName: alertRules[1].Name, ServerName: "db01",
+			Type: domain.AlertTypeDiskCapacity, Severity: "warning", Code: "disk:/",
+			Description: "Festplattenbelegung 89 % (Schwellwert 90 % in Kürze erreicht, Prognose: 11 Tage)",
+			Notified:    true, CreatedAt: base.AddDate(0, 0, -1)},
+		{RuleID: alertRules[2].ID, ServerID: &db01, RuleName: alertRules[2].Name, ServerName: "db01",
+			Type: domain.AlertTypeRebootRequired, Severity: "warning", Code: "reboot-required",
+			Description: "Neustart erforderlich (Kernel-Update eingespielt)",
+			Notified:    true, CreatedAt: base.AddDate(0, 0, -1).Add(2 * time.Hour)},
+	})
+
+	// Zweite Gruppe "Staging" mit eigenem Wartungs-Zeitplan - zeigt Gruppen
+	// samt Schedule/Rules im gefüllten Zustand.
+	staging := domain.ServerGroup{Name: "Staging", Description: "Test- und Staging-Systeme (Demo)"}
+	if err := db.Create(&staging).Error; err != nil {
+		return err
+	}
+	db.Model(&staging).Association("Servers").Append(&demoServers[3], &demoServers[4], &demoServers[10])
+	nightly := domain.Schedule{GroupID: staging.ID, Name: "Nächtliche Updates", CronExpr: "0 3 * * *", Enabled: true}
+	if err := db.Create(&nightly).Error; err != nil {
+		return err
+	}
+	db.Create(&[]domain.Rule{
+		{GroupID: staging.ID, ScheduleID: &nightly.ID, Name: "Alle Pakete aktualisieren",
+			Type: domain.RuleTypeUpdate, Enabled: true},
+		{GroupID: staging.ID, ScheduleID: &nightly.ID, Name: "Neustart bei Bedarf",
+			Type: domain.RuleTypeRebootIfNeeded, Enabled: true},
 	})
 
 	// Beispiel-Allowlists (gemeinsamer Pool) - auswählbar in Firewall-Regeln

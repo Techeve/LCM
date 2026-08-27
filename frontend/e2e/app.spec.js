@@ -108,7 +108,7 @@ test.describe('LCM', () => {
     await page.goto('/#/');
     await expect(page.locator('h1')).toContainText('Dashboard');
     // Zähler über der Tabelle (die Seitennavigation darunter erscheint erst ab Seite 2).
-    await expect(page.locator('body')).toContainText('8 Server');
+    await expect(page.locator('body')).toContainText('11 Server');
 
     // OS-Dropdown ist mit den echten Werten befüllt.
     await expect(page.locator('#f-os option')).toContainText(['alle', 'Ubuntu']);
@@ -121,7 +121,7 @@ test.describe('LCM', () => {
 
     // Reset stellt alle Server wieder her.
     await page.getByRole('button', { name: 'Reset' }).click();
-    await expect(page.locator('body')).toContainText('8 Server');
+    await expect(page.locator('body')).toContainText('11 Server');
 
     // Status-Filter „Kritisch“ zeigt nur den roten Server (cache01).
     await page.selectOption('#f-status', 'red');
@@ -2117,7 +2117,7 @@ test.describe('LCM', () => {
     await loginAsAdmin(page);
     await page.goto('/#/jobs');
     // Filter-Dropdowns sind mit distinkten Werten befüllt.
-    await expect(page.locator('#f-type option', { hasText: 'update' })).toHaveCount(1);
+    await expect(page.locator('#f-type option', { hasText: /^update$/ })).toHaveCount(1);
     await expect(page.locator('#f-by option', { hasText: 'scheduler' })).toHaveCount(1);
     // Zähler über der Tabelle vorhanden (Seitennavigation erst ab Seite 2).
     await expect(page.locator('body')).toContainText('Job(s)');

@@ -157,7 +157,7 @@ func (s *ServerService) Reboot(scope repositories.AccessScope, id uint, actor st
 
 func (s *ServerService) runRebootJob(job *domain.Job, server *domain.Server, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "demo-server: neustart simuliert (kein ssh-kontakt)", ptrInt(0), nil)
+		s.jobs.Complete(job, demoSimulateReboot(s.servers, server), ptrInt(0), nil)
 		return
 	}
 	conn, err := s.connect(server)
