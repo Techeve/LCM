@@ -81,6 +81,8 @@ type Deps struct {
 	// AgentBinDirs sind die Suchpfade für die auslieferbaren lcm-agent-
 	// Binaries (Download-Endpunkt). leer/nil => Route liefert 404.
 	AgentBinDirs []string
+	// DemoPublic aktiviert die Sperren der öffentlichen Demo (DemoGuard).
+	DemoPublic bool
 }
 
 // New erstellt die Fiber-App mit allen Routen und Middlewares.
@@ -209,6 +211,12 @@ func New(deps Deps) *fiber.App {
 	// LCM Remote: lcm-agent-Binary für die manuelle Installation (öffentlich,
 	// von der IP-Allowlist ausgenommen - siehe controllers.AgentDownload).
 	api.Get("/agent/download/:arch", controllers.AgentDownload(deps.AgentBinDirs))
+
+	// Öffentliche Demo: Sperren für Zugangs-Manipulation, Daten-Abfluss und
+	// ausgehende Verbindungen (siehe middlewares.DemoGuard).
+	if deps.DemoPublic {
+		api.Use(middlewares.DemoGuard())
+	}
 
 	// System-Info: Version, Build, Uptime (Controller ohne DB-Schicht).
 	api.Get("/system/info", systemCtrl.Info)

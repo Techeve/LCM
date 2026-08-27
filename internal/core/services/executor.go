@@ -265,9 +265,10 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 		return
 	}
 
-	// Demo-Server werden nie kontaktiert.
+	// Demo-Server werden nie kontaktiert - die Simulation liefert plausiblen
+	// Output und zieht den Datenbestand nach (siehe demo_sim.go).
 	if server.IsDemo {
-		e.jobs.Complete(job, "demo-server: ausführung simuliert (kein ssh-kontakt)", ptrInt(0), nil)
+		e.jobs.Complete(job, demoRuleOutput(e.servers, server, rule), ptrInt(0), nil)
 		return
 	}
 

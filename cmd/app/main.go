@@ -68,6 +68,7 @@ func main() {
 	dataDir := flag.String("data", "", "Datenverzeichnis für config.json, Datenbank und version.json (Default: Verzeichnis des Binaries; für Container z.B. /data)")
 	debug := flag.Bool("debug", false, "Debug-Modus: hebt das Log-Level auf debug an")
 	demo := flag.Bool("demo", false, "Demo-Modus: initialisiert mit Testdaten (Server, Pakete, Job-Historien)")
+	demoPublic := flag.Bool("demo-public", false, "Öffentliche Demo-Instanz (impliziert --demo): zeigt Demo-Zugänge auf der Login-Seite und sperrt Zugangs-Änderungen, Backups-Export und ausgehende Verbindungen")
 	dev := flag.Bool("dev", false, "Entwicklungsmodus: erlaubt unverschlüsseltes HTTP")
 	showVersion := flag.Bool("version", false, "Version ausgeben und beenden")
 	healthcheck := flag.Bool("healthcheck", false, "Eigenen Health-Endpunkt prüfen und mit 0 (gesund) bzw. 1 beenden - für den Docker-HEALTHCHECK")
@@ -97,7 +98,7 @@ func main() {
 		return
 	}
 
-	if err := run(*configPath, *dataDir, *debug, *demo, *dev); err != nil {
+	if err := run(*configPath, *dataDir, *debug, *demo || *demoPublic, *dev, *demoPublic); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -176,7 +177,7 @@ func rotateDBKey(configPath, dataDir string) error {
 	return nil
 }
 
-func run(configPath, dataDir string, debug, demo, dev bool) error {
+func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Datenverzeichnis: dorthin kommen config.json, Datenbank, lcm.key
 	// und version.json - im Container ist das der Volume-Mountpoint.
 	dataDir, err := resolveDataDir(dataDir)
@@ -202,6 +203,7 @@ func run(configPath, dataDir string, debug, demo, dev bool) error {
 	if demo {
 		cfg.DemoMode = true
 	}
+	cfg.DemoPublic = demoPublic
 	cfg.DevMode = dev
 
 	// Master-Key für die At-Rest-Verschlüsselung (AES-256-GCM) laden
@@ -827,6 +829,7 @@ func run(configPath, dataDir string, debug, demo, dev bool) error {
 	app = router.New(router.Deps{
 		Restart:                  restart,
 		Health:                   healthMonitor,
+		DemoPublic:               cfg.DemoPublic,
 		IPAllowlist:              ipAllowlist,
 		TrustProxyHeader:         cfg.TrustProxyHeader,
 		Auth:                     authService,

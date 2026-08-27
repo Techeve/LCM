@@ -1826,7 +1826,7 @@ func (s *ServerService) startPackageJob(scope repositories.AccessScope, id uint,
 // mit dem Job verknüpft) und liest danach den Paketbestand neu ein.
 func (s *ServerService) runPackageJob(job *domain.Job, server *domain.Server, script, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "demo-server: paket-update simuliert (kein ssh-kontakt)", ptrInt(0), nil)
+		s.jobs.Complete(job, demoSimulatePackageUpdate(s.servers, server), ptrInt(0), nil)
 		return
 	}
 	conn, err := s.connect(server)

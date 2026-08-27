@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.33.0 - 2026-08-27
+
+### 🚀 Features
+
+- **demo**: oeffentlicher demo-modus --demo-public mit echter simulation (2b684222)
+
+### ♻️ Refactoring
+
+- **demo**: login-integration der demo-zugaenge wieder entfernt (add4417f)
+
+### 🔧 Sonstiges
+
+- **readme**: englisches README als Standard, deutsche Fassung daneben (d422fc6b)
+
 ## v1.32.0 - 2026-08-26
 
 ### 🚀 Features
