@@ -26,11 +26,12 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		return err
 	}
 	mgrHash, _ := services.HashPassword("demo-passwort-1234")
-	if err := db.Create(&domain.User{
+	demoManager := domain.User{
 		Username: "ops.manager", Email: "ops.manager@demo.local",
 		PasswordHash: mgrHash, FirstName: "Olivia", LastName: "Ops",
 		Active: true, Roles: []domain.Role{*managerRole},
-	}).Error; err != nil {
+	}
+	if err := db.Create(&demoManager).Error; err != nil {
 		return fmt.Errorf("demo-manager: %w", err)
 	}
 
@@ -422,6 +423,11 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		return err
 	}
 	db.Model(&group).Association("Servers").Append(&demoServers[0], &demoServers[1])
+	// Verwaltungs-User der Gruppe: erst diese Zuordnung macht die Gruppe (und
+	// ihre Server) für ops.manager sichtbar - ohne sie bliebe seine Ansicht
+	// leer. Bewusst NUR diese Gruppe, damit die Demo die Mandantentrennung
+	// zeigt: der Manager sieht zwei der elf Server.
+	db.Model(&group).Association("Managers").Append(&demoManager)
 	// Linux-Benutzer der Gruppe zuordnen (werden auf ihre Server verteilt).
 	db.Model(&group).Association("LinuxUsers").Append(&linuxUsers[0], &linuxUsers[1])
 	// anna direkt an web01 - nicht über die Gruppe, damit die Demo beide

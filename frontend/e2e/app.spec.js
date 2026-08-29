@@ -1367,6 +1367,28 @@ test.describe('LCM', () => {
     await expect(sysRules.locator('tr', { hasText: 'Docker-Check' })).toContainText('System-Sync');
   });
 
+  test('Servergruppen: Verwaltungs-User zuweisen und entfernen', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/#/groups');
+
+    // Produktion bringt den Demo-Manager bereits mit - ohne diese Zuordnung
+    // saehe ein Benutzer der Manager-Rolle ueberhaupt keine Server.
+    await page.getByRole('button', { name: 'Produktion' }).click();
+    const managers = page.getByTestId('group-managers-table');
+    await expect(managers).toContainText('ops.manager');
+
+    // Zuweisen in einer zweiten Gruppe und wieder entfernen.
+    await page.getByRole('button', { name: 'Staging' }).click();
+    await expect(managers).toContainText('Kein Verwaltungs-User zugeordnet');
+    await page.locator('select').filter({ hasText: 'Verwaltungs-User hinzufügen' })
+      .selectOption({ label: 'ops.manager (Olivia Ops)' });
+    await page.getByRole('button', { name: 'Verwaltungs-User hinzufügen' }).click();
+    await expect(managers).toContainText('ops.manager');
+
+    await page.getByRole('button', { name: 'Verwaltungs-User entfernen' }).click();
+    await expect(managers).toContainText('Kein Verwaltungs-User zugeordnet');
+  });
+
   test('Servergruppe: Name und Beschreibung nachträglich bearbeitbar', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto('/#/groups');

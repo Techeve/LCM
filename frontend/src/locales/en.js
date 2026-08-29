@@ -834,6 +834,13 @@ export default {
     colName: 'Name',
     colHost: 'Host',
     noServersAssigned: 'No servers assigned.',
+    managersHeading: 'Managers',
+    managersHint:
+      'Users with the manager role only see groups they are listed in here - together with those groups\' servers. Without an entry their view stays empty. Administrators always see everything.',
+    addManagerPlaceholder: 'Add manager …',
+    colUser: 'User',
+    colEmail: 'Email',
+    noManagersAssigned: 'No manager assigned.',
     schedulesTitle: 'Schedules',
     newSchedule: 'New schedule',
     schedulesIntro:
@@ -927,6 +934,8 @@ export default {
       groupCreated: 'Group created.',
       serverAdded: 'Server added.',
       serverRemoved: 'Server removed.',
+      managerAdded: 'Manager assigned.',
+      managerRemoved: 'Manager removed.',
       schedSaved: 'Schedule saved.',
       schedCreated: 'Schedule created.',
       schedTriggered: 'Schedule triggered.',
@@ -947,6 +956,8 @@ export default {
     a11y: {
       addServer: 'Add server',
       removeServer: 'Remove server',
+      addManager: 'Add manager',
+      removeManager: 'Remove manager',
       deleteSchedule: 'Delete schedule',
       deleteRule: 'Delete rule',
     },

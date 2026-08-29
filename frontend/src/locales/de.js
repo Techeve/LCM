@@ -838,6 +838,13 @@ export default {
     colName: 'Name',
     colHost: 'Host',
     noServersAssigned: 'Keine Server zugeordnet.',
+    managersHeading: 'Verwaltungs-User',
+    managersHint:
+      'Benutzer der Manager-Rolle sehen ausschließlich Gruppen, in denen sie hier eingetragen sind - samt deren Servern. Ohne Eintrag bleibt ihre Ansicht leer. Administratoren sehen ohnehin alles.',
+    addManagerPlaceholder: 'Verwaltungs-User hinzufügen …',
+    colUser: 'Benutzer',
+    colEmail: 'E-Mail',
+    noManagersAssigned: 'Kein Verwaltungs-User zugeordnet.',
     schedulesTitle: 'Schedules',
     newSchedule: 'Neuer Schedule',
     schedulesIntro:
@@ -931,6 +938,8 @@ export default {
       groupCreated: 'Gruppe erstellt.',
       serverAdded: 'Server hinzugefügt.',
       serverRemoved: 'Server entfernt.',
+      managerAdded: 'Verwaltungs-User zugewiesen.',
+      managerRemoved: 'Verwaltungs-User entfernt.',
       schedSaved: 'Schedule gespeichert.',
       schedCreated: 'Schedule erstellt.',
       schedTriggered: 'Schedule ausgelöst.',
@@ -951,6 +960,8 @@ export default {
     a11y: {
       addServer: 'Server hinzufügen',
       removeServer: 'Server entfernen',
+      addManager: 'Verwaltungs-User hinzufügen',
+      removeManager: 'Verwaltungs-User entfernen',
       deleteSchedule: 'Schedule löschen',
       deleteRule: 'Rule löschen',
     },

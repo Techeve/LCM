@@ -32,6 +32,16 @@ export class GroupsApi {
     return this.#client.post(`/server-groups/${id}/remove-server`, { server_id: serverId });
   }
 
+  /** Verwaltungs-User dieser Gruppe zuweisen - erst dadurch sieht ein
+   *  Benutzer der Manager-Rolle die Gruppe und ihre Server. */
+  assignManager(id, userId) {
+    return this.#client.post(`/server-groups/${id}/assign-manager`, { user_id: userId });
+  }
+
+  removeManager(id, userId) {
+    return this.#client.post(`/server-groups/${id}/remove-manager`, { user_id: userId });
+  }
+
   /** Gruppe auflösen (löschen). System-Gruppe ist geschützt (409). */
   disband(id) {
     return this.#client.post(`/server-groups/${id}/disband`, {});
