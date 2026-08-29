@@ -108,6 +108,32 @@ workflow:
       when: never
     - when: on_success
 
+# Wie .skip-on-bot-pipelines, zusaetzlich aber nicht auf den Release-Branches.
+#
+# Ein Merge dorthin bringt genau den Stand, den die MR-Pipeline schon geprueft
+# hat: community, beta und enterprise tragen "push = niemand", bekommen
+# Aenderungen also ausschliesslich per Merge Request und sind damit stets
+# Vorfahre des Quellbranches - der Merge-Commit traegt denselben Baum wie der
+# getestete Stand. Dazwischen kann nichts rutschen, weil
+# "only_allow_merge_if_pipeline_succeeds" gesetzt ist und GitLab diese
+# Bedingung an den jeweils LETZTEN Commit des Quellbranches bindet.
+#
+# Was hier bewusst NICHT haengt:
+#   frontend  liefert das Artefakt frontend/dist, das binaries per go:embed
+#             einbettet - der Job baut, er prueft nicht nur.
+#   e2e       bleibt der Waechter vor Release und Deploy. Er prueft als
+#             einziger das ausgelieferte Binary, und auf den Release-Branches
+#             wird das mit der Release-Version gebaut, nicht mit der aus dem MR.
+.nicht-auf-release-branch:
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $GITHUB_ISSUE_SYNC == "true"
+      when: never
+    - if: $CI_COMMIT_BRANCH =~ /^(community|beta|enterprise)$/
+      when: never
+    - when: on_success
+
 # Der Cache wird pro Job EIN- UND AUSGEPACKT - bei ~75.000 Dateien und 2 GB
 # kostet allein das Einpacken 130-185s. Deshalb tragen nur die Jobs, die den
 # Cache tatsaechlich fuellen, "pull-push"; alle uebrigen lesen ihn nur
@@ -292,7 +318,7 @@ frontend:
 
 backend:
   stage: test
-  extends: .skip-on-bot-pipelines
+  extends: .nicht-auf-release-branch
   image: $GO_IMAGE
   cache: *go-cache
   script:
@@ -315,7 +341,7 @@ backend:
 
 govulncheck:
   stage: test
-  extends: .skip-on-bot-pipelines
+  extends: .nicht-auf-release-branch
   image: $GO_IMAGE
   cache: *go-cache-ro
   script:
@@ -446,8 +472,13 @@ binaries:
   cache: *go-cache-cross
   needs:
     - frontend
-    - backend
-    - govulncheck
+    # optional: Auf den Release-Branches laufen diese beiden nicht (siehe
+    # .nicht-auf-release-branch). Ohne die Markierung braeche die Pipeline
+    # dort mit "needs job that is not in any previous stage" ab.
+    - job: backend
+      optional: true
+    - job: govulncheck
+      optional: true
     - job: version
       optional: true
   script:
@@ -720,9 +751,11 @@ upgrade-test:
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
-  # e2e explizit hier: binaries hängt bereits an frontend/backend/govulncheck,
-  # aber NICHT an e2e - ohne diese Zeile liefe das Release trotz rotem e2e.
-  # Damit ist das Release (und der davon abhängige Deploy) an ALLE Tests gebunden.
+  # e2e explizit hier: binaries hängt nicht daran - ohne diese Zeile liefe das
+  # Release trotz rotem e2e. Auf den Release-Branches ist e2e der einzige
+  # verbliebene Testjob (siehe .nicht-auf-release-branch); diese Zeile ist damit
+  # die Sicherung, die Release und den davon abhängigen Deploy an einen grünen
+  # Testlauf gegen das ausgelieferte Binary bindet.
   needs: [version, binaries, packages:deb, e2e]
   rules:
     - if: $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "enterprise"
@@ -914,7 +947,14 @@ release:public:
 mirror:public:
   stage: deploy
   image: alpine:3
-  needs: [frontend, backend, govulncheck, e2e, release]
+  needs:
+    - frontend
+    - job: backend
+      optional: true
+    - job: govulncheck
+      optional: true
+    - e2e
+    - release
   rules:
     - if: $RENOVATE_BOT == "true"
       when: never
