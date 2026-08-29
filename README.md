@@ -12,11 +12,19 @@
 </p>
 
 <p align="center">
+  <a href="https://lcm-demo.techeve.de"><strong>Live demo</strong></a> ·
   <a href="https://techeve.de/produkte/lcm/">Website</a> ·
   <a href="https://doc.techeve.de/lcm/en/">Documentation</a> ·
   <a href="https://github.com/Techeve/LCM/releases">Releases</a> ·
   <a href="README.de.md">Deutsch</a>
 </p>
+
+> **Try it without installing anything: [lcm-demo.techeve.de](https://lcm-demo.techeve.de)**
+> Sign in with `demo` / `Just-Testing!26` (administrator) or `demo-manager`
+> (restricted view - sees only its own group). The demo runs against simulated
+> servers, so its scope is deliberately limited: no real SSH connections, and
+> changing accounts, exporting backups or adding servers is disabled. It resets
+> to its initial state every 24 hours - feel free to break things.
 
 LCM is a self-hosted control center for Linux servers. Install it once - a single
 binary with no external dependencies - and manage any number of machines over
