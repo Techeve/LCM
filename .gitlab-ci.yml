@@ -51,8 +51,14 @@ default:
   tags: [docker]
 
 variables:
-  GO_IMAGE: golang:1-alpine
-  NODE_IMAGE: node:lts
+  # Feste Major/Minor statt gleitender Tags. golang:1-alpine wanderte
+  # unbemerkt von Go 1.26 auf 1.27 und riss dabei golangci-lint mit (das
+  # gebündelte staticcheck kannte die neue Standardbibliothek nicht) - ein
+  # roter Job ohne eine einzige Änderung am Code. Ein Wechsel der Toolchain
+  # gehört in den Diff, nicht in den Zufall. Patch-Stände laufen weiterhin
+  # von selbst nach; die tragen Fehlerbehebungen, keine Überraschungen.
+  GO_IMAGE: golang:1.27-alpine
+  NODE_IMAGE: node:24
   # Playwright-Image mit vorinstallierten Browsern. Die Version MUSS zu
   # @playwright/test in frontend/package.json passen -- laufen sie
   # auseinander, laedt Playwright die Browser doch wieder selbst nach und der
