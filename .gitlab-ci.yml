@@ -73,18 +73,18 @@ variables:
   # Repository-/Social-Link oben rechts in der Doku-Kopfzeile.
   # Bewusst der ÖFFENTLICHE Spiegel: das private Repo wäre für Leser der
   # Doku ein 404.
-  DOCS_REPO: "https://gitlab.techeve.de/techeve/lcm-ce"
+  DOCS_REPO: "https://gitlab.techeve.de/techeve/lcm"
 
 # Branch-Pipelines + MR-Pipelines, ohne Duplikate bei offenem MR.
 workflow:
   rules:
-    # Diese Datei reist im Schnappschuss in den öffentlichen Spiegel (lcm-ce)
+    # Diese Datei reist im Schnappschuss in den öffentlichen Spiegel (techeve/lcm)
     # und von dort nach GitHub. Pipelines gehören aber nur dem privaten Repo:
     # Auf dem Spiegel liefe sonst bei jedem Spiegelstand die komplette Suite -
     # Tests ins Leere, Deploys ohne Secrets rot. Der Spiegel hat CI zusätzlich
     # projektseitig deaktiviert; dieser Riegel hält auch dann, wenn das mal
     # nicht so ist (Neuaufbau, Fork auf demselben Server).
-    - if: $CI_PROJECT_PATH != "techeve/lcm"
+    - if: $CI_PROJECT_PATH != "techeve/lcm-intern"
       when: never
     # Geplante Pipelines (u.a. der Dependency-Bot) laufen immer - auch wenn
     # für den Branch bereits ein MR offen ist.
@@ -812,7 +812,7 @@ deploy:apt:
     - bash packaging/publish-deb.sh
 
 # Öffentliche Releases: Dieselben Artefakte wie am privaten Release hängen
-# auch am Spiegel lcm-ce und auf GitHub - als Komfort-Weg neben dem
+# auch am Spiegel techeve/lcm und auf GitHub - als Komfort-Weg neben dem
 # empfohlenen apt-Repo (repo.techeve.de), über das Updates automatisch kommen.
 # Die Tags zeigen dort auf die Schnappschuss-Commits; deshalb läuft dieser Job
 # NACH mirror:public. Auf GitHub entsteht das Tag erst durch den asynchronen
@@ -841,24 +841,24 @@ release:public:
     - |
       PRERELEASE=false
       case "$NEXT_VERSION" in *-*) PRERELEASE=true ;; esac
-    # ---- lcm-ce: Dateien in die Package Registry, Release mit Links --------
+    # ---- Spiegel: Dateien in die Package Registry, Release mit Links -------
     - |
       if [ -z "${LCMCE_RELEASE_TOKEN:-}" ]; then
         echo "HINWEIS: LCMCE_RELEASE_TOKEN fehlt - kein Release am Spiegel."
       else
-        CE="${CI_API_V4_URL}/projects/techeve%2Flcm-ce"
+        CE="${CI_API_V4_URL}/projects/techeve%2Flcm"
         PKG_URL="${CE}/packages/generic/lcm/${NEXT_VERSION}"
         LINKS='[]'
         for f in bin/*; do
           name=$(basename "$f")
           case "$name" in lcm-trivyd-*) continue ;; esac
-          echo "lcm-ce: lade $name hoch ..."
+          echo "Spiegel: lade $name hoch ..."
           curl -fsS -H "PRIVATE-TOKEN: $LCMCE_RELEASE_TOKEN" --upload-file "$f" "${PKG_URL}/${name}" > /dev/null
           # printf statt Here-String: der Job läuft in busybox-sh, nicht bash.
           LINKS=$(printf '%s' "$LINKS" | jq -c --arg n "$name" --arg u "${PKG_URL}/${name}" '. + [{name:$n,url:$u,link_type:"package"}]')
         done
         jq -n --arg tag "$TAG" --arg name "LCM $TAG" --rawfile d changelog-snippet.md --argjson links "$LINKS"           '{tag_name:$tag, name:$name, description:$d, assets:{links:$links}}'           | curl -fsS -H "PRIVATE-TOKEN: $LCMCE_RELEASE_TOKEN" -H "Content-Type: application/json"               -d @- "${CE}/releases" > /dev/null
-        echo "lcm-ce: Release $TAG angelegt."
+        echo "Spiegel: Release $TAG angelegt."
       fi
     # ---- GitHub: auf das gespiegelte Tag warten, Release + Assets ----------
     - |
@@ -872,9 +872,9 @@ release:public:
       # Der Anstoß ist reine Beschleunigung - scheitert er, entscheidet die
       # Warteschleife unten. Deshalb in jedem Zweig verzeihend (|| true):
       # ein 401/404 hier darf den Job nicht reißen.
-      MID=$(curl -fsS -H "PRIVATE-TOKEN: ${LCMCE_RELEASE_TOKEN:-}" "${CI_API_V4_URL}/projects/techeve%2Flcm-ce/remote_mirrors" 2>/dev/null | jq -r '.[0].id' || true)
+      MID=$(curl -fsS -H "PRIVATE-TOKEN: ${LCMCE_RELEASE_TOKEN:-}" "${CI_API_V4_URL}/projects/techeve%2Flcm/remote_mirrors" 2>/dev/null | jq -r '.[0].id' || true)
       if [ -n "$MID" ] && [ "$MID" != "null" ]; then
-        curl -fsS -X POST -H "PRIVATE-TOKEN: $LCMCE_RELEASE_TOKEN" "${CI_API_V4_URL}/projects/techeve%2Flcm-ce/remote_mirrors/${MID}/sync" -o /dev/null || true
+        curl -fsS -X POST -H "PRIVATE-TOKEN: $LCMCE_RELEASE_TOKEN" "${CI_API_V4_URL}/projects/techeve%2Flcm/remote_mirrors/${MID}/sync" -o /dev/null || true
       fi
       i=0
       until curl -fsS -H "$AUTH" "${GH}/git/ref/tags/${TAG}" -o /dev/null 2>/dev/null; do
@@ -908,7 +908,7 @@ release:public:
 # Arbeitsweise, enterprise-Bezüge in Merge-Nachrichten) bleibt so privat.
 # Tags des gespiegelten Standes zeigen im Spiegel auf den Schnappschuss.
 #
-# Voraussetzung: CI-Variablen MIRROR_URL (https://…/techeve/lcm-ce.git) und
+# Voraussetzung: CI-Variablen MIRROR_URL (https://…/techeve/lcm.git) und
 # MIRROR_TOKEN (Project Access Token des Spiegel-Repos, Scope write_repository,
 # masked).
 mirror:public:
@@ -1032,13 +1032,13 @@ docs-deploy:
 # Scope api + write_repository). Einrichtung siehe docs/reference/ci-release.md.
 # GitHub-Briefkasten: Der öffentliche Spiegel auf GitHub (Techeve/LCM) nimmt
 # Issues an, gearbeitet wird aber auf gitlab.techeve.de. Dieser Job holt die
-# GitHub-Issues in regelmäßigen Abständen in den Spiegel lcm-ce - dorthin,
+# GitHub-Issues in regelmäßigen Abständen in den Spiegel techeve/lcm - dorthin,
 # wo auch direkt eingereichte Community-Issues liegen. GitHub bleibt für
 # seine Issues die Quelle: Anlegen und Schließen folgen dem GitHub-Stand.
 #
 # Läuft als geplante Pipeline mit GITHUB_ISSUE_SYNC=true (Muster wie der
 # Dependency-Bot). Voraussetzung: CI-Variable ISSUE_SYNC_TOKEN (Projekt-
-# Access-Token von lcm-ce, Scope api, masked). Das Lesen der öffentlichen
+# Access-Token des Spiegels techeve/lcm, Scope api, masked). Das Lesen der öffentlichen
 # GitHub-Issues braucht kein Token.
 github-issue-sync:
   stage: maintenance
@@ -1048,11 +1048,11 @@ github-issue-sync:
     - if: $CI_PIPELINE_SOURCE == "web" && $GITHUB_ISSUE_SYNC == "true"
   variables:
     GITHUB_REPO: Techeve/LCM
-    GITLAB_MIRROR_PROJECT: techeve/lcm-ce
+    GITLAB_MIRROR_PROJECT: techeve/lcm
   script:
     - |
       if [ -z "${ISSUE_SYNC_TOKEN:-}" ]; then
-        echo "FEHLER: CI-Variable ISSUE_SYNC_TOKEN fehlt (Projekt-Access-Token von lcm-ce, Scope api)."
+        echo "FEHLER: CI-Variable ISSUE_SYNC_TOKEN fehlt (Projekt-Access-Token des Spiegels techeve/lcm, Scope api)."
         exit 1
       fi
     - go run ./tools/githubsync

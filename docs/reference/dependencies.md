@@ -89,7 +89,7 @@ machen es praktisch unmöglich, eine bereits eingebundene Version nachträglich 
 manipulieren. **Ein Supply-Chain-Angriff läuft deshalb immer über eine _neue_
 Version.** Daraus folgen drei Regeln, die im Repo verankert sind:
 
-- **Karenzzeit.** [renovate.json](https://gitlab.techeve.de/techeve/lcm-ce/-/blob/community/renovate.json)
+- **Karenzzeit.** [renovate.json](https://gitlab.techeve.de/techeve/lcm/-/blob/community/renovate.json)
   setzt `minimumReleaseAge` auf sieben Tage. Das ist das Fenster, in dem
   kompromittierte Pakete üblicherweise entdeckt und zurückgezogen werden.
 - **Automerge nur für Stufe 4 und 5.** Patch-Updates mergen selbsttätig nur bei

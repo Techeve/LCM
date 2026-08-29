@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.34.2 - 2026-08-29
+
+### 🐛 Bugfixes
+
+- **ci**: pipeline-riegel kennt den neuen internen projektpfad (009b7892)
+
+### ♻️ Refactoring
+
+- **repo**: oeffentlicher spiegel heisst jetzt techeve/lcm (41d69c28)
+
+### 🔧 Sonstiges
+
+- **logo**: neutrale wortmarke als fallback fuer gitlab und docker hub (7349007f)
+
 ## v1.34.1 - 2026-08-29
 
 ### 🔧 Sonstiges
