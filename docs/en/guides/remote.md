@@ -280,7 +280,7 @@ commands:
 2. **Install the agent.** On Debian/Ubuntu from the package channel
    (`sudo apt install lcm-agent`). For the other distributions the same
    package is attached to the
-   [release](https://gitlab.techeve.de/techeve/lcm-ce/-/releases) as an RPM, APK
+   [release](https://gitlab.techeve.de/techeve/lcm/-/releases) as an RPM, APK
    and Arch package - there is no dedicated channel for those yet, so the file
    is installed directly:
 

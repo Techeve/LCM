@@ -61,7 +61,7 @@ func TestAbgleichEndeZuEnde(t *testing.T) {
 			{"number": 4, "title": "ein PR", "state": "open", "html_url": "https://github.com/Techeve/LCM/pull/4", "pull_request": map[string]any{}},
 		})
 	})
-	mux.HandleFunc("GET /api/v4/projects/techeve%2Flcm-ce/issues", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v4/projects/techeve%2Flcm/issues", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("page") != "1" {
 			w.Write([]byte("[]"))
 			return
@@ -71,14 +71,14 @@ func TestAbgleichEndeZuEnde(t *testing.T) {
 			{"iid": 12, "state": "opened", "description": openTwinDesc},
 		})
 	})
-	mux.HandleFunc("POST /api/v4/projects/techeve%2Flcm-ce/issues", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/v4/projects/techeve%2Flcm/issues", func(w http.ResponseWriter, r *http.Request) {
 		var p map[string]any
 		json.NewDecoder(r.Body).Decode(&p)
 		created = append(created, p["title"].(string))
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(`{"iid": 99}`))
 	})
-	mux.HandleFunc("PUT /api/v4/projects/techeve%2Flcm-ce/issues/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /api/v4/projects/techeve%2Flcm/issues/", func(w http.ResponseWriter, r *http.Request) {
 		stateEvents = append(stateEvents, r.URL.Path+"?"+r.URL.RawQuery)
 		w.Write([]byte(`{}`))
 	})
@@ -94,7 +94,7 @@ func TestAbgleichEndeZuEnde(t *testing.T) {
 
 	sum, err := sync(config{
 		GitHubRepo: "Techeve/LCM", GitLabAPI: srv.URL + "/api/v4",
-		GitLabProject: "techeve/lcm-ce", Token: "test",
+		GitLabProject: "techeve/lcm", Token: "test",
 	})
 	if err != nil {
 		t.Fatal(err)

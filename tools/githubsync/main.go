@@ -1,5 +1,5 @@
 // githubsync holt die Issues des öffentlichen GitHub-Spiegels (Techeve/LCM)
-// in das GitLab-Projekt des Spiegels (techeve/lcm-ce). GitHub ist für seine
+// in das GitLab-Projekt des Spiegels (techeve/lcm). GitHub ist für seine
 // Issues die Quelle: Neue werden in GitLab angelegt, auf GitHub geschlossene
 // in GitLab geschlossen, auf GitHub wieder geöffnete wieder geöffnet.
 //
@@ -13,7 +13,7 @@
 // Konfiguration über die Umgebung (siehe Job github-issue-sync):
 //
 //	GITHUB_REPO            z.B. Techeve/LCM
-//	GITLAB_MIRROR_PROJECT  z.B. techeve/lcm-ce
+//	GITLAB_MIRROR_PROJECT  z.B. techeve/lcm
 //	CI_API_V4_URL          von GitLab CI gesetzt
 //	ISSUE_SYNC_TOKEN       Projekt-Access-Token des Ziels, Scope api
 package main

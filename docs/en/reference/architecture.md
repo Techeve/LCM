@@ -217,7 +217,7 @@ arbitrary background goroutine. All execution paths are secured:
 | Path | Protection |
 |---|---|
 | HTTP (UI/REST, agent gateway, MCP) | Fiber's `recover` middleware, first in each chain |
-| Background goroutines (job runners, workers, listeners) | [`internal/safego`](https://gitlab.techeve.de/techeve/lcm-ce/-/tree/community/internal/safego) - `safego.Go` / `safego.GoCleanup` |
+| Background goroutines (job runners, workers, listeners) | [`internal/safego`](https://gitlab.techeve.de/techeve/lcm/-/tree/community/internal/safego) - `safego.Go` / `safego.GoCleanup` |
 | Scheduled runs (cron) | `cron.Recover` chain in the scheduler |
 | MQTT hooks + the agents' WebSocket connection | `safego.Recover` per hook |
 

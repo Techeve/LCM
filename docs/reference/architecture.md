@@ -218,7 +218,7 @@ abgesichert:
 | Pfad | Schutz |
 |---|---|
 | HTTP (UI/REST, Agent-Gateway, MCP) | Fibers `recover`-Middleware, jeweils als erste Middleware |
-| Hintergrund-Goroutinen (Job-Runner, Worker, Listener) | [`internal/safego`](https://gitlab.techeve.de/techeve/lcm-ce/-/tree/community/internal/safego) - `safego.Go` / `safego.GoCleanup` |
+| Hintergrund-Goroutinen (Job-Runner, Worker, Listener) | [`internal/safego`](https://gitlab.techeve.de/techeve/lcm/-/tree/community/internal/safego) - `safego.Go` / `safego.GoCleanup` |
 | Geplante Läufe (Cron) | `cron.Recover`-Kette im Scheduler |
 | MQTT-Hooks + WebSocket-Verbindung der Agents | `safego.Recover` je Hook |
 

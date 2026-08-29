@@ -304,7 +304,7 @@ Optional: `REPO_NAME` (Default `techeve`), `DISTRO` (Default `stable`), `GPG_KEY
 
 ### Container-Images (deploy)
 
-Der Job `images` baut zwei Images für **amd64 und arm64** und veröffentlicht sie in der Projekt-Registry (`registry.techeve.de/techeve/lcm`):
+Der Job `images` baut zwei Images für **amd64 und arm64** und veröffentlicht sie in der Projekt-Registry (`registry.techeve.de/techeve/lcm-intern`):
 
 | Image | Inhalt |
 |---|---|

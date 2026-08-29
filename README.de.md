@@ -1,7 +1,10 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="logo/lcm-wordmark-dark.svg">
-    <img src="logo/lcm-wordmark-light.svg" alt="LCM - Linux Centralized Management" width="380">
+    <source media="(prefers-color-scheme: light)" srcset="logo/lcm-wordmark-light.svg">
+    <!-- Fallback fuer Renderer ohne prefers-color-scheme (GitLab, Docker Hub):
+         die Neutralvariante ist auf hellem wie dunklem Grund lesbar. -->
+    <img src="logo/lcm-wordmark-neutral.svg" alt="LCM - Linux Centralized Management" width="380">
   </picture>
 </p>
 
@@ -253,7 +256,10 @@ Funktions-Updates erst nach bewährter Feldphase, Fixes dafür umso schneller).
 
 ## Entwicklung & Releases (GitLab)
 
-Das Projekt lebt auf `https://gitlab.techeve.de/techeve/LCM` mit geschütztem Workflow:
+Entwickelt wird im internen Repository
+(`gitlab.techeve.de/techeve/lcm-intern`) mit geschütztem Workflow; das
+öffentliche Repository [`techeve/lcm`](https://gitlab.techeve.de/techeve/lcm)
+erhält bei jedem Release den Schnappschuss der Branches `community` und `beta`:
 
 - **Gearbeitet wird auf `develop`** (Standard-Branch) bzw. auf Feature-Branches mit MR nach develop.
 - **Die Kanal-Branches `beta`, `community` und `enterprise` sind gesperrt**: kein direkter Push - Änderungen kommen ausschließlich per Merge Request, die CI-Pipeline muss grün sein. Welcher Kanal welches Publikum bedient, steht in [docs/reference/repo-channels.md](docs/reference/repo-channels.md).

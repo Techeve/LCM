@@ -117,7 +117,7 @@ docker compose logs -f lcm   # Erststart: Admin-Passwort
 ```
 
 Die ausführlich kommentierte Vorlage liegt im Repo:
-[`docker/docker-compose.yml`](https://gitlab.techeve.de/techeve/lcm-ce/-/blob/community/docker/docker-compose.yml).
+[`docker/docker-compose.yml`](https://gitlab.techeve.de/techeve/lcm/-/blob/community/docker/docker-compose.yml).
 
 ## Enterprise
 
@@ -130,5 +130,5 @@ gepflegter Wartungszweig mit **schnellen Sicherheitsupdates**, bewusst
 
 - Produktseite: [techeve.de/lcm](https://techeve.de/lcm) · Firma: [techeve.de](https://techeve.de)
 - Dokumentation: [doc.techeve.de/lcm/](https://doc.techeve.de/lcm/)
-- Quellcode: [gitlab.techeve.de/techeve/lcm-ce](https://gitlab.techeve.de/techeve/lcm-ce) · Spiegel: [github.com/Techeve/LCM](https://github.com/Techeve/LCM)
+- Quellcode: [gitlab.techeve.de/techeve/lcm](https://gitlab.techeve.de/techeve/lcm) · Spiegel: [github.com/Techeve/LCM](https://github.com/Techeve/LCM)
 - Lizenz: AGPL-3.0

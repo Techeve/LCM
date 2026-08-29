@@ -15,7 +15,7 @@ import (
 type config struct {
 	GitHubRepo    string // "Techeve/LCM"
 	GitLabAPI     string // "https://gitlab.techeve.de/api/v4"
-	GitLabProject string // "techeve/lcm-ce" (wird URL-kodiert)
+	GitLabProject string // "techeve/lcm" (wird URL-kodiert)
 	Token         string
 }
 

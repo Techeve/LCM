@@ -1,7 +1,10 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="logo/lcm-wordmark-dark.svg">
-    <img src="logo/lcm-wordmark-light.svg" alt="LCM - Linux Centralized Management" width="380">
+    <source media="(prefers-color-scheme: light)" srcset="logo/lcm-wordmark-light.svg">
+    <!-- Fallback fuer Renderer ohne prefers-color-scheme (GitLab, Docker Hub):
+         die Neutralvariante ist auf hellem wie dunklem Grund lesbar. -->
+    <img src="logo/lcm-wordmark-neutral.svg" alt="LCM - Linux Centralized Management" width="380">
   </picture>
 </p>
 
@@ -306,8 +309,10 @@ faster for it).
 
 ## Development & releases (GitLab)
 
-The project lives at `https://gitlab.techeve.de/techeve/LCM` with a protected
-workflow:
+Development happens in the internal repository
+(`gitlab.techeve.de/techeve/lcm-intern`) with a protected workflow; the public
+repository [`techeve/lcm`](https://gitlab.techeve.de/techeve/lcm) receives a
+snapshot of the `community` and `beta` branches on every release:
 
 - **Work happens on `develop`** (default branch) or on feature branches with an
   MR to develop.
