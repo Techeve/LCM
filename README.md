@@ -1,8 +1,22 @@
-# LCM - Linux Centralized Management
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/lcm-wordmark-dark.svg">
+    <img src="logo/lcm-wordmark-light.svg" alt="LCM - Linux Centralized Management" width="380">
+  </picture>
+</p>
 
-> 🇩🇪 Eine deutsche Fassung dieser README liegt in [README.de.md](README.de.md).
+<h1 align="center">LCM - Linux Centralized Management</h1>
 
-**Agentless management for your entire Linux fleet - one binary, any number of servers.**
+<p align="center">
+  <strong>Agentless management for your entire Linux fleet - one binary, any number of servers.</strong>
+</p>
+
+<p align="center">
+  <a href="https://techeve.de/produkte/lcm/">Website</a> ·
+  <a href="https://doc.techeve.de/lcm/en/">Documentation</a> ·
+  <a href="https://github.com/Techeve/LCM/releases">Releases</a> ·
+  <a href="README.de.md">Deutsch</a>
+</p>
 
 LCM is a self-hosted control center for Linux servers. Install it once - a single
 binary with no external dependencies - and manage any number of machines over

@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.34.0 - 2026-08-29
+
+### 🚀 Features
+
+- **groups**: verwaltungs-user in der oberflaeche zuweisen (8e3f02c7)
+
+### 🐛 Bugfixes
+
+- **demo**: demo-manager der gruppe produktion zuweisen (7eac41ef)
+
+### 🔧 Sonstiges
+
+- **readme**: logo im kopfbereich, social-preview fuers repo (fc66f638)
+
 ## v1.33.0 - 2026-08-27
 
 ### 🚀 Features

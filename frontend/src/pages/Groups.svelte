@@ -20,6 +20,8 @@
   let rules = $state([]);
   let customActions = $state([]);
   let addServerId = $state('');
+  let users = $state([]);
+  let addManagerId = $state('');
 
   // Modal-Zustände.
   let groupOpen = $state(false);
@@ -89,6 +91,18 @@
       : [],
   );
 
+  // Nutzer, die noch NICHT Manager der gewählten Gruppe sind (Dedup).
+  let availableManagers = $derived(
+    selected
+      ? users.filter((u) => u.active !== false && !(selected.managers ?? []).some((m) => m.id === u.id))
+      : [],
+  );
+
+  function userLabel(u) {
+    const name = [u.first_name, u.last_name].filter(Boolean).join(' ');
+    return name ? `${u.username} (${name})` : u.username;
+  }
+
   // Anzeige-Name des Ziels einer Rule (Schedule-Name oder „Grundsatz").
   function ruleTarget(r) {
     if (r.enforce) return t('groups.policy');
@@ -152,6 +166,7 @@
       groups = await api.groups.list();
       servers = await api.servers.list();
       if (auth.can('rules:manage')) customActions = await api.customActions.list();
+      if (auth.can('users:read')) users = await api.users.getAll().catch(() => []);
       // Allowlists für die Quell-Auswahl in Firewall-Grundsatz-Regeln (best effort).
       ipAllowlists = await api.servers.ipAllowlists().catch(() => []);
     } catch (e) {
@@ -225,6 +240,12 @@
     if (!addServerId) return;
     await run(() => api.groups.assignServer(selected.id, Number(addServerId)), t('groups.notices.serverAdded'));
     addServerId = '';
+  }
+
+  async function addManager() {
+    if (!addManagerId) return;
+    await run(() => api.groups.assignManager(selected.id, Number(addManagerId)), t('groups.notices.managerAdded'));
+    addManagerId = '';
   }
 
   // ---- Schedule -----------------------------------------------------------
@@ -387,6 +408,44 @@
             </tbody>
           </table>
         </div>
+
+        <!-- Verwaltungs-User (Manager) der Gruppe. Erst diese Zuordnung macht
+             die Gruppe und ihre Server für einen Benutzer der Manager-Rolle
+             sichtbar; ohne sie sieht er nach dem Anmelden nichts. Zuweisen
+             darf nur, wer groups:write UND users:read hat (Admin). -->
+        {#if auth.can('users:read')}
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h3 class="h6 mb-0">{t('groups.managersHeading')} ({selected.managers?.length ?? 0})</h3>
+            {#if auth.can('groups:write')}
+              <div class="input-group input-group-sm" style="max-width: 340px">
+                <select class="form-select" bind:value={addManagerId}>
+                  <option value="">{t('groups.addManagerPlaceholder')}</option>
+                  {#each availableManagers as u (u.id)}<option value={u.id}>{userLabel(u)}</option>{/each}
+                </select>
+                <button class="btn btn-primary" aria-label={t('groups.a11y.addManager')} onclick={addManager} disabled={!addManagerId || busy}>+</button>
+              </div>
+            {/if}
+          </div>
+          <p class="text-body-secondary small">{t('groups.managersHint')}</p>
+          <div class="table-responsive mb-4">
+            <table class="table table-sm align-middle" data-testid="group-managers-table">
+              <thead><tr><th>{t('groups.colUser')}</th><th>{t('groups.colEmail')}</th>{#if auth.can('groups:write')}<th></th>{/if}</tr></thead>
+              <tbody>
+                {#each selected.managers ?? [] as u (u.id)}
+                  <tr>
+                    <td>{userLabel(u)}</td>
+                    <td class="text-body-secondary small">{u.email}</td>
+                    {#if auth.can('groups:write')}
+                      <td class="text-end"><button class="btn btn-sm btn-outline-danger py-0" aria-label={t('groups.a11y.removeManager')} disabled={busy} onclick={() => run(() => api.groups.removeManager(selected.id, u.id), t('groups.notices.managerRemoved'))}>×</button></td>
+                    {/if}
+                  </tr>
+                {:else}
+                  <tr><td colspan="3" class="text-body-secondary small">{t('groups.noManagersAssigned')}</td></tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
 
         <!-- Schedules-Tabelle -->
         <div class="d-flex justify-content-between align-items-center mb-2">
