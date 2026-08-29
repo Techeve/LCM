@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.34.1-beta.1 - 2026-08-29
+
+### 🔧 Sonstiges
+
+- **readme**: live-demo im kopfbereich (en/de) (f445dcfd)
+
 ## v1.34.0 - 2026-08-29
 
 ### 🚀 Features
