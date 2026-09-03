@@ -51,7 +51,10 @@ func NewOSV(baseURL string) *OSV {
 	}
 }
 
-func (o *OSV) Name() string      { return domain.AdvisorySourceOSV }
+func (o *OSV) Name() string { return domain.AdvisorySourceOSV }
+
+// Local: Nein - die Abfrage geht an osv.dev.
+func (o *OSV) Local() bool       { return false }
 func (o *OSV) Available() bool   { return o != nil && o.baseURL != "" }
 func (o *OSV) userAgent() string { return "LCM/" + version.Version }
 

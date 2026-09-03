@@ -112,6 +112,78 @@ sum of the file sizes - this is correct and not a measurement error, but may
 surprise when comparing both values.
 :::
 
+### Monitoring further volumes
+
+Only `/` is monitored by default. Every other volume can be **added
+individually** in the disks tab, with its own warning threshold in percent.
+
+Why not all of them: a disk is allowed to be full. An archive is **supposed**
+to fill up, and a backup disk at 95 % is not a defect but working as intended.
+Alerting on it unasked would produce messages people dismiss - and whoever gets
+used to that dismisses the important ones along with them.
+
+For a monitored volume LCM checks two things:
+
+- **Usage** against the configured threshold (default 85 %; a critical
+  threshold can be set in addition).
+- **Inodes** against the same threshold. A filesystem can stop accepting
+  writes while plenty of bytes are still free - typical with many small files
+  (maildirs, session files, package caches). ZFS and Btrfs allocate inodes
+  dynamically: they do report a number, but a computed one - a 32 GB dataset
+  reports 65 million inodes at 1 % usage. The check therefore never fires
+  there, which is correct: that supply cannot run out.
+
+Independently of any setting, LCM reports a volume mounted **read-only**. The
+kernel switches a filesystem to `ro` by itself after an I/O or metadata error
+to prevent further damage - otherwise nobody notices until the first write
+fails.
+
+:::note[Network storage is shown, but not monitored]
+NFS, CIFS/SMB, SSHFS, CephFS and relatives appear in the list - you want to see
+what is mounted - but cannot be monitored. Capacity and health are the
+responsibility of the service providing the storage. From here only the client
+view would be visible: every network hiccup would arrive as a storage problem
+without anything being wrong with the storage itself.
+:::
+
+## Health of the storage sets
+
+A full filesystem is visible in the usage bar. What is **not** visible there: a
+ZFS pool that has been `DEGRADED` for three weeks because a disk failed. Btrfs
+silently counting checksum errors. A software RAID running without redundancy.
+An LVM thin pool whose metadata is filling up.
+
+None of these systems report on their own - you have to look, and in practice
+nobody does so regularly. LCM collects these states with every scan and shows
+them in the disks tab.
+
+| Technology | Collected from | Reported when |
+|---|---|---|
+| **ZFS** | `zpool list`, `zpool status` | pool not `ONLINE`, read/write/checksum errors |
+| **Btrfs** | `btrfs device stats`, `filesystem show` | counted device errors, missing device in the set |
+| **Software RAID** | `/proc/mdstat` | set running without the intended redundancy (`[U_]`) |
+| **LVM thin** | `lvs` | data or metadata above 80 %, critical from 95 % |
+
+Collection is read-only. `zpool` and `/proc/mdstat` can be read without
+special privileges; `btrfs device stats` and `lvs` refuse the service user -
+for those the scan runs via `sudo`. In **restricted mode** (no general sudo)
+Btrfs and LVM thin report "unknown" - deliberately no state, because a false
+healthy would be worse than not knowing. If the technology is absent on a
+server - the normal case - no entry and no work is created.
+Unlike per-volume usage this part **cannot be switched off**: it costs nothing,
+and a degraded pool is not a matter of taste.
+
+A fixed defect disappears on the next scan by itself: the state is collected
+afresh every run, not carried forward. If a set is removed or a pool exported,
+no entry from yesterday is left behind either.
+
+:::caution[Thin pools warn earlier]
+The thresholds for LVM thin are deliberately lower than for an ordinary
+filesystem. A full thin pool can no longer be cleaned up - extending it needs
+free space itself - and a full metadata volume costs the pool for good. Waking
+up at 95 % here is too late.
+:::
+
 ## Offline marker
 
 A server is marked **Offline** as soon as it was unreachable on **two
@@ -149,6 +221,36 @@ changed per server under *Settings → Availability*:
   configurable 1-365) of continuous unreachability does it turn red for being
   unreachable.
 
+## Maintenance
+
+"Unreachability non-critical" softens the verdict on a server that **should** be
+reachable. **Maintenance** says something different: that right now it should
+not be.
+
+The switch under *Settings → Maintenance* takes a server out of service for a
+while:
+
+- no scheduled runs (health check, system sync, updates, baseline rules),
+- no early warning and no CVE scan - its package inventory is frozen, so any
+  finding would be a statement about how things looked back then,
+- no alerts.
+
+The server stays registered and visible; the list and detail view carry a yellow
+**Maintenance** marker with the date. This is meant for systems that are off on
+purpose: a powered-down test environment, a device being rebuilt, a machine
+whose resources are needed elsewhere for now.
+
+:::note[Why this is more than cosmetics]
+Without this state, "off" counts as "broken". A single decommissioned system
+then produces an unreachable warning every 15 minutes - in practice that was
+over a thousand lines for one server in a single week, and the real faults drown
+in that noise.
+:::
+
+Switching it on and off is recorded in the audit log
+(`server.maintenance.start` / `server.maintenance.end`): taking a server's
+monitoring offline should be traceable.
+
 ## Baseline schedules (System group)
 
 Every installation has a protected **System group** with two
@@ -158,6 +260,61 @@ non-deletable schedules that run on **all** servers:
 |---|---|---|
 | **Health check** | every 15 min | Check reachability; enforce baseline rules and measure storage while doing so |
 | **System sync** | daily 04:00 | Sync hardware & Linux users, refresh the package list, run the central Docker check |
+
+:::note[The ping does not run twice]
+A successful job **is** a server's sign of life. If something else already
+talked to it within the health interval - a sync, an update, a reboot - the ping
+is skipped: it would learn nothing new. The measure is the schedule's own
+interval, not a fixed number; set it to five minutes and the window shrinks with
+it.
+
+The scheduled ping is therefore never swallowed (at the next run the previous
+contact is exactly one interval old), and if contact stops coming, it runs again
+anyway. At night, when sync and updates are working on every server regardless,
+it all but disappears - precisely in the window where the machine can least
+afford the load.
+
+A health check triggered **by hand** always runs: whoever starts it wants fresh
+contact.
+:::
+
+## When two schedules hit the same server
+
+At most **one** job runs on a server at a time - two concurrent accesses to the
+same package manager would be a system conflict. When a schedule hits a busy
+server, its run is therefore no longer discarded but **queued**: it shows up as
+`pending` in the job list and starts as soon as the running job finishes.
+
+The order in the queue:
+
+1. **Strongest group priority first.** What counts is the priority of the group
+   the rule comes from (lower = stronger; the System group deliberately has the
+   weakest priority, so health check and sync do not push ahead of rules that
+   carry actual intent).
+2. **Ties go to whoever was triggered first.** Two groups of equal rank stay
+   fair and predictable among themselves.
+3. **A running job is never preempted.** Priority decides the queue, not an
+   abort - anything else would make a half-applied update possible.
+
+Two rules keep the queue short:
+
+- **The same rule queues only once.** During a one-hour update you would
+  otherwise end up with four health checks in a row, all checking the same
+  thing.
+- **Waiting too long drops out.** The limit is half the interval of the run's
+  own schedule. Beyond that the next run is closer than its own start, so it
+  would already be outdated by the time it ran. It is closed as `blocked` with
+  a reason - never silently swallowed.
+
+:::note[Manual actions do not wait]
+Press a button while something is running and you still get an immediate refusal
+("a job is already running on this server"). A silent delay would be dishonest
+there - someone is standing in front of it waiting for an answer. Only scheduled
+runs are queued; they have no human in front of them, just an interval.
+:::
+
+Queued jobs can be aborted from the job list just like running ones - they
+release no lock, only their place in the queue.
 
 ## Refresh at the push of a button
 

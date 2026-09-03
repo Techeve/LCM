@@ -6,9 +6,23 @@ import (
 	"gorm.io/gorm"
 )
 
-// Job-Status. "blocked" dokumentiert die Concurrency Control: Läuft auf
-// einem Server bereits ein Job, werden parallel getriggerte Jobs für
-// diesen Server abgewiesen, um Systemkollisionen zu verhindern.
+// Job-Status.
+//
+// Auf einem Server läuft immer höchstens EIN Job - zwei gleichzeitige Zugriffe
+// auf dieselbe Paketverwaltung oder Firewall wären ein Systemkonflikt. Was
+// dagegen läuft, hängt davon ab, wer den Job ausgelöst hat:
+//
+//   - "pending": Ein Zeitplan-Lauf, der warten darf. Er steht in der
+//     Warteschlange des Servers und startet, sobald der laufende Job fertig
+//     ist - der Reihe nach, stärkster Gruppen-Vorrang zuerst. Ein feuernder
+//     Zeitplan verliert seine Arbeit damit nicht mehr, nur weil zufällig
+//     gerade ein anderer Lauf auf demselben Server aktiv war.
+//   - "blocked": Der Job kam nicht zum Zug und wird es auch nicht mehr. Das
+//     trifft eine unmittelbare Aktion (jemand hat auf einen Knopf gedrückt,
+//     während etwas lief - dann ist eine sofortige Absage ehrlicher als eine
+//     stille Verzögerung) und einen Wartenden, der zu lange gewartet hat: Ist
+//     der nächste Durchgang seines Zeitplans ohnehin näher als sein eigener
+//     Start, wäre er beim Laufen schon überholt.
 const (
 	JobStatusPending = "pending"
 	JobStatusRunning = "running"

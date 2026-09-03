@@ -192,10 +192,24 @@ func (c *Client) handleCommand(payload []byte) {
 	}
 	safego.Go("agent-cmd:"+cmd.ID, func() {
 		c.log.Info("command started", "id", cmd.ID)
-		res := c.runner.Run(cmd)
+		res := c.runner.Run(cmd, func(outputBytes int) {
+			c.publishProgress(cmd.ID, outputBytes)
+		})
 		c.log.Info("command finished", "id", cmd.ID, "exit", res.ExitCode, "truncated", res.Truncated)
 		c.publishResult(res)
 	})
+}
+
+// publishProgress meldet, dass das Kommando noch arbeitet. Anders als das
+// Ergebnis wird es NICHT wiederholt: Ein verlorenes Lebenszeichen holt das
+// nächste 30 Sekunden später ein, und ein nachgereichtes wäre ohnehin
+// wertlos - es soll ja den aktuellen Zustand belegen.
+func (c *Client) publishProgress(id string, outputBytes int) {
+	payload, err := json.Marshal(wire.Result{ID: id, Progress: true, OutputBytes: outputBytes})
+	if err != nil {
+		return
+	}
+	c.mqtt.Publish(wire.TopicRes(c.cfg.AgentID), 1, false, payload)
 }
 
 // publishResult stellt ein Ergebnis zu und wiederholt bei Verbindungs-

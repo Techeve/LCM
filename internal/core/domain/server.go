@@ -267,6 +267,27 @@ type Server struct {
 	// statt sie ohne Shell-Zugriff nachzubauen.
 	DSMSecurityRisks   int    `gorm:"default:0" json:"dsm_security_risks"`
 	DSMSecuritySummary string `json:"dsm_security_summary,omitempty"`
+	// Maintenance nimmt einen Server vorübergehend aus dem Betrieb: keine
+	// Zeitplan-Läufe, kein Health-Check, keine Frühwarnung, kein CVE-Scan,
+	// keine Alarme. Er bleibt erfasst und sichtbar - nur wird er nicht mehr
+	// angefasst und nicht mehr bewertet.
+	//
+	// Der Zustand ist gebaut für den Server, der ABSICHTLICH aus ist: eine
+	// abgeschaltete Testumgebung, ein Gerät im Umbau, eine Maschine, deren
+	// Ressourcen gerade woanders gebraucht werden. Ohne ihn gilt „aus" als
+	// „gestört": Ein einziges stillgelegtes System hat im Betrieb binnen einer
+	// Woche 1.188 Unerreichbar-Warnungen erzeugt und damit das Protokoll
+	// unlesbar gemacht, in dem die echten Störungen stehen.
+	//
+	// Bewusst NICHT dasselbe wie UnreachableUncritical: Das dämpft die
+	// Bewertung eines Servers, der erreichbar sein SOLL. Wartung sagt, dass
+	// er es gerade nicht soll.
+	Maintenance bool `gorm:"default:false" json:"maintenance"`
+	// MaintenanceSince hält fest, seit wann - ohne die Angabe ist nach ein
+	// paar Wochen nicht mehr zu erkennen, ob eine Wartung noch läuft oder
+	// jemand sie schlicht vergessen hat.
+	MaintenanceSince *time.Time `json:"maintenance_since,omitempty"`
+
 	// Virtualization ist die rohe systemd-detect-virt-Ausgabe: "none" (blankes
 	// Blech), ein Container-Typ ("lxc", "docker", …) oder ein VM-Typ ("kvm",
 	// "qemu", "vmware", …). Leer = unbekannt.
@@ -333,13 +354,19 @@ type Server struct {
 	// KernelPackage). In Containern bewusst leer: dort laeuft der Kernel des
 	// Hosts, installierte Kernel-Pakete waeren wirkungslos.
 	InstalledKernels string `gorm:"serializer:aesgcm" json:"installed_kernels"`
-	CPUModel         string `gorm:"serializer:aesgcm" json:"cpu_model"`
-	CPUCores         int    `json:"cpu_cores"`
-	MemTotalMB       int64  `json:"mem_total_mb"`
-	MemUsedMB        int64  `json:"mem_used_mb"`
-	DiskTotalMB      int64  `json:"disk_total_mb"`
-	DiskUsedMB       int64  `json:"disk_used_mb"`
-	IPAddresses      string `gorm:"serializer:aesgcm" json:"ip_addresses"` // kommagetrennt, AES-GCM at rest
+	// HardwareModel ist das Geräte-/Board-Modell: bei Einplatinenrechnern aus
+	// dem Device-Tree ("Raspberry Pi 4 Model B Rev 1.4"), bei x86 aus der
+	// DMI-Tabelle ("Dell Inc. PowerEdge R640"). Die Distribution allein sagt
+	// darüber nichts - ein Pi meldet sich schlicht als Debian (siehe
+	// hardware.go). Leer = nicht ermittelbar.
+	HardwareModel string `gorm:"serializer:aesgcm" json:"hardware_model"`
+	CPUModel      string `gorm:"serializer:aesgcm" json:"cpu_model"`
+	CPUCores      int    `json:"cpu_cores"`
+	MemTotalMB    int64  `json:"mem_total_mb"`
+	MemUsedMB     int64  `json:"mem_used_mb"`
+	DiskTotalMB   int64  `json:"disk_total_mb"`
+	DiskUsedMB    int64  `json:"disk_used_mb"`
+	IPAddresses   string `gorm:"serializer:aesgcm" json:"ip_addresses"` // kommagetrennt, AES-GCM at rest
 
 	// Verfügbarkeit (Health-Check) & Security-Zustand.
 	LastSeenAt *time.Time `json:"last_seen_at"` // letzter erfolgreicher SSH-Kontakt
@@ -562,6 +589,27 @@ func (s *Server) IsSynologyDSM() bool { return s.OSID == OSIDSynologyDSM }
 // shell-/paketverwaltungsgestützten Aktionen gesperrt.
 func (s *Server) IsAPIDevice() bool { return s.IsRouterOS() || s.IsSynologyDSM() }
 
+// InMaintenance meldet, ob dieser Server vorübergehend aus dem Betrieb
+// genommen ist (siehe Feld Maintenance).
+func (s *Server) InMaintenance() bool { return s.Maintenance }
+
+// ActiveServers filtert die Server heraus, die gerade bearbeitet werden
+// dürfen - die EINE Stelle, an der die Wartung wirkt.
+//
+// Eigene Funktion statt einer Bedingung an jedem Aufrufer: Ein vergessener
+// Aufrufer wäre genau der Fall, den niemand bemerkt - der Server in Wartung
+// würde dann doch angefasst, und zwar ausgerechnet vom nächtlichen Lauf, dem
+// niemand zusieht.
+func ActiveServers(servers []Server) []Server {
+	out := make([]Server, 0, len(servers))
+	for i := range servers {
+		if !servers[i].InMaintenance() {
+			out = append(out, servers[i])
+		}
+	}
+	return out
+}
+
 // IsLcmHost meldet, ob dieser Server der LCM-Host selbst ist (Host localhost /
 // Loopback). Für ihn zeigt die UI das LCM-Logo und bietet host-spezifische
 // Aktionen (Trivy- und apt-cacher-ng-Einrichtung) an.
@@ -669,6 +717,14 @@ type TrafficLightInput struct {
 	// Now aktiviert die OS-Support-/EOL-Bewertung (Zero-Wert = deaktiviert,
 	// damit schlanke Tests ohne Zeitbezug unverändert bleiben).
 	Now time.Time
+	// Volumes/VolumeMonitors: die erfassten Speicher-Volumes und die
+	// ausdrücklich angeordnete Überwachung einzelner davon. Ohne Anordnung
+	// wird außer „/" nichts bewertet - siehe volumeInsights.
+	Volumes        []DiskVolume
+	VolumeMonitors []VolumeMonitor
+	// StorageHealth ist der Zustand der Speicher-Verbünde unterhalb der
+	// Belegung. Immer bewertet, nicht abschaltbar.
+	StorageHealth []StorageHealth
 	// Bekannte Sicherheitslücken (CVE) aus dem letzten Trivy-Scan.
 	// Kritische Funde eskalieren die Ampel auf Rot, hohe auf Gelb.
 	CriticalVulns int
@@ -898,6 +954,12 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 			"Festplattenspeicher wird knapp ("+itoa(p)+"% belegt)",
 			map[string]string{"percent": itoa(p)}))
 	}
+	// Zusätzlich überwachte Volumes und der Zustand der Speicher-Verbünde
+	// (ZFS/Btrfs/RAID/LVM-Thin). Beides sind Befunde mit Handlungsbedarf und
+	// gehört damit in dieselbe Sammlung wie die Root-Belegung: Ein Server mit
+	// einem degradierten Pool darf nicht grün sein.
+	insights = append(insights, volumeInsights(in.Volumes, in.VolumeMonitors)...)
+	insights = append(insights, storageHealthInsights(in.StorageHealth)...)
 	// Uhrenversatz: eine falsch gehende Uhr verdirbt TLS-Prüfungen, die
 	// Reihenfolge in Protokollen über mehrere Server hinweg, zeitbasierte
 	// Einmalpasswörter und signierte Paket-Metadaten - ohne dass im Betrieb

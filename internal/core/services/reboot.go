@@ -44,7 +44,20 @@ var (
 	// Neustart als fehlgeschlagen - dann steht ein Server, der nicht
 	// wiederkommt, als solcher da und nicht als „läuft".
 	RebootMaxWait = 10 * time.Minute
+	// RebootMaxWaitSlow gilt für schwache Hardware (siehe
+	// Server.IsSlowHardware). Ein Raspberry Pi bootet von SD-Karte, und nach
+	// einem größeren Upgrade liegt zwischen Neustart und Anmeldebereitschaft
+	// noch die Neuerzeugung der initramfs - zehn Minuten sind dafür knapp.
+	RebootMaxWaitSlow = 30 * time.Minute
 )
+
+// rebootMaxWait liefert das Zeitfenster für die Rückkehr dieses Servers.
+func rebootMaxWait(server *domain.Server) time.Duration {
+	if server.IsSlowHardware() {
+		return RebootMaxWaitSlow
+	}
+	return RebootMaxWait
+}
 
 // completeRebootJob wertet das Ergebnis des Neustart-Kommandos aus. Bei
 // Erfolg bleibt der Job OFFEN und die Rückkehr wird überwacht (siehe
@@ -79,7 +92,14 @@ func completeRebootJob(jobs *JobService, servers *repositories.ServerRepository,
 // Job erst dann ab. Kommt er innerhalb von rebootMaxWait nicht zurück,
 // scheitert der Job mit genau dieser Aussage.
 func awaitRebootReturn(jobs *JobService, servers *repositories.ServerRepository, server *domain.Server, job *domain.Job, output string, dial func() error, onOnline func()) {
-	back, err := pollRebootReturn(dial, RebootSettleDelay, RebootPingInterval, RebootMaxWait)
+	// Jeder Verbindungsversuch ist ein Lebenszeichen: Während der Server
+	// weg ist, entsteht keine Ausgabe - ohne diese Meldung hielte der
+	// Watchdog den wartenden Job für hängend und bräche ihn ab.
+	ping := func() error {
+		jobs.MarkActivity(job.ID)
+		return dial()
+	}
+	back, err := pollRebootReturn(ping, RebootSettleDelay, RebootPingInterval, rebootMaxWait(server))
 	if err != nil {
 		jobs.Complete(job, output, nil, err)
 		return

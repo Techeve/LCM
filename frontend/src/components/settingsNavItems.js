@@ -22,6 +22,7 @@ export const settingsItems = [
   { path: '/settings/time', labelKey: 'settings.nav.time', show: () => auth.can('settings:manage') },
   { path: '/settings/crowdsec', labelKey: 'settings.nav.crowdsec', show: () => auth.can('settings:manage') },
   { path: '/settings/allowlists', labelKey: 'settings.nav.allowlists', show: () => auth.can('settings:manage') },
+  { path: '/settings/events', labelKey: 'settings.nav.events', show: () => auth.can('settings:manage') },
   { path: '/settings/subscription', labelKey: 'settings.nav.subscription', show: () => auth.can('settings:manage') },
   { path: '/settings/backups', labelKey: 'settings.nav.backups', show: () => auth.can('backups:manage') },
   { path: '/settings/schedules', labelKey: 'settings.nav.schedules', show: () => auth.can('rules:manage') },

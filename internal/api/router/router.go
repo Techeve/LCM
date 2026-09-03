@@ -26,6 +26,10 @@ import (
 
 // Deps bündelt alles, was der Router zum Verdrahten braucht.
 type Deps struct {
+	// LogFile ist die rotierende Logdatei des Dienstes - Grundlage der
+	// Ereignis-Ansicht. Leer = LCM schreibt keine Datei, dann gibt es dort
+	// nichts zu zeigen.
+	LogFile       string
 	Auth          *services.AuthService
 	APIKeys       *services.APIKeyService
 	Users         *services.UserService
@@ -151,6 +155,8 @@ func New(deps Deps) *fiber.App {
 	userCtrl := controllers.NewUserController(deps.Users, deps.TOTP, loginGuard)
 	apiKeyCtrl := controllers.NewAPIKeyController(deps.APIKeys)
 	systemCtrl := controllers.NewSystemController(deps.System)
+	logsCtrl := controllers.NewLogsController(deps.LogFile)
+	terminalCtrl := controllers.NewTerminalController(deps.Servers, services.NewTerminalTickets())
 	serverCtrl := controllers.NewServerController(deps.Servers)
 	jobCtrl := controllers.NewJobController(deps.Jobs, deps.Audit)
 	groupCtrl := controllers.NewGroupController(deps.Groups, deps.Scheduler)
@@ -220,6 +226,13 @@ func New(deps Deps) *fiber.App {
 
 	// System-Info: Version, Build, Uptime (Controller ohne DB-Schicht).
 	api.Get("/system/info", systemCtrl.Info)
+	// Ereignis-Ansicht: LCMs eigenes Log. settings:manage, weil dort Namen,
+	// Adressen und Kommandos ALLER Server stehen - auch derer, die ein
+	// Manager mit eingeschränktem Blick nicht sehen darf.
+	api.Get("/system/logs", middlewares.RequirePermission(domain.PermSettingsManage), logsCtrl.List)
+	api.Get("/system/logs/stream", middlewares.RequirePermission(domain.PermSettingsManage), logsCtrl.Stream)
+	api.Get("/system/logs/level", middlewares.RequirePermission(domain.PermSettingsManage), logsCtrl.Level)
+	api.Post("/system/logs/level", middlewares.RequirePermission(domain.PermSettingsManage), logsCtrl.SetLevel)
 	// Update-Status (installiert vs. neueste bekannte Version) fürs Banner -
 	// jeder eingeloggte Nutzer; die manuelle Prüfung ist Admin-Sache.
 	api.Get("/system/update-info", middlewares.RequireAuth(), opsCtrl.UpdateInfo)
@@ -283,6 +296,16 @@ func New(deps Deps) *fiber.App {
 	servers.Post("/dsm/probe", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.ProbeDSM)
 	servers.Post("/dsm", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.CreateDSM)
 	servers.Post("/:id/agent-token", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RegenerateAgentToken)
+	// Web-Konsole. Zweistufig: erst eine Einmal-Fahrkarte über den normal
+	// angemeldeten Weg, dann der WebSocket damit - die Schnittstelle des
+	// Browsers kann keine Kopfzeilen setzen, und der Anmelde-Token hat in
+	// einer URL nichts zu suchen (siehe TerminalController).
+	servers.Post("/:id/terminal/ticket", middlewares.RequirePermission(domain.PermServersConsole), terminalCtrl.Ticket)
+	// Der WebSocket selbst trägt KEINE Permission-Prüfung: Er kommt ohne
+	// Anmelde-Kopfzeile herein, und die Fahrkarte ist hier der Nachweis - sie
+	// ist einmalig, dreißig Sekunden gültig und an diesen Server gebunden,
+	// also strenger als der Token, den der Browser nicht mitschicken kann.
+	servers.Get("/:id/terminal", terminalCtrl.Connect)
 	// Statischer Katalog - VOR der :id-Route registrieren.
 	servers.Get("/known-repos", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.KnownRepos)
 	servers.Get("/:id", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Get)
@@ -298,6 +321,10 @@ func New(deps Deps) *fiber.App {
 	servers.Post("/:id/vulnerabilities/scan", middlewares.RequirePermission(domain.PermServersWrite), opsCtrl.ScanServerVulnerabilities)
 	servers.Get("/:id/outdated-packages", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.OutdatedPackages)
 	servers.Get("/:id/storage-history", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.StorageHistory)
+	// Speicher-Volumes: Anzeige aller Volumes samt Zustand der Verbünde,
+	// und das Ein-/Ausschalten der Überwachung einzelner davon.
+	servers.Get("/:id/volumes", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Volumes)
+	servers.Put("/:id/volumes/monitor", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.SetVolumeMonitor)
 	servers.Get("/:id/packages/:name/versions", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.PackageVersions)
 	servers.Post("/:id/refresh-hardware", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RefreshHardware)
 	servers.Post("/:id/refresh-all", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RefreshAll)

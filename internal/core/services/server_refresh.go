@@ -101,35 +101,15 @@ func (s *ServerService) runRefreshJob(job *domain.Job, server *domain.Server, ac
 	scan := scanServerMode(conn, server.ServiceUser, server.RestrictedSudo)
 	fresh := *server
 	applyScan(&fresh, scan)
-	fields := map[string]any{
-		"os_name": fresh.OSName, "os_version": fresh.OSVersion,
-		"os_id": fresh.OSID, "os_version_id": fresh.OSVersionID,
-		"proxmox_type": fresh.ProxmoxType, "proxmox_version": fresh.ProxmoxVersion,
-		"virtualization": fresh.Virtualization, "package_manager": fresh.PackageManager,
-		"has_snap": fresh.HasSnap, "has_docker": fresh.HasDocker, "has_compose": fresh.HasCompose,
-		"has_acl": fresh.HasACL, "acl_usable": fresh.ACLUsable,
-		"reboot_required": fresh.RebootRequired, "listening_packages": fresh.ListeningPackages,
-		"kernel_version": fresh.KernelVersion, "installed_kernels": fresh.InstalledKernels,
-		"cpu_model": fresh.CPUModel, "cpu_cores": fresh.CPUCores,
-		"mem_total_mb": fresh.MemTotalMB, "mem_used_mb": fresh.MemUsedMB,
-		"disk_total_mb": fresh.DiskTotalMB, "disk_used_mb": fresh.DiskUsedMB,
-		"ip_addresses":       fresh.IPAddresses,
-		"fail2ban_installed": fresh.Fail2banInstalled, "crowdsec_installed": fresh.CrowdSecInstalled,
-		"ssh_2fa_enabled": fresh.SSH2FAEnabled,
-		"firewall_tool":   fresh.FirewallTool, "listening_ports": fresh.ListeningPorts,
-		// Zeit-Zustand gehört zur Grunderfassung: eine falsch gehende Uhr
-		// fällt sonst nirgends auf, verdirbt aber TLS-Prüfungen, die
-		// Protokoll-Reihenfolge über mehrere Server und signierte
-		// Paket-Metadaten.
-		"timezone": fresh.Timezone, "ntp_service": fresh.NTPService,
-		"ntp_synchronized": fresh.NTPSynchronized, "ntp_servers": fresh.NTPServers,
-		"clock_offset_seconds": fresh.ClockOffsetSeconds, "time_checked_at": time.Now(),
-		"reachable": true, "last_seen_at": time.Now(), "last_error": "", "failed_checks": 0,
-	}
-	// Quell-IP nur überschreiben, wenn erkannt (leer = alten Wert behalten).
-	if fresh.LCMSourceIP != "" {
-		fields["lcm_source_ip"] = fresh.LCMSourceIP
-	}
+	// Die Scan-Spalten kommen aus der gemeinsamen Quelle (siehe scanFields) -
+	// hier kommt nur dazu, was diesen Weg ausmacht: Der Kontakt hat gerade
+	// stattgefunden.
+	fields := scanFields(&fresh)
+	fields["reachable"] = true
+	fields["last_seen_at"] = time.Now()
+	fields["last_error"] = ""
+	fields["failed_checks"] = 0
+
 	// DNS gehört zur Grunderfassung: aktive Resolver + Auflösungstest der
 	// gepflegten Test-Domains - rein lesend und sudo-frei, daher auch beim
 	// reinen Hardware-Scan enthalten (nicht nur über die Aktion "DNS-Test").
@@ -146,6 +126,7 @@ func (s *ServerService) runRefreshJob(job *domain.Job, server *domain.Server, ac
 		s.updateHTTPSRevertURLs(conn, server, scan.Repositories)
 		s.rescanApps(conn, server)
 		_ = s.servers.ReplaceDiskVolumes(server.ID, scan.DiskVolumes)
+		_ = s.servers.ReplaceStorageHealth(server.ID, scan.StorageHealth)
 		_ = s.servers.ReplaceServerUsers(server.ID, scan.Users)
 		_ = s.servers.ReplaceServerUserLogins(server.ID, scan.UserLogins)
 		_ = s.servers.ReplaceDockerContainers(server.ID, scan.DockerContainers)

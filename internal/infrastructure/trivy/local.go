@@ -110,7 +110,14 @@ func (l *localRunner) scanImage(ctx context.Context, ref string) ([]byte, error)
 	ctx, cancel := context.WithTimeout(ctx, imageTimeout)
 	defer cancel()
 
-	args := []string{"image", "--format", "json", "--quiet", "--scanners", "vuln"}
+	args := []string{"image", "--format", "json", "--quiet", "--scanners", "vuln",
+		// --skip-java-db-update: Die Java-Datenbank ist ein zweiter Download
+		// von rund anderthalb Gigabyte, den Trivy beim ersten Java-Artefakt in
+		// einem Image nachzieht. Für eine Flotte aus Linux-Servern trägt sie
+		// nichts bei - die Befunde am Paketbestand kommen aus der normalen
+		// Schwachstellen-Datenbank -, kostet aber auf einer kleinen Maschine
+		// genau die Reserve, die dem Dienst daneben fehlt.
+		"--skip-java-db-update"}
 	if l.cacheDir != "" {
 		args = append(args, "--cache-dir", l.cacheDir)
 	}

@@ -124,6 +124,10 @@ func (ctrl *LinuxUserController) Update(c fiber.Ctx) error {
 
 type genLinuxActivationRequest struct {
 	TTLHours int `json:"ttl_hours"`
+	// SendEmail schickt den Link zusätzlich an die hinterlegte Adresse des
+	// Linux-Benutzers. Ohne das bleibt es wie bisher: Der Administrator
+	// bekommt den Link und gibt ihn selbst weiter.
+	SendEmail bool `json:"send_email"`
 }
 
 // GenerateActivation - POST /api/v1/linux-users/:id/activation-links/generate
@@ -141,7 +145,21 @@ func (ctrl *LinuxUserController) GenerateActivation(c fiber.Ctx) error {
 	if err != nil {
 		return mapLinuxUserError(err)
 	}
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"token": token, "expires_at": act.ExpiresAt})
+	out := fiber.Map{"token": token, "expires_at": act.ExpiresAt}
+
+	// Versand ist eine Option, kein Ersatz: Der Link kommt IMMER auch in der
+	// Antwort zurück. Scheitert die Mail, hat der Administrator ihn trotzdem
+	// vor sich und kann ihn von Hand weitergeben - der Link ist ja bereits
+	// gültig. Ein harter Fehlschlag würde hier nur verschleiern, dass er
+	// existiert.
+	if req.SendEmail {
+		out["mailed"] = true
+		if err := ctrl.linux.MailActivation(id, token, act.ExpiresAt); err != nil {
+			out["mailed"] = false
+			out["mail_error"] = err.Error()
+		}
+	}
+	return c.Status(fiber.StatusCreated).JSON(out)
 }
 
 type consumeLinuxActivationRequest struct {

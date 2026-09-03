@@ -8,6 +8,17 @@ export class ServersApi {
     this.#client = client;
   }
 
+  /**
+   * Holt eine Einmal-Fahrkarte für die Web-Konsole.
+   *
+   * Der WebSocket kann keine Anmelde-Kopfzeile mitschicken; die Fahrkarte ist
+   * dort der Nachweis - einmalig, 30 Sekunden gültig, an diesen Server
+   * gebunden. Der Anmelde-Token gehört nicht in eine URL.
+   */
+  terminalTicket(id) {
+    return this.#client.post(`/servers/${id}/terminal/ticket`, {});
+  }
+
   list() {
     return this.#client.get('/servers');
   }
@@ -60,6 +71,20 @@ export class ServersApi {
   /** Verlauf der Festplattenbelegung (Tagesdurchschnitte) + aktueller Stand. */
   storageHistory(id) {
     return this.#client.get(`/servers/${id}/storage-history`);
+  }
+
+  /** Speicher-Volumes samt Überwachungs-Stand und Zustand der Verbünde. */
+  volumes(id) {
+    return this.#client.get(`/servers/${id}/volumes`);
+  }
+
+  /**
+   * Überwachung eines Volumes ein- oder ausschalten.
+   * Ein Aufruf für beides - der Mountpoint ist der Schlüssel und gehört
+   * deshalb in den Rumpf, nicht in die URL.
+   */
+  setVolumeMonitor(id, body) {
+    return this.#client.put(`/servers/${id}/volumes/monitor`, body);
   }
 
   /** CVE-Scan-Bericht (Trivy): Funde, Zusammenfassung, Scan-Metadaten. */

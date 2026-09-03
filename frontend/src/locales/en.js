@@ -51,6 +51,17 @@ export default {
       control_chars: 'Must not contain control characters.',
     },
   },
+  terminal: {
+    title: 'Console',
+    subtitle: 'Interactive shell on {name}.',
+    open: 'Open console',
+    connecting: 'Connecting …',
+    close: 'End session',
+    connectionFailed: 'Could not connect to the console.',
+    sessionEnded: '— session ended —',
+    notice:
+      'The session is recorded in full and afterwards lives in the SSH log. While the console is open no schedules run on this server - it holds the execution slot. After 15 minutes without input it ends on its own.',
+  },
   common: {
     collapse: 'Collapse',
     expand: 'Expand',
@@ -141,6 +152,11 @@ export default {
       other: '{count} container images with available updates',
     },
     diskLow: 'Disk space is running low ({percent}% used)',
+    volumeLow: 'Volume {mountpoint} is {percent}% full (threshold {limit}%)',
+    volumeCritical: 'Volume {mountpoint} is {percent}% full (critical from {limit}%)',
+    volumeInodes: 'Volume {mountpoint}: inodes {percent}% used - the filesystem can fill up while space is still free',
+    volumeReadOnly: 'Volume {mountpoint} is mounted read-only - the kernel protected it after an error',
+    storageDefect: '{name} ({kind}) is {state}: {message}',
     clockAhead: 'Clock is {seconds} seconds ahead - check time synchronisation',
     clockBehind: 'Clock is {seconds} seconds behind - check time synchronisation',
     clockAheadContainer:
@@ -281,6 +297,8 @@ export default {
     warning: 'Warning',
     critical: 'Critical',
     offline: 'Offline',
+    maintenance: 'Maintenance',
+    maintenanceTitle: 'Deliberately out of service - LCM runs nothing here.',
     offlineTolerated: 'Currently unreachable - marked as non-critical, status from last contact.',
     offlineTitle: 'Unreachable for {count} consecutive contact attempts.',
     noServers: 'No servers yet.',
@@ -512,6 +530,7 @@ export default {
     sshLogTitle: 'SSH log of this job:',
     none: 'No jobs matching the current filters.',
     abort: 'Abort',
+    pendingHint: 'Waiting for the server - the running job has to finish first. Order follows the priority of the group, ties by trigger time.',
     abortConfirm:
       'Really abort job “{name}”? The connection is closed and the server lock released - the remote command may already have made changes on the server.',
   },
@@ -1000,6 +1019,11 @@ export default {
     email: 'Email',
     active: 'active',
     save: 'Save',
+    mailActivation: 'Send link by email',
+    mailActivationTo: 'Send activation link to {email}',
+    noEmailHint: 'No email address on this user - nothing to send to.',
+    activationMailed: 'The link was sent to {email}.',
+    activationMailFailed: 'The link was created but could not be sent: {error}. You can copy it below and pass it on yourself.',
     genActivation: 'Generate activation link',
     passwordSet: 'Password set',
     noPassword: 'no password',
@@ -1086,7 +1110,7 @@ export default {
         'Instead of querying every package online, the OSV database is mirrored once a day for the distributions you actually run and evaluated in-house afterwards. The price is freshness: early warning is then only as current as the last mirror run - roughly a day instead of a few minutes.',
       advisoryTtlLabel: 'Cache validity (minutes)',
       advisoryTtlHint:
-        '0 disables the cache, maximum is 30. A cache hit means the package was not queried again during that time - precisely inside the window the early warning exists for. Keep it low.',
+        '0 disables the cache. Otherwise the range is 15 to 30 minutes: the poll runs every 15 minutes, and an entry that expires sooner would already be stale by the next run - written but never read, so smaller values are raised to 15. A hit means the package was not queried again during that time. With the local copy the cache is bypassed entirely, since nothing leaves the house anyway.',
       stateLabel: 'State',
       stateActive: 'enabled',
       stateOff: 'disabled',
@@ -1101,6 +1125,23 @@ export default {
         'There is no server with a recorded Linux package inventory, so the copy does not know which distributions to fetch. Add a server first and let its package list be collected.',
       mirrorStarted: 'Mirror run started - it downloads several megabytes and runs in the background.',
       never: 'never',
+    },
+    events: {
+      title: 'Events',
+      intro:
+        'The log of the LCM service itself. This is what LCM is doing and where it fails - the same lines otherwise only visible through journalctl on the LCM host.',
+      level: 'From severity',
+      reload: 'Reload',
+      allLevels: 'all',
+      search: 'Search',
+      searchPlaceholder: 'e.g. unreachable, queued, degraded',
+      follow: 'Follow',
+      following: 'Following',
+      empty: 'No lines for this selection.',
+      debugLabel: 'Debug logging',
+      debugUntil: 'ends {time}',
+      debugHint:
+        'Raises logging to debug for 30 minutes and lowers it again on its own. Debug records every SSH command including its output - left on permanently it fills the log file on a small machine faster than rotation clears it. Switching it on again extends the window.',
     },
     general: {
       title: 'General',
@@ -1137,10 +1178,13 @@ export default {
         ' = default from the configuration. Takes effect from the next login; valid values: 5 min to 30 days (43200 min). A service restart ends all sessions anyway.',
       jobsTitle: 'Job monitoring',
       jobsIntro:
-        'The job watchdog automatically aborts jobs that run longer than the maximum duration and releases the server lock - e.g. when an update waits on a dpkg lock. Additionally, jobs interrupted by a service restart are cleaned up on startup.',
-      jobMaxLabel: 'Maximum job runtime (minutes)',
-      jobMaxHintA: '',
-      jobMaxHintB: ' = watchdog off. Valid values: 5 minutes to 24 hours (1440).',
+        'The job watchdog does not look at total runtime but at signs of life: as long as a run produces output it is working and may take as long as it needs. If nothing at all arrives for longer than the configured time, it counts as stalled (e.g. an update waiting on a dpkg lock) and is aborted - the server lock is released. Additionally, jobs interrupted by a service restart are cleaned up on startup.',
+      jobIdleLabel: 'Permitted silence (minutes)',
+      jobIdleHintA: '',
+      jobIdleHintB: ' = watchdog off. Valid values: 1 minute to 24 hours (1440).',
+      jobIdleSlowLabel: 'Permitted silence on slow hardware (minutes)',
+      jobIdleSlowHint:
+        'Applies to Raspberry Pi and similar boards as well as servers with at most 2 cores and 2 GB RAM. Long silent phases are normal there - a single dpkg trigger such as update-initramfs runs for minutes on an SD card without a line of output.',
       mailTitle: 'Default email delivery',
       mailIntroA:
         'System outbox for transactional mail: password resets, invitation links for new users and notices to administrators (e.g. on backup problems). Separate from the ',
@@ -1170,7 +1214,7 @@ export default {
       'Instead of querying every package online, the OSV database is mirrored once a day for the distributions you actually run and evaluated in-house afterwards. The price is freshness: early warning is then only as current as the last mirror run - roughly a day instead of a few minutes.',
     advisoryTtlLabel: 'Cache validity (minutes)',
     advisoryTtlHint:
-      '0 disables the cache, maximum is 30. A cache hit means the package was not queried again during that time - precisely inside the window the early warning exists for. Keep it low.',
+      '0 disables the cache. Otherwise the range is 15 to 30 minutes: the poll runs every 15 minutes, and an entry that expires sooner would already be stale by the next run - written but never read, so smaller values are raised to 15. A hit means the package was not queried again during that time. With the local copy the cache is bypassed entirely, since nothing leaves the house anyway.',
     cveWeightLabel: 'Packages with high CVE weighting',
       logTitle: 'Log cleanup',
       logIntroA:
@@ -2020,6 +2064,16 @@ export default {
       cvesOverrideNote:
         'Note: this also covers containers marked as CVE-relevant and those reachable from the network past the host firewall - which would otherwise count automatically.',
     },
+    maintenance: {
+      title: 'Maintenance',
+      label: 'Server under maintenance',
+      badge: 'Maintenance',
+      badgeTitle: 'This server is deliberately out of service - LCM leaves it alone.',
+      hint: 'Takes the server out of service for a while: no scheduled runs, no health check, no early warning, no CVE scan, no alerts. For systems that are off on purpose - a powered-down test environment, a device being rebuilt. Without this switch, "off" counts as "broken" and the server reports itself unreachable every 15 minutes.',
+      since: 'Under maintenance since {date}.',
+      started: 'Server placed under maintenance.',
+      ended: 'Maintenance ended.',
+    },
     availability: {
       title: 'Availability',
       label: 'Unreachability non-critical',
@@ -2471,6 +2525,7 @@ export default {
     overview: {
       hardware: 'Hardware',
       platform: 'Platform',
+      model: 'Model',
       cpu: 'CPU',
       cores: '{count} cores',
       ram: 'RAM',
@@ -2652,6 +2707,36 @@ export default {
       colDevice: 'Device',
       colFstype: 'Type',
       colUsage: 'Usage',
+      colInodes: 'Inodes',
+      colMonitor: 'Monitoring',
+      volumesHintMonitor:
+        'By default only "/" is monitored. Every other volume can be added here individually, with its own warning threshold. Without that instruction it stays display-only: an archive is allowed to fill up, and alerting on it would be noise.',
+      readOnlyBadge: 'read-only',
+      readOnlyHint:
+        'The filesystem is mounted read-only. The kernel does this to protect it after an I/O or metadata error - otherwise it goes unnoticed until the first write fails.',
+      networkBadge: 'network storage',
+      notMonitorable: 'not monitorable',
+      alwaysMonitored: 'always monitored',
+      notMonitorableHint:
+        'Network storage is monitored by the service that provides it. From here only the client view would be visible - every network hiccup would be reported as a storage problem.',
+      monitorToggle: 'Enable or disable monitoring for {mount}',
+      thresholdLabel: 'Warning threshold in percent',
+      monitoredFrom: 'monitored from {percent}%',
+      healthTitle: 'Health of the storage sets',
+      healthHint:
+        'ZFS, Btrfs, software RAID and LVM thin pools report trouble nowhere on their own - a pool can run without redundancy for weeks before anyone notices. This state is therefore always collected and cannot be switched off.',
+      colKind: 'Type',
+      colName: 'Set',
+      colState: 'State',
+      colDetail: 'Finding',
+      fillData: 'data {percent}%',
+      fillMeta: 'metadata {percent}%',
+      kind: {
+        zfs: 'ZFS pool',
+        btrfs: 'Btrfs',
+        mdraid: 'software RAID',
+        lvm_thin: 'LVM thin pool',
+      },
     },
     apps: {
       intro:

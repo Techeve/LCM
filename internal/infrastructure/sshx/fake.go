@@ -117,8 +117,19 @@ func (d *FakeDialer) DialKey(host string, port int, user, privateKeyPEM, expecte
 }
 
 type fakeConn struct {
-	dialer *FakeDialer
-	closed bool
+	dialer     *FakeDialer
+	closed     bool
+	onActivity func()
+}
+
+// OnActivity hinterlegt den Lebenszeichen-Rückruf; die Fake-Verbindung löst
+// ihn wie die echte zu Beginn und Ende jedes Kommandos aus.
+func (c *fakeConn) OnActivity(fn func()) { c.onActivity = fn }
+
+func (c *fakeConn) activity() {
+	if c.onActivity != nil {
+		c.onActivity()
+	}
 }
 
 func (c *fakeConn) Run(cmd string) (string, int, error) {
@@ -134,6 +145,8 @@ func (c *fakeConn) Run(cmd string) (string, int, error) {
 // kann ein Test einen allgemeinen Standard setzen und einzelne Kommandos
 // gezielt davon ausnehmen.
 func (c *fakeConn) RunStdin(cmd, stdin string) (string, int, error) {
+	c.activity()
+	defer c.activity()
 	c.dialer.record(cmd, stdin)
 	if d := c.dialer.Delay; d > 0 {
 		time.Sleep(d)

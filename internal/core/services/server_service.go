@@ -100,6 +100,9 @@ type ServerService struct {
 	// knownRepos ist der pflegbare Katalog bekannter Paketquellen. Optional -
 	// ohne DB-Sicht (schlanke Tests) greift der mitgelieferte Default-Katalog.
 	knownRepos *repositories.KnownRepoRepository
+	// settings sind die globalen Einstellungen (nur für den Konsolen-Schalter
+	// gebraucht; optional verdrahtet, siehe WithSettings).
+	settings *repositories.SettingsRepository
 	// apps ist der Anwendungskatalog samt der Funde je Server. Optional -
 	// ohne ihn entfällt die Erkennung (schlanke Tests).
 	apps *repositories.AppRepository
@@ -249,6 +252,18 @@ func NewServerService(servers *repositories.ServerRepository, jobs *JobService, 
 // Tests den Service ohne Recorder erzeugen können).
 func (s *ServerService) WithRecorder(rec *SSHRecorder) *ServerService {
 	s.recorder = rec
+	return s
+}
+
+// WithSettings verdrahtet die globalen Einstellungen - gebraucht für den
+// Schalter, der die Web-Konsole freigibt.
+//
+// Fehlt die Verdrahtung, bleibt die Konsole ZU (siehe OpenTerminal). Bei einer
+// Funktion, die eine Root-Shell öffnet, ist das die einzig vertretbare
+// Vorgabe: Eine vergessene Verdrahtung darf nicht dazu führen, dass ein
+// Schalter wirkungslos ist, den ein Betreiber bewusst umgelegt hat.
+func (s *ServerService) WithSettings(settings *repositories.SettingsRepository) *ServerService {
+	s.settings = settings
 	return s
 }
 
@@ -1001,6 +1016,85 @@ func withProvisionLog(err error, provisionLog string) error {
 	return fmt.Errorf("%w\n\n--- Provisionierungs-Protokoll ---\n%s", err, strings.TrimSpace(provisionLog))
 }
 
+// transportOf benennt den Weg, über den LCM einen Server erreicht - fürs
+// Debug-Protokoll, damit man dort nicht raten muss.
+func transportOf(server *domain.Server) string {
+	switch {
+	case server.IsAgent():
+		return "agent"
+	case server.IsRouterOS():
+		return "routeros"
+	default:
+		return "ssh"
+	}
+}
+
+// scanFields baut aus einem gescannten Server die Spalten für die Datenbank.
+//
+// EINE Quelle für BEIDE Scan-Wege - den nächtlichen System-Sync und den
+// manuellen Voll-Refresh. Vorher pflegte jeder Weg seine eigene Liste von
+// Hand, und die des Syncs war zurückgeblieben: Er erfasste vierzig Werte und
+// schrieb sechzehn davon weg. Neunzehn erfasste Angaben fielen jede Nacht
+// unter den Tisch, darunter os_id und os_version_id - die beiden Felder, aus
+// denen die Support-/EOL-Bewertung rechnet.
+//
+// Die Folge war im Betrieb sichtbar: Nach einem Distributions-Upgrade zeigte
+// die Oberfläche den neuen Namen („Debian 13"), bewertete aber weiter die
+// alte Version - ein Server blieb also rot wegen eines End-of-Life, das das
+// Upgrade gerade behoben hatte. Genau dieser Fehler war zuvor schon einmal
+// bei den DNS-Angaben aufgetreten und dort einzeln repariert worden; eine
+// dritte Runde davon verhindert diese Funktion.
+//
+// Laufzeit-Angaben (reachable, last_seen_at, …) gehören NICHT hierher: Sie
+// beschreiben den Kontakt, nicht den Befund, und der Voll-Refresh setzt sie
+// zusätzlich.
+func scanFields(fresh *domain.Server) map[string]any {
+	fields := map[string]any{
+		"os_name": fresh.OSName, "os_version": fresh.OSVersion,
+		"proxmox_type": fresh.ProxmoxType, "proxmox_version": fresh.ProxmoxVersion,
+		"has_snap": fresh.HasSnap, "has_docker": fresh.HasDocker, "has_compose": fresh.HasCompose,
+		"has_acl": fresh.HasACL, "acl_usable": fresh.ACLUsable,
+		"reboot_required": fresh.RebootRequired, "listening_packages": fresh.ListeningPackages,
+		"kernel_version": fresh.KernelVersion, "installed_kernels": fresh.InstalledKernels,
+		"hardware_model": fresh.HardwareModel,
+		"cpu_model":      fresh.CPUModel, "cpu_cores": fresh.CPUCores,
+		"mem_total_mb": fresh.MemTotalMB, "mem_used_mb": fresh.MemUsedMB,
+		"disk_total_mb": fresh.DiskTotalMB, "disk_used_mb": fresh.DiskUsedMB,
+		"ip_addresses":       fresh.IPAddresses,
+		"fail2ban_installed": fresh.Fail2banInstalled, "crowdsec_installed": fresh.CrowdSecInstalled,
+		"ssh_2fa_enabled": fresh.SSH2FAEnabled,
+		"firewall_tool":   fresh.FirewallTool, "listening_ports": fresh.ListeningPorts,
+		// Zeit-Zustand gehört zur Grunderfassung: eine falsch gehende Uhr
+		// fällt sonst nirgends auf, verdirbt aber TLS-Prüfungen, die
+		// Protokoll-Reihenfolge über mehrere Server und signierte
+		// Paket-Metadaten.
+		"timezone": fresh.Timezone, "ntp_service": fresh.NTPService,
+		"ntp_synchronized": fresh.NTPSynchronized, "ntp_servers": fresh.NTPServers,
+		"clock_offset_seconds": fresh.ClockOffsetSeconds, "time_checked_at": time.Now(),
+	}
+	// Werte, die eine Erkennung sind und kein Zustand: Ein leeres Ergebnis
+	// heißt hier „nicht ermittelt", nicht „nicht vorhanden". Ein Scan, dem
+	// ein Kommando weggebrochen ist, darf einen einmal erkannten Wert nicht
+	// überschreiben - sonst verlöre ein Server bei einem einzigen gestörten
+	// Durchgang seine Distributions-Kennung und damit die EOL-Bewertung.
+	// (Dasselbe Muster wie bei lcm_source_ip weiter unten.)
+	keepIfDetected(fields, "os_id", fresh.OSID)
+	keepIfDetected(fields, "os_version_id", fresh.OSVersionID)
+	keepIfDetected(fields, "package_manager", fresh.PackageManager)
+	keepIfDetected(fields, "virtualization", fresh.Virtualization)
+	// Quell-IP nur überschreiben, wenn erkannt (leer = alten Wert behalten).
+	keepIfDetected(fields, "lcm_source_ip", fresh.LCMSourceIP)
+	return fields
+}
+
+// keepIfDetected nimmt einen Wert nur auf, wenn er erkannt wurde - sonst
+// bleibt die Spalte unberührt.
+func keepIfDetected(fields map[string]any, spalte, wert string) {
+	if wert != "" {
+		fields[spalte] = wert
+	}
+}
+
 // applyScan überträgt das Scan-Ergebnis auf das Server-Struct.
 func applyScan(server *domain.Server, scan *scanResult) {
 	server.OSName = scan.OSName
@@ -1037,6 +1131,7 @@ func applyScan(server *domain.Server, scan *scanResult) {
 	server.TimeCheckedAt = &now
 	server.KernelVersion = scan.KernelVersion
 	server.InstalledKernels = domain.MarshalKernelPackages(scan.Kernels)
+	server.HardwareModel = scan.HardwareModel
 	server.CPUModel = scan.CPUModel
 	server.CPUCores = scan.CPUCores
 	server.MemTotalMB = scan.MemTotalMB
@@ -1216,6 +1311,14 @@ func (s *ServerService) connectRead(server *domain.Server) (sshx.Conn, error) {
 // Für Agent-Server (LCM Remote) liefert es stattdessen die MQTT-Verbindung
 // des Hubs; ConnLimiter und SSHRecorder liegen in beiden Fällen darüber.
 func (s *ServerService) dial(server *domain.Server) (sshx.Conn, error) {
+	// Die Dauer des Verbindungsaufbaus ist im Debug-Fall die interessanteste
+	// Einzelzahl: Ein Server, der erst nach Sekunden antwortet, erklärt einen
+	// langsamen Durchgang, ohne dass irgendetwas scheitert.
+	start := time.Now()
+	defer func() {
+		slog.Debug("ssh dial", "server", server.Name, "host", server.Host,
+			"transport", transportOf(server), "duration_ms", time.Since(start).Milliseconds())
+	}()
 	if server.IsDemo {
 		return nil, errors.New("demo-server werden nicht per ssh kontaktiert")
 	}
@@ -1930,8 +2033,15 @@ func (s *ServerService) Status(scope repositories.AccessScope, id uint) (string,
 	if err != nil {
 		return "", nil, domain.OSSupportInfo{}, err
 	}
+	// Speicher: die erfassten Volumes, die angeordnete Überwachung einzelner
+	// davon und der Zustand der Verbünde. Fehler hier dürfen die Bewertung
+	// nicht kippen - dann fehlt eben dieser Teil der Befunde.
+	volumes, _ := s.servers.FindDiskVolumes(id)
+	monitore, _ := s.servers.FindVolumeMonitors(id)
+	storage, _ := s.servers.FindStorageHealth(id)
 	in := domain.TrafficLightInput{
 		OutdatedPackages: int(outdated), Now: time.Now(),
+		Volumes: volumes, VolumeMonitors: monitore, StorageHealth: storage,
 		CriticalVulns: weighted[domain.SeverityCritical], HighVulns: weighted[domain.SeverityHigh],
 		RaisedVulnPackages:      raisedVulnPackages(facts, s.cveWeightList(), splitCSVList(server.ListeningPackages), relevantRefs),
 		OutdatedContainerImages: int(outdatedImages),
@@ -2187,6 +2297,7 @@ type ServerSettingsInput struct {
 	UnreachableGraceDays  *int
 	DockerUpdatesDisabled *bool
 	DockerCVEsIgnored     *bool
+	Maintenance           *bool
 }
 
 // UpdateSettings ändert Metadaten eines Servers (Name, Host, Port) sowie die
@@ -2234,9 +2345,162 @@ func (s *ServerService) UpdateSettings(scope repositories.AccessScope, id uint, 
 	if in.DockerCVEsIgnored != nil {
 		server.DockerCVEsIgnored = *in.DockerCVEsIgnored
 	}
+	if in.Maintenance != nil && *in.Maintenance != server.Maintenance {
+		server.Maintenance = *in.Maintenance
+		// Der Zeitstempel entsteht beim Einschalten und verschwindet beim
+		// Ausschalten - ein stehengebliebenes Datum wäre schlimmer als keins.
+		if server.Maintenance {
+			now := time.Now()
+			server.MaintenanceSince = &now
+		} else {
+			server.MaintenanceSince = nil
+		}
+	}
 	if err := s.servers.Update(server); err != nil {
 		return nil, err
 	}
 	s.audit.Log(actor, "server.update", "server", id, server.Name)
+	// Die Wartung bekommt einen eigenen Eintrag: Sie stellt die Überwachung
+	// eines Servers still, und wer das wann getan hat, gehört nachvollziehbar
+	// ins Protokoll - nicht versteckt in einer allgemeinen Änderung.
+	if in.Maintenance != nil {
+		action, detail := "server.maintenance.end", server.Name+": Wartung beendet"
+		if server.Maintenance {
+			action, detail = "server.maintenance.start", server.Name+": in Wartung genommen - keine Zeitplan-Läufe, keine Alarme"
+		}
+		s.audit.Log(actor, action, "server", id, detail)
+	}
 	return server, nil
+}
+
+// --- Speicher-Volumes: Überwachung und Zustand -------------------------------
+
+// VolumeView ist ein erfasstes Volume samt seiner Überwachungs-Einstellung -
+// die Ansicht, die die Server-Detailseite braucht.
+type VolumeView struct {
+	domain.DiskVolume
+	// Monitorable: Darf dieses Volume überhaupt überwacht werden? Netz-Mounts
+	// dürfen es nicht - dafür ist der Speicher zuständig, der sie anbietet.
+	Monitorable bool `json:"monitorable"`
+	IsNetwork   bool `json:"is_network"`
+	// Monitor ist die Einstellung, falls die Überwachung angeordnet wurde.
+	Monitor *domain.VolumeMonitor `json:"monitor,omitempty"`
+	// UsagePercent/InodePercent ausgerechnet, damit die Oberfläche nicht
+	// dieselbe Rechnung noch einmal führen muss.
+	UsagePercent int `json:"usage_percent"`
+	InodePercent int `json:"inode_percent"`
+}
+
+// Volumes liefert die Speicher-Volumes eines Servers samt Überwachungs-Stand.
+func (s *ServerService) Volumes(scope repositories.AccessScope, id uint) ([]VolumeView, error) {
+	if _, err := s.servers.FindByID(scope, id); err != nil {
+		return nil, err
+	}
+	volumes, err := s.servers.FindDiskVolumes(id)
+	if err != nil {
+		return nil, err
+	}
+	monitore, err := s.servers.FindVolumeMonitors(id)
+	if err != nil {
+		return nil, err
+	}
+	nachMount := make(map[string]*domain.VolumeMonitor, len(monitore))
+	for i := range monitore {
+		nachMount[monitore[i].Mountpoint] = &monitore[i]
+	}
+
+	views := make([]VolumeView, 0, len(volumes))
+	for i := range volumes {
+		v := &volumes[i]
+		views = append(views, VolumeView{
+			DiskVolume:   *v,
+			Monitorable:  v.Monitorable(),
+			IsNetwork:    v.IsNetwork(),
+			Monitor:      nachMount[v.Mountpoint],
+			UsagePercent: v.UsagePercent(),
+			InodePercent: v.InodeUsagePercent(),
+		})
+	}
+	return views, nil
+}
+
+// StorageHealth liefert den Zustand der Speicher-Verbünde eines Servers.
+func (s *ServerService) StorageHealth(scope repositories.AccessScope, id uint) ([]domain.StorageHealth, error) {
+	if _, err := s.servers.FindByID(scope, id); err != nil {
+		return nil, err
+	}
+	return s.servers.FindStorageHealth(id)
+}
+
+// ErrVolumeNotMonitorable meldet den Versuch, ein Volume zu überwachen, das
+// dafür nicht in Frage kommt.
+var ErrVolumeNotMonitorable = errors.New("dieses Volume kann nicht überwacht werden")
+
+// SetVolumeMonitor schaltet die Überwachung eines Volumes ein oder aus.
+//
+// Geprüft wird gegen die ZULETZT ERFASSTEN Volumes: Ein Mountpoint, den es auf
+// dem Server gar nicht gibt, wäre eine Einstellung ins Leere, und ein
+// Netz-Mount darf nicht überwacht werden. Beides hier abzufangen ist
+// billiger, als es später als „meldet nie" zu erklären.
+func (s *ServerService) SetVolumeMonitor(scope repositories.AccessScope, id uint,
+	mountpoint string, enabled bool, warn, crit, inodeWarn int, actor string,
+) error {
+	server, err := s.servers.FindByID(scope, id)
+	if err != nil {
+		return err
+	}
+	mountpoint = strings.TrimSpace(mountpoint)
+	if mountpoint == "" {
+		return ErrVolumeNotMonitorable
+	}
+	if !enabled {
+		if err := s.servers.DeleteVolumeMonitor(id, mountpoint); err != nil {
+			return err
+		}
+		s.audit.Log(actor, "server.volume-monitor.off", "server", id, server.Name+": "+mountpoint)
+		return nil
+	}
+
+	volumes, err := s.servers.FindDiskVolumes(id)
+	if err != nil {
+		return err
+	}
+	var passend *domain.DiskVolume
+	for i := range volumes {
+		if volumes[i].Mountpoint == mountpoint {
+			passend = &volumes[i]
+			break
+		}
+	}
+	if passend == nil || !passend.Monitorable() {
+		return ErrVolumeNotMonitorable
+	}
+
+	m := &domain.VolumeMonitor{
+		ServerID: id, Mountpoint: mountpoint,
+		WarnPercent: clampPercent(warn), CritPercent: clampPercent(crit),
+		InodeWarnPercent: clampPercent(inodeWarn),
+	}
+	if err := s.servers.SaveVolumeMonitor(m); err != nil {
+		return err
+	}
+	s.audit.Log(actor, "server.volume-monitor.on", "server", id,
+		server.Name+": "+mountpoint+" ab "+itoaPercent(m.EffectiveWarnPercent())+"%")
+	return nil
+}
+
+// itoaPercent formatiert eine Prozentangabe.
+func itoaPercent(p int) string { return fmt.Sprintf("%d", p) }
+
+// clampPercent hält eine Grenze im sinnvollen Bereich. 0 bleibt 0 und heißt
+// „nicht gesetzt" - die Vorgabe greift dann.
+func clampPercent(p int) int {
+	switch {
+	case p <= 0:
+		return 0
+	case p > 100:
+		return 100
+	default:
+		return p
+	}
 }

@@ -52,6 +52,17 @@ export default {
       control_chars: 'Darf keine Steuerzeichen enthalten.',
     },
   },
+  terminal: {
+    title: 'Konsole',
+    subtitle: 'Interaktive Shell auf {name}.',
+    open: 'Konsole öffnen',
+    connecting: 'Verbinde …',
+    close: 'Beenden',
+    connectionFailed: 'Verbindung zur Konsole fehlgeschlagen.',
+    sessionEnded: '— Sitzung beendet —',
+    notice:
+      'Die Sitzung wird vollständig mitgeschnitten und liegt danach im SSH-Protokoll. Solange die Konsole offen ist, laufen auf diesem Server keine Zeitpläne - sie belegt den Ausführungs-Slot. Nach 15 Minuten ohne Eingabe endet sie von selbst.',
+  },
   common: {
     collapse: 'Einklappen',
     expand: 'Ausklappen',
@@ -142,6 +153,11 @@ export default {
       other: '{count} Container-Images mit verfügbaren Updates',
     },
     diskLow: 'Festplattenspeicher wird knapp ({percent}% belegt)',
+    volumeLow: 'Volume {mountpoint} zu {percent}% belegt (Grenze {limit}%)',
+    volumeCritical: 'Volume {mountpoint} zu {percent}% belegt (kritisch ab {limit}%)',
+    volumeInodes: 'Volume {mountpoint}: Inodes zu {percent}% belegt - das Dateisystem kann volllaufen, obwohl noch Platz frei ist',
+    volumeReadOnly: 'Volume {mountpoint} ist nur lesbar eingehängt - der Kernel hat es nach einem Fehler abgesichert',
+    storageDefect: '{kindLabel} {name}: {message}',
     clockAhead: 'Uhr geht {seconds} Sekunden vor - Zeitabgleich prüfen',
     clockBehind: 'Uhr geht {seconds} Sekunden nach - Zeitabgleich prüfen',
     clockAheadContainer:
@@ -282,6 +298,8 @@ export default {
     warning: 'Warnung',
     critical: 'Kritisch',
     offline: 'Offline',
+    maintenance: 'Wartung',
+    maintenanceTitle: 'Absichtlich außer Betrieb - LCM führt hier keine Läufe aus.',
     offlineTolerated: 'Zurzeit nicht erreichbar - als unkritisch markiert, Status vom letzten Kontakt.',
     offlineTitle: 'Seit {count} aufeinanderfolgenden Kontaktversuchen nicht erreichbar.',
     noServers: 'Noch keine Server.',
@@ -514,6 +532,7 @@ export default {
     sshLogTitle: 'SSH-Protokoll dieses Jobs:',
     none: 'Keine Jobs für die aktuellen Filter.',
     abort: 'Abbrechen',
+    pendingHint: 'Wartet auf den Server - der laufende Job muss erst fertig werden. Die Reihenfolge entscheidet der Vorrang der Gruppe, bei Gleichstand die Auslösezeit.',
     abortConfirm:
       'Job „{name}" wirklich abbrechen? Die Verbindung wird getrennt und die Server-Sperre aufgehoben - das Remote-Kommando kann auf dem Server bereits Änderungen vorgenommen haben.',
   },
@@ -1004,6 +1023,11 @@ export default {
     email: 'E-Mail',
     active: 'aktiv',
     save: 'Speichern',
+    mailActivation: 'Link per E-Mail senden',
+    mailActivationTo: 'Aktivierungslink an {email} schicken',
+    noEmailHint: 'Für den Versand fehlt eine E-Mail-Adresse an diesem Benutzer.',
+    activationMailed: 'Der Link wurde an {email} geschickt.',
+    activationMailFailed: 'Der Link wurde erzeugt, der Versand ist aber fehlgeschlagen: {error}. Du kannst ihn unten kopieren und selbst weitergeben.',
     genActivation: 'Aktivierungslink generieren',
     passwordSet: 'Passwort gesetzt',
     noPassword: 'kein Passwort',
@@ -1090,7 +1114,7 @@ export default {
         'Statt jedes Paket online abzufragen, wird die OSV-Datenbank einmal täglich für die tatsächlich eingesetzten Distributionen gespiegelt und danach im Haus ausgewertet. Der Preis ist die Aktualität: Die Frühwarnung ist dann so frisch wie der letzte Spiegellauf - also etwa einen Tag statt weniger Minuten.',
       advisoryTtlLabel: 'Zwischenspeicher gültig (Minuten)',
       advisoryTtlHint:
-        '0 schaltet den Zwischenspeicher aus, Maximum 30. Ein Treffer im Zwischenspeicher heißt: In dieser Zeit wurde für das Paket nicht erneut nachgefragt - genau im Fenster, für das die Frühwarnung da ist. Niedrig halten.',
+        '0 schaltet den Zwischenspeicher aus. Sonst gilt der Bereich 15 bis 30 Minuten: Der Durchgang läuft alle 15 Minuten, ein kürzer gültiger Eintrag wäre beim nächsten Mal längst abgelaufen und würde nur geschrieben, nie gelesen - kleinere Werte werden deshalb auf 15 angehoben. Ein Treffer heißt: In dieser Zeit wurde für das Paket nicht erneut nachgefragt. Bei lokaler Kopie wird der Zwischenspeicher übergangen, weil dann ohnehin nichts nach außen geht.',
       stateLabel: 'Zustand',
       stateActive: 'eingeschaltet',
       stateOff: 'ausgeschaltet',
@@ -1105,6 +1129,23 @@ export default {
         'Es gibt keinen Server mit erfasstem Linux-Paketbestand - die Kopie weiß deshalb nicht, welche Distributionen sie holen soll. Nimm zuerst einen Server auf und lass die Paketliste erfassen.',
       mirrorStarted: 'Spiegellauf gestartet - er lädt einige Megabyte und läuft im Hintergrund.',
       never: 'noch nie',
+    },
+    events: {
+      title: 'Ereignisse',
+      intro:
+        'Das Log des LCM-Dienstes selbst. Hier steht, was LCM gerade tut und woran es scheitert - dieselben Zeilen, die sonst nur über journalctl auf dem LCM-Host zu sehen wären.',
+      level: 'Ab Schwere',
+      reload: 'Neu laden',
+      allLevels: 'alle',
+      search: 'Suche',
+      searchPlaceholder: 'z.B. unreachable, queued, degraded',
+      follow: 'Mitlaufen',
+      following: 'Läuft mit',
+      empty: 'Keine Zeilen für diese Auswahl.',
+      debugLabel: 'Debug-Protokollierung',
+      debugUntil: 'endet {time}',
+      debugHint:
+        'Hebt die Protokollierung für 30 Minuten auf debug und stellt sie danach von selbst zurück. Debug schreibt jedes SSH-Kommando samt Ausgabe mit - dauerhaft eingeschaltet füllt es auf einer kleinen Maschine die Logdatei schneller, als die Rotation sie wegräumt. Die Frist verlängert sich, wenn du erneut einschaltest.',
     },
     general: {
       title: 'Allgemein',
@@ -1141,10 +1182,13 @@ export default {
         ' = Vorgabe aus der Konfiguration. Greift ab dem nächsten Login; gültige Werte: 5 Min bis 30 Tage (43200 Min). Ein Dienst-Neustart beendet ohnehin alle Sessions.',
       jobsTitle: 'Job-Überwachung',
       jobsIntro:
-        'Der Job-Watchdog bricht Jobs, die länger als die Maximaldauer laufen, automatisch ab und hebt die Server-Sperre auf - z.B. wenn ein Update auf einen dpkg-Lock wartet. Zusätzlich werden beim Dienststart unterbrochene Jobs aufgeräumt.',
-      jobMaxLabel: 'Maximale Job-Laufzeit (Minuten)',
-      jobMaxHintA: '',
-      jobMaxHintB: ' = Watchdog aus. Gültige Werte: 5 Minuten bis 24 Stunden (1440).',
+        'Der Job-Watchdog achtet nicht auf die Gesamtdauer, sondern auf Lebenszeichen: Solange ein Lauf Ausgabe erzeugt, arbeitet er und darf beliebig lange dauern. Kommt über die eingestellte Zeit hinaus gar nichts mehr, gilt er als hängend (z.B. ein Update, das auf einen dpkg-Lock wartet) und wird abgebrochen - die Server-Sperre wird frei. Zusätzlich werden beim Dienststart unterbrochene Jobs aufgeräumt.',
+      jobIdleLabel: 'Erlaubte Stille (Minuten)',
+      jobIdleHintA: '',
+      jobIdleHintB: ' = Watchdog aus. Gültige Werte: 1 Minute bis 24 Stunden (1440).',
+      jobIdleSlowLabel: 'Erlaubte Stille auf schwacher Hardware (Minuten)',
+      jobIdleSlowHint:
+        'Gilt für Raspberry Pi & Co. sowie Server mit höchstens 2 Kernen und 2 GB RAM. Dort sind lange stille Phasen normal - ein einzelner dpkg-Trigger wie update-initramfs läuft auf einer SD-Karte minutenlang ohne eine Zeile Ausgabe.',
       mailTitle: 'Standard-E-Mail-Versand',
       mailIntroA:
         'System-Postausgang für transaktionale Mails: Passwort-Resets, Einladungslinks für neue Benutzer und Hinweise an die Administratoren (z.B. bei Backup-Problemen). Getrennt von den ',
@@ -1174,7 +1218,7 @@ export default {
       'Statt jedes Paket online abzufragen, wird die OSV-Datenbank einmal täglich für die tatsächlich eingesetzten Distributionen gespiegelt und danach im Haus ausgewertet. Der Preis ist die Aktualität: Die Frühwarnung ist dann so frisch wie der letzte Spiegellauf - also etwa einen Tag statt weniger Minuten.',
     advisoryTtlLabel: 'Zwischenspeicher gültig (Minuten)',
     advisoryTtlHint:
-      '0 schaltet den Zwischenspeicher aus, Maximum 30. Ein Treffer im Zwischenspeicher heißt: In dieser Zeit wurde für das Paket nicht erneut nachgefragt - genau im Fenster, für das die Frühwarnung da ist. Niedrig halten.',
+      '0 schaltet den Zwischenspeicher aus. Sonst gilt der Bereich 15 bis 30 Minuten: Der Durchgang läuft alle 15 Minuten, ein kürzer gültiger Eintrag wäre beim nächsten Mal längst abgelaufen und würde nur geschrieben, nie gelesen - kleinere Werte werden deshalb auf 15 angehoben. Ein Treffer heißt: In dieser Zeit wurde für das Paket nicht erneut nachgefragt. Bei lokaler Kopie wird der Zwischenspeicher übergangen, weil dann ohnehin nichts nach außen geht.',
     cveWeightLabel: 'Pakete mit hoher CVE-Gewichtung',
       logTitle: 'Log-Bereinigung',
       logIntroA:
@@ -2024,6 +2068,16 @@ export default {
       cvesOverrideNote:
         'Achtung: Das gilt auch für Container, die als CVE-relevant markiert sind, und für solche, die an der Host-Firewall vorbei aus dem Netz erreichbar sind - die sonst automatisch mitzählen.',
     },
+    maintenance: {
+      title: 'Wartung',
+      label: 'Server in Wartung',
+      badge: 'Wartung',
+      badgeTitle: 'Dieser Server ist absichtlich außer Betrieb - LCM lässt ihn in Ruhe.',
+      hint: 'Nimmt den Server vorübergehend aus dem Betrieb: keine Zeitplan-Läufe, kein Health-Check, keine Frühwarnung, kein CVE-Scan, keine Alarme. Für Systeme, die absichtlich aus sind - abgeschaltete Testumgebungen, Geräte im Umbau. Ohne diesen Schalter zählt „aus" als „gestört" und der Server meldet sich alle 15 Minuten als nicht erreichbar.',
+      since: 'In Wartung seit {date}.',
+      started: 'Server in Wartung genommen.',
+      ended: 'Wartung beendet.',
+    },
     availability: {
       title: 'Verfügbarkeit',
       label: 'Nichterreichbarkeit unkritisch',
@@ -2475,6 +2529,7 @@ export default {
     overview: {
       hardware: 'Hardware',
       platform: 'Plattform',
+      model: 'Modell',
       cpu: 'CPU',
       cores: '{count} Kerne',
       ram: 'RAM',
@@ -2656,6 +2711,36 @@ export default {
       colDevice: 'Gerät',
       colFstype: 'Typ',
       colUsage: 'Belegung',
+      colInodes: 'Inodes',
+      colMonitor: 'Überwachung',
+      volumesHintMonitor:
+        'Überwacht wird standardmäßig nur „/". Jedes weitere Volume lässt sich hier einzeln dazuschalten - mit eigener Warngrenze. Ohne diese Ansage bleibt es bei der reinen Anzeige: Ein Archiv darf voll werden, und eine Meldung darüber wäre Lärm.',
+      readOnlyBadge: 'nur lesbar',
+      readOnlyHint:
+        'Das Dateisystem ist nur lesbar eingehängt. Nach einem I/O- oder Metadatenfehler sichert der Kernel es so ab - bis zum ersten Schreibversuch fällt das sonst nicht auf.',
+      networkBadge: 'Netzspeicher',
+      notMonitorable: 'nicht überwachbar',
+      alwaysMonitored: 'immer überwacht',
+      notMonitorableHint:
+        'Netzspeicher wird von dem Dienst überwacht, der ihn anbietet. Von hier aus wäre nur die Sicht des Clients sichtbar - jeder Netz-Aussetzer würde als Speicherproblem gemeldet.',
+      monitorToggle: 'Überwachung für {mount} ein- oder ausschalten',
+      thresholdLabel: 'Warngrenze in Prozent',
+      monitoredFrom: 'überwacht ab {percent}%',
+      healthTitle: 'Zustand der Speicher-Verbünde',
+      healthHint:
+        'ZFS, Btrfs, Software-RAID und LVM-Thin-Pools melden Störungen von sich aus nirgends - ein Pool kann wochenlang ohne Redundanz laufen, ohne dass es jemand bemerkt. Dieser Zustand wird deshalb immer erhoben und ist nicht abschaltbar.',
+      colKind: 'Art',
+      colName: 'Verbund',
+      colState: 'Zustand',
+      colDetail: 'Befund',
+      fillData: 'Daten {percent}%',
+      fillMeta: 'Metadaten {percent}%',
+      kind: {
+        zfs: 'ZFS-Pool',
+        btrfs: 'Btrfs',
+        mdraid: 'Software-RAID',
+        lvm_thin: 'LVM-Thin-Pool',
+      },
     },
     apps: {
       intro:

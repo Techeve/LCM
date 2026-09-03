@@ -9,12 +9,15 @@ import (
 	"time"
 
 	"LCM/internal/remote/wire"
+	"LCM/internal/safego"
 )
 
-// hardRuntimeCap ist die Agent-eigene Notbremse je Kommando - normalerweise
-// bricht der LCM-Server (Watchdog) viel früher per Cancel ab; die Kappe
-// verhindert nur, dass ein verwaistes Kommando ewig weiterläuft.
-const hardRuntimeCap = 4 * time.Hour
+// defaultIdleTimeout ist die Agent-eigene Notbremse, wenn der Server keine
+// Frist mitschickt (älterer Server). Sie greift nach STILLE, nicht nach
+// Gesamtdauer: Ein Kommando darf beliebig lange laufen, solange es dabei
+// Ausgabe erzeugt - nur wer gar nichts mehr von sich gibt, gilt als hängend.
+// Normalerweise bricht der LCM-Server längst vorher per Cancel ab.
+const defaultIdleTimeout = 60 * time.Minute
 
 // Runner führt Kommandos des LCM-Servers aus: /bin/sh -c in einer eigenen
 // Prozessgruppe (Setsid), kombinierter Output mit Größenlimit, Abbruch per
@@ -31,8 +34,11 @@ func NewRunner() *Runner {
 	return &Runner{running: map[string]*exec.Cmd{}}
 }
 
-// Run führt das Kommando aus und liefert das Ergebnis (blockiert).
-func (r *Runner) Run(cmd wire.Command) wire.Result {
+// Run führt das Kommando aus und liefert das Ergebnis (blockiert). progress
+// wird - sofern gesetzt - im Takt von wire.ProgressInterval mit dem bisher
+// gesammelten Ausgabe-Umfang aufgerufen, solange das Kommando läuft; darüber
+// erfährt der Server, dass der Lauf noch arbeitet.
+func (r *Runner) Run(cmd wire.Command, progress func(outputBytes int)) wire.Result {
 	r.execMu.Lock()
 	defer r.execMu.Unlock()
 
@@ -66,10 +72,10 @@ func (r *Runner) Run(cmd wire.Command) wire.Result {
 		r.mu.Unlock()
 	}()
 
-	// Notbremse gegen verwaiste Endlos-Kommandos (Cancel kommt normal
-	// lange vorher vom Server).
-	capTimer := time.AfterFunc(hardRuntimeCap, func() { r.Cancel(cmd.ID) })
-	defer capTimer.Stop()
+	// Notbremse gegen verwaiste, hängende Kommandos (Cancel kommt normal
+	// lange vorher vom Server) - und zugleich der Takt der Lebenszeichen.
+	stopWatch := r.watch(cmd, out, progress)
+	defer stopWatch()
 
 	err := proc.Wait()
 	res.Output = out.String()
@@ -86,6 +92,39 @@ func (r *Runner) Run(cmd wire.Command) wire.Result {
 		}
 	}
 	return res
+}
+
+// watch begleitet ein laufendes Kommando: Es meldet den Fortschritt an den
+// Server und bricht ab, sobald der Ausgabe-Umfang über die erlaubte Stille
+// hinweg unverändert bleibt. Rückgabe ist die Abschaltfunktion.
+func (r *Runner) watch(cmd wire.Command, out *limitedBuffer, progress func(int)) func() {
+	idle := time.Duration(cmd.IdleTimeoutSec) * time.Second
+	if idle <= 0 {
+		idle = defaultIdleTimeout
+	}
+	done := make(chan struct{})
+	ticker := time.NewTicker(wire.ProgressInterval)
+	safego.Go("agent-watch:"+cmd.ID, func() {
+		defer ticker.Stop()
+		seen, since := out.Written(), time.Now()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if n := out.Written(); n != seen {
+					seen, since = n, time.Now()
+				} else if time.Since(since) >= idle {
+					r.Cancel(cmd.ID)
+					return
+				}
+				if progress != nil {
+					progress(seen)
+				}
+			}
+		}
+	})
+	return func() { close(done) }
 }
 
 // Cancel bricht ein laufendes Kommando ab (Kill der Prozessgruppe).
@@ -108,11 +147,23 @@ type limitedBuffer struct {
 	buf       strings.Builder
 	max       int
 	truncated bool
+	written   int // alle geschriebenen Bytes, auch die verworfenen
+}
+
+// Written ist die Zahl ALLER bisher geschriebenen Bytes - auch der wegen des
+// Limits verworfenen. Daran erkennt watch, ob das Kommando noch arbeitet; die
+// Länge des Puffers taugt dafür nicht, weil sie nach dem Kürzen stehen bliebe
+// und ein weiterhin arbeitendes Kommando als hängend erscheinen ließe.
+func (b *limitedBuffer) Written() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.written
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.written += len(p)
 	if room := b.max - b.buf.Len(); room > 0 {
 		if len(p) > room {
 			b.buf.Write(p[:room])

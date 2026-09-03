@@ -4789,6 +4789,13 @@ paths:
                   type: string
                 unreachable_grace_days:
                   type: string
+                maintenance:
+                  type: boolean
+                  description: >-
+                    Takes the server out of service for a while: no scheduled
+                    runs, no health check, no early warning, no CVE scan, no
+                    alerts. For systems that are off on purpose. Switching it on
+                    sets maintenance_since; switching it off clears it.
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -5015,6 +5022,80 @@ paths:
       responses:
         '200':
           description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/servers/{id}/volumes:
+    get:
+      tags:
+      - Server
+      summary: Storage volumes with monitoring state and health of the storage sets.
+      operationId: serverCtrl_Volumes
+      description: 'Storage volumes with monitoring state and health of the storage sets.
+
+
+        Benötigte Berechtigung: `servers:read`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/servers/{id}/volumes/monitor:
+    put:
+      tags:
+      - Server
+      summary: Enable or disable monitoring for one volume.
+      operationId: serverCtrl_SetVolumeMonitor
+      description: 'Enable or disable monitoring for one volume.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - mountpoint
+              - enabled
+              properties:
+                mountpoint:
+                  type: string
+                enabled:
+                  type: boolean
+                warn_percent:
+                  type: integer
+                crit_percent:
+                  type: integer
+                inode_warn_percent:
+                  type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Erfolgreich.
+        '400':
+          description: Volume nicht überwachbar (z. B. Netz-Mount).
         '401':
           description: Nicht angemeldet.
         '403':
@@ -5373,7 +5454,9 @@ paths:
                   type: string
                 session_ttl_minutes:
                   type: integer
-                job_max_runtime_minutes:
+                job_idle_timeout_minutes:
+                  type: integer
+                job_idle_timeout_slow_minutes:
                   type: integer
                 apt_cache_url:
                   type: string

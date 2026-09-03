@@ -114,6 +114,80 @@ Menge deshalb unter der Summe der Dateigrößen - das ist korrekt und kein
 Messfehler, kann aber überraschen, wenn man beide Werte vergleicht.
 :::
 
+### Weitere Volumes überwachen
+
+Überwacht wird von sich aus nur `/`. Jedes weitere Volume lässt sich im
+Festplatten-Tab **einzeln dazuschalten** - mit eigener Warngrenze in Prozent.
+
+Warum nicht alle: Ein Datenträger darf voll sein. Ein Archiv **soll** voll
+werden, und eine Sicherungsplatte bei 95 % ist kein Mangel, sondern
+bestimmungsgemäß. Ungefragt zu melden hieße, Meldungen zu erzeugen, die man
+wegklickt - und wer sich das angewöhnt, klickt die wichtigen mit weg.
+
+Überwacht ein Volume, prüft LCM zweierlei:
+
+- **Belegung** gegen die eingestellte Grenze (Vorgabe 85 %; zusätzlich lässt
+  sich eine kritische Grenze setzen).
+- **Inodes** gegen dieselbe Grenze. Ein Dateisystem kann dichtmachen, obwohl
+  in Bytes reichlich frei ist - typisch bei vielen kleinen Dateien
+  (Maildirs, Session-Dateien, Paket-Caches). ZFS und Btrfs vergeben Inodes
+  dynamisch: Sie nennen zwar eine Zahl, aber eine gerechnete - ein 32-GB-Dataset
+  meldet 65 Millionen Inodes bei 1 % Belegung. Die Prüfung schlägt dort deshalb
+  nie an, und das ist richtig so: Erschöpfen kann sich dieser Vorrat nicht.
+
+Unabhängig von jeder Einstellung meldet LCM ein Volume, das **nur lesbar**
+eingehängt ist. Der Kernel schaltet ein Dateisystem nach einem I/O- oder
+Metadatenfehler selbsttätig auf `ro`, damit kein weiterer Schaden entsteht -
+bis zum ersten Schreibversuch fällt das sonst niemandem auf.
+
+:::note[Netzspeicher wird angezeigt, aber nicht überwacht]
+NFS, CIFS/SMB, SSHFS, CephFS und Verwandte erscheinen in der Liste - man will
+sehen, was eingehängt ist -, lassen sich aber nicht überwachen. Für Füllstand
+und Gesundheit ist der Dienst zuständig, der den Speicher anbietet. Von hier
+aus wäre nur die Sicht des Clients sichtbar: Jeder Netz-Aussetzer käme als
+Speicherproblem an, ohne dass am Speicher selbst etwas wäre.
+:::
+
+## Zustand der Speicher-Verbünde
+
+Ein volles Dateisystem sieht man an der Belegung. Was man dort **nicht** sieht:
+einen ZFS-Pool, der seit drei Wochen `DEGRADED` läuft, weil eine Platte
+ausgefallen ist. Btrfs, das still Prüfsummenfehler zählt. Ein Software-RAID
+ohne Redundanz. Einen LVM-Thin-Pool, dessen Metadaten volllaufen.
+
+Keines dieser Systeme meldet sich von selbst - man muss nachsehen, und genau
+das tut im Alltag niemand regelmäßig. LCM erhebt diese Zustände bei jedem Scan
+mit und zeigt sie im Festplatten-Tab.
+
+| Technik | Erhoben wird | Beanstandet wird |
+|---|---|---|
+| **ZFS** | `zpool list`, `zpool status` | Pool nicht `ONLINE`, Lese-/Schreib-/Prüfsummenfehler |
+| **Btrfs** | `btrfs device stats`, `filesystem show` | gezählte Gerätefehler, fehlendes Gerät im Verbund |
+| **Software-RAID** | `/proc/mdstat` | Verbund läuft ohne die vorgesehene Redundanz (`[U_]`) |
+| **LVM-Thin** | `lvs` | Daten oder Metadaten über 80 %, ab 95 % kritisch |
+
+Die Erhebung ist rein lesend. `zpool` und `/proc/mdstat` lassen sich ohne
+Sonderrechte lesen; `btrfs device stats` und `lvs` verweigern sich dem
+Dienstbenutzer - dafür läuft der Scan über `sudo`. Im **eingeschränkten
+Modus** (ohne allgemeines sudo) melden Btrfs und LVM-Thin „unbekannt" - bewusst
+kein Zustand, denn ein falsches Gesund wäre schlimmer als Nichtwissen. Fehlt die
+Technik auf einem Server - der Regelfall -, entsteht kein Eintrag und kein
+Aufwand. Anders als die Belegung einzelner Volumes ist dieser Teil **nicht
+abschaltbar**: Er kostet nichts, und ein degradierter Pool ist keine
+Geschmacksfrage.
+
+Ein behobener Defekt verschwindet beim nächsten Scan von selbst: Der Zustand
+wird bei jedem Durchgang vollständig neu erhoben, nicht fortgeschrieben. Wird
+ein Verbund ausgebaut oder ein Pool exportiert, bleibt ebenfalls kein Eintrag
+von gestern stehen.
+
+:::caution[Thin-Pools früher warnen]
+Die Grenzen für LVM-Thin liegen bewusst niedriger als bei einem gewöhnlichen
+Dateisystem. Ein voller Thin-Pool lässt sich nicht mehr aufräumen - die
+Erweiterung braucht selbst freien Platz -, und ein volles Metadaten-Volume
+kostet den Pool endgültig. Wer hier erst bei 95 % aufwacht, kommt zu spät.
+:::
+
 ## Offline-Kennzeichen
 
 Ein Server bekommt das Kennzeichen **Offline**, sobald er bei **zwei
@@ -153,6 +227,36 @@ lässt sich das pro Server über *Einstellungen → Verfügbarkeit* umstellen:
   1-365) ununterbrochener Nichterreichbarkeit springt er wegen
   Nichterreichbarkeit auf Rot.
 
+## Wartung
+
+„Nichterreichbarkeit unkritisch" dämpft die Bewertung eines Servers, der
+erreichbar sein **soll**. **Wartung** sagt etwas anderes: dass er es gerade
+nicht soll.
+
+Der Schalter unter *Einstellungen → Wartung* nimmt einen Server vorübergehend
+ganz aus dem Betrieb:
+
+- keine Zeitplan-Läufe (Health-Check, System-Sync, Updates, Grundsatz-Regeln),
+- keine Frühwarnung und kein CVE-Scan - ihr Paketbestand ist eingefroren, ein
+  Befund wäre eine Aussage über den Stand von damals,
+- keine Alarme.
+
+Der Server bleibt erfasst und sichtbar; in Liste und Detailansicht trägt er ein
+gelbes **Wartung**-Kennzeichen samt Datum. Gedacht ist das für Systeme, die
+absichtlich aus sind: eine abgeschaltete Testumgebung, ein Gerät im Umbau, eine
+Maschine, deren Ressourcen gerade woanders gebraucht werden.
+
+:::note[Warum das nicht nur Kosmetik ist]
+Ohne diesen Zustand zählt „aus" als „gestört". Ein einziges stillgelegtes System
+erzeugt so alle 15 Minuten eine Unerreichbar-Warnung - im Betrieb waren das
+binnen einer Woche über tausend Zeilen für einen einzigen Server, und in dem
+Rauschen gehen die echten Störungen unter.
+:::
+
+Das Ein- und Ausschalten steht im Audit-Log (`server.maintenance.start` /
+`server.maintenance.end`): Wer die Überwachung eines Servers stilllegt, soll
+nachvollziehbar sein.
+
 ## Basis-Zeitpläne (System-Gruppe)
 
 Jede Installation hat eine geschützte **System-Gruppe** mit zwei
@@ -162,6 +266,63 @@ nicht-löschbaren Zeitplänen, die auf **allen** Servern laufen:
 |---|---|---|
 | **Health-Check** | alle 15 Min | Erreichbarkeit prüfen; dabei Grundsatz-Regeln durchsetzen und Speicher messen |
 | **System-Sync** | täglich 04:00 | Hardware & Linux-Benutzer synchronisieren, Paketliste aktualisieren, zentralen Docker-Check ausführen |
+
+:::note[Der Ping läuft nicht doppelt]
+Ein erfolgreicher Job **ist** das Lebenszeichen eines Servers. Hat innerhalb des
+Health-Takts schon etwas anderes mit ihm gesprochen - ein Sync, ein Update, ein
+Neustart -, entfällt der Ping: Er erführe nichts Neues. Maßgeblich ist der Takt
+des Zeitplans selbst, nicht eine feste Zahl; stellst du ihn auf fünf Minuten,
+schrumpft das Fenster mit.
+
+Der planmäßige Ping wird dadurch nie verschluckt (beim nächsten Lauf ist der
+vorige Kontakt genau einen Takt alt), und bleibt der Kontakt aus, läuft er
+ohnehin wieder. In der Nacht, wenn Sync und Updates ohnehin auf allen Servern
+arbeiten, verschwindet er dagegen fast vollständig - genau in dem Fenster, in
+dem die Maschine die Last am wenigsten brauchen kann.
+
+Ein **von Hand** ausgelöster Health-Check läuft immer: Wer ihn anstößt, will
+einen frischen Kontakt.
+:::
+
+## Wenn zwei Zeitpläne denselben Server treffen
+
+Auf einem Server läuft immer höchstens **ein** Job - zwei gleichzeitige Zugriffe
+auf dieselbe Paketverwaltung wären ein Systemkonflikt. Trifft ein Zeitplan auf
+einen belegten Server, wird sein Lauf deshalb nicht mehr verworfen, sondern
+**eingereiht**: Er steht als `pending` in der Job-Liste und startet, sobald der
+laufende Job fertig ist.
+
+Die Reihenfolge in der Warteschlange:
+
+1. **Stärkster Gruppen-Vorrang zuerst.** Maßgeblich ist die Priorität der
+   Gruppe, aus der die Regel stammt (kleiner = stärker; die System-Gruppe hat
+   bewusst den schwächsten Vorrang, damit Health-Check und Sync sich nicht vor
+   fachliche Regeln drängen).
+2. **Bei gleichem Vorrang der zuerst Ausgelöste.** Zwei Gruppen mit demselben
+   Rang bleiben untereinander fair und vorhersagbar.
+3. **Ein laufender Job wird nie verdrängt.** Der Vorrang entscheidet über die
+   Warteschlange, nicht über einen Abbruch - alles andere machte ein halb
+   eingespieltes Update möglich.
+
+Zwei Regeln halten die Schlange kurz:
+
+- **Dieselbe Regel steht nur einmal an.** Läuft ein einstündiges Update, stünden
+  sonst vier Health-Checks hintereinander, die alle dasselbe prüfen.
+- **Wer zu lange wartet, fällt heraus.** Die Frist ist der halbe Takt des
+  eigenen Zeitplans. Danach ist der nächste Durchgang näher als der eigene
+  Start - der Wartende wäre beim Laufen schon überholt. Er wird mit Begründung
+  als `blocked` abgeschlossen, nicht stillschweigend verschluckt.
+
+:::note[Aktionen von Hand warten nicht]
+Wer einen Knopf drückt, während etwas läuft, bekommt weiterhin sofort eine
+Absage („auf diesem Server läuft bereits ein Job"). Eine stille Verzögerung wäre
+dort unehrlich - jemand steht davor und wartet auf eine Antwort. Eingereiht
+werden nur Zeitplan-Läufe; die haben keinen Menschen vor sich, sondern einen
+Takt.
+:::
+
+Wartende Jobs lassen sich in der Job-Liste abbrechen wie laufende - sie geben
+dabei keine Sperre frei, sondern nur ihren Platz in der Schlange.
 
 ## Aktualisieren auf Knopfdruck
 

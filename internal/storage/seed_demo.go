@@ -381,6 +381,19 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		{ServerID: demoServers[0].ID, Mountpoint: "/data", Device: "/dev/sdb1", Fstype: "xfs", TotalMB: 512000, UsedMB: 384000},
 		{ServerID: demoServers[1].ID, Mountpoint: "/", Device: "/dev/vda1", Fstype: "ext4", TotalMB: 102400, UsedMB: 91000},
 		{ServerID: demoServers[1].ID, Mountpoint: "/var/lib/mysql", Device: "/dev/mapper/vg-db", Fstype: "ext4", TotalMB: 204800, UsedMB: 153600},
+		// Ein Netz-Mount: wird angezeigt, ist aber bewusst nicht überwachbar -
+		// dafür ist der Speicher zuständig, der ihn anbietet.
+		{ServerID: demoServers[0].ID, Mountpoint: "/mnt/backup", Device: "nas01:/export/backup", Fstype: "nfs4", TotalMB: 2097152, UsedMB: 1887436},
+	})
+
+	// Zustand der Speicher-Verbünde: db01 hat einen ZFS-Mirror, dem eine
+	// Platte fehlt - der Fall, den ohne LCM niemand bemerkt.
+	db.Create(&[]domain.StorageHealth{
+		{ServerID: demoServers[1].ID, Kind: domain.StorageKindZFS, Name: "tank", State: domain.StorageStateDegraded,
+			RawState: "DEGRADED", Message: "Pool-Zustand DEGRADED, 7 Lese-/Schreib-/Prüfsummenfehler",
+			UsagePercent: 61, FragmentPercent: 9, Errors: 7},
+		{ServerID: demoServers[0].ID, Kind: domain.StorageKindMDRaid, Name: "md0", State: domain.StorageStateHealthy,
+			RawState: "active"},
 	})
 
 	// Anmeldefähige Linux-Konten (Benutzer-Übersicht): zeigt die typischen

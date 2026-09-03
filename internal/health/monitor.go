@@ -1,8 +1,10 @@
 package health
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"LCM/internal/safego"
@@ -31,6 +33,33 @@ const (
 	panicLimit  = 10
 )
 
+// checkTimeout begrenzt eine EINZELNE Prüfung. Der Wert liegt deutlich über
+// dem Zeitlimit, das die Prüffunktion selbst mitbringt (5 s Datenbank-Ping) -
+// er greift also nur, wenn sie ihr eigenes Limit nicht einhält, etwa weil sie
+// auf eine gesperrte Datei wartet. Variable, damit Tests sie auf
+// Millisekunden herunterdrehen können (wie RebootSettleDelay & Co.).
+var checkTimeout = 15 * time.Second
+
+// Befunde, die keine Antwort der Prüffunktion sind, sondern ihr Ausbleiben.
+// Sie zählen wie ein Fehlschlag auf unhealthyLimit - der entscheidende
+// Unterschied ist, dass es sie überhaupt gibt: Vorher war eine hängende
+// Prüfung schlicht Stille, und Stille beantwortet systemd mit SIGKILL.
+var (
+	errCheckTimeout = errors.New("health check did not return in time")
+	errCheckStuck   = errors.New("previous health check still running")
+)
+
+// ErrNotWritable meldet: Die Datenbank ist erreichbar, nimmt aber keine
+// Schreibvorgänge an - typischerweise, weil ein fremder Vorgang ihre
+// Schreibsperre hält.
+//
+// Der Zustand gehört gemeldet, aber NICHT mit einem Neustart beantwortet: Die
+// Sperre liegt außerhalb dieses Prozesses, ein neu gestarteter stünde vor
+// derselben. Der Neustart wäre dann kein Heilmittel, sondern ein zweiter
+// Ausfall obendrauf - er würde die gerade laufenden Jobs mitnehmen. Der
+// Dienst meldet stattdessen dauerhaft „degraded", bis sich die Lage klärt.
+var ErrNotWritable = errors.New("database is reachable but not writable")
+
 // Monitor prüft den eigenen Prozess in festem Takt und hält das Ergebnis für
 // den Health-Endpunkt bereit.
 type Monitor struct {
@@ -54,6 +83,11 @@ type Monitor struct {
 	lastCheck time.Time
 	failStrk  int
 	started   time.Time
+
+	// probing hält fest, ob noch eine Prüfung unterwegs ist. Ohne diese
+	// Sperre würde eine hängende Prüfung bei jedem Takt eine weitere
+	// Goroutine hinterlassen.
+	probing atomic.Bool
 }
 
 // NewMonitor erzeugt die Überwachung. check darf nicht nil sein.
@@ -68,7 +102,21 @@ func (m *Monitor) WithRestart(fn func(reason string)) *Monitor {
 }
 
 // Start meldet systemd die Betriebsbereitschaft und beginnt die Überwachung
-// in einer eigenen (panic-geschützten) Goroutine.
+// in ZWEI eigenen (panic-geschützten) Goroutinen.
+//
+// Die Trennung ist der Kern dieser Überwachung. Vorher lief beides in einem
+// Ablauf: erst die Prüfung, dann das Lebenszeichen. Damit hing die Aussage
+// „dieser Prozess läuft noch" an der Datenbank - wurde die zäh, verstummte
+// der Dienst und systemd räumte ihn ab, obwohl er arbeitete.
+//
+// Jetzt beantworten die beiden Abläufe zwei verschiedene Fragen:
+//
+//   - pingLoop: Läuft dieser Prozess noch? Er tickt und meldet, sonst nichts.
+//     Bleibt er aus, bekommt der Prozess keine Rechenzeit mehr - dann ist ein
+//     Abräumen durch systemd richtig.
+//   - checkLoop: Ist der Dienst arbeitsfähig? Er prüft mit eigenem Zeitlimit
+//     und entscheidet über den Neustart - kontrolliert und mit Begründung im
+//     Protokoll, statt per SIGKILL.
 func (m *Monitor) Start(readyStatus string) {
 	NotifyReady(readyStatus)
 	interval := watchdogInterval()
@@ -79,10 +127,37 @@ func (m *Monitor) Start(readyStatus string) {
 		slog.Debug("self-monitoring active (without systemd watchdog)", "interval", interval.String())
 	}
 	m.interval = interval
-	safego.Go("health-monitor", func() { m.loop(interval) })
+	safego.Go("health-watchdog", func() { m.pingLoop(interval) })
+	safego.Go("health-monitor", func() { m.checkLoop(interval) })
 }
 
-func (m *Monitor) loop(interval time.Duration) {
+// pingLoop meldet systemd im festen Takt, dass dieser Prozess noch läuft. Er
+// ruft NICHTS auf, was blockieren könnte - er liest nur den zuletzt
+// festgestellten Zustand und schickt ihn weg.
+func (m *Monitor) pingLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		m.ping()
+	}
+}
+
+// ping schickt genau ein Lebenszeichen mit dem zuletzt festgestellten Zustand.
+func (m *Monitor) ping() { notifyWatchdog(m.watchdogStatus()) }
+
+// watchdogStatus ist der Text, der in `systemctl status` neben dem Dienst
+// steht - „operational" oder der Grund, warum gerade nicht.
+func (m *Monitor) watchdogStatus() string {
+	m.mu.Lock()
+	err := m.lastErr
+	m.mu.Unlock()
+	if err != nil {
+		return "degraded: " + err.Error()
+	}
+	return "operational"
+}
+
+func (m *Monitor) checkLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -90,12 +165,41 @@ func (m *Monitor) loop(interval time.Duration) {
 	}
 }
 
-// tick führt eine Prüfung durch und entscheidet über Lebenszeichen bzw.
-// Neustart.
+// probe führt die Prüfung mit eigenem Zeitlimit aus.
+//
+// Eine Prüfung, die nicht zurückkehrt, ist damit ein BEFUND und kein
+// Schweigen: Sie zählt auf unhealthyLimit, und bis zur Grenze meldet der
+// Dienst weiter „degraded" statt gar nichts. Läuft die vorherige Prüfung noch,
+// wird keine zweite gestartet - sonst stapelten sich die Goroutinen.
+func (m *Monitor) probe() error {
+	if !m.probing.CompareAndSwap(false, true) {
+		return errCheckStuck
+	}
+	done := make(chan error, 1) // gepuffert: die Prüfung endet auch nach einer Zeitüberschreitung sauber
+	safego.Go("health-probe", func() {
+		err := m.check()
+		// ERST freigeben, dann melden: Andersherum könnte der nächste Takt
+		// die Sperre noch gesetzt sehen, obwohl das Ergebnis schon da ist.
+		m.probing.Store(false)
+		done <- err
+	})
+	timer := time.NewTimer(checkTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return errCheckTimeout
+	}
+}
+
+// tick führt eine Prüfung durch und entscheidet über den Neustart. Das
+// Lebenszeichen an systemd hängt NICHT an diesem Ablauf (siehe pingLoop).
 func (m *Monitor) tick() {
-	err := m.check()
+	err := m.probe()
 
 	m.mu.Lock()
+	prev := m.lastErr
 	m.lastErr = err
 	m.lastCheck = time.Now()
 	if err != nil {
@@ -106,31 +210,30 @@ func (m *Monitor) tick() {
 	streak := m.failStrk
 	m.mu.Unlock()
 
-	// Das Lebenszeichen sagt systemd nur eines: Dieser Ablauf kommt noch
-	// voran. Es hängt bewusst NICHT am Ergebnis der Prüfung - über eine
-	// unerreichbare Datenbank entscheidet unhealthyLimit weiter unten, mit
-	// der Toleranz, die dort steht.
+	// Ein Zustandswechsel geht SOFORT hinaus, statt auf den nächsten
+	// Ping-Takt zu warten.
 	//
-	// Andersherum wäre diese Toleranz nämlich unerreichbar: Der Ping-Takt ist
-	// WatchdogSec/2, zwei ausgefallene Pings genügen systemd. Beim ersten
-	// Fehlschlag zu schweigen hieße, nach 90 Sekunden abgeräumt zu werden -
-	// die Zählung bis unhealthyLimit käme nie zustande. Genau das ist auf dem
-	// LCM-Host jede Nacht passiert, wenn Zeitplan-Last und CVE-Scan die
-	// Datenbank ausgebremst haben.
-	//
-	// Der Fall „dieser Ablauf selbst hängt" bleibt gedeckt: Das Lebenszeichen
-	// steht HINTER m.check(). Kommt der Aufruf nicht zurück, bleibt es aus.
+	// Die Trennung der beiden Abläufe hat einen Preis: Sie ticken unabhängig,
+	// also kann der Ping noch den Befund des vorigen Durchgangs tragen. Im
+	// Test stand deshalb fast eine Minute lang „operational" in
+	// `systemctl status`, obwohl die Datenbank längst gesperrt war. Für die
+	// Frage „lebt der Prozess?" ist das gleichgültig - für den Menschen, der
+	// dort nachsieht, nicht.
+	if errText(prev) != errText(err) {
+		m.ping()
+	}
+
 	if err != nil {
-		notifyWatchdog("degraded: " + err.Error())
 		slog.Warn("self-monitoring: service not operational",
 			"error", err, "consecutive_failures", streak, "limit", unhealthyLimit)
-		if streak >= unhealthyLimit {
-			m.restart("database unreachable for " + (time.Duration(streak) * m.interval).String() +
+		// Ein Neustart hilft nur, wenn er die Ursache beseitigen kann - siehe
+		// ErrNotWritable.
+		if streak >= unhealthyLimit && !errors.Is(err, ErrNotWritable) {
+			m.restart("health check failing for " + (time.Duration(streak) * m.interval).String() +
 				": " + err.Error())
 		}
 		return
 	}
-	notifyWatchdog("operational")
 
 	// Arbeitsfähig - aber häufen sich abgefangene Panics, ist der Zustand des
 	// Prozesses trotzdem nicht mehr vertrauenswürdig.
@@ -173,6 +276,15 @@ func (m *Monitor) Status() Status {
 		st.Error = m.lastErr.Error()
 	}
 	return st
+}
+
+// errText macht zwei Befunde vergleichbar - auch der Wechsel von einer
+// Störung zu einer anderen ist ein Wechsel.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // itoa vermeidet einen strconv-Import für eine einzige Zahl im Klartext.

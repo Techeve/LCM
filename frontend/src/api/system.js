@@ -14,6 +14,35 @@ export class SystemApi {
     return this.#client.get('/system/info');
   }
 
+  /** Ende des LCM-Logs, gefiltert nach Schwere und Text. */
+  logs({ lines, level, q } = {}) {
+    const p = new URLSearchParams();
+    if (lines) p.set('lines', lines);
+    if (level) p.set('level', level);
+    if (q) p.set('q', q);
+    const query = p.toString();
+    return this.#client.get('/system/logs' + (query ? `?${query}` : ''));
+  }
+
+  /** Live-Strom neuer Logzeilen (siehe ApiClient.stream). */
+  streamLogs({ level, q } = {}, signal, onEvent) {
+    const p = new URLSearchParams();
+    if (level) p.set('level', level);
+    if (q) p.set('q', q);
+    const query = p.toString();
+    return this.#client.stream('/system/logs/stream' + (query ? `?${query}` : ''), signal, onEvent);
+  }
+
+  /** Wirksames Log-Level samt Ende einer laufenden Debug-Frist. */
+  logLevel() {
+    return this.#client.get('/system/logs/level');
+  }
+
+  /** Befristetes Debug ein- oder ausschalten. */
+  setDebug(debug) {
+    return this.#client.post('/system/logs/level', { debug });
+  }
+
   /** Update-Status: installierte vs. neueste bekannte Version (fürs Banner). */
   /** Update-Prüfung sofort auslösen und den frischen Stand zurückgeben. */
   checkUpdateNow() {

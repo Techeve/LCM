@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.35.0-beta.1 - 2026-09-03
+
+### 🚀 Features
+
+- **lcm**: Speicher-Überwachung, Hardware-Erkennung, Job-Warteschlange, Web-Terminal, Verschlüsselungs-Fix (d0c7db30)
+
+### 🐛 Bugfixes
+
+- **deps**: x/crypto auf v0.56.0 - zwei DoS-Lücken in ssh behoben (f965a9ef)
+
+### 🔧 Sonstiges
+
+- **storage**: Gegenprobe zur Speicher-Diagnose - behobene Defekte müssen verschwinden (1b188dd5)
+- Go- und Node-Image auf feste Tags (8d8493c0)
+- Kampagnen-Parameter an Links auf eigene Seiten (17e8875b)
+- Prüfjobs nicht doppelt auf den Release-Branches laufen lassen (c252d69b)
+- enterprise wieder mit vollem Testlauf (fdefb7d4)
+
 ## v1.34.2 - 2026-08-29
 
 ### 🐛 Bugfixes

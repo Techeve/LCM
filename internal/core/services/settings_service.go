@@ -375,7 +375,8 @@ type GlobalSettingsInput struct {
 	AdvisoryLocalCopy           *bool
 	AdvisoryCacheTTLMinutes     *int
 	SessionTTLMinutes           *int
-	JobMaxRuntimeMinutes        *int
+	JobIdleTimeoutMinutes       *int
+	JobIdleTimeoutSlowMinutes   *int
 	AptCacheURL                 *string
 	Require2FARoles             *string
 	PublicBaseURL               *string
@@ -567,10 +568,14 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		settings.SessionTTLMinutes = clampSessionTTL(*in.SessionTTLMinutes)
 		touch("session_ttl_minutes")
 	}
-	if in.JobMaxRuntimeMinutes != nil {
-		// Job-Maximaldauer (Watchdog): 0 = aus; sonst 5 Minuten bis 24 Stunden.
-		settings.JobMaxRuntimeMinutes = domain.ClampJobMaxRuntime(*in.JobMaxRuntimeMinutes)
-		touch("job_max_runtime_minutes")
+	if in.JobIdleTimeoutMinutes != nil {
+		// Erlaubte Stille (Watchdog): 0 = aus; sonst 1 Minute bis 24 Stunden.
+		settings.JobIdleTimeoutMinutes = domain.ClampJobIdleTimeout(*in.JobIdleTimeoutMinutes)
+		touch("job_idle_timeout_minutes")
+	}
+	if in.JobIdleTimeoutSlowMinutes != nil {
+		settings.JobIdleTimeoutSlowMinutes = domain.ClampJobIdleTimeout(*in.JobIdleTimeoutSlowMinutes)
+		touch("job_idle_timeout_slow_minutes")
 	}
 	if in.AptCacheURL != nil {
 		aptCacheURL, err := normalizeAptCacheURL(*in.AptCacheURL)

@@ -291,7 +291,7 @@ zeigt die passenden Befehle:
 2. **Agent installieren.** Auf Debian/Ubuntu aus dem Paketkanal
    (`sudo apt install lcm-agent`). Für die übrigen Distributionen hängt
    dasselbe Paket als RPM, APK und Arch-Paket am
-   [Release](https://gitlab.techeve.de/techeve/lcm/-/releases) - es gibt dort
+   [Release](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=doc) - es gibt dort
    bislang keinen eigenen Paketkanal, die Datei wird also direkt installiert:
 
    ```sh
@@ -336,4 +336,6 @@ klaren Hinweis abgewiesen. Der Agent läuft als **Root-Dienst** auf dem Zielsyst
 (kein sudo-Wrapper nötig); alle übrigen Funktionen - Scans, Paket-Updates,
 Docker-Monitoring, Firewall, DNS, Sicherheits-Tools - laufen unverändert über den
 Agent-Transport. Auch die SSH-Protokollierung (Recorder) und die Kommando-Limits
-(ConnLimiter, Laufzeit-Watchdog, Job-Abort) greifen genau wie beim SSH-Transport.
+(ConnLimiter, Job-Watchdog, Job-Abort) greifen genau wie beim SSH-Transport. Der
+Agent meldet dabei alle 30 Sekunden, dass ein laufendes Kommando noch arbeitet -
+darüber unterscheidet der Watchdog ein langsames Update von einem hängenden.

@@ -671,7 +671,8 @@ type globalSettingsRequest struct {
 	AdvisoryCacheTTLMinutes     *int    `json:"advisory_cache_ttl_minutes"`
 	CVEHighWeightPackages       *string `json:"cve_high_weight_packages"`
 	SessionTTLMinutes           *int    `json:"session_ttl_minutes"`
-	JobMaxRuntimeMinutes        *int    `json:"job_max_runtime_minutes"`
+	JobIdleTimeoutMinutes       *int    `json:"job_idle_timeout_minutes"`
+	JobIdleTimeoutSlowMinutes   *int    `json:"job_idle_timeout_slow_minutes"`
 	AptCacheURL                 *string `json:"apt_cache_url"`
 	Require2FARoles             *string `json:"require_2fa_roles"`
 	PublicBaseURL               *string `json:"public_base_url"`
@@ -722,7 +723,8 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		AdvisoryLocalCopy:           req.AdvisoryLocalCopy,
 		AdvisoryCacheTTLMinutes:     req.AdvisoryCacheTTLMinutes,
 		SessionTTLMinutes:           req.SessionTTLMinutes,
-		JobMaxRuntimeMinutes:        req.JobMaxRuntimeMinutes,
+		JobIdleTimeoutMinutes:       req.JobIdleTimeoutMinutes,
+		JobIdleTimeoutSlowMinutes:   req.JobIdleTimeoutSlowMinutes,
 		AptCacheURL:                 req.AptCacheURL,
 		Require2FARoles:             req.Require2FARoles,
 		PublicBaseURL:               req.PublicBaseURL,

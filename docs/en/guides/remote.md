@@ -280,7 +280,7 @@ commands:
 2. **Install the agent.** On Debian/Ubuntu from the package channel
    (`sudo apt install lcm-agent`). For the other distributions the same
    package is attached to the
-   [release](https://gitlab.techeve.de/techeve/lcm/-/releases) as an RPM, APK
+   [release](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=doc) as an RPM, APK
    and Arch package - there is no dedicated channel for those yet, so the file
    is installed directly:
 
@@ -325,5 +325,7 @@ rotation, reconnect) are hidden there or rejected with a clear message. The agen
 runs as a **root service** on the target system (no sudo wrapper needed); all
 other functions - scans, package updates, Docker monitoring, firewall, DNS,
 security tools - run over the agent transport unchanged. The SSH logging
-(recorder) and the command limits (connection limiter, runtime watchdog, job
-abort) apply exactly as with the SSH transport.
+(recorder) and the command limits (connection limiter, job watchdog, job
+abort) apply exactly as with the SSH transport. The agent reports every 30
+seconds that a running command is still working - that is how the watchdog
+tells a slow update from a stalled one.

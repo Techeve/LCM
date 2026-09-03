@@ -27,7 +27,7 @@ func commandForRule(r *domain.Rule) string {
 	case domain.RuleTypeScript:
 		return r.Command
 	case domain.RuleTypeHealth:
-		return "echo lcm-health-ok"
+		return healthProbeCmd
 	case domain.RuleTypeSync:
 		return "" // Sync läuft über den ProvisioningService, nicht als reines Kommando
 	default:
@@ -36,6 +36,12 @@ func commandForRule(r *domain.Rule) string {
 		return ""
 	}
 }
+
+// healthProbeCmd ist der Health-Ping selbst: Der Beweis liegt darin, dass die
+// Verbindung zustande kommt und ein Kommando zurückkehrt - nicht in dessen
+// Ausgabe. Als Konstante, weil der SSH-Recorder ihn wiedererkennen muss, um
+// ihn NICHT zu protokollieren (siehe trivialCommands).
+const healthProbeCmd = "echo lcm-health-ok"
 
 // Executor führt Rules und Ad-hoc-Kommandos auf Servern aus. Jede
 // Ausführung wird als Job protokolliert (mit exaktem Konsolen-Output);
@@ -202,22 +208,32 @@ func (e *Executor) RunRule(rule *domain.Rule, triggeredBy string) {
 		slog.Error("rule execution: group servers not loadable", "rule", rule.ID, "error", err)
 		return
 	}
+	// Einmal je Regel-Lauf ermittelt, nicht je Server: Takt und Vorrang
+	// hängen am Zeitplan und an der Gruppe, nicht am einzelnen Server.
+	plan := runPlan{
+		interval:   e.scheduleInterval(rule),
+		priority:   e.rulePriority(rule),
+		queueable:  triggeredBy == ActorScheduler,
+		healthSkip: 0,
+	}
+	plan.healthSkip = e.healthSkipWindow(rule, plan.interval, triggeredBy)
+
+	slog.Debug("rule starting", "rule", rule.Name, "type", rule.Type,
+		"servers", len(servers), "priority", plan.priority,
+		"interval", plan.interval.String(), "queueable", plan.queueable)
+
 	sem := make(chan struct{}, ruleParallelism)
 	var wg sync.WaitGroup
 	for i := range servers {
 		server := &servers[i]
 		wg.Add(1)
-		sem <- struct{}{}
-		e.takeSlot()
 		go func() {
 			defer wg.Done()
-			defer func() { <-sem }()
-			defer e.freeSlot()
-			// Panic-Schutz INNEN (nicht über safego.Go): wg.Done und die
-			// Semaphore-Freigabe müssen in jedem Fall laufen, sonst
-			// blockierte wg.Wait() den Gruppen-Lauf für immer.
+			// Panic-Schutz INNEN (nicht über safego.Go): wg.Done muss in
+			// jedem Fall laufen, sonst blockierte wg.Wait() den Gruppen-Lauf
+			// für immer.
 			defer safego.Recover("rule-server:"+server.Name, nil)
-			e.runOnServer(server, rule, triggeredBy)
+			e.runOnServer(server, rule, triggeredBy, plan, sem)
 		}()
 	}
 	wg.Wait()
@@ -246,24 +262,160 @@ func (e *Executor) serversForRule(rule *domain.Rule) ([]domain.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	var servers []domain.Server
 	if group.IsSystem {
-		return e.servers.FindAllUnscoped()
+		servers, err = e.servers.FindAllUnscoped()
+	} else {
+		servers, err = e.groups.ServersOfGroup(rule.GroupID)
 	}
-	return e.groups.ServersOfGroup(rule.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	// Server in Wartung bleiben unangetastet - hier greift die Ausnahme für
+	// ALLE Zeitplan-Läufe auf einmal (Health-Check, Sync, Updates, Firewall).
+	return domain.ActiveServers(servers), nil
+}
+
+// ActorScheduler ist der Auslöser der zeitgesteuerten Läufe. Er steht hier als
+// Konstante, weil an ihm eine Entscheidung hängt: Nur der Zeitplan darf einen
+// Health-Ping auslassen - wer ihn von Hand anstößt, will einen frischen
+// Kontakt und bekommt ihn.
+const ActorScheduler = "scheduler"
+
+// scheduleInterval liefert den Takt des Zeitplans, an dem eine Regel hängt -
+// den Abstand zwischen ihren nächsten beiden Läufen. 0 = kein Zeitplan oder
+// unlesbarer Ausdruck.
+//
+// Der Wert trägt zwei Entscheidungen: Wie lange ein Wartender in der
+// Schlange bleiben darf (StartOrQueue), und ob ein Health-Ping entfallen kann
+// (healthSkipWindow). Beide fragen dasselbe - „wann kommt der nächste
+// Durchgang?" - und müssen dieselbe Antwort bekommen.
+func (e *Executor) scheduleInterval(rule *domain.Rule) time.Duration {
+	if rule.ScheduleID == nil {
+		return 0
+	}
+	sched, err := e.groups.FindSchedule(repositories.ScopeAll(), *rule.ScheduleID)
+	if err != nil {
+		return 0
+	}
+	spec, err := cronParser.Parse(sched.CronExpr)
+	if err != nil {
+		return 0
+	}
+	now := time.Now()
+	first := spec.Next(now)
+	if first.IsZero() {
+		return 0
+	}
+	second := spec.Next(first)
+	if second.IsZero() {
+		return 0
+	}
+	return second.Sub(first)
+}
+
+// healthSkipWindow liefert die Frist, innerhalb derer ein Health-Ping
+// entfallen darf: den eigenen Takt des Zeitplans.
+//
+// Der Takt ist das richtige Maß und keine gegriffene Zahl. Läuft der Ping alle
+// 15 Minuten, ist der letzte planmäßige Kontakt beim nächsten Mal genau 15
+// Minuten alt - er löst also nie eine Auslassung aus. Was den Ping erspart,
+// ist ausschließlich ein ANDERER Kontakt dazwischen: ein Sync, ein Update, ein
+// Neustart. Und stellt der Betreiber den Takt auf fünf Minuten, schrumpft die
+// Frist mit - eine feste Zahl hätte bei einem kürzeren Takt alle Pings
+// verschluckt.
+//
+// 0 heißt: nicht auslassen (kein Zeitplan, unlesbarer Ausdruck, manueller
+// Lauf).
+func (e *Executor) healthSkipWindow(rule *domain.Rule, interval time.Duration, triggeredBy string) time.Duration {
+	if rule.Type != domain.RuleTypeHealth || triggeredBy != ActorScheduler {
+		return 0
+	}
+	return interval
+}
+
+// skipHealthPing meldet, ob der Kontakt zu diesem Server frisch genug ist,
+// dass ein Ping nichts Neues erführe - und nennt den Grund fürs Protokoll.
+//
+// Der Gedanke dahinter: Ein erfolgreicher Job IST das Lebenszeichen. Wer
+// gerade ein Paket-Update auf einer Maschine durchgeführt hat, muss sie danach
+// nicht anpingen, um zu erfahren, ob sie erreichbar ist. Nachts, wenn Sync und
+// Updates laufen, verschwindet der Health-Check damit fast vollständig - genau
+// in dem Fenster, in dem der Dienst die Last am wenigsten brauchen kann.
+func skipHealthPing(server *domain.Server, window time.Duration, now time.Time) (string, bool) {
+	if window <= 0 || server.LastSeenAt == nil || !server.Reachable {
+		return "", false
+	}
+	age := now.Sub(*server.LastSeenAt)
+	if age < 0 || age >= window {
+		return "", false
+	}
+	return "letzter erfolgreicher Kontakt vor " + age.Round(time.Second).String() +
+		" (Takt " + window.String() + ")", true
+}
+
+// runPlan bündelt, was für ALLE Server eines Regel-Laufs gleich gilt.
+type runPlan struct {
+	// interval ist der Takt des Zeitplans - die Frist, die ein Wartender in
+	// der Warteschlange bekommt.
+	interval time.Duration
+	// priority ist der Vorrang der Gruppe, aus der die Regel stammt.
+	priority int
+	// queueable: Darf dieser Lauf warten? Nur Zeitplan-Läufe dürfen das -
+	// hinter einer Aktion von Hand steht jemand, der eine Antwort erwartet.
+	queueable bool
+	// healthSkip ist die Frist, innerhalb derer ein Health-Ping entfällt.
+	healthSkip time.Duration
+}
+
+// rulePriority liefert den Vorrang der Gruppe, aus der eine Regel stammt.
+// Unbekannt ⇒ der schwächste Vorrang: Wer sich nicht einordnen lässt, drängt
+// sich nicht vor.
+func (e *Executor) rulePriority(rule *domain.Rule) int {
+	group, err := e.groups.GroupByID(rule.GroupID)
+	if err != nil || group == nil {
+		return domain.SystemGroupPriority
+	}
+	return group.Priority
 }
 
 // runOnServer führt eine Rule auf einem einzelnen Server aus.
-func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, triggeredBy string) {
-	ruleID := rule.ID
-	job, err := e.jobs.Start(&server.ID, &ruleID, rule.Type, rule.Name+" @ "+server.Name, triggeredBy)
-	if err != nil {
-		if errors.Is(err, ErrServerBusy) {
-			slog.Info("job blocked (server busy)", "server", server.Name, "rule", rule.Name)
-			return
-		}
-		slog.Error("job start failed", "server", server.Name, "error", err)
+func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, triggeredBy string, plan runPlan, sem chan struct{}) {
+	// Vor dem Job-Start prüfen: Ein übersprungener Ping kostet dann weder
+	// Verbindung noch Slot noch eine einzige Zeile in der Datenbank.
+	//
+	// Bewusst OHNE Job-Eintrag: Bei dreihundert Servern wären das
+	// achtundzwanzigtausend Zeilen am Tag, die dokumentieren, dass nichts
+	// passiert ist. Die sichtbare Wahrheit steht ohnehin am Server - sein
+	// letzter Kontakt ist frisch, und genau deshalb entfiel der Ping. Bleibt
+	// der Kontakt aus, wächst sein Alter über den Takt und der Ping läuft
+	// wieder; die Auslassung kann sich also nicht verselbständigen.
+	if reason, skip := skipHealthPing(server, plan.healthSkip, time.Now()); skip {
+		slog.Debug("health ping skipped", "server", server.Name, "reason", reason)
 		return
 	}
+
+	// Warten OHNE Ausführungs-Slots: Ein Wartender darf nicht die Arbeit an
+	// ganz anderen Servern blockieren. Erst wenn er an der Reihe ist, belegt
+	// er einen Platz.
+	job, err := e.startOnServer(server, rule, triggeredBy, plan)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrJobSuperseded):
+			slog.Info("scheduled run skipped", "server", server.Name, "rule", rule.Name)
+		case errors.Is(err, ErrServerBusy):
+			slog.Info("job blocked (server busy)", "server", server.Name, "rule", rule.Name)
+		default:
+			slog.Error("job start failed", "server", server.Name, "error", err)
+		}
+		return
+	}
+
+	sem <- struct{}{}
+	defer func() { <-sem }()
+	e.takeSlot()
+	defer e.freeSlot()
+	slog.Debug("job running", "job", job.ID, "server", server.Name, "rule", rule.Name)
 
 	// Demo-Server werden nie kontaktiert - die Simulation liefert plausiblen
 	// Output und zieht den Datenbestand nach (siehe demo_sim.go).
@@ -415,6 +567,39 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	}
 
 	e.finishWithHealth(job, server, output, runErr)
+}
+
+// queueWaitShare begrenzt, welchen Teil seines eigenen Takts ein Lauf mit
+// Warten verbringen darf.
+//
+// Warum nicht den ganzen Takt: Die Regeln eines Zeitplans laufen bewusst
+// nacheinander (siehe RunRule) - erst Update, dann Neustart, die Reihenfolge
+// trägt Bedeutung. Ein Lauf, der seinen vollen Takt lang wartet, nähme damit
+// den übrigen Regeln desselben Zeitplans ihre gesamte Zeit; beim täglichen
+// System-Sync wären das vierundzwanzig Stunden. Die Hälfte ist der Ausgleich:
+// lange genug, um ein mehrstündiges Update auf schwacher Hardware
+// abzuwarten, und kurz genug, dass der Rest des Zeitplans noch eine halbe
+// Runde für sich hat.
+const queueWaitShare = 2
+
+// startOnServer legt den Job an - wartend, wenn er warten darf.
+//
+// Ein Zeitplan-Lauf reiht sich ein, statt verworfen zu werden. Seine Frist
+// bemisst sich am eigenen Takt: Wer länger wartet, wird vom nächsten
+// Durchgang überholt und wäre beim Laufen schon überholt. Alles andere - eine
+// Aktion von Hand, ein manuell ausgelöster Zeitplan - bekommt weiterhin sofort
+// eine Antwort, weil dort jemand davorsteht.
+func (e *Executor) startOnServer(server *domain.Server, rule *domain.Rule, triggeredBy string, plan runPlan) (*domain.Job, error) {
+	ruleID := rule.ID
+	name := rule.Name + " @ " + server.Name
+	if !plan.queueable || plan.interval <= 0 {
+		return e.jobs.Start(&server.ID, &ruleID, rule.Type, name, triggeredBy)
+	}
+	return e.jobs.StartOrQueue(QueuedStart{
+		ServerID: server.ID, RuleID: &ruleID, Type: rule.Type, Name: name,
+		TriggeredBy: triggeredBy, Priority: plan.priority,
+		MaxWait: plan.interval / queueWaitShare,
+	})
 }
 
 // storageSampleInterval ist der Mindestabstand zwischen zwei Speicher-Messungen
@@ -1192,7 +1377,9 @@ func (e *Executor) RunCVEScan(triggeredBy string) {
 		var scanned, failed, crit, high int
 		var unreachable []string
 		for i := range servers {
-			if servers[i].IsDemo {
+			// Demo-Server sind erfunden, Server in Wartung sollen nicht
+			// angefasst werden - beide liefern keinen verwertbaren Befund.
+			if servers[i].IsDemo || servers[i].InMaintenance() {
 				continue
 			}
 			c, h, err := scanServerCVEs(context.Background(), e.scanner, e.servers, &servers[i])

@@ -112,6 +112,9 @@
       : status === 'aborted' ? 'bg-secondary text-light'
       : status === 'running' ? 'bg-primary'
       : status === 'blocked' ? 'bg-warning text-dark'
+      // Wartend: dieselbe Farbe wie „läuft", nur blasser - er gehört zum
+      // laufenden Betrieb und ist kein Fehlerzustand.
+      : status === 'pending' ? 'bg-primary bg-opacity-50'
       : 'bg-secondary';
   }
 
@@ -238,11 +241,14 @@
             <tr class={expandedId === j.id ? 'table-active' : ''}>
               <td>{j.name}</td>
               <td class="small text-body-secondary">{j.type}</td>
-              <td><span class="badge {badge(j.status)}">{j.status}</span></td>
+              <td>
+                <span class="badge {badge(j.status)}"
+                  title={j.status === 'pending' ? t('jobs.pendingHint') : undefined}>{j.status}</span>
+              </td>
               <td class="small">{j.triggered_by}</td>
               <td class="small text-body-secondary">{j.started_at ? new Date(j.started_at).toLocaleString() : '-'}</td>
               <td class="text-end text-nowrap">
-                {#if j.status === 'running' && auth.can('servers:write')}
+                {#if (j.status === 'running' || j.status === 'pending') && auth.can('servers:write')}
                   <button class="btn btn-sm btn-outline-danger" onclick={() => abortJob(j)}>{t('jobs.abort')}</button>
                 {/if}
                 <button class="btn btn-sm btn-outline-secondary" onclick={() => toggleOutput(j)}>

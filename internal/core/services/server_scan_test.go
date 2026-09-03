@@ -45,12 +45,18 @@ lxd   5.0.3    28000  canonical✓  -`
 }
 
 func TestParseDiskVolumes(t *testing.T) {
-	// TSV wie von diskVolumesCmd: mountpoint \t device \t fstype \t total \t used
-	out := "/\t/dev/sda1\text4\t40960\t12800\n" +
-		"/boot\t/dev/sda2\text4\t976\t180\n" +
-		"/data\t/dev/sdb1\txfs\t512000\t384000\n" +
-		"\t\t\t\t\n" + // kaputte Zeile (falsche Feldzahl bzw. leer) → übersprungen
-		"/mnt/x\t/dev/sdc1\text4\t0\t0\n" // total 0 → übersprungen
+	// TSV wie von diskVolumesCmd - drei Ströme, die der Parser über den
+	// Mountpoint zusammenführt: S = Größe, I = Inodes, M = Mount-Option.
+	out := "S\t/\t/dev/sda1\text4\t40960\t12800\n" +
+		"S\t/boot\t/dev/sda2\text4\t976\t180\n" +
+		"S\t/data\t/dev/sdb1\txfs\t512000\t384000\n" +
+		"S\t\t\t\t\t\n" + // kaputte Zeile → übersprungen
+		"S\t/mnt/x\t/dev/sdc1\text4\t0\t0\n" + // total 0 → übersprungen
+		"I\t/\t2621440\t131072\n" +
+		"I\t/data\t0\t0\n" +
+		"M\t/\trw\n" +
+		"M\t/boot\tro\n" +
+		"M\t/proc\trw\n" // Pseudo-Mount ohne Größen-Eintrag → kein Volume
 
 	vols := parseDiskVolumes(out)
 	if len(vols) != 3 {
@@ -68,6 +74,39 @@ func TestParseDiskVolumes(t *testing.T) {
 	}
 	if got := parseDiskVolumes(""); len(got) != 0 {
 		t.Errorf("leere Ausgabe sollte 0 Volumes liefern, bekam %d", len(got))
+	}
+
+	// Inodes und Mount-Option werden dem richtigen Volume zugeordnet.
+	if vols[0].InodesTotal != 2621440 || vols[0].InodeUsagePercent() != 5 {
+		t.Errorf("Inodes des Root-Volumes falsch: %d/%d", vols[0].InodesUsed, vols[0].InodesTotal)
+	}
+	if vols[0].ReadOnly {
+		t.Error("/ ist rw eingehängt, wird aber als nur lesbar geführt")
+	}
+	if !vols[1].ReadOnly {
+		t.Error("/boot ist ro eingehängt, wird aber als beschreibbar geführt")
+	}
+	// Der M-Strom enthält jeden Kernel-Mount. Maßgeblich ist der S-Strom -
+	// sonst stünde /proc als Speicher-Volume in der Übersicht.
+	for _, v := range vols {
+		if v.Mountpoint == "/proc" {
+			t.Error("ein Pseudo-Mount aus /proc/mounts wurde als Volume geführt")
+		}
+	}
+}
+
+// TestUnescapeMountpoint: Der Kernel maskiert Sonderzeichen in /proc/mounts
+// oktal. Ohne Rückwandlung fände ein Mountpoint mit Leerzeichen seinen
+// Größen-Eintrag nicht wieder und bliebe ohne Inode- und ro-Angabe.
+func TestUnescapeMountpoint(t *testing.T) {
+	out := "S\t/mnt/mein volume\t/dev/sdd1\text4\t100\t50\n" +
+		"M\t/mnt/mein\\040volume\tro\n"
+	vols := parseDiskVolumes(out)
+	if len(vols) != 1 {
+		t.Fatalf("erwartet ein Volume, bekam %d", len(vols))
+	}
+	if !vols[0].ReadOnly {
+		t.Error("die Mount-Option wurde dem maskierten Mountpoint nicht zugeordnet")
 	}
 }
 

@@ -41,11 +41,35 @@ Restart=always
 RestartSec=5
 
 # WatchdogSec is the core of the runtime supervision: LCM sends a periodic
-# heartbeat (WATCHDOG=1) - but ONLY while it can reach its database. If the
-# heartbeat stops because the process hangs, blocks or is no longer able to
-# work, systemd terminates and restarts it. `Restart=` alone does NOT cover
-# these cases: a blocked process never crashes.
+# heartbeat (WATCHDOG=1) while the process is still running. If the heartbeat
+# stops because the process hangs, blocks or gets no CPU time at all, systemd
+# terminates and restarts it. `Restart=` alone does NOT cover these cases: a
+# blocked process never crashes.
+#
+# The heartbeat deliberately does NOT depend on the database being reachable
+# (see internal/health/monitor.go). A slow database makes the service report
+# "degraded" and, if it stays that way, restart itself with a reason in the
+# journal - a controlled handover instead of a SIGKILL from the outside.
 WatchdogSec=90
+
+# --- Resource accounting ------------------------------------------------------
+# The CVE scanner (Trivy) runs as a CHILD of this service and therefore lives
+# in this cgroup. That has a consequence worth spelling out: a MemoryMax here
+# would cap LCM AND the scanner together, so a scanner that grows past the
+# limit would get the service killed rather than protected. There is no way to
+# cap the child separately as long as it is started from inside this unit.
+#
+# What IS possible is measurement. With accounting on, `systemctl status lcm`
+# reports the peak, and `systemd-cgtop` shows the pressure live - which turns
+# "the service died again last night" into a number.
+#
+# On a host too small to run the scanner alongside the service (the database
+# alone is over a gigabyte), the right answer is not a limit but separation:
+# point trivy_url in config.json at the sidecar (cmd/trivyd), which runs in its
+# own unit or container with its own memory limit. LCM then talks to it over
+# HTTP and never forks a scanner at all.
+MemoryAccounting=true
+IOAccounting=true
 
 # On shutdown send SIGTERM first (graceful shutdown, LCM closes jobs and
 # listeners), then force after 30 s.

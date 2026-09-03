@@ -61,6 +61,10 @@ var serializerColumns = []struct {
 	{"servers", "id", "kernel_version"},
 	{"servers", "id", "installed_kernels"},
 	{"servers", "id", "cpu_model"},
+	{"servers", "id", "hardware_model"},
+	// Zustandsfelder, die der Scan schreibt.
+	{"servers", "id", "rhsm_status"},
+	{"servers", "id", "https_revert_urls"},
 	// Benutzer-/Linux-Benutzer-Felder ohne Blindindex (die mit Blindindex -
 	// username/email - laufen weiter unten als Sonderfall).
 	{"users", "id", "first_name"},
@@ -68,6 +72,15 @@ var serializerColumns = []struct {
 	{"users", "id", "password_hash"},
 	{"linux_users", "id", "full_name"},
 	{"linux_users", "id", "email"},
+	// Auf den Servern vorgefundene Benutzer (Bestand, nicht die von LCM
+	// verwalteten linux_users). Die Tabellen mit Blindindex auf dem Namen
+	// laufen weiter unten als Sonderfall.
+	{"server_users", "id", "username"},
+	{"server_user_logins", "id", "from_host"},
+	// Zustand der Speicher-Verbünde (ZFS/Btrfs/MD-RAID/LVM-Thin).
+	{"storage_healths", "id", "name"},
+	{"storage_healths", "id", "raw_state"},
+	{"storage_healths", "id", "message"},
 }
 
 // blindIndexedColumns sind verschlüsselte Felder mit einem MITZUFÜHRENDEN
@@ -81,6 +94,12 @@ var blindIndexedColumns = []struct {
 	{"users", "username", "username_bidx"},
 	{"users", "email", "email_bidx"},
 	{"linux_users", "username", "username_bidx"},
+	// Benutzer-Bestand der Server: Sperren, Anmeldungen und ausstehende
+	// Abgleiche werden über den Namen gesucht - ohne neuen Index nach der
+	// Rotation fände die Sperrprüfung keinen gesperrten Benutzer mehr.
+	{"server_user_blocks", "username", "username_bidx"},
+	{"server_user_logins", "username", "username_bidx"},
+	{"pending_user_syncs", "username", "username_bidx"},
 }
 
 // RotateEncryptedFields entschlüsselt alle verschlüsselten Spalten mit

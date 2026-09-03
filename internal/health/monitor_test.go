@@ -2,6 +2,8 @@ package health
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -146,5 +148,55 @@ func TestWatchdogIntervalIsHalf(t *testing.T) {
 	t.Setenv("WATCHDOG_PID", "")
 	if got, want := watchdogInterval(), 45*time.Second; got != want {
 		t.Errorf("watchdogInterval() = %v, erwartet %v", got, want)
+	}
+}
+
+// TestKeinNeustartWennEinNeustartNichtHilft: Eine gesperrte Datenbank meldet
+// der Dienst dauerhaft als „degraded" - aber er startet sich NICHT neu.
+//
+// Die Sperre liegt außerhalb dieses Prozesses; ein neu gestarteter stünde vor
+// derselben. Der Neustart wäre kein Heilmittel, sondern ein zweiter Ausfall
+// obendrauf - er nähme die gerade laufenden Jobs mit.
+func TestKeinNeustartWennEinNeustartNichtHilft(t *testing.T) {
+	safego.Reset()
+	var reasons []string
+	m := NewMonitor(func() error {
+		return fmt.Errorf("%w: database is locked", ErrNotWritable)
+	}).WithRestart(func(r string) { reasons = append(reasons, r) })
+
+	// Weit über die Grenze hinaus, ab der sonst neu gestartet würde.
+	for i := 0; i < unhealthyLimit*3; i++ {
+		m.tick()
+	}
+
+	if len(reasons) != 0 {
+		t.Errorf("trotz ErrNotWritable %d Neustarts ausgelöst: %v", len(reasons), reasons)
+	}
+	st := m.Status()
+	if st.Healthy {
+		t.Error("der Zustand muss als gestört gemeldet werden")
+	}
+	if st.FailStreak < unhealthyLimit {
+		t.Errorf("die Fehlschläge müssen weiter gezählt werden, waren %d", st.FailStreak)
+	}
+	// Und das Lebenszeichen trägt den Grund nach außen.
+	if got := m.watchdogStatus(); !strings.Contains(got, "degraded") || !strings.Contains(got, "not writable") {
+		t.Errorf("Status nennt die Störung nicht: %q", got)
+	}
+}
+
+// TestNeustartWennDieDatenbankWegIst: die Gegenprobe. Ist die Datenbank gar
+// nicht erreichbar, kann LCM nichts mehr - dann ist der Neustart richtig.
+func TestNeustartWennDieDatenbankWegIst(t *testing.T) {
+	safego.Reset()
+	var reasons []string
+	m := NewMonitor(func() error { return errors.New("connection refused") }).
+		WithRestart(func(r string) { reasons = append(reasons, r) })
+
+	for i := 0; i < unhealthyLimit; i++ {
+		m.tick()
+	}
+	if len(reasons) != 1 {
+		t.Errorf("erwartete genau einen Neustart, bekam %d", len(reasons))
 	}
 }

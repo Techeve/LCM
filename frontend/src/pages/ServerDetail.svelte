@@ -6,6 +6,7 @@
   import { auth } from '../stores/auth.svelte.js';
   import { i18n } from '../stores/i18n.svelte.js';
   import StatusBadge from '../components/StatusBadge.svelte';
+  import ServerTerminal from '../components/ServerTerminal.svelte';
   import OsLogo from '../components/OsLogo.svelte';
   import SshSessions from '../components/SshSessions.svelte';
   import ReconnectWizard from '../components/ReconnectWizard.svelte';
@@ -90,6 +91,60 @@
   let docker = $state(null); // Docker-Inventar (Container + Images + CVE-Zähler)
   let dockerBusy = $state(false);
   let storage = $state(null); // Speicher-Verlauf (Tagesdurchschnitte + Live-Wert)
+  // Volumes samt Überwachungs-Stand und Zustand der Speicher-Verbünde.
+  let volumeData = $state(null);
+  let volumeBusy = $state(''); // Mountpoint, dessen Überwachung gerade umgestellt wird
+
+  /**
+   * Überwachung eines Volumes ein- oder ausschalten.
+   *
+   * Netz-Mounts kommen hier nicht an - die Oberfläche bietet den Schalter
+   * dort gar nicht erst an, und der Server weist sie zusätzlich ab.
+   */
+  async function toggleVolumeMonitor(v) {
+    volumeBusy = v.mountpoint;
+    try {
+      await api.servers.setVolumeMonitor(id, {
+        mountpoint: v.mountpoint,
+        enabled: !v.monitor,
+        warn_percent: v.monitor?.warn_percent ?? 0,
+        crit_percent: v.monitor?.crit_percent ?? 0,
+      });
+      volumeData = await api.servers.volumes(id);
+    } catch (e) {
+      toasts.error(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      volumeBusy = '';
+    }
+  }
+
+  /** Warngrenze eines überwachten Volumes ändern. */
+  async function saveVolumeThreshold(v, warn) {
+    const grenze = Number(warn);
+    if (!Number.isFinite(grenze) || grenze < 1 || grenze > 100) return;
+    volumeBusy = v.mountpoint;
+    try {
+      await api.servers.setVolumeMonitor(id, {
+        mountpoint: v.mountpoint,
+        enabled: true,
+        warn_percent: grenze,
+        crit_percent: v.monitor?.crit_percent ?? 0,
+      });
+      volumeData = await api.servers.volumes(id);
+    } catch (e) {
+      toasts.error(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      volumeBusy = '';
+    }
+  }
+
+  /** Farbe der Zustandsmarke eines Speicher-Verbunds. */
+  function storageStateClass(state) {
+    if (state === 'faulted') return 'text-bg-danger';
+    if (state === 'degraded') return 'text-bg-warning';
+    if (state === 'healthy') return 'text-bg-success';
+    return 'text-bg-secondary';
+  }
   let serverUsers = $state(null); // Benutzer-Übersicht: gescannte Linux-Konten des Zielsystems
   let serverUsersBusy = $state(false);
   // Offene Benutzer-Abgleiche: liegengeblieben, weil der Server im Moment der
@@ -340,6 +395,7 @@
   );
 
   let unreachableUncritical = $derived(!!server?.unreachable_uncritical);
+  let inMaintenance = $derived(!!server?.maintenance);
   let graceDaysInput = $state(null);
   $effect(() => {
     if (server && graceDaysInput === null) graceDaysInput = server.unreachable_grace_days || 28;
@@ -1278,6 +1334,7 @@
       outdated = [];
       repos = [];
       storage = null;
+      volumeData = null;
       vulnReport = null;
       serverUsers = null;
       docker = server?.has_docker ? await api.servers.docker(id) : null;
@@ -1328,6 +1385,7 @@
         apps = await api.servers.apps(id);
       } else if (name === 'storage') {
         if (!storage) storage = await api.servers.storageHistory(id);
+        if (!volumeData) volumeData = await api.servers.volumes(id);
       } else if (name === 'jobs') {
         jobs = (await api.jobs.history(id, { page_size: 100 })).items;
       } else if (name === 'logs') {
@@ -1817,6 +1875,7 @@
     sessions = [];
     vulnReport = null;
     storage = null;
+    volumeData = null;
     docker = null;
     serverUsers = null;
     assignUserId = '';
@@ -1841,7 +1900,7 @@
   {#if server}
     <div class="d-flex justify-content-between align-items-start mb-3">
       <div class="d-flex align-items-center gap-3">
-        <OsLogo os={server.os_name} proxmox={server.proxmox_type} host={server.host} port={server.ssh_port} size={40} />
+        <OsLogo os={server.os_name} hardware={server.hardware_model} proxmox={server.proxmox_type} host={server.host} port={server.ssh_port} size={40} />
         <div>
           <h1 class="h3 mb-1">
             {server.name}
@@ -1853,6 +1912,12 @@
               <span class="badge text-bg-secondary align-middle ms-1" data-testid="offline-badge"
                 title={t('serverDetail.offline.title', { count: server.failed_checks })}>
                 {t('serverDetail.offline.badge')}
+              </span>
+            {/if}
+            {#if inMaintenance}
+              <span class="badge text-bg-warning align-middle ms-1" data-testid="maintenance-badge"
+                title={t('serverDetail.maintenance.badgeTitle')}>
+                {t('serverDetail.maintenance.badge')}
               </span>
             {/if}
             {#if isProxmox}
@@ -2200,6 +2265,15 @@
           </div>
         </div>
       {/if}
+      <!-- Web-Konsole: eigene Berechtigung, und nur dort, wo eine Shell
+           überhaupt möglich ist (kein Agent-Transport, kein DSM, kein
+           Demo-Server, keine Wartung - siehe services.terminalPossible). -->
+      {#if auth.can('servers:console') && !isAgent && !isDSM && !server.is_demo && !inMaintenance}
+        <div class="mb-3">
+          <ServerTerminal serverId={id} serverName={server.name} />
+        </div>
+      {/if}
+
       <div class="row g-3">
         <div class="col-md-6">
           <div class="card"><div class="card-body">
@@ -2215,6 +2289,14 @@
               {/if}
               {#if isDSM && server.dsm_model}
                 <dt class="col-5">{t('serverDetail.dsm.model')}</dt><dd class="col-7">{server.dsm_model}</dd>
+              {/if}
+              <!-- Gerätemodell: Auf einem Raspberry Pi sagt die Distribution
+                   nur „Debian" - erst hier steht, welches Blech darunter
+                   läuft. Leer bleibt die Zeile weg statt „unbekannt" zu
+                   behaupten (Container haben schlicht keine DMI-Tabelle). -->
+              {#if server.hardware_model}
+                <dt class="col-5">{t('serverDetail.overview.model')}</dt>
+                <dd class="col-7" data-testid="hardware-model">{server.hardware_model}</dd>
               {/if}
               <dt class="col-5">{t('serverDetail.overview.cpu')}</dt><dd class="col-7">{server.cpu_model || '-'} ({t('serverDetail.overview.cores', { count: server.cpu_cores })})</dd>
               <dt class="col-5">{t('serverDetail.overview.ram')}</dt><dd class="col-7">{fmtSize(server.mem_total_mb)}</dd>
@@ -3843,10 +3925,12 @@
         </div>
       {/if}
 
-      <!-- Eingehängte Dateisysteme (Volumes): aktuelle Belegung je Volume. -->
+      <!-- Eingehängte Dateisysteme (Volumes): Belegung, Inodes und die
+           ausdrücklich angeordnete Überwachung je Volume. -->
       <h2 class="h6 mt-4 mb-1">{t('serverDetail.storage.volumesTitle')}</h2>
       <p class="small text-body-secondary">{t('serverDetail.storage.volumesHint')}</p>
-      {#if (storage?.volumes?.length ?? 0) > 0}
+      <p class="small text-body-secondary">{t('serverDetail.storage.volumesHintMonitor')}</p>
+      {#if (volumeData?.volumes?.length ?? 0) > 0}
         <div class="table-responsive">
           <table class="table table-sm align-middle" data-testid="volumes-table">
             <thead><tr>
@@ -3854,24 +3938,80 @@
               <th>{t('serverDetail.storage.colDevice')}</th>
               <th>{t('serverDetail.storage.colFstype')}</th>
               <th style="min-width: 220px">{t('serverDetail.storage.colUsage')}</th>
+              <th>{t('serverDetail.storage.colInodes')}</th>
+              <th style="min-width: 190px">{t('serverDetail.storage.colMonitor')}</th>
             </tr></thead>
             <tbody>
-              {#each storage.volumes as v (v.id)}
-                {@const pct = v.total_mb > 0 ? Math.round((v.used_mb * 100) / v.total_mb) : 0}
-                <tr>
+              {#each volumeData.volumes as v (v.mountpoint)}
+                <tr data-testid="volume-row" data-mount={v.mountpoint}>
                   <td>
                     <code class="small">{v.mountpoint}</code>
                     {#if v.mountpoint === '/'}<span class="badge text-bg-secondary ms-1">{t('serverDetail.storage.rootBadge')}</span>{/if}
+                    {#if v.read_only}
+                      <span class="badge text-bg-danger ms-1" title={t('serverDetail.storage.readOnlyHint')}>
+                        {t('serverDetail.storage.readOnlyBadge')}
+                      </span>
+                    {/if}
                   </td>
                   <td class="small text-body-secondary">{v.device}</td>
-                  <td class="small text-body-secondary">{v.fstype}</td>
+                  <td class="small text-body-secondary">
+                    {v.fstype}
+                    {#if v.is_network}
+                      <span class="badge text-bg-light border ms-1">{t('serverDetail.storage.networkBadge')}</span>
+                    {/if}
+                  </td>
                   <td>
                     <div class="d-flex align-items-center gap-2">
                       <div class="progress flex-grow-1" style="height: 8px; min-width: 90px">
-                        <div class="progress-bar {pct >= 90 ? 'bg-danger' : pct >= 85 ? 'bg-warning' : 'bg-success'}" style="width: {pct}%"></div>
+                        <div class="progress-bar {v.usage_percent >= 90 ? 'bg-danger' : v.usage_percent >= 85 ? 'bg-warning' : 'bg-success'}" style="width: {v.usage_percent}%"></div>
                       </div>
-                      <span class="small text-nowrap">{fmtSize(v.used_mb)} / {fmtSize(v.total_mb)} ({pct}%)</span>
+                      <span class="small text-nowrap">{fmtSize(v.used_mb)} / {fmtSize(v.total_mb)} ({v.usage_percent}%)</span>
                     </div>
+                  </td>
+                  <td class="small text-nowrap">
+                    {#if v.inodes_total > 0}
+                      <span class:text-danger={v.inode_percent >= 90}>{v.inode_percent}%</span>
+                    {:else}
+                      <span class="text-body-secondary">–</span>
+                    {/if}
+                  </td>
+                  <td>
+                    {#if v.mountpoint === '/'}
+                      <!-- Das Root-Volume ist immer überwacht (Ampel, Verlauf,
+                           Prognose) - ein Schalter meldete es doppelt. -->
+                      <span class="small text-body-secondary">{t('serverDetail.storage.alwaysMonitored')}</span>
+                    {:else if !v.monitorable}
+                      <!-- Netzspeicher überwacht der Dienst, der ihn anbietet.
+                           Von hier aus sähe man nur die Sicht des Clients. -->
+                      <span class="small text-body-secondary" title={t('serverDetail.storage.notMonitorableHint')}>
+                        {t('serverDetail.storage.notMonitorable')}
+                      </span>
+                    {:else if auth.can('servers:write')}
+                      <div class="d-flex align-items-center gap-2">
+                        <div class="form-check form-switch mb-0">
+                          <input class="form-check-input" type="checkbox" role="switch"
+                            checked={!!v.monitor} disabled={volumeBusy === v.mountpoint}
+                            onchange={() => toggleVolumeMonitor(v)}
+                            data-testid="volume-monitor-toggle"
+                            aria-label={t('serverDetail.storage.monitorToggle', { mount: v.mountpoint })} />
+                        </div>
+                        {#if v.monitor}
+                          <div class="input-group input-group-sm" style="max-width: 110px">
+                            <input class="form-control" type="number" min="1" max="100"
+                              value={v.monitor.warn_percent || 85}
+                              disabled={volumeBusy === v.mountpoint}
+                              data-testid="volume-monitor-threshold"
+                              aria-label={t('serverDetail.storage.thresholdLabel')}
+                              onchange={(e) => saveVolumeThreshold(v, e.currentTarget.value)} />
+                            <span class="input-group-text">%</span>
+                          </div>
+                        {/if}
+                      </div>
+                    {:else if v.monitor}
+                      <span class="small">{t('serverDetail.storage.monitoredFrom', { percent: v.monitor.warn_percent || 85 })}</span>
+                    {:else}
+                      <span class="small text-body-secondary">–</span>
+                    {/if}
                   </td>
                 </tr>
               {/each}
@@ -3880,6 +4020,43 @@
         </div>
       {:else}
         <div class="alert alert-info small">{t('serverDetail.storage.volumesEmpty')}</div>
+      {/if}
+
+      <!-- Zustand der Speicher-Verbünde. Anders als die Belegung ist er nicht
+           abschaltbar: Ein degradierter Pool ist keine Geschmacksfrage, und
+           ZFS und Btrfs melden ihn von sich aus nirgends. -->
+      {#if (volumeData?.storage_health?.length ?? 0) > 0}
+        <h2 class="h6 mt-4 mb-1">{t('serverDetail.storage.healthTitle')}</h2>
+        <p class="small text-body-secondary">{t('serverDetail.storage.healthHint')}</p>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle" data-testid="storage-health-table">
+            <thead><tr>
+              <th>{t('serverDetail.storage.colKind')}</th>
+              <th>{t('serverDetail.storage.colName')}</th>
+              <th>{t('serverDetail.storage.colState')}</th>
+              <th>{t('serverDetail.storage.colDetail')}</th>
+            </tr></thead>
+            <tbody>
+              {#each volumeData.storage_health as h (h.id)}
+                <tr data-testid="storage-health-row">
+                  <td class="small">{t(`serverDetail.storage.kind.${h.kind}`)}</td>
+                  <td><code class="small">{h.name}</code></td>
+                  <td>
+                    <span class="badge {storageStateClass(h.state)}">{h.raw_state || h.state}</span>
+                  </td>
+                  <td class="small">
+                    {#if h.message}{h.message}{:else}<span class="text-body-secondary">–</span>{/if}
+                    {#if h.usage_percent > 0 || h.meta_percent > 0}
+                      <span class="text-body-secondary ms-1">
+                        ({#if h.usage_percent > 0}{t('serverDetail.storage.fillData', { percent: h.usage_percent })}{/if}{#if h.meta_percent > 0}{#if h.usage_percent > 0}, {/if}{t('serverDetail.storage.fillMeta', { percent: h.meta_percent })}{/if})
+                      </span>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       {/if}
     {:else if tab === 'repos'}
       {#if auth.can('servers:write')}
@@ -4083,6 +4260,26 @@
             {/if}
           </div>
         {/if}
+
+        <div class="border-top pt-3">
+          <h3 class="h6">{t('serverDetail.maintenance.title')}</h3>
+          <div class="form-check form-switch mb-1">
+            <input class="form-check-input" type="checkbox" id="maintenance" role="switch"
+              checked={inMaintenance} disabled={busy || !auth.can('servers:write')}
+              data-testid="maintenance-toggle"
+              onchange={() => action(
+                () => api.servers.updateSettings(id, { maintenance: !inMaintenance }),
+                t(inMaintenance ? 'serverDetail.maintenance.ended' : 'serverDetail.maintenance.started'),
+              )} />
+            <label class="form-check-label" for="maintenance">{t('serverDetail.maintenance.label')}</label>
+          </div>
+          <div class="form-text mb-2">{t('serverDetail.maintenance.hint')}</div>
+          {#if inMaintenance && server.maintenance_since}
+            <div class="alert alert-warning py-2 px-3 small mb-0" role="note" data-testid="maintenance-since">
+              {t('serverDetail.maintenance.since', { date: dsFmtTime(server.maintenance_since) })}
+            </div>
+          {/if}
+        </div>
 
         <div class="border-top pt-3">
           <h3 class="h6">{t('serverDetail.availability.title')}</h3>

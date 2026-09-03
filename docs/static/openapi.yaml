@@ -1296,10 +1296,26 @@ paths:
       - Linux-Benutzer
       summary: Liefert das einmalige Token für den Self-Service-Link.
       operationId: linuxCtrl_GenerateActivation
-      description: 'Liefert das einmalige Token für den Self-Service-Link.
+      description: >-
+        Liefert das einmalige Token für den Self-Service-Link, über den der
+        Mitarbeiter Passwort und/oder SSH-Schlüssel selbst setzt.
 
 
-        Benötigte Berechtigung: `linux-users:write`.'
+        Mit `send_email` geht der Link zusätzlich an die am Linux-Benutzer
+        hinterlegte Adresse. Er kommt in JEDEM Fall auch in der Antwort zurück:
+        Scheitert der Versand (`mailed: false`, `mail_error`), hat der
+        Administrator ihn trotzdem vor sich und kann ihn von Hand weitergeben -
+        der Link ist ja bereits gültig.
+
+
+        Der Text der Mail richtet sich danach, ob der Account schon
+        Zugangsdaten hat: Ohne welche lädt er zum Einrichten ein, mit welchen
+        spricht er vom Zurücksetzen. Es ist derselbe Link - aber eine Einladung
+        für einen Zugang, den jemand längst nutzt, sieht aus wie ein
+        Angriffsversuch.
+
+
+        Benötigte Berechtigung: `linux-users:write`.
       parameters:
       - name: id
         in: path
@@ -1315,6 +1331,8 @@ paths:
               properties:
                 ttl_hours:
                   type: integer
+                send_email:
+                  type: boolean
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -6277,6 +6295,14 @@ paths:
                     für Status/Alarme und erscheinen nicht in der
                     Sicherheitsübersicht. Sticht auch die Markierung einzelner
                     Container als CVE-relevant.
+                maintenance:
+                  type: boolean
+                  description: >-
+                    Nimmt den Server vorübergehend aus dem Betrieb: keine
+                    Zeitplan-Läufe, kein Health-Check, keine Frühwarnung, kein
+                    CVE-Scan, keine Alarme. Für Systeme, die absichtlich aus
+                    sind. Beim Einschalten wird maintenance_since gesetzt, beim
+                    Ausschalten geleert.
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -6503,6 +6529,80 @@ paths:
       responses:
         '200':
           description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/servers/{id}/volumes:
+    get:
+      tags:
+      - Server
+      summary: Speicher-Volumes samt Überwachungs-Stand und Zustand der Verbünde.
+      operationId: serverCtrl_Volumes
+      description: 'Speicher-Volumes samt Überwachungs-Stand und Zustand der Verbünde.
+
+
+        Benötigte Berechtigung: `servers:read`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/servers/{id}/volumes/monitor:
+    put:
+      tags:
+      - Server
+      summary: Überwachung eines Volumes ein- oder ausschalten.
+      operationId: serverCtrl_SetVolumeMonitor
+      description: 'Überwachung eines Volumes ein- oder ausschalten.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - mountpoint
+              - enabled
+              properties:
+                mountpoint:
+                  type: string
+                enabled:
+                  type: boolean
+                warn_percent:
+                  type: integer
+                crit_percent:
+                  type: integer
+                inode_warn_percent:
+                  type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Erfolgreich.
+        '400':
+          description: Volume nicht überwachbar (z. B. Netz-Mount).
         '401':
           description: Nicht angemeldet.
         '403':
@@ -7103,7 +7203,9 @@ paths:
                   type: string
                 session_ttl_minutes:
                   type: integer
-                job_max_runtime_minutes:
+                job_idle_timeout_minutes:
+                  type: integer
+                job_idle_timeout_slow_minutes:
                   type: integer
                 apt_cache_url:
                   type: string
@@ -7623,6 +7725,197 @@ paths:
       security:
       - sessionAuth: []
       - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/servers/{id}/terminal/ticket:
+    post:
+      tags:
+      - Server
+      summary: Stellt eine Einmal-Fahrkarte für die Web-Konsole aus.
+      operationId: terminalCtrl_Ticket
+      description: >-
+        Liefert eine dreißig Sekunden gültige Einmal-Fahrkarte, mit der
+        anschließend die WebSocket-Verbindung zur Konsole aufgebaut wird.
+
+
+        Warum der Umweg: Die WebSocket-Schnittstelle des Browsers kann keine
+        eigenen Kopfzeilen setzen, der Anmelde-Token käme dort nicht an. Ihn an
+        die URL zu hängen verbietet sich - URLs stehen in Zugriffs- und
+        Proxy-Protokollen, und dieser Zugang öffnet eine Root-Shell. Die
+        Fahrkarte gilt einmal, kurz und nur für diesen einen Server; steht sie
+        später in einem Protokoll, ist sie längst wertlos.
+
+
+        Benötigte Berechtigung: `servers:console` - bewusst NICHT in
+        `servers:write` enthalten.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Fahrkarte ausgestellt.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/servers/{id}/terminal:
+    get:
+      tags:
+      - Server
+      summary: Öffnet die interaktive Konsole (WebSocket).
+      operationId: terminalCtrl_Connect
+      description: >-
+        Baut die Konsolen-Verbindung auf. Nachweis ist die Fahrkarte aus
+        `POST /terminal/ticket` (`?ticket=…`), nicht der Anmelde-Token - der
+        Endpunkt trägt deshalb keine Permission-Prüfung.
+
+
+        Über die Verbindung laufen Tastenanschläge als Binärnachrichten; eine
+        Größenänderung wird als Textnachricht `{"type":"resize","cols":…,"rows":…}`
+        geschickt, damit sie nicht als Eingabe im Terminal landet. Die Ausgabe
+        kommt binär zurück.
+
+
+        Die Sitzung wird MITGESCHNITTEN und liegt danach im SSH-Protokoll. Sie
+        belegt den Ausführungs-Slot des Servers: Solange die Konsole offen ist,
+        laufen dort keine Zeitpläne. Nach 15 Minuten ohne Eingabe endet sie von
+        selbst.
+
+
+        Nicht möglich auf Demo-Servern, Synology DSM, Agent-Servern (der
+        Transport führt keinen Strom) und Servern in Wartung.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: ticket
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: cols
+        in: query
+        schema:
+          type: integer
+      - name: rows
+        in: query
+        schema:
+          type: integer
+      security: []
+      responses:
+        '101':
+          description: Verbindung aufgebaut.
+        '400':
+          description: Auf diesem Server ist keine Konsole möglich.
+        '401':
+          description: Ungültige oder abgelaufene Fahrkarte.
+        '403':
+          description: Die Web-Konsole ist abgeschaltet.
+        '409':
+          description: Auf dem Server läuft gerade etwas anderes.
+  /api/v1/system/logs:
+    get:
+      tags:
+      - System
+      summary: Liefert das Ende des LCM-Logs.
+      operationId: logsCtrl_List
+      description: >-
+        Das eigene Log des Dienstes, jüngste Zeile zuletzt. `lines` begrenzt die
+        Menge (Vorgabe 300, Maximum 2000), `level` filtert nach Schwere
+        (debug/info/warn/error), `q` nach Textbestandteil in der ganzen Zeile.
+
+
+        Benötigte Berechtigung: `settings:manage` - im Log stehen Namen,
+        Adressen und Kommandos ALLER Server.
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Kein Dateiprotokoll konfiguriert.
+  /api/v1/system/logs/stream:
+    get:
+      tags:
+      - System
+      summary: Streamt neue Logzeilen als Server-Sent Events.
+      operationId: logsCtrl_Stream
+      description: >-
+        Liefert ab dem aktuellen Ende der Datei jede neue Zeile als SSE-Ereignis
+        `log`; dazwischen `ping` als Herzschlag. Dieselben Filter wie bei der
+        Liste (`level`, `q`). Der Strom endet nach 30 Minuten - der Browser baut
+        ihn selbsttätig wieder auf.
+
+
+        Hinweis für Clients: Die Anmeldung läuft über den Authorization-Header,
+        den `EventSource` nicht setzen kann. Der Strom ist deshalb per `fetch`
+        zu lesen; der Token gehört NICHT in die URL (er landete sonst in
+        Zugriffs- und Proxy-Protokollen).
+
+
+        Benötigte Berechtigung: `settings:manage`.
+      responses:
+        '200':
+          description: Ereignisstrom.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Kein Dateiprotokoll konfiguriert.
+  /api/v1/system/logs/level:
+    get:
+      tags:
+      - System
+      summary: Liefert das wirksame Log-Level.
+      operationId: logsCtrl_Level
+      description: >-
+        Das aktuell wirksame Level und - falls ein befristetes Debug läuft - der
+        Zeitpunkt, zu dem es endet.
+
+
+        Benötigte Berechtigung: `settings:manage`.
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+    post:
+      tags:
+      - System
+      summary: Schaltet das befristete Debug-Log ein oder aus.
+      operationId: logsCtrl_SetLevel
+      description: >-
+        `{"debug": true}` hebt das Level für 30 Minuten auf debug und stellt es
+        danach selbsttätig zurück; `{"debug": false}` beendet es sofort. Die
+        Frist ist Absicht: Debug schreibt jedes SSH-Kommando samt Ausgabe mit,
+        und ein dauerhaft eingeschaltetes Debug füllt auf einer kleinen Maschine
+        die Logdatei schneller, als die Rotation sie wegräumt.
+
+
+        Benötigte Berechtigung: `settings:manage`.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                debug:
+                  type: boolean
       responses:
         '200':
           description: Erfolgreich.

@@ -107,7 +107,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	settingsSvc.WithIPAllowlistUsage(func(id uint) []string {
 		return services.IPAllowlistUsage(serverRepo, groupRepo, id)
 	})
-	servers := services.NewServerService(serverRepo, jobs, audit, cipher, dialer).WithRecorder(recorder).WithLinux(linuxRepo).WithGroups(groupRepo).WithScanner(scanner).
+	servers := services.NewServerService(serverRepo, jobs, audit, cipher, dialer).WithRecorder(recorder).WithLinux(linuxRepo).WithGroups(groupRepo).WithScanner(scanner).WithSettings(settingsRepo).
 		WithOnboardingKey(settingsSvc.OnboardingPrivateKey).WithKnownRepos(knownRepoRepo).WithIPAllowlists(settingsSvc.ExpandIPAllowlists).
 		WithAptCacheURL(func() (string, error) {
 			st, err := settingsRepo.Get()

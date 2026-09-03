@@ -51,6 +51,15 @@ type Source interface {
 	Name() string
 	// Available meldet, ob die Quelle nutzbar ist (verdrahtet und aktiviert).
 	Available() bool
+	// Local meldet, ob die Quelle ohne Netzzugriff aus einer eigenen Kopie
+	// antwortet.
+	//
+	// Der Zwischenspeicher der Frühwarnung existiert, um fremde Dienste zu
+	// schonen - er begrenzt, wie viel vom eigenen Bestand überhaupt nach
+	// außen gelangt. Bei einer lokalen Quelle gibt es nichts zu schonen: Die
+	// Abfrage ist ein Blick in eine Map im Arbeitsspeicher. Übrig bliebe nur
+	// sein Preis, das Neuschreiben sämtlicher Einträge bei jedem Durchgang.
+	Local() bool
 	// Query liefert je purl die bekannten Meldungen. Ein purl ohne Eintrag im
 	// Ergebnis gilt als geprüft und unauffällig - das ist der Normalfall und
 	// nicht von einem Fehler zu unterscheiden, wenn man ihn nicht so

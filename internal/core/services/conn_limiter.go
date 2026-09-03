@@ -87,6 +87,18 @@ type limitedConn struct {
 	release func()
 }
 
+// Terminal reicht die Konsolen-Fähigkeit durch, sofern die innere Verbindung
+// sie hat. Der Slot bleibt belegt, bis die Verbindung geschlossen wird - also
+// die ganze Sitzung über. Genau so soll es sein: Ein apt-Lauf neben einer
+// offenen Konsole ist der Konflikt, den der Slot verhindert.
+func (c *limitedConn) Terminal(term string, cols, rows int) (sshx.Terminal, error) {
+	inner, ok := c.Conn.(sshx.TerminalConn)
+	if !ok {
+		return nil, ErrTerminalUnsupported
+	}
+	return inner.Terminal(term, cols, rows)
+}
+
 func (c *limitedConn) Close() error {
 	err := c.Conn.Close()
 	c.release()

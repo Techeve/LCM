@@ -20,8 +20,22 @@ const diskUsageCmd = `df -BM / | awk 'NR==2{gsub(/M/,""); print $2" "$3}'`
 // nicht um jeden Kernel-Mount. `-P` erzwingt eine Zeile pro Eintrag (kein
 // Umbruch bei langen Gerätenamen). Ausgabe je Volume als TSV:
 // mountpoint \t device \t fstype \t totalMB \t usedMB.
-const diskVolumesCmd = `df -PTBM -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs -x ramfs -x fuse.gvfsd-fuse 2>/dev/null | ` +
-	`awk 'NR>1 && $7 ~ /^\// {gsub(/M$/,"",$3); gsub(/M$/,"",$4); print $7"\t"$1"\t"$2"\t"$3"\t"$4}' | head -50`
+//
+// Erhoben wird in drei Strömen, die der Parser über den Mountpoint
+// zusammenführt - jeder für sich trivial zu lesen und zu testen:
+//
+//	S  Größe:   mountpoint, device, fstype, totalMB, usedMB
+//	I  Inodes:  mountpoint, total, used
+//	M  Mount:   mountpoint, erste Mount-Option (rw/ro)
+//
+// Die Inodes stehen dabei, weil ein Dateisystem dichtmachen kann, obwohl df
+// in Bytes noch Platz zeigt; die Mount-Option, weil der Kernel ein
+// Dateisystem nach einem I/O-Fehler selbsttätig auf „ro" umhängt - der
+// deutlichste Notruf, den er absetzt, und ohne Nachsehen unsichtbar.
+const diskVolumesCmd = `DFX="-x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs -x ramfs -x fuse.gvfsd-fuse"
+df -PTBM $DFX 2>/dev/null | awk 'NR>1 && $7 ~ /^\// {gsub(/M$/,"",$3); gsub(/M$/,"",$4); print "S\t"$7"\t"$1"\t"$2"\t"$3"\t"$4}' | head -50
+df -PTi $DFX 2>/dev/null | awk 'NR>1 && $7 ~ /^\// && $3 ~ /^[0-9]+$/ {print "I\t"$7"\t"$3"\t"$4}' | head -50
+awk '{split($4,o,","); print "M\t"$2"\t"o[1]}' /proc/mounts 2>/dev/null | head -200`
 
 // scanResult bündelt das Ergebnis eines System-Scans.
 type scanResult struct {
@@ -43,18 +57,23 @@ type scanResult struct {
 	KernelVersion     string
 	// Kernels sind die installierten Kernel-Pakete (leer in Containern -
 	// dort kommt der Kernel vom Host).
-	Kernels      []domain.KernelPackage
-	CPUModel     string
-	CPUCores     int
-	MemTotalMB   int64
-	MemUsedMB    int64
-	DiskTotalMB  int64
-	DiskUsedMB   int64
-	DiskVolumes  []domain.DiskVolume // alle eingehängten Volumes (inkl. „/")
-	IPAddresses  string
-	Packages     []domain.Package
-	Snaps        []domain.SnapPackage
-	Repositories []domain.AptRepository
+	Kernels       []domain.KernelPackage
+	HardwareModel string // Geräte-/Board-Modell (Device-Tree bzw. DMI)
+	CPUModel      string
+	CPUCores      int
+	MemTotalMB    int64
+	MemUsedMB     int64
+	DiskTotalMB   int64
+	DiskUsedMB    int64
+	DiskVolumes   []domain.DiskVolume // alle eingehängten Volumes (inkl. „/")
+	// StorageHealth ist der Zustand der Speicher-Verbünde unterhalb der
+	// Belegung (ZFS-Pools, Btrfs, MD-RAID, LVM-Thin) - leer auf Systemen
+	// ohne diese Techniken.
+	StorageHealth []domain.StorageHealth
+	IPAddresses   string
+	Packages      []domain.Package
+	Snaps         []domain.SnapPackage
+	Repositories  []domain.AptRepository
 	// Docker-Inventar (nur wenn HasDocker; siehe docker_scan.go).
 	HasDocker        bool
 	HasCompose       bool
@@ -135,11 +154,19 @@ func scanServerMode(conn sshx.Conn, loginUser string, restricted bool) *scanResu
 	// Paketverwaltung vorhaelt. Nach einem Kernel-Update weichen beide bis zum
 	// Neustart voneinander ab.
 	res.KernelVersion = strings.TrimSpace(run("kernel", "uname -r"))
-	res.CPUModel = strings.TrimSpace(run("cpu", "sed -n 's/^model name[^:]*: //p' /proc/cpuinfo | head -1"))
+	// Gerätemodell und CPU. `model name` gibt es nur auf x86 - auf ARM
+	// (Raspberry Pi & Co.) kennt /proc/cpuinfo die Zeile nicht, dort füllt
+	// scanHardware die Lücke aus Device-Tree, SoC und lscpu.
+	hw := scanHardware(strings.TrimSpace(run("cpu", "sed -n 's/^model name[^:]*: //p' /proc/cpuinfo | head -1")), run)
+	res.HardwareModel, res.CPUModel = hw.Model, hw.CPU
 	res.CPUCores, _ = strconv.Atoi(strings.TrimSpace(run("cores", "nproc")))
 	res.MemTotalMB, res.MemUsedMB = parseTwoInts(run("mem", "free -m | awk '/^Mem:/{print $2\" \"$3}'"))
 	res.DiskTotalMB, res.DiskUsedMB = parseTwoInts(run("disk", diskUsageCmd))
 	res.DiskVolumes = parseDiskVolumes(run("volumes", diskVolumesCmd))
+	// Braucht Root: btrfs device stats und lvs verweigern sich dem
+	// Dienstbenutzer. Im eingeschränkten Modus laufen sie ohne sudo und
+	// melden dann „unbekannt" - nie ein falsches Gesund.
+	res.StorageHealth = parseStorageHealth(run("storage-health", wrapSudo(loginUser, restricted, storageHealthCmd)))
 	res.IPAddresses = strings.Join(strings.Fields(run("ips", "hostname -I")), ", ")
 
 	// Paketverwaltung erkennen und bestandsabhängig scannen (apt/dnf/zypper).
@@ -476,30 +503,81 @@ func parseTwoInts(out string) (int64, int64) {
 	return total, used
 }
 
-// parseDiskVolumes parst die TSV-Ausgabe von diskVolumesCmd:
-// mountpoint \t device \t fstype \t totalMB \t usedMB (je Zeile ein Volume).
-// Zeilen ohne verwertbare Kapazität werden übersprungen.
+// parseDiskVolumes führt die drei Ströme von diskVolumesCmd über den
+// Mountpoint zusammen (S = Größe, I = Inodes, M = Mount-Option). Maßgeblich
+// ist der S-Strom: Was dort nicht vorkommt, ist kein Speicher-Volume - der
+// M-Strom enthält auch jeden Pseudo-Mount des Kernels.
 func parseDiskVolumes(out string) []domain.DiskVolume {
+	type extra struct {
+		inodesTotal, inodesUsed int64
+		readOnly                bool
+	}
+	extras := map[string]*extra{}
+	hole := func(mp string) *extra {
+		if e := extras[mp]; e != nil {
+			return e
+		}
+		e := &extra{}
+		extras[mp] = e
+		return e
+	}
+
 	var vols []domain.DiskVolume
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(f) != 5 {
-			continue
+		switch {
+		case f[0] == "S" && len(f) == 6:
+			total, _ := strconv.ParseInt(strings.TrimSpace(f[4]), 10, 64)
+			used, _ := strconv.ParseInt(strings.TrimSpace(f[5]), 10, 64)
+			if total <= 0 {
+				continue
+			}
+			vols = append(vols, domain.DiskVolume{
+				Mountpoint: strings.TrimSpace(f[1]),
+				Device:     strings.TrimSpace(f[2]),
+				Fstype:     strings.TrimSpace(f[3]),
+				TotalMB:    total,
+				UsedMB:     used,
+			})
+		case f[0] == "I" && len(f) == 4:
+			e := hole(strings.TrimSpace(f[1]))
+			e.inodesTotal, _ = strconv.ParseInt(strings.TrimSpace(f[2]), 10, 64)
+			e.inodesUsed, _ = strconv.ParseInt(strings.TrimSpace(f[3]), 10, 64)
+		case f[0] == "M" && len(f) == 3:
+			hole(unescapeMountpoint(strings.TrimSpace(f[1]))).readOnly = strings.TrimSpace(f[2]) == "ro"
 		}
-		total, _ := strconv.ParseInt(strings.TrimSpace(f[3]), 10, 64)
-		used, _ := strconv.ParseInt(strings.TrimSpace(f[4]), 10, 64)
-		if total <= 0 {
-			continue
+	}
+
+	for i := range vols {
+		if e := extras[vols[i].Mountpoint]; e != nil {
+			vols[i].InodesTotal = e.inodesTotal
+			vols[i].InodesUsed = e.inodesUsed
+			vols[i].ReadOnly = e.readOnly
 		}
-		vols = append(vols, domain.DiskVolume{
-			Mountpoint: strings.TrimSpace(f[0]),
-			Device:     strings.TrimSpace(f[1]),
-			Fstype:     strings.TrimSpace(f[2]),
-			TotalMB:    total,
-			UsedMB:     used,
-		})
 	}
 	return vols
+}
+
+// unescapeMountpoint macht die Oktal-Maskierung aus /proc/mounts rückgängig.
+// Der Kernel schreibt dort Leerzeichen, Tabulatoren, Zeilenumbrüche und den
+// Backslash selbst als \OOO - ohne Rückwandlung fände ein Mountpoint mit
+// Leerzeichen im Namen seinen Größen-Eintrag nicht wieder.
+func unescapeMountpoint(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+3 < len(s) {
+			if n, err := strconv.ParseUint(s[i+1:i+4], 8, 8); err == nil {
+				b.WriteByte(byte(n))
+				i += 3
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // parseDpkgList parst "paket version"-Zeilen von dpkg-query.

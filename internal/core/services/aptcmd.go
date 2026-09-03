@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -58,9 +59,48 @@ func parsePackageNames(s string) ([]string, error) {
 	return out, nil
 }
 
+// aptUpgradeRounds ist die Zahl der Anläufe, die ein Upgrade bekommt.
+//
+// Ein einziger Durchgang genügt nicht immer: Bei großen Rückständen (ein
+// System, das lange nicht aktualisiert wurde, oder ein Sprung über mehrere
+// Distributionsstände) hängen Pakete voneinander ab und lassen sich erst in
+// einer bestimmten Reihenfolge einspielen. apt bricht dann mit halb
+// konfigurierten Paketen ab - der zweite Anlauf, dem `dpkg --configure -a`
+// und `apt-get -f install` vorausgehen, bringt genau diese durch. Drei
+// Anläufe decken den Fall ab, ohne bei echten Fehlern lange zu kreisen: Was
+// dreimal am selben Punkt scheitert, braucht einen Menschen.
+const aptUpgradeRounds = 3
+
+// aptRetry legt den Wiederholungslauf um ein apt-Kommando: Vor jedem
+// weiteren Anlauf werden angebrochene Installationen abgeschlossen
+// (`dpkg --configure -a`) und fehlende Abhängigkeiten nachgezogen
+// (`apt-get -f install`) - die zwei Handgriffe, mit denen man ein steckenes
+// Upgrade auch von Hand weiterbringt. Der Exit-Code des letzten Anlaufs ist
+// der des Skripts, ein Fehlschlag bleibt also ein Fehlschlag.
+func aptRetry(cmd string) string {
+	rounds := make([]string, 0, aptUpgradeRounds)
+	for i := 1; i <= aptUpgradeRounds; i++ {
+		rounds = append(rounds, strconv.Itoa(i))
+	}
+	return strings.Join([]string{
+		`rc=0`,
+		`for i in ` + strings.Join(rounds, " ") + `; do`,
+		`  if [ "$i" -gt 1 ]; then`,
+		`    echo "LCM: Anlauf $i - angebrochene Installationen abschliessen"`,
+		`    DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true`,
+		`    ` + aptNonInteractive + ` -f install -y || true`,
+		`  fi`,
+		`  ` + cmd + `; rc=$?`,
+		`  [ $rc -eq 0 ] && break`,
+		`  echo "LCM: Anlauf $i endete mit Exit-Code $rc"`,
+		`done`,
+		`exit $rc`,
+	}, "\n")
+}
+
 // aptUpgradeAllScript aktualisiert alle Pakete (klassisches apt upgrade).
 func aptUpgradeAllScript() string {
-	return aptNonInteractive + " update && " + aptNonInteractive + " -y upgrade"
+	return aptRetry(aptNonInteractive + " update && " + aptNonInteractive + " -y upgrade")
 }
 
 // aptRefreshScript aktualisiert nur die Paket-Metadaten (apt-get update) -
@@ -75,8 +115,8 @@ func aptRefreshScript() string {
 // auf die neueste verfügbare Version (--only-upgrade installiert keine neuen
 // Pakete, falls eines nicht installiert ist).
 func aptUpgradePackagesScript(names []string) string {
-	return aptNonInteractive + " update && " +
-		aptNonInteractive + " install --only-upgrade -y " + strings.Join(names, " ")
+	return aptRetry(aptNonInteractive + " update && " +
+		aptNonInteractive + " install --only-upgrade -y " + strings.Join(names, " "))
 }
 
 // aptInstallVersionScript installiert ein Paket auf eine exakte Version
@@ -110,7 +150,7 @@ func aptSecurityUpgradeScript() string {
 		"pkgs=$(apt list --upgradable 2>/dev/null | " + reUpgradableSecure + " | cut -d/ -f1)",
 		`if [ -z "$pkgs" ]; then echo 'LCM: keine security-updates verfuegbar'; exit 0; fi`,
 		`echo "LCM: security-updates fuer: $pkgs"`,
-		aptNonInteractive + " install --only-upgrade -y $pkgs",
+		aptRetry(aptNonInteractive + " install --only-upgrade -y $pkgs"),
 	}, "\n")
 }
 

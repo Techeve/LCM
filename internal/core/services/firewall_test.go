@@ -424,7 +424,10 @@ func TestEnforceRuleAppliedOnHealthPing(t *testing.T) {
 	env.Dialer.Responses["then echo ufw"] = sshx.FakeResponse{Output: "ufw\n"}
 	env.Dialer.Responses["ufw status verbose"] = sshx.FakeResponse{Output: "Status: active\n"}
 	env.Dialer.Commands = nil
-	env.Executor.RunRule(healthRule, "scheduler")
+	// Von Hand ausgelöst statt über den Zeitplan: Ein geplanter Ping würde
+	// hier ausgelassen, weil der Join gerade eben Kontakt hatte (siehe
+	// skipHealthPing). Geprüft wird die Durchsetzung, nicht die Taktung.
+	env.Executor.RunRule(healthRule, "admin")
 
 	all := strings.Join(env.Dialer.Commands, "\n")
 	if !strings.Contains(all, "ufw --force reset") || !strings.Contains(all, "ufw allow proto tcp to any port 80") {
@@ -459,7 +462,7 @@ func TestEnforceRuleAppliedOnHealthPing(t *testing.T) {
 			"80/tcp (v6)                ALLOW IN    Anywhere (v6)\n",
 	}
 	env.Dialer.Commands = nil
-	env.Executor.RunRule(healthRule, "scheduler")
+	env.Executor.RunRule(healthRule, "admin")
 
 	all = strings.Join(env.Dialer.Commands, "\n")
 	if strings.Contains(all, "ufw --force reset") {

@@ -153,11 +153,17 @@
     );
   }
 
-  async function generateActivation() {
+  async function generateActivation(sendEmail = false) {
     try {
-      const res = await api.linuxUsers.generateActivation(manage.id, 48);
+      const res = await api.linuxUsers.generateActivation(manage.id, 48, sendEmail);
       const base = `${location.origin}${location.pathname}#/linux-aktivierung?token=`;
-      activationLink = { url: base + encodeURIComponent(res.token), expires_at: res.expires_at };
+      activationLink = {
+        url: base + encodeURIComponent(res.token),
+        expires_at: res.expires_at,
+        mailed: res.mailed === true,
+        mailError: res.mail_error ?? '',
+        to: manage.email,
+      };
     } catch (e) {
       toasts.error(e instanceof ApiError ? e.message : String(e));
     }
@@ -343,7 +349,14 @@
     {#if canWrite}
       <div class="d-flex gap-2 align-items-center mb-3">
         <button class="btn btn-sm btn-primary" onclick={saveEdit} disabled={busy}>{t('linuxUsers.save')}</button>
-        <button class="btn btn-sm btn-outline-primary" onclick={generateActivation} disabled={busy}>{t('linuxUsers.genActivation')}</button>
+        <button class="btn btn-sm btn-outline-primary" onclick={() => generateActivation(false)} disabled={busy}>{t('linuxUsers.genActivation')}</button>
+        <!-- Versand nur anbieten, wenn es eine Adresse gibt - ein Knopf, der
+             zwangsläufig scheitert, ist schlechter als keiner. -->
+        <button class="btn btn-sm btn-outline-primary" onclick={() => generateActivation(true)}
+          disabled={busy || !manage.email} data-testid="linux-activation-mail"
+          title={manage.email ? t('linuxUsers.mailActivationTo', { email: manage.email }) : t('linuxUsers.noEmailHint')}>
+          {t('linuxUsers.mailActivation')}
+        </button>
         <span class="small ms-auto">
           {#if manage.has_password}<span class="badge text-bg-success">{t('linuxUsers.passwordSet')}</span>{:else}<span class="badge text-bg-secondary">{t('linuxUsers.noPassword')}</span>{/if}
         </span>
@@ -464,6 +477,17 @@
   {#if activationLink}
     <p class="small">
       {t('linuxUsers.activationIntro', { until: new Date(activationLink.expires_at).toLocaleString() })}
+    </p>
+    {#if activationLink.mailed}
+      <div class="alert alert-success py-2 px-3 small" role="status" data-testid="activation-mailed">
+        {t('linuxUsers.activationMailed', { email: activationLink.to })}
+      </div>
+    {:else if activationLink.mailError}
+      <div class="alert alert-warning py-2 px-3 small" role="alert" data-testid="activation-mail-failed">
+        {t('linuxUsers.activationMailFailed', { error: activationLink.mailError })}
+      </div>
+    {/if}
+    <p class="d-none">
     </p>
     <div class="input-group">
       <input class="form-control user-select-all" readonly value={activationLink.url} />

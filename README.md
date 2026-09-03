@@ -22,7 +22,7 @@
   <a href="README.de.md">Deutsch</a>
 </p>
 
-> **Try it without installing anything: [lcm-demo.techeve.de](https://lcm-demo.techeve.de)**
+> **Try it without installing anything: [lcm-demo.techeve.de](https://lcm-demo.techeve.de/?mtm_campaign=linking&mtm_kwd=README)**
 > Sign in with `demo` / `Just-Testing!26` (administrator) or `demo-manager`
 > (restricted view - sees only its own group). The demo runs against simulated
 > servers, so its scope is deliberately limited: no real SSH connections, and
@@ -232,7 +232,7 @@ This sets LCM up as an unprivileged `systemd` service (autostart, HTTPS). The
 initial admin password is in the journal:
 `journalctl -u lcm | grep -A3 'Admin-Zugang'`. Without the repo: install a
 single `.deb` from the
-[releases](https://gitlab.techeve.de/techeve/lcm/-/releases) with
+[releases](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=README) with
 `sudo apt install ./lcm_<version>_<arch>.deb`. Further options (Docker, from
 source): [installation docs](docs/getting-started/installation.md).
 
@@ -270,7 +270,7 @@ make test-e2e  # Playwright E2E against the real binary
 ## Documentation
 
 The full documentation is published at
-**[doc.techeve.de/lcm](https://doc.techeve.de/lcm/en/)** (English and German)
+**[doc.techeve.de/lcm](https://doc.techeve.de/lcm/en/?mtm_campaign=linking&mtm_kwd=README)** (English and German)
 and lives as **plain Markdown** in this repository under [`docs/`](docs/) -
 German at the root, English under [`docs/en/`](docs/en/). The repo deliberately
 contains **no** Astro/Node/npm scaffolding: CI builds the pages with the
@@ -311,7 +311,7 @@ faster for it).
 
 Development happens in the internal repository
 (`gitlab.techeve.de/techeve/lcm-intern`) with a protected workflow; the public
-repository [`techeve/lcm`](https://gitlab.techeve.de/techeve/lcm) receives a
+repository [`techeve/lcm`](https://gitlab.techeve.de/techeve/lcm?mtm_campaign=linking&mtm_kwd=README) receives a
 snapshot of the `community` and `beta` branches on every release:
 
 - **Work happens on `develop`** (default branch) or on feature branches with an

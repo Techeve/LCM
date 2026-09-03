@@ -1,10 +1,14 @@
 package trivy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"LCM/internal/core/domain"
 )
@@ -155,5 +159,104 @@ func TestScanLaedtNichtsNach(t *testing.T) {
 	}
 	if !strings.Contains(line, "--cache-dir /var/lib/lcm/trivy") {
 		t.Errorf("Cache-Verzeichnis fehlt: %s", line)
+	}
+}
+
+// blockingRunner hält jeden schweren Lauf an, bis der Test ihn freigibt, und
+// zählt dabei mit, wie viele gleichzeitig unterwegs waren.
+type blockingRunner struct {
+	entered chan struct{} // ein Eintrag je begonnenem Lauf
+	release chan struct{} // schließen gibt alle Läufe frei
+
+	mu   sync.Mutex
+	cur  int
+	peak int
+}
+
+func (r *blockingRunner) enter() {
+	r.mu.Lock()
+	r.cur++
+	if r.cur > r.peak {
+		r.peak = r.cur
+	}
+	r.mu.Unlock()
+	r.entered <- struct{}{}
+	<-r.release
+	r.mu.Lock()
+	r.cur--
+	r.mu.Unlock()
+}
+
+func (r *blockingRunner) available() bool { return true }
+
+func (r *blockingRunner) scanSBOM(context.Context, []byte) ([]byte, error) {
+	r.enter()
+	return []byte(`{"Results":[]}`), nil
+}
+
+func (r *blockingRunner) scanImage(context.Context, string) ([]byte, error) {
+	r.enter()
+	return []byte(`{"Results":[]}`), nil
+}
+
+func (r *blockingRunner) updateDB(context.Context) (string, error) {
+	r.enter()
+	return "", nil
+}
+
+func (r *blockingRunner) info(context.Context) domain.CVEDBStatus {
+	return domain.CVEDBStatus{Available: true}
+}
+
+// TestSchwereLaeufeLaufenNichtGleichzeitig: Trivy sperrt sein Cache-Verzeichnis
+// exklusiv - überlappende Läufe scheiterten im Betrieb reihenweise mit „cache
+// may be in use by another process". Und zwei Läufe nebeneinander brauchen auf
+// einer kleinen Maschine mehr Speicher, als sie hat.
+func TestSchwereLaeufeLaufenNichtGleichzeitig(t *testing.T) {
+	r := &blockingRunner{entered: make(chan struct{}, 8), release: make(chan struct{})}
+	tv := newTrivy(r)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = tv.ScanImage(context.Background(), "beispiel@sha256:abc")
+		}()
+	}
+
+	// Genau EIN Lauf darf begonnen haben; die anderen warten auf die Schranke.
+	<-r.entered
+	select {
+	case <-r.entered:
+		t.Fatal("ein zweiter Trivy-Lauf ist gleichzeitig gestartet")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(r.release)
+	wg.Wait()
+
+	r.mu.Lock()
+	peak := r.peak
+	r.mu.Unlock()
+	if peak != 1 {
+		t.Errorf("höchste Gleichzeitigkeit war %d, erlaubt ist 1", peak)
+	}
+}
+
+// TestSchwereLaeufeAchtenAufDenKontext: Ein abgebrochener Job darf nicht
+// weiterwarten, nur weil vor ihm noch ein Scan läuft.
+func TestSchwereLaeufeAchtenAufDenKontext(t *testing.T) {
+	r := &blockingRunner{entered: make(chan struct{}, 8), release: make(chan struct{})}
+	defer close(r.release)
+	tv := newTrivy(r)
+
+	go func() { _, _ = tv.UpdateDB(context.Background()) }()
+	<-r.entered // die Schranke ist jetzt belegt
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := tv.UpdateDB(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("abgebrochener Aufruf sollte context.Canceled liefern, war %v", err)
 	}
 }
