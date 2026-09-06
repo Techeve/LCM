@@ -301,6 +301,9 @@ func New(deps Deps) *fiber.App {
 	// Browsers kann keine Kopfzeilen setzen, und der Anmelde-Token hat in
 	// einer URL nichts zu suchen (siehe TerminalController).
 	servers.Post("/:id/terminal/ticket", middlewares.RequirePermission(domain.PermServersConsole), terminalCtrl.Ticket)
+	// Ab-/Freischalten der Konsole je Server - dasselbe Recht wie ihre
+	// Benutzung, also allein bei admin.
+	servers.Put("/:id/console", middlewares.RequirePermission(domain.PermServersConsole), terminalCtrl.SetEnabled)
 	// Der WebSocket selbst trägt KEINE Permission-Prüfung: Er kommt ohne
 	// Anmelde-Kopfzeile herein, und die Fahrkarte ist hier der Nachweis - sie
 	// ist einmalig, dreißig Sekunden gültig und an diesen Server gebunden,

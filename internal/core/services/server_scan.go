@@ -14,6 +14,18 @@ import (
 // Speicher-Snapshot des Health-Checks genutzt (parsebar via parseTwoInts).
 const diskUsageCmd = `df -BM / | awk 'NR==2{gsub(/M/,""); print $2" "$3}'`
 
+// hostnameCmd liest den Namen, unter dem sich das System selbst kennt.
+//
+// Bewusst NICHT `hostname -f`: Das schlägt eine Rückwärtsauflösung im DNS nach
+// und hängt, wenn der Resolver nicht antwortet - ausgerechnet bei einem
+// Server mit Netzproblemen also dort, wo der Scan am wenigsten warten darf.
+// Die drei Quellen hier kommen ohne Netz aus; die letzte liefert der Kernel
+// und ist immer da.
+const hostnameCmd = `h=$(hostnamectl --static 2>/dev/null | head -1)
+[ -n "$h" ] || h=$(head -1 /etc/hostname 2>/dev/null)
+[ -n "$h" ] || h=$(head -1 /proc/sys/kernel/hostname 2>/dev/null)
+printf '%s\n' "$h"`
+
 // diskVolumesCmd listet ALLE eingehängten „echten" Dateisysteme (Volumes, die
 // dem System durchgereicht sind) mit Typ und Größe in MiB. Pseudo-Dateisysteme
 // (tmpfs/overlay/squashfs …) werden ausgeschlossen - es geht um Speicher-Volumes,
@@ -65,7 +77,9 @@ type scanResult struct {
 	MemUsedMB     int64
 	DiskTotalMB   int64
 	DiskUsedMB    int64
-	DiskVolumes   []domain.DiskVolume // alle eingehängten Volumes (inkl. „/")
+	// Hostname: der Name, unter dem sich das System selbst kennt.
+	Hostname    string
+	DiskVolumes []domain.DiskVolume // alle eingehängten Volumes (inkl. „/")
 	// StorageHealth ist der Zustand der Speicher-Verbünde unterhalb der
 	// Belegung (ZFS-Pools, Btrfs, MD-RAID, LVM-Thin) - leer auf Systemen
 	// ohne diese Techniken.
@@ -168,6 +182,7 @@ func scanServerMode(conn sshx.Conn, loginUser string, restricted bool) *scanResu
 	// melden dann „unbekannt" - nie ein falsches Gesund.
 	res.StorageHealth = parseStorageHealth(run("storage-health", wrapSudo(loginUser, restricted, storageHealthCmd)))
 	res.IPAddresses = strings.Join(strings.Fields(run("ips", "hostname -I")), ", ")
+	res.Hostname = firstLine(run("hostname", hostnameCmd))
 
 	// Paketverwaltung erkennen und bestandsabhängig scannen (apt/dnf/zypper).
 	res.PackageManager = detectPackageManager(run)

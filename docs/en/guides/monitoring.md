@@ -17,6 +17,11 @@ SSH connections; the managed servers need no agent.
   (bare metal, VM, LXC), and OS support status (Ubuntu, Debian and the RHEL
   family: Red Hat Enterprise Linux, Rocky Linux, AlmaLinux, CentOS Stream).
 - **Hardware** - CPU model/cores, RAM, disk, IP addresses.
+- **Hostname** - the name the system knows itself by (`hostnamectl`, else
+  `/etc/hostname`). It is shown next to the display name when the two
+  differ - if a server was added by IP, this tells you which machine it is.
+  Deliberately without `hostname -f`: that does a DNS lookup and hangs
+  exactly where the network is the problem.
 - **Disks/volumes** - all mounted filesystems (passed-through storage volumes,
   not physical disks) with usage; the root volume `/` stays authoritative for
   the traffic light and forecast.
@@ -89,6 +94,15 @@ in the security views remains the raw rating.
 
 All factors, thresholds and special cases in detail:
 [Status calculation](/en/guides/status/).
+
+## Renaming a server
+
+Server detail → **Settings** (gear) → section *Name*. The display name is
+freely chosen and independent of what the server calls itself on the network,
+but it must be **unique** - an already taken name is rejected with a message.
+
+If the detected hostname differs from the display name, it is offered below the
+field and can be adopted with one click.
 
 ## Disks, history & forecast
 

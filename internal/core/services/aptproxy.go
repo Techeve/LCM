@@ -11,7 +11,7 @@ import (
 
 // ErrNoAptCacheURL: Anbindung angefordert, aber in den globalen Einstellungen
 // ist keine APT-Cache-URL hinterlegt.
-var ErrNoAptCacheURL = errors.New("keine apt-cache-url konfiguriert - bitte unter Einstellungen → APT-Cache hinterlegen")
+var ErrNoAptCacheURL = errors.New("keine APT-Cache-URL konfiguriert - bitte unter Einstellungen → APT-Cache hinterlegen")
 
 // aptProxyDropin ist das von LCM verwaltete apt-Drop-in, das APT-Anfragen über
 // den zentralen Cache leitet.

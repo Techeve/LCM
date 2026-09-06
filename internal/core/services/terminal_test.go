@@ -31,6 +31,37 @@ func TestKonsoleFolgtDemGlobalenSchalter(t *testing.T) {
 	}
 }
 
+// TestKonsoleJeServerAbschaltbar: Der globale Schalter nimmt die Fähigkeit
+// aus dem ganzen Haus, die Berechtigung regelt WER sie benutzt - hier geht es
+// um einzelne Maschinen, auf denen ein Shell-Zugriff aus der Oberfläche nicht
+// erwünscht ist.
+func TestKonsoleJeServerAbschaltbar(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	schalteKonsole(t, env, true)
+
+	// Vorbedingung: ohne Sperre geht es (der Fake-Server nimmt die Sitzung
+	// nicht an, aber die Prüfung davor muss durchlaufen).
+	if _, err := env.Servers.OpenTerminal(repositories.ScopeAll(), id, "admin", "", 80, 24); errors.Is(err, services.ErrTerminalNotPossible) {
+		t.Fatal("Vorbedingung: die Konsole ist schon ohne Sperre nicht möglich")
+	}
+
+	if err := env.Servers.SetConsoleDisabled(repositories.ScopeAll(), id, true, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Servers.OpenTerminal(repositories.ScopeAll(), id, "admin", "", 80, 24); !errors.Is(err, services.ErrTerminalNotPossible) {
+		t.Errorf("bei gesperrter Konsole erwartet ErrTerminalNotPossible, bekam %v", err)
+	}
+
+	// Und wieder freischalten.
+	if err := env.Servers.SetConsoleDisabled(repositories.ScopeAll(), id, false, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Servers.OpenTerminal(repositories.ScopeAll(), id, "admin", "", 80, 24); errors.Is(err, services.ErrTerminalNotPossible) {
+		t.Error("nach dem Freischalten bleibt die Konsole gesperrt")
+	}
+}
+
 // TestKonsoleNichtAufJedemServertyp: Wo es keine Shell gibt, soll eine klare
 // Absage kommen statt eines Verbindungsversuchs, der ins Leere läuft.
 func TestKonsoleNichtAufJedemServertyp(t *testing.T) {

@@ -2308,6 +2308,27 @@ export default {
       lapiHint: 'Richtet den CrowdSec-LAPI-Server auf dem LCM-Host ein und trägt die Zugangsdaten automatisch in die CrowdSec-Einstellungen ein - verwaltete Server können sich dann im Remote-Modus anbinden.',
       lapiStarted: 'CrowdSec-LAPI-Einrichtung gestartet - Verlauf im Protokolle-Tab.',
     },
+      terminal: {
+        title: 'Konsole',
+        open: 'Konsole',
+        openTitle: 'Interaktive Shell auf diesem Server öffnen',
+        settingTitle: 'Web-Konsole',
+        settingLabel: 'Konsole für diesen Server abschalten',
+        settingHint:
+          'Nimmt die Schaltfläche von der Server-Seite und weist auch direkte Aufrufe ab. Nur Administratoren können das festlegen - die Berechtigung dafür ist dieselbe, die zum Benutzen der Konsole nötig ist.',
+        disabled: 'Konsole für diesen Server abgeschaltet',
+        enabled: 'Konsole für diesen Server freigeschaltet',
+      },
+      rename: {
+        title: 'Name',
+        intro:
+          'Der Anzeigename in LCM - frei wählbar und unabhängig davon, wie der Server im Netz heißt. Er muss eindeutig sein.',
+        apply: 'Umbenennen',
+        suggestion: 'Das System nennt sich selbst:',
+        done: 'Server heißt jetzt {name}',
+      },
+      hostnameHint:
+        'Name, unter dem sich das System selbst kennt (hostnamectl) - er kann vom Anzeigenamen und von der Adresse abweichen.',
     sshProtect: {
       title: 'SSH-Zugang absichern',
       intro:

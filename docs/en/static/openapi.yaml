@@ -2773,6 +2773,43 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/console:
+    put:
+      tags:
+      - Server
+      summary: Enable or disable the web console for this server.
+      operationId: terminalCtrl_SetEnabled
+      description: 'Enable or disable the web console for this server.
+
+
+        Required permission: `servers:console`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - disabled
+              properties:
+                disabled:
+                  type: boolean
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Successful.
+        '401':
+          description: Not authenticated.
+        '403':
+          description: No permission.
   /api/v1/servers/{id}/decommission:
     post:
       tags:
@@ -4803,6 +4840,8 @@ paths:
       responses:
         '200':
           description: Erfolgreich.
+        '409':
+          description: Name or host/port already taken.
         '401':
           description: Nicht angemeldet.
         '403':

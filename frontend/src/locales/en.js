@@ -2304,6 +2304,27 @@ export default {
       lapiHint: 'Sets up the CrowdSec LAPI server on the LCM host and stores the credentials in the CrowdSec settings automatically - managed servers can then enroll in remote mode.',
       lapiStarted: 'CrowdSec LAPI setup started - see the Logs tab for progress.',
     },
+      terminal: {
+        title: 'Console',
+        open: 'Console',
+        openTitle: 'Open an interactive shell on this server',
+        settingTitle: 'Web console',
+        settingLabel: 'Disable the console for this server',
+        settingHint:
+          'Removes the button from the server page and rejects direct calls as well. Only administrators can set this - the permission required is the same one needed to use the console.',
+        disabled: 'Console disabled for this server',
+        enabled: 'Console enabled for this server',
+      },
+      rename: {
+        title: 'Name',
+        intro:
+          'The display name in LCM - freely chosen and independent of what the server calls itself on the network. It must be unique.',
+        apply: 'Rename',
+        suggestion: 'The system calls itself:',
+        done: 'Server is now called {name}',
+      },
+      hostnameHint:
+        'Name the system knows itself by (hostnamectl) - it can differ from the display name and from the address.',
     sshProtect: {
       title: 'Secure SSH access',
       intro:

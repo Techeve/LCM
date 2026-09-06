@@ -29,13 +29,17 @@ log() { printf '\n==> %s\n' "$*"; }
 if [ -e /dev/md0 ]; then
   log "MD-RAID: Gerät wieder aufnehmen"
   mdadm --add /dev/md0 "${DISK2}1" >/dev/null 2>&1 || true
-  # Der Resync läuft im Hintergrund; bis er durch ist, steht der Verbund
-  # weiter auf [U_] - die Prüfung danach wäre sonst zufällig.
+  # Auf den ZIELZUSTAND warten, nicht auf das Ende eines Resyncs: Direkt nach
+  # dem Hinzufügen läuft noch keiner - das Gerät hängt zunächst als Spare
+  # ("vdb1[2](S)") am Verbund, und die Belegungsmaske steht weiter auf [U_].
+  # Eine Schleife über "läuft ein Resync?" ist damit sofort fertig und meldet
+  # einen Verbund als repariert, der noch ohne Redundanz läuft.
   i=0
-  while grep -qE 'resync|recovery' /proc/mdstat && [ $i -lt 120 ]; do
+  while grep -A1 '^md0' /proc/mdstat | grep -q '_\]' && [ $i -lt 180 ]; do
     sleep 5; i=$((i+1))
   done
   grep -A1 '^md0' /proc/mdstat
+  grep -A1 '^md0' /proc/mdstat | grep -q '_\]' && echo "WARNUNG: md0 laeuft weiter ohne Redundanz" >&2 || true
 fi
 
 # --- ZFS -------------------------------------------------------------------

@@ -602,6 +602,92 @@ test.describe('LCM', () => {
     await expect(volumes).toContainText('GiB');
   });
 
+  test('Server-Detail: Konsole nicht mehr als Kachel, je Server abschaltbar', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/#/servers/1');
+
+    // Die Konsole liegt nicht mehr als Kachel auf der Übersichtsseite.
+    await expect(page.getByTestId('terminal-host')).toHaveCount(0);
+
+    // Die Schaltfläche erscheint hier nicht - und das ist richtig: Alle
+    // Demo-Server tragen is_demo, und auf einem erfundenen Server gibt es
+    // nichts, womit man sprechen könnte (services.terminalPossible). Dass
+    // die Sperre je Server greift, prüft TestKonsoleJeServerAbschaltbar.
+    await expect(page.getByTestId('open-console')).toHaveCount(0);
+
+    // Der Schalter steht in den Einstellungen und hängt am Konsolen-Recht.
+    await page.getByTestId('open-settings').click();
+    const schalter = page.getByTestId('console-disabled-toggle');
+    await expect(schalter).toBeVisible();
+
+    // Von einem bekannten Zustand ausgehen - die Einstellung überlebt
+    // absichtlich einen Testlauf.
+    if (await schalter.isChecked()) {
+      await schalter.click();
+      await expect(schalter).not.toBeChecked();
+    }
+
+    await schalter.click();
+    await expect(schalter).toBeChecked();
+
+    // Und sie bleibt über den Neuaufbau der Seite hinweg stehen.
+    await page.reload();
+    await page.getByTestId('open-settings').click();
+    await expect(page.getByTestId('console-disabled-toggle')).toBeChecked();
+
+    // Wieder freischalten, damit die folgenden Tests den Ausgangszustand
+    // vorfinden.
+    await page.getByTestId('console-disabled-toggle').click();
+    await expect(page.getByTestId('console-disabled-toggle')).not.toBeChecked();
+  });
+
+  test('Server-Detail: Hostname anzeigen und Server umbenennen', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/#/servers/1');
+
+    // web01 wurde über eine IP aufgenommen und nennt sich selbst anders -
+    // genau dann ist der Hostname eine Information und wird gezeigt.
+    await expect(page.getByTestId('server-hostname')).toHaveText('web01.intern.example');
+
+    // Der Dialog bleibt nach dem Speichern offen; er wird deshalb EINMAL
+    // geöffnet - ein zweiter Klick liefe gegen die Überlagerung.
+    await page.getByTestId('open-settings').click();
+    const feld = page.getByTestId('server-name-input');
+    const speichern = page.getByTestId('server-name-apply');
+    await expect(feld).toBeVisible();
+
+    // Von einem bekannten Zustand ausgehen: Ein abgebrochener Lauf kann den
+    // Server umbenannt hinterlassen haben.
+    await feld.fill('web01');
+    if (await speichern.isEnabled()) await speichern.click();
+    await expect(page.locator('h1')).toContainText('web01');
+
+    // Der gemeldete Hostname wird als Vorschlag angeboten - man muss ihn
+    // nicht abtippen.
+    await page.getByTestId('server-name-suggestion').click();
+    await expect(feld).toHaveValue('web01.intern.example');
+
+    // Ein bereits vergebener Name muss mit einer verständlichen Meldung
+    // abgewiesen werden, nicht mit einem Datenbank-Fehler.
+    await feld.fill('db01');
+    await speichern.click();
+    await expect(page.locator('body')).toContainText('bereits');
+    await expect(page.locator('h1')).toContainText('web01');
+    // Das Getippte bleibt stehen - ein abgelehnter Name soll korrigierbar
+    // sein, nicht neu eingegeben werden müssen.
+    await expect(feld).toHaveValue('db01');
+
+    // Und jetzt richtig umbenennen.
+    await feld.fill('web01-umbenannt');
+    await speichern.click();
+    await expect(page.locator('h1')).toContainText('web01-umbenannt');
+
+    // Zurückbenennen, damit die folgenden Tests web01 vorfinden.
+    await feld.fill('web01');
+    await speichern.click();
+    await expect(page.locator('h1')).toContainText('web01');
+  });
+
   test('Server-Detail: Volume-Überwachung ein-/ausschalten, Netz-Mount gesperrt', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto('/#/servers/1');

@@ -101,9 +101,37 @@ func (s *ServerService) OpenTerminal(scope repositories.AccessScope, id uint, ac
 	return &serverTerminal{Terminal: t, conn: conn, server: server.Name, actor: actor, audit: s.audit, id: id}, nil
 }
 
+// SetConsoleDisabled schaltet die Web-Konsole für einen Server ab oder wieder
+// frei.
+//
+// Eigener Weg statt eines Feldes in den Einstellungen: Jene Route verlangt
+// servers:write, und wer Server konfigurieren darf, soll über die Konsole
+// nicht mitbestimmen - das Recht dafür liegt allein bei admin
+// (PermServersConsole). Getrennte Route, getrenntes Recht.
+func (s *ServerService) SetConsoleDisabled(scope repositories.AccessScope, id uint, disabled bool, actor string) error {
+	server, err := s.servers.FindByID(scope, id)
+	if err != nil {
+		return err
+	}
+	if err := s.servers.UpdateFields(id, map[string]any{"console_disabled": disabled}); err != nil {
+		return err
+	}
+	zustand := "frei"
+	if disabled {
+		zustand = "gesperrt"
+	}
+	s.audit.Log(actor, "server.console."+zustand, "server", id, server.Name)
+	return nil
+}
+
 // terminalPossible prüft, ob dieser Servertyp überhaupt eine Shell hat.
 func terminalPossible(server *domain.Server) error {
 	switch {
+	case server.ConsoleDisabled:
+		// Für diesen Server ausdrücklich abgeschaltet. Die Prüfung steht hier
+		// und nicht nur in der Oberfläche: Wer die Adresse kennt, bekommt
+		// sonst trotzdem eine Fahrkarte.
+		return ErrTerminalNotPossible
 	case server.IsDemo:
 		// Demo-Server sind erfunden - es gibt nichts, womit man sprechen könnte.
 		return ErrTerminalNotPossible

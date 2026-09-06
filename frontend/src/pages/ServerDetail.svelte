@@ -236,6 +236,8 @@
   let reconnectOpen = $state(false);
   let removeOpen = $state(false);
   let settingsOpen = $state(false);
+  let nameInput = $state(null); // null = noch nicht aus dem Server gefüllt
+  let terminalOpen = $state(false);
   let restrictOpen = $state(false);
   let removePurge = $state(true); // Ziel-Bereinigung, Default an (wenn erreichbar)
   let firewallOpen = $state(false);
@@ -959,10 +961,57 @@
   // (wird erst per Aktion übernommen), Root-Login ein Sofort-Schalter.
   let rootLoginDisabled = $derived(!!server?.ssh_root_login_disabled);
   let portInput = $state(null);
-  // Beim (Neu-)Laden des Servers das Portfeld mit dem aktuellen Wert füllen.
+  // Beim (Neu-)Laden des Servers Port- und Namensfeld mit dem aktuellen Wert
+  // füllen.
   $effect(() => {
     if (server && portInput === null) portInput = server.ssh_port;
+    if (server && nameInput === null) nameInput = server.name;
   });
+
+  // Die Konsole steht nur, wo eine Shell überhaupt möglich ist - dieselben
+  // Bedingungen wie in services.terminalPossible - und wo sie für diesen
+  // Server nicht ausdrücklich abgeschaltet wurde.
+  const konsoleVerfuegbar = $derived(
+    auth.can('servers:console') &&
+      !!server &&
+      !server.console_disabled &&
+      !isAgent &&
+      !isDSM &&
+      !server.is_demo &&
+      !inMaintenance,
+  );
+
+  /** Konsole für diesen Server ab- oder freischalten (nur mit servers:console). */
+  async function toggleConsole() {
+    await action(
+      () => api.servers.setConsoleEnabled(id, !server.console_disabled),
+      server.console_disabled ? t('serverDetail.terminal.enabled') : t('serverDetail.terminal.disabled'),
+    );
+  }
+
+  // Der Hostname ist nur dann eine Information: Deckt er sich mit dem
+  // Anzeigenamen oder der Adresse, wiederholte er nur, was daneben steht.
+  const zeigeHostname = $derived(
+    !!server?.hostname && server.hostname !== server.name && server.hostname !== server.host,
+  );
+
+  /**
+   * Server umbenennen. Der Name ist eindeutig - der Server weist ein Doppel
+   * mit einer eigenen Meldung ab, die hier unverändert angezeigt wird.
+   */
+  async function renameServer() {
+    const neu = (nameInput ?? '').trim();
+    if (!neu || neu === server.name) return;
+    await action(
+      () => api.servers.updateSettings(id, { name: neu }),
+      t('serverDetail.rename.done', { name: neu }),
+    );
+    // Nur bei Erfolg zurücksetzen (danach füllt der Effekt aus dem Server
+    // nach). Wurde der Name abgelehnt - etwa weil er schon vergeben ist -,
+    // bleibt das Getippte stehen: Sonst müsste man es neu eingeben, statt es
+    // zu korrigieren.
+    if (server?.name === neu) nameInput = null;
+  }
   async function changePort() {
     const p = Number(portInput);
     if (!Number.isInteger(p) || p < 1 || p > 65535 || p === server.ssh_port) return;
@@ -1950,6 +1999,14 @@
             {:else}
               {server.os_name} {server.os_version} · {server.host}:{server.ssh_port} · {server.service_user}
             {/if}
+            <!-- Der Hostname steht nur da, wenn er etwas Neues sagt: Ist er
+                 mit dem Anzeigenamen oder der Adresse identisch, wäre er eine
+                 Wiederholung. Interessant ist er genau dann, wenn ein Server
+                 über eine IP eingetragen wurde - dann steht hier, um welche
+                 Maschine es sich handelt. -->
+            {#if zeigeHostname}
+              · <span data-testid="server-hostname" title={t('serverDetail.hostnameHint')}>{server.hostname}</span>
+            {/if}
           </div>
           {#if isRouterOS}
             {#if server.routeros_update_available}
@@ -2001,8 +2058,18 @@
       </div>
     {/if}
 
-    {#if auth.can('servers:write')}
+    {#if auth.can('servers:write') || konsoleVerfuegbar}
       <div class="d-flex flex-wrap gap-2 mb-4">
+        <!-- Konsole zuerst: Sie ist die unmittelbarste Handlung an einem
+             Server. Eigene Berechtigung, deshalb außerhalb der
+             Verwalter-Gruppe - und nur dort, wo eine Shell überhaupt möglich
+             ist (siehe services.terminalPossible). -->
+        {#if konsoleVerfuegbar}
+          <button class="btn btn-sm btn-outline-dark" data-testid="open-console"
+            disabled={busy} title={t('serverDetail.terminal.openTitle')}
+            onclick={() => (terminalOpen = true)}>{@html icons.monitor} {t('serverDetail.terminal.open')}</button>
+        {/if}
+        {#if auth.can('servers:write')}
         <div class="btn-group btn-group-sm flex-wrap" role="group">
           <button class="btn btn-outline-secondary" disabled={busy || jobLocked} title={t('serverDetail.actions.refreshHardwareTitle')} onclick={() => refreshServer(() => api.servers.refreshHardware(id), t('serverDetail.actions.refreshHardware'))}>{@html icons.refresh} {t('serverDetail.actions.refreshHardware')}</button>
           <button class="btn btn-outline-secondary" disabled={busy || jobLocked} title={t('serverDetail.actions.refreshAllTitle')} onclick={() => refreshServer(() => api.servers.refreshAll(id), t('serverDetail.actions.refreshAll'))}>{@html icons.refresh} {t('serverDetail.actions.refreshAll')}</button>
@@ -2096,6 +2163,7 @@
             </button>
           </div>
         </div>
+        {/if}
       </div>
     {/if}
 
@@ -2265,15 +2333,6 @@
           </div>
         </div>
       {/if}
-      <!-- Web-Konsole: eigene Berechtigung, und nur dort, wo eine Shell
-           überhaupt möglich ist (kein Agent-Transport, kein DSM, kein
-           Demo-Server, keine Wartung - siehe services.terminalPossible). -->
-      {#if auth.can('servers:console') && !isAgent && !isDSM && !server.is_demo && !inMaintenance}
-        <div class="mb-3">
-          <ServerTerminal serverId={id} serverName={server.name} />
-        </div>
-      {/if}
-
       <div class="row g-3">
         <div class="col-md-6">
           <div class="card"><div class="card-body">
@@ -4176,8 +4235,60 @@
 
     {#if auth.can('servers:write')}
       <!-- Einstellungen als Modal (per Zahnrad-Schaltfläche geöffnet). -->
+      <!-- Konsole im Dialog statt als Kachel: Sie ist eine Handlung, kein
+           Dauerinhalt der Übersichtsseite. -->
+      <Modal title={t('serverDetail.terminal.title')} bind:open={terminalOpen} size="modal-xl">
+        <ServerTerminal serverId={id} serverName={server.name} />
+      </Modal>
+
       <Modal title={t('serverDetail.actions.settings')} bind:open={settingsOpen}>
+        <!-- Name: die grundlegendste Einstellung, deshalb zuoberst. Er ist
+             frei wählbar und muss eindeutig sein; ein Doppel weist der Server
+             mit eigener Meldung ab. -->
         <div class="mb-4">
+          <h3 class="h6">{t('serverDetail.rename.title')}</h3>
+          <p class="small text-body-secondary">{t('serverDetail.rename.intro')}</p>
+          <div class="input-group input-group-sm" style="max-width: 360px">
+            <input id="server-name" type="text" class="form-control" maxlength="120"
+              bind:value={nameInput} disabled={busy || !auth.can('servers:write')}
+              data-testid="server-name-input"
+              aria-label={t('serverDetail.rename.title')}
+              onkeydown={(e) => { if (e.key === 'Enter') renameServer(); }} />
+            <button class="btn btn-outline-primary" onclick={renameServer} data-testid="server-name-apply"
+              disabled={busy || !auth.can('servers:write') || !nameInput?.trim() || nameInput.trim() === server.name}>
+              {t('serverDetail.rename.apply')}
+            </button>
+          </div>
+          {#if server.hostname && server.hostname !== server.name}
+            <!-- Der vom System gemeldete Name als Vorschlag: Genau dafür ist
+                 er erhoben - man muss ihn nicht abtippen. -->
+            <div class="form-text">
+              {t('serverDetail.rename.suggestion')}
+              <button type="button" class="btn btn-link btn-sm p-0 align-baseline"
+                data-testid="server-name-suggestion"
+                disabled={busy || !auth.can('servers:write')}
+                onclick={() => (nameInput = server.hostname)}>{server.hostname}</button>
+            </div>
+          {/if}
+        </div>
+
+        {#if auth.can('servers:console')}
+          <!-- Nur mit dem Konsolen-Recht sichtbar UND änderbar: Wer Server
+               konfigurieren darf, soll über die Shell nicht mitbestimmen.
+               Der Server prüft dasselbe an der Route. -->
+          <div class="mb-4 border-top pt-3">
+            <h3 class="h6">{t('serverDetail.terminal.settingTitle')}</h3>
+            <div class="form-check form-switch mb-1">
+              <input class="form-check-input" type="checkbox" id="console-off" role="switch"
+                checked={!!server.console_disabled} disabled={busy}
+                data-testid="console-disabled-toggle" onchange={toggleConsole} />
+              <label class="form-check-label" for="console-off">{t('serverDetail.terminal.settingLabel')}</label>
+            </div>
+            <div class="form-text">{t('serverDetail.terminal.settingHint')}</div>
+          </div>
+        {/if}
+
+        <div class="mb-4 border-top pt-3">
           <h3 class="h6">{t('serverDetail.sshProtect.title')}</h3>
           <p class="small text-body-secondary">{t('serverDetail.sshProtect.intro')}</p>
 

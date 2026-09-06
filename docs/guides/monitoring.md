@@ -17,6 +17,12 @@ SSH-Verbindungen; die verwalteten Server brauchen keinen Agent.
   (Bare-Metal, VM, LXC) und OS-Support-Status (Ubuntu, Debian sowie die
   RHEL-Familie: Red Hat Enterprise Linux, Rocky Linux, AlmaLinux, CentOS Stream).
 - **Hardware** - CPU-Modell/Kerne, RAM, Festplatte, IP-Adressen.
+- **Hostname** - der Name, unter dem sich das System selbst kennt
+  (`hostnamectl`, sonst `/etc/hostname`). Er steht neben dem Anzeigenamen,
+  wenn beide voneinander abweichen - wer einen Server über eine IP
+  eingetragen hat, sieht so, um welche Maschine es sich handelt. Bewusst
+  ohne `hostname -f`: Das schlägt im DNS nach und hängt ausgerechnet dort,
+  wo das Netz klemmt.
 - **Festplatten/Volumes** - alle eingehängten Dateisysteme (durchgereichte
   Speicher-Volumes, nicht physische Platten) mit Belegung; das Root-Volume `/`
   bleibt maßgeblich für Ampel und Prognose.
@@ -91,6 +97,16 @@ angezeigte Schwere in den Sicherheits-Ansichten bleibt die Roh-Bewertung.
 
 Alle Faktoren, Schwellwerte und Sonderfälle im Detail:
 [Status-Berechnung](/guides/status/).
+
+## Server umbenennen
+
+Server-Detail → **Einstellungen** (Zahnrad) → Abschnitt *Name*. Der Anzeigename
+ist frei wählbar und unabhängig davon, wie der Server im Netz heißt; er muss
+aber **eindeutig** sein - ein bereits vergebener Name wird mit einer Meldung
+abgewiesen.
+
+Weicht der erhobene Hostname vom Anzeigenamen ab, steht er unter dem Feld und
+lässt sich mit einem Klick übernehmen.
 
 ## Festplatten, Verlauf & Prognose
 

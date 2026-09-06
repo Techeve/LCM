@@ -73,6 +73,15 @@ export class ServersApi {
     return this.#client.get(`/servers/${id}/storage-history`);
   }
 
+  /**
+   * Web-Konsole für diesen Server ab- oder freischalten.
+   * Eigene Route mit eigenem Recht (servers:console) - nicht Teil der
+   * Server-Einstellungen, die servers:write genügt.
+   */
+  setConsoleEnabled(id, disabled) {
+    return this.#client.put(`/servers/${id}/console`, { disabled });
+  }
+
   /** Speicher-Volumes samt Überwachungs-Stand und Zustand der Verbünde. */
   volumes(id) {
     return this.#client.get(`/servers/${id}/volumes`);

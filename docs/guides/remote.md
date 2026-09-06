@@ -264,6 +264,32 @@ Danach am Agent-Server `lcm-agent enroll …` ausführen: Der Verbindungstest
 läuft vor jeder Installation und meldet einen Proxy-Fehler sofort im Klartext,
 statt ihn im Dienst-Log zu vergraben.
 
+## Web-Konsole
+
+Eine interaktive Shell auf einem Server, im Browser - erreichbar über die
+Schaltfläche **Konsole** ganz links in der Aktionsleiste der Server-Detailseite.
+
+Die Konsole ist an drei Stellen begrenzt, und alle drei greifen unabhängig
+voneinander:
+
+| Ebene | Wirkung |
+|---|---|
+| **Einstellungen → Sicherheit** | globaler Schalter - nimmt die Fähigkeit aus dem ganzen Haus |
+| **Berechtigung `servers:console`** | regelt, WER sie benutzen darf; im Auslieferungszustand allein `admin` |
+| **Server-Einstellungen → Web-Konsole** | schaltet sie für EINEN Server ab |
+
+Die Berechtigung ist bewusst von `servers:write` getrennt: Wer Server
+konfigurieren darf, soll damit nicht automatisch eine Root-Shell auf allen
+bekommen. Aus demselben Grund verlangt auch der Schalter je Server das
+Konsolen-Recht - sonst könnte sich ein Verwalter freischalten, was ihm nicht
+zusteht.
+
+Ist die Konsole für einen Server abgeschaltet, verschwindet nicht nur die
+Schaltfläche: Der Server weist auch direkte Aufrufe ab. Ohne Shell geht es
+ohnehin nicht - auf Demo-Servern, Synology-DSM-Geräten, Agent-Servern (der
+Agent-Transport führt keinen Strom) und auf Servern in Wartung wird die
+Konsole gar nicht erst angeboten.
+
 ## Enrollment-Token
 
 Das Token ist das **dauerhafte** Credential des Agents (wie ein API-Key). Es

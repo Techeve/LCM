@@ -54,6 +54,7 @@ var serializerColumns = []struct {
 	{"servers", "id", "listening_ports"},
 	{"servers", "id", "listening_packages"},
 	// OS-/Kernel-/CPU-Profilfelder der Server.
+	{"servers", "id", "hostname"},
 	{"servers", "id", "os_name"},
 	{"servers", "id", "os_version"},
 	{"servers", "id", "os_id"},

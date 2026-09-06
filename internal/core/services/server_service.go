@@ -16,9 +16,9 @@ import (
 )
 
 var (
-	ErrServerNameTaken     = errors.New("ein server mit diesem namen existiert bereits")
-	ErrServerHostTaken     = errors.New("dieser server ist bereits angelegt (Host/IP schon vorhanden)")
-	ErrFingerprintMismatch = errors.New("der host-key-fingerprint weicht vom bestätigten wert ab")
+	ErrServerNameTaken     = errors.New("ein Server mit diesem Namen existiert bereits")
+	ErrServerHostTaken     = errors.New("dieser Server ist bereits angelegt (Host/IP schon vorhanden)")
+	ErrFingerprintMismatch = errors.New("der Host-Key-Fingerprint weicht vom bestätigten Wert ab")
 	// ErrLoopbackInContainer: LCM läuft im Container; localhost zeigt dort auf
 	// den Container selbst. Der Docker-Host wird über seine im Netz
 	// erreichbare Adresse aufgenommen, wie jeder andere Server auch.
@@ -26,7 +26,7 @@ var (
 	// ErrProxmoxRestricted: auf erkannten Proxmox-Systemen sperrt LCM
 	// Aktionen, die mit der Proxmox-eigenen Verwaltung kollidieren würden
 	// (Repositories hinzufügen, ufw-Firewall, Linux-Benutzer-Sync).
-	ErrProxmoxRestricted = errors.New("auf proxmox-systemen gesperrt - proxmox verwaltet repositories, firewall und benutzer selbst")
+	ErrProxmoxRestricted = errors.New("auf Proxmox-Systemen gesperrt - Proxmox verwaltet Repositories, Firewall und Benutzer selbst")
 
 	// ErrFirewallToolMissing: das für die Distribution vorgesehene
 	// Firewall-Werkzeug (ufw/firewalld/nftables) fehlt auf dem Zielsystem und
@@ -455,7 +455,7 @@ const (
 
 // ErrNoOnboardingKey: Key-Login angefordert, aber kein System-Onboarding-Key
 // verdrahtet/vorhanden.
-var ErrNoOnboardingKey = errors.New("kein system-onboarding-ssh-key verfügbar")
+var ErrNoOnboardingKey = errors.New("kein System-Onboarding-SSH-Key verfügbar")
 
 // JoinRequest bündelt die Eingaben des Onboarding-Formulars.
 type JoinRequest struct {
@@ -1078,6 +1078,9 @@ func scanFields(fresh *domain.Server) map[string]any {
 	// überschreiben - sonst verlöre ein Server bei einem einzigen gestörten
 	// Durchgang seine Distributions-Kennung und damit die EOL-Bewertung.
 	// (Dasselbe Muster wie bei lcm_source_ip weiter unten.)
+	// Der Hostname ist eine Erkennung, kein Zustand: Ein Scan, dem das
+	// Kommando weggebrochen ist, darf den einmal erfassten Namen nicht löschen.
+	keepIfDetected(fields, "hostname", fresh.Hostname)
 	keepIfDetected(fields, "os_id", fresh.OSID)
 	keepIfDetected(fields, "os_version_id", fresh.OSVersionID)
 	keepIfDetected(fields, "package_manager", fresh.PackageManager)
@@ -1097,6 +1100,7 @@ func keepIfDetected(fields map[string]any, spalte, wert string) {
 
 // applyScan überträgt das Scan-Ergebnis auf das Server-Struct.
 func applyScan(server *domain.Server, scan *scanResult) {
+	server.Hostname = scan.Hostname
 	server.OSName = scan.OSName
 	server.OSVersion = scan.OSVersion
 	server.OSID = scan.OSID
@@ -2148,7 +2152,7 @@ func (s *ServerService) RemoveSnaps(scope repositories.AccessScope, id uint, nam
 }
 
 // ErrNoSnapd: Auf dem Server gibt es keine Snap-Verwaltung.
-var ErrNoSnapd = errors.New("auf diesem server ist snapd nicht vorhanden")
+var ErrNoSnapd = errors.New("auf diesem Server ist snapd nicht vorhanden")
 
 // requireSnapd weist Snap-Aktionen auf Servern ohne snapd ab, statt ein
 // Kommando abzusetzen, das mit „command not found" endet.
@@ -2308,7 +2312,18 @@ func (s *ServerService) UpdateSettings(scope repositories.AccessScope, id uint, 
 	if err != nil {
 		return nil, err
 	}
-	if in.Name != "" {
+	// Umbenennen: Der Name ist eindeutig (Unique-Index auf dem Blindindex).
+	// Ohne diese Prüfung liefe ein Namensdoppel in die Datenbank-Sperre und
+	// käme als roher Constraint-Fehler zurück - der Join prüft es seit jeher,
+	// die Einstellungen taten es nicht.
+	if in.Name != "" && in.Name != server.Name {
+		if vorhanden, err := s.servers.FindByName(in.Name); err == nil {
+			if vorhanden.ID != id {
+				return nil, ErrServerNameTaken
+			}
+		} else if !errors.Is(err, repositories.ErrNotFound) {
+			return nil, err
+		}
 		server.Name = in.Name
 	}
 	// Host/Port-Eindeutigkeit auch hier erzwingen - beim Join/Anlegen wird

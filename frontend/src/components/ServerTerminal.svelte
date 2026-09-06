@@ -108,11 +108,12 @@
   onDestroy(close);
 </script>
 
-<div class="card">
-  <div class="card-body">
+<!-- Ohne eigene Karte und ohne eigene Überschrift: Die Komponente sitzt im
+     Konsolen-Dialog, der beides schon mitbringt. -->
+<div>
+  <div>
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
       <div>
-        <h2 class="h6 mb-1">{t('terminal.title')}</h2>
         <div class="small text-body-secondary">{t('terminal.subtitle', { name: serverName })}</div>
       </div>
       <div class="d-flex gap-2">

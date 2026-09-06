@@ -14,7 +14,7 @@ import (
 // ErrServerBusy: Auf dem Server läuft bereits ein Job - parallel
 // getriggerte Jobs werden blockiert, um Systemkollisionen zu verhindern
 // (Concurrency Control laut Spezifikation).
-var ErrServerBusy = errors.New("auf diesem server läuft bereits ein job - ausführung blockiert")
+var ErrServerBusy = errors.New("auf diesem Server läuft bereits ein Job - Ausführung blockiert")
 
 // ErrJobNotRunning: Abbruch angefordert, aber der Job läuft (nicht mehr).
 var ErrJobNotRunning = errors.New("dieser job läuft nicht (mehr)")

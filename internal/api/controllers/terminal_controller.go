@@ -32,6 +32,28 @@ func NewTerminalController(servers *services.ServerService, tickets *services.Te
 	return &TerminalController{servers: servers, tickets: tickets}
 }
 
+// SetEnabled - PUT /api/v1/servers/:id/console (servers:console)
+//
+// Schaltet die Web-Konsole für einen Server ab oder wieder frei. Die Route
+// hängt am Konsolen-Recht, nicht an servers:write: Wer Server konfigurieren
+// darf, soll sich die Shell nicht selbst freischalten können.
+func (ctrl *TerminalController) SetEnabled(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Disabled bool `json:"disabled"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "ungültige Anfrage")
+	}
+	if err := ctrl.servers.SetConsoleDisabled(scopeFor(c), id, req.Disabled, actor(c)); err != nil {
+		return mapServerError(err)
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
 // Ticket - POST /api/v1/servers/:id/terminal/ticket (servers:console)
 func (ctrl *TerminalController) Ticket(c fiber.Ctx) error {
 	id, err := paramID(c)

@@ -59,6 +59,10 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 	demoServers := []domain.Server{
 		{
 			Name: "web01", Host: "10.10.0.11", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
+			// Abweichender Hostname: Der Server wurde über eine IP aufgenommen,
+			// das System selbst nennt sich anders - genau der Fall, für den die
+			// Anzeige gedacht ist.
+			Hostname:           "web01.intern.example",
 			HostKeyFingerprint: "SHA256:DEMOweb01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO web01",
 			OSName: "Debian GNU/Linux", OSVersion: "12 (bookworm)", OSID: "debian", OSVersionID: "12",
 			Virtualization: "kvm", PackageManager: "apt", HasDocker: true, HasCompose: true, KernelVersion: "6.1.0-13-amd64",
@@ -87,6 +91,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		},
 		{
 			Name: "db01", Host: "10.10.0.12", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
+			Hostname:           "db01", // deckt sich mit dem Anzeigenamen - wird nicht doppelt gezeigt
 			HostKeyFingerprint: "SHA256:DEMOdb01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO db01",
 			OSName: "Ubuntu", OSVersion: "22.04 LTS", OSID: "ubuntu", OSVersionID: "22.04",
 			Virtualization: "lxc", PackageManager: "apt", HasSnap: true, HasDocker: true, KernelVersion: "5.15.0-91-generic",

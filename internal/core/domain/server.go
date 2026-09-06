@@ -190,6 +190,22 @@ type Server struct {
 	// OS-/Kernel-/CPU-Profil at rest verschlüsselt (`aesgcm`): so verrät die per
 	// server_ref verknüpfte Server-Zeile einem DB-Leser nichts über das System.
 	// Filterung (Dashboard) läuft clientseitig über die entschlüsselten Werte.
+	// ConsoleDisabled schaltet die Web-Konsole für DIESEN Server ab. Der
+	// globale Schalter (GlobalSettings.TerminalEnabled) nimmt die Fähigkeit
+	// aus dem ganzen Haus, die Berechtigung (PermServersConsole) regelt, WER
+	// sie benutzen darf - hier geht es um einzelne Maschinen, bei denen ein
+	// Shell-Zugriff aus der Oberfläche nicht erwünscht ist.
+	//
+	// Setzen darf das nur, wer die Konsole selbst benutzen dürfte: Sonst
+	// könnte ein Verwalter sie sich freischalten oder jemandem entziehen,
+	// dessen Recht er nicht vergibt.
+	ConsoleDisabled bool `gorm:"default:false" json:"console_disabled"`
+	// Hostname ist der Name, unter dem sich das System SELBST kennt
+	// (hostnamectl/etc/hostname) - nicht der Anzeigename in LCM und nicht die
+	// Adresse, über die LCM es erreicht. Alle drei können auseinanderlaufen,
+	// und genau das ist der Nutzen: Wer einen Server über eine IP eingetragen
+	// hat, sieht hier, um welche Maschine es sich handelt.
+	Hostname  string `gorm:"serializer:aesgcm" json:"hostname"`
 	OSName    string `gorm:"serializer:aesgcm" json:"os_name"`    // z.B. "Debian GNU/Linux"
 	OSVersion string `gorm:"serializer:aesgcm" json:"os_version"` // z.B. "12 (bookworm)"
 	// RebootRequired: Das System fordert einen Neustart an, um Updates
