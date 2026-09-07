@@ -1,26 +1,18 @@
 # Changelog
 
-## v1.36.0-beta.1 - 2026-09-06
+## v1.36.0 - 2026-09-07
 
 ### 🚀 Features
 
 - **console**: Konsole als Schaltfläche oben, je Server abschaltbar (0c7da281)
+- **lcm**: Speicher-Überwachung, Hardware-Erkennung, Job-Warteschlange, Web-Terminal, Verschlüsselungs-Fix (d0c7db30)
 - **servers**: Server umbenennen und den Hostname erfassen (b86f08f2)
 
 ### 🐛 Bugfixes
 
+- **deps**: x/crypto auf v0.56.0 - zwei DoS-Lücken in ssh behoben (f965a9ef)
 - **errors**: Substantive in den Fehlermeldungen großschreiben (19ad31b5)
 - **testing**: MD-Reparatur wartet auf den Zielzustand, nicht auf ein Resync-Ende (3216ba27)
-
-## v1.35.0-beta.1 - 2026-09-03
-
-### 🚀 Features
-
-- **lcm**: Speicher-Überwachung, Hardware-Erkennung, Job-Warteschlange, Web-Terminal, Verschlüsselungs-Fix (d0c7db30)
-
-### 🐛 Bugfixes
-
-- **deps**: x/crypto auf v0.56.0 - zwei DoS-Lücken in ssh behoben (f965a9ef)
 
 ### 🔧 Sonstiges
 
