@@ -123,3 +123,25 @@ func TestSlugifyDeutsch(t *testing.T) {
 		}
 	}
 }
+
+// TestAuszeichnungUeberDenZeilenumbruch: Ein Absatz wird als Ganzes
+// ausgezeichnet, nicht Zeile für Zeile.
+//
+// Vorher lief jede Zeile einzeln durch inline(). Eine Hervorhebung, deren
+// Ende in der nächsten Zeile stand, fand ihren Partner damit nie - in der
+// Seite standen dann wörtliche Sternchen. Das fiel nirgends auf: kein Fehler,
+// keine Warnung, nur eine Anleitung, die unsauber aussieht.
+func TestAuszeichnungUeberDenZeilenumbruch(t *testing.T) {
+	html := Render("Ein Satz mit **einer Hervorhebung,\ndie über den Umbruch reicht** und danach mehr.")
+	if strings.Contains(html, "**") {
+		t.Errorf("Sternchen blieben wörtlich stehen:\n%s", html)
+	}
+	if !strings.Contains(html, "<strong>einer Hervorhebung, die über den Umbruch reicht</strong>") {
+		t.Errorf("Hervorhebung nicht über den Umbruch hinweg erkannt:\n%s", html)
+	}
+	// Die Gegenprobe: Absätze bleiben getrennt.
+	zwei := Render("Erster Absatz.\n\nZweiter Absatz.")
+	if strings.Count(zwei, "<p>") != 2 {
+		t.Errorf("erwartet zwei Absätze:\n%s", zwei)
+	}
+}

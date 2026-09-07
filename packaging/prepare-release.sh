@@ -10,21 +10,31 @@
 # Einsatz je Branch (Branch-Modell: develop → beta → community → enterprise):
 #   develop     nächstes Feature-Release vorbereiten, bevor der Release-Zug
 #               nach beta abfährt (Version aus den Conventional Commits)
-#   beta        Vorabversionen, immer explizit: ./packaging/prepare-release.sh 1.12.0-beta.1
-#               Die finale Version (ohne -beta.N) wird ebenfalls hier gesetzt,
-#               bevor der MR nach community geht - releast und ausgerollt wird
-#               sie aber erst auf community (siehe version-Job in .gitlab-ci.yml).
 #   enterprise  Fix-Releases des Wartungszweigs (Version aus den Fix-Commits
 #               seit dem letzten Tag der Wartungslinie)
+#
+# Auf beta und community wird NICHT gearbeitet: Beide sind mit "push: No one"
+# geschützt, ein dort erzeugter Release-Commit ließe sich nicht hochladen.
+# Beide Vorabversionen UND die finale Version entstehen deshalb auf develop
+# und fahren als Merge Request weiter.
 #
 # Ablauf:
 #   1. ./packaging/prepare-release.sh            # Version aus Commits
 #      oder: ./packaging/prepare-release.sh 1.0.0     # explizite Version
-#   2. git push origin <branch>
-#   3. Merge Request in den Release-Branch (develop→beta, beta→community);
-#      auf beta/enterprise genügt der direkte Push des Release-Commits.
+#   2. git push origin develop  (bzw. enterprise)
+#   3. Merge Request in den Release-Branch.
 #      -> release-Job taggt v<VERSION> und erzeugt das Release aus CHANGELOG.md,
 #         deploy-Job rollt das .deb in den apt-Kanal des Branches aus.
+#      Auf enterprise genügt der direkte Push - dort dürfen Maintainer pushen.
+#
+# Der Weg einer Version durch die Kanäle (Stand: 2026-09):
+#   Vorabversion   develop: prepare-release.sh          -> MR develop -> beta
+#                  Der Merge nach beta taggt und rollt in den Kanal "beta" aus.
+#   Finale Version develop: prepare-release.sh 1.36.0   -> MR develop -> beta
+#                  Auf beta passiert dabei NICHTS: check:release-version lässt
+#                  eine finale Version durch, weil der Tag dem Community-Kanal
+#                  gehört (siehe version-Job in .gitlab-ci.yml).
+#                  Danach MR beta -> community; dieser Merge taggt und rollt aus.
 #
 # Optionen:
 #   PUSH=1   committeten Stand direkt nach origin/<branch> pushen
@@ -34,9 +44,19 @@ cd "$(git rev-parse --show-toplevel)"
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 case "$BRANCH" in
-  develop|beta|enterprise) ;;
+  develop|enterprise) ;;
+  beta|community)
+    # Früher stand hier auch beta. Das führt in eine Sackgasse: Der Commit
+    # entsteht, lässt sich aber nicht pushen ("push: No one"), und wer es
+    # bemerkt, hat den Release-Zug schon halb aufgegleist.
+    echo "FEHLER: $BRANCH ist gegen direkte Pushes geschützt - ein Release-Commit" >&2
+    echo "       käme hier nicht heraus. Beide Versionsformen entstehen auf develop:" >&2
+    echo "         git switch develop && ./packaging/prepare-release.sh [version]" >&2
+    echo "       Danach als Merge Request weiterfahren (develop -> beta -> community)." >&2
+    exit 1
+    ;;
   *)
-    echo "FEHLER: bitte auf develop, beta oder enterprise ausführen (aktuell: $BRANCH)." >&2
+    echo "FEHLER: bitte auf develop oder enterprise ausführen (aktuell: $BRANCH)." >&2
     exit 1
     ;;
 esac
@@ -121,16 +141,17 @@ else
   echo "   Nächste Schritte:"
   echo "     git push origin ${BRANCH}"
 fi
-# Was der Push tatsächlich auslöst, hängt auf beta an der Versionsform -
-# dieselbe Unterscheidung trifft der version-Job in .gitlab-ci.yml.
+# Was der Merge auslöst, hängt an der Versionsform - dieselbe Unterscheidung
+# trifft der version-Job in .gitlab-ci.yml.
 case "$BRANCH" in
-  develop) echo "   Dann: Merge Request develop -> beta (Release-Zug) erstellen und nach grüner Pipeline mergen." ;;
-  beta)
+  develop)
+    echo "   Dann: Merge Request develop -> beta erstellen und nach grüner Pipeline mergen."
     case "$NEXT_VERSION" in
-      *-*) echo "   Der Push auf beta releast v${NEXT_VERSION} in den apt-Kanal 'beta'." ;;
-      *)   echo "   Der Push auf beta taggt v${NEXT_VERSION} NICHT - eine finale Version"
-           echo "   gehört dem Community-Kanal, der version-Job überlässt sie ihm."
-           echo "   Dann: Merge Request beta -> community erstellen und nach grüner Pipeline mergen." ;;
+      *-*) echo "   Der Merge nach beta taggt v${NEXT_VERSION} und rollt in den apt-Kanal 'beta' aus." ;;
+      *)   echo "   Auf beta passiert dann NICHTS: Eine finale Version gehört dem"
+           echo "   Community-Kanal, der version-Job überlässt sie ihm."
+           echo "   Danach: Merge Request beta -> community - DIESER Merge taggt v${NEXT_VERSION}"
+           echo "   und rollt aus." ;;
     esac ;;
   enterprise) echo "   Der Push auf enterprise releast v${NEXT_VERSION} in den Enterprise-Kanal." ;;
 esac
