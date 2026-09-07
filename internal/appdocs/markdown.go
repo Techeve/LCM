@@ -46,7 +46,11 @@ func Render(md string) string {
 	// lists hält die offenen Listen (ul/ol) samt Einrücktiefe, damit
 	// verschachtelte Aufzählungen wieder korrekt geschlossen werden.
 	var lists []openList
-	inPara := false
+	// Absatzzeilen werden GESAMMELT und erst beim Schließen ausgezeichnet.
+	// Zeilenweise wäre falsch: Eine Auszeichnung, die über den Umbruch reicht
+	// (**fett** an der Zeilengrenze), fände ihr Ende nicht und stünde als
+	// wörtliche Sternchen in der Seite - still, ohne Fehler.
+	var para []string
 
 	closeLists := func(toIndent int) {
 		for len(lists) > 0 && lists[len(lists)-1].indent >= toIndent {
@@ -55,10 +59,11 @@ func Render(md string) string {
 		}
 	}
 	closePara := func() {
-		if inPara {
-			out.WriteString("</p>\n")
-			inPara = false
+		if len(para) == 0 {
+			return
 		}
+		fmt.Fprintf(&out, "<p>%s</p>\n", inline(strings.Join(para, " ")))
+		para = nil
 	}
 
 	for i := 0; i < len(lines); i++ {
@@ -149,13 +154,7 @@ func Render(md string) string {
 		}
 
 		closeLists(0)
-		if !inPara {
-			out.WriteString("<p>")
-			inPara = true
-		} else {
-			out.WriteString(" ")
-		}
-		out.WriteString(inline(trimmed))
+		para = append(para, trimmed)
 	}
 	closePara()
 	closeLists(0)

@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.37.0 - 2026-09-07
+
+### 🚀 Features
+
+- **docs**: App-Seite "Was LCM auf dem Server ändert" samt Rückbau-Anleitung (2cf2e176)
+
+### 🐛 Bugfixes
+
+- **appdocs**: Auszeichnungen über den Zeilenumbruch hinweg erkennen (4856863f)
+
+### 🔧 Sonstiges
+
+- **release**: Anleitung im Release-Skript auf den tatsächlichen Weg bringen (3a161a9a)
+
 ## v1.36.0 - 2026-09-07
 
 ### 🚀 Features
