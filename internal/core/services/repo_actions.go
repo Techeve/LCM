@@ -303,11 +303,11 @@ const httpsRecordScript = "grep -rhoE 'http://[^ ]+' " + httpsBackupDir + " 2>/d
 
 // ErrNoRevertCandidates: für diesen Server ist keine Quelle bekannt, die sich
 // zurückstellen ließe.
-var ErrNoRevertCandidates = errors.New("keine paketquelle zum zurückstellen")
+var ErrNoRevertCandidates = errors.New("keine Paketquelle zum Zurückstellen")
 
 // ErrNotRevertible: die angeforderte Quelle steht nicht auf der Kandidatenliste
 // des Servers. Alles andere wäre ein Downgrade auf Verdacht.
-var ErrNotRevertible = errors.New("diese paketquelle ist nicht zum zurückstellen vorgemerkt")
+var ErrNotRevertible = errors.New("diese Paketquelle ist nicht zum Zurückstellen vorgemerkt")
 
 // RevertRepositoriesHTTPS stellt Paketquellen von https auf http zurück -
 // aber nur die, die vor der LCM-Umstellung http waren (siehe httpsBackupDir

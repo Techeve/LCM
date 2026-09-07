@@ -237,9 +237,9 @@ func TestDisconnectFailsPending(t *testing.T) {
 // bis zum Watchdog fest.
 func TestDisconnectFailsSubsequentCommandFast(t *testing.T) {
 	hub, server, _ := newTestHub(t)
-	// Sehr großzügiges Kommando-Timeout: Ein hängendes Folge-Kommando würde
-	// so lange warten - der Test muss trotzdem in Millisekunden zurückkehren.
-	hub.WithMaxRuntime(func() time.Duration { return time.Hour })
+	// Sehr großzügige Stille-Frist: Ein hängendes Folge-Kommando würde so
+	// lange warten - der Test muss trotzdem in Millisekunden zurückkehren.
+	hub.WithIdleTimeout(func() time.Duration { return time.Hour })
 	cl := hub.broker.NewClient(nil, "test", server.AgentID, false)
 	hub.agentConnected(cl)
 

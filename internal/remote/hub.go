@@ -36,10 +36,10 @@ import (
 // Verbindungen im Broker (rein informativ, es gibt keinen echten Listener).
 const listenerID = "ws-fiber"
 
-// defaultMaxRuntime begrenzt ein einzelnes Agent-Kommando, falls keine
-// Einstellung verdrahtet ist - bewusst über dem Job-Watchdog-Default
-// (120 min), damit immer zuerst der Watchdog greift und sauber abbricht.
-const defaultMaxRuntime = 130 * time.Minute
+// defaultIdleTimeout ist die erlaubte Stille eines Agent-Kommandos, falls
+// keine Einstellung verdrahtet ist - bewusst über dem Watchdog-Vorgabewert,
+// damit im Regelfall zuerst der Job-Watchdog greift und sauber abbricht.
+const defaultIdleTimeout = 45 * time.Minute
 
 // ErrAgentOffline: der Agent des Servers ist nicht mit dem Broker verbunden.
 // (Eigene Definition statt services.ErrAgentOffline, um keinen Importzyklus
@@ -52,9 +52,9 @@ type Hub struct {
 	log     *slog.Logger
 	broker  *mqtt.Server
 
-	// maxRuntime liefert die Obergrenze je Kommando (aus den globalen
-	// Einstellungen, JobMaxRuntimeMinutes + Puffer). Optional.
-	maxRuntime func() time.Duration
+	// idleTimeout liefert die erlaubte Stille je Kommando (aus den globalen
+	// Einstellungen + Puffer). Optional.
+	idleTimeout func() time.Duration
 	// onOnline wird nach dem Connect eines Agents asynchron aufgerufen,
 	// sobald sein Inventar eintrifft (= cmd-Topic sicher abonniert) - z.B.
 	// für den Erst-Scan eines frisch enrollten Servers. Optional.
@@ -80,6 +80,11 @@ type Hub struct {
 type pendingReq struct {
 	agentID string
 	ch      chan wire.Result // gepuffert (1), Zustellung blockiert nie
+	// progress meldet die Lebenszeichen des laufenden Kommandos (siehe
+	// wire.Result.Progress). Gepuffert (1) und mit select gespeist: Ein
+	// Lebenszeichen darf die Broker-Goroutine nie aufhalten, und ein
+	// verworfenes ist folgenlos - das nächste kommt in 30 Sekunden.
+	progress chan struct{}
 }
 
 // New erstellt den Hub (Broker startet erst mit Start()).
@@ -96,10 +101,10 @@ func New(servers *repositories.ServerRepository, log *slog.Logger) *Hub {
 	}
 }
 
-// WithMaxRuntime verdrahtet die Kommando-Obergrenze (globale Einstellung
-// JobMaxRuntimeMinutes + Puffer). Optional.
-func (h *Hub) WithMaxRuntime(fn func() time.Duration) *Hub {
-	h.maxRuntime = fn
+// WithIdleTimeout verdrahtet die erlaubte Stille je Kommando (globale
+// Einstellung + Puffer). Optional.
+func (h *Hub) WithIdleTimeout(fn func() time.Duration) *Hub {
+	h.idleTimeout = fn
 	return h
 }
 
@@ -204,12 +209,16 @@ func (h *Hub) forgetConn(c *agentConn) {
 // ---- Registry & Zustellung -----------------------------------------------------
 
 // register legt einen Warteplatz für eine Request-ID an.
-func (h *Hub) register(reqID, agentID string) chan wire.Result {
-	ch := make(chan wire.Result, 1)
+func (h *Hub) register(reqID, agentID string) *pendingReq {
+	req := &pendingReq{
+		agentID:  agentID,
+		ch:       make(chan wire.Result, 1),
+		progress: make(chan struct{}, 1),
+	}
 	h.mu.Lock()
-	h.pending[reqID] = &pendingReq{agentID: agentID, ch: ch}
+	h.pending[reqID] = req
 	h.mu.Unlock()
-	return ch
+	return req
 }
 
 func (h *Hub) unregister(reqID string) {
@@ -236,14 +245,26 @@ func (h *Hub) handleResult(cl *mqtt.Client, sub packets.Subscription, pk packets
 	// Agent kann dank ACL ohnehin nur auf sein eigenes res-Topic schreiben,
 	// aber die Request-ID könnte er raten; der Abgleich schließt das aus.
 	if ok && req.agentID == agentID {
-		delete(h.pending, res.ID)
+		// Ein Lebenszeichen schließt den Auftrag NICHT ab - der Warteplatz
+		// bleibt bestehen, nur die Stille-Uhr wird zurückgesetzt.
+		if !res.Progress {
+			delete(h.pending, res.ID)
+		}
 	} else {
 		ok = false
 	}
 	h.mu.Unlock()
-	if ok {
-		req.ch <- res // gepuffert, blockiert nie
+	if !ok {
+		return
 	}
+	if res.Progress {
+		select {
+		case req.progress <- struct{}{}:
+		default:
+		}
+		return
+	}
+	req.ch <- res // gepuffert, blockiert nie
 }
 
 // handleInventory übernimmt Version/Hostinfo eines frisch verbundenen Agents.
@@ -344,14 +365,14 @@ func (h *Hub) agentDisconnected(cl *mqtt.Client) {
 	h.log.Info("agent disconnected", "server", server.Name, "agent_id", agentID)
 }
 
-// commandTimeout liefert die Obergrenze je Kommando.
-func (h *Hub) commandTimeout() time.Duration {
-	if h.maxRuntime != nil {
-		if d := h.maxRuntime(); d > 0 {
+// commandIdleTimeout liefert die erlaubte Stille je Kommando.
+func (h *Hub) commandIdleTimeout() time.Duration {
+	if h.idleTimeout != nil {
+		if d := h.idleTimeout(); d > 0 {
 			return d
 		}
 	}
-	return defaultMaxRuntime
+	return defaultIdleTimeout
 }
 
 // publishCommand schickt ein Command-Payload auf das cmd-Topic des Agents.
@@ -372,10 +393,27 @@ type agentConn struct {
 	hub     *Hub
 	agentID string
 
-	mu     sync.Mutex
-	closed bool
-	dead   bool // Agent getrennt - Folge-Kommandos scheitern sofort
-	done   chan struct{}
+	mu         sync.Mutex
+	closed     bool
+	dead       bool   // Agent getrennt - Folge-Kommandos scheitern sofort
+	onActivity func() // Lebenszeichen-Rückruf, siehe sshx.Conn.OnActivity
+	done       chan struct{}
+}
+
+// OnActivity hinterlegt den Lebenszeichen-Rückruf dieser Verbindung.
+func (c *agentConn) OnActivity(fn func()) {
+	c.mu.Lock()
+	c.onActivity = fn
+	c.mu.Unlock()
+}
+
+func (c *agentConn) activity() {
+	c.mu.Lock()
+	fn := c.onActivity
+	c.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 func (c *agentConn) Run(cmd string) (string, int, error) {
@@ -407,41 +445,57 @@ func (c *agentConn) RunStdin(cmd, stdin string) (string, int, error) {
 	}
 	c.mu.Unlock()
 
+	c.activity()
+	defer c.activity()
+
 	reqID := uuid.NewString()
-	ch := c.hub.register(reqID, c.agentID)
+	req := c.hub.register(reqID, c.agentID)
 	defer c.hub.unregister(reqID)
 
-	if err := c.hub.publishCommand(c.agentID, wire.Command{ID: reqID, Cmd: cmd, Stdin: stdin}); err != nil {
+	idle := c.hub.commandIdleTimeout()
+	// Der Agent bekommt dieselbe Frist mitgegeben: Bricht die Verbindung zum
+	// Server weg, beendet er das hängende Kommando von sich aus.
+	command := wire.Command{ID: reqID, Cmd: cmd, Stdin: stdin, IdleTimeoutSec: int(idle.Seconds())}
+	if err := c.hub.publishCommand(c.agentID, command); err != nil {
 		return "", -1, fmt.Errorf("kommando senden: %w", err)
 	}
 
-	timeout := time.NewTimer(c.hub.commandTimeout())
+	// Gewartet wird auf STILLE, nicht auf Gesamtdauer: Jedes Lebenszeichen
+	// des Agents stellt die Uhr zurück, ein arbeitendes Kommando darf
+	// deshalb beliebig lange laufen.
+	timeout := time.NewTimer(idle)
 	defer timeout.Stop()
-	select {
-	case res := <-ch:
-		out := res.Output
-		if res.Truncated {
-			out += "\n[Ausgabe vom Agent gekürzt - Limit überschritten]"
+	for {
+		select {
+		case <-req.progress:
+			c.activity()
+			timeout.Reset(idle)
+			continue
+		case res := <-req.ch:
+			out := res.Output
+			if res.Truncated {
+				out += "\n[Ausgabe vom Agent gekürzt - Limit überschritten]"
+			}
+			if res.Error != "" {
+				return out, res.ExitCode, errors.New(res.Error)
+			}
+			return out, res.ExitCode, nil
+		case <-c.done:
+			c.mu.Lock()
+			dead := c.dead
+			c.mu.Unlock()
+			if dead {
+				// Agent getrennt - kein Cancel nötig, er ist weg.
+				return "", -1, ErrAgentOffline
+			}
+			// Job-Abort/Watchdog hat die Verbindung geschlossen - Kommando im
+			// Agent abbrechen (Kill der Prozessgruppe).
+			_ = c.hub.publishCommand(c.agentID, wire.Command{ID: reqID, Cancel: true})
+			return "", -1, errors.New("kommando abgebrochen (verbindung geschlossen)")
+		case <-timeout.C:
+			_ = c.hub.publishCommand(c.agentID, wire.Command{ID: reqID, Cancel: true})
+			return "", -1, fmt.Errorf("ohne lebenszeichen - kommando nach %s stille abgebrochen", idle)
 		}
-		if res.Error != "" {
-			return out, res.ExitCode, errors.New(res.Error)
-		}
-		return out, res.ExitCode, nil
-	case <-c.done:
-		c.mu.Lock()
-		dead := c.dead
-		c.mu.Unlock()
-		if dead {
-			// Agent getrennt - kein Cancel nötig, er ist weg.
-			return "", -1, ErrAgentOffline
-		}
-		// Job-Abort/Watchdog hat die Verbindung geschlossen - Kommando im
-		// Agent abbrechen (Kill der Prozessgruppe).
-		_ = c.hub.publishCommand(c.agentID, wire.Command{ID: reqID, Cancel: true})
-		return "", -1, errors.New("kommando abgebrochen (verbindung geschlossen)")
-	case <-timeout.C:
-		_ = c.hub.publishCommand(c.agentID, wire.Command{ID: reqID, Cancel: true})
-		return "", -1, fmt.Errorf("zeitüberschreitung - kommando nach %s abgebrochen", c.hub.commandTimeout())
 	}
 }
 

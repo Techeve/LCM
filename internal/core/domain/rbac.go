@@ -29,6 +29,11 @@ const (
 
 	PermServersRead  = "servers:read"  // Server-Listen, Details, Status, Pakete
 	PermServersWrite = "servers:write" // Join, Settings, User-Zuordnung, Hardening, Decommission
+	// PermServersConsole öffnet die interaktive Web-Konsole. BEWUSST getrennt
+	// von servers:write: Wer Server konfigurieren darf, soll damit nicht
+	// automatisch eine Root-Shell auf allen bekommen. Im Auslieferungszustand
+	// liegt das Recht allein bei admin (siehe ManagerPermissions).
+	PermServersConsole = "servers:console"
 
 	PermGroupsRead  = "groups:read"
 	PermGroupsWrite = "groups:write"

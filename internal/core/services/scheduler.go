@@ -39,7 +39,17 @@ const updateCheckCron = "@every 3h"
 // der Schedule-Übersicht: ein interner Wartungstakt, kein Zeitplan des
 // Betreibers. Der Aufruf ist leise; nur ein Fehlschlag erzeugt einen Job
 // (siehe Executor.RefreshCVEDB).
-const cveDBUpdateCron = "@every 6h"
+//
+// Feste Uhrzeiten statt „@every 6h": Der relative Takt beginnt beim
+// PROZESSSTART, nicht zur vollen Stunde. Auf dem LCM-Host von Techeve hat das
+// eine Rückkopplung erzeugt, die sich jede Nacht selbst bestätigte - der
+// Dienst wurde um 04:10 abgeräumt, der Takt verankerte sich neu auf 04:10,
+// und der nächste Datenbank-Download landete am Folgetag wieder genau in der
+// Zeitplan-Welle um vier Uhr, die ihn umgebracht hatte. Feste Zeiten können
+// nicht wandern, und 01:40 / 07:40 / 13:40 / 19:40 liegen frei zwischen dem
+// Docker-Check (kurz nach Mitternacht), dem System-Sync (04:00), dem
+// OSV-Spiegel (04:15), der Anreicherung (04:45) und der Sicherung (05:14).
+const cveDBUpdateCron = "40 1,7,13,19 * * *"
 
 // advisoryPollCron ist der Takt der Fruehwarnung. 15 Minuten sind der
 // Kompromiss zwischen „schnell genug, um die Trivy-Spur (6-12 h) deutlich zu
@@ -48,7 +58,11 @@ const cveDBUpdateCron = "@every 6h"
 // registriert, wenn die Fruehwarnung ueberhaupt verdrahtet ist; ob sie
 // eingeschaltet ist, entscheidet der Lauf selbst - so wirkt das Umlegen des
 // Schalters sofort, ohne Scheduler-Reload.
-const advisoryPollCron = "@every 15m"
+//
+// Der Takt kommt aus der Domaenenschicht, weil die Cache-Gueltigkeit sich an
+// ihm bemisst (domain.AdvisoryCacheTTLMin): Beide Werte duerfen nicht
+// unabhaengig voneinander verrutschen.
+var advisoryPollCron = fmt.Sprintf("@every %dm", domain.AdvisoryPollIntervalMinutes)
 
 // advisoryEnrichCron holt das Ausnutzungs-Signal der EUVD. Taeglich, weil
 // sich die Liste in Tagen aendert; zeitlich nach dem CVE-Scan, damit die
@@ -188,6 +202,8 @@ func (s *Scheduler) Reload() error {
 			continue
 		}
 		entryID, err := s.cron.AddFunc(sched.CronExpr, func() {
+			slog.Debug("schedule fired", "schedule", sched.Name, "cron", sched.CronExpr,
+				"rules", len(sched.Rules))
 			s.executor.RunSchedule(&sched, "scheduler")
 		})
 		if err != nil {

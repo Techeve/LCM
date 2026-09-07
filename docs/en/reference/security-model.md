@@ -346,7 +346,7 @@ Large console output (job/SSH output) as well as the server host/name go through
 
 ## LCM Remote (agent listener)
 
-Servers behind NAT connect **outbound** via `lcm-agent` (MQTT over WebSocket) on a **separate, dedicated port** (default `9320`, `internal/remote`) - separate from UI/REST. The enrollment token is shown in plaintext only on first display; at rest only its hash is stored. The agent listener uses the same TLS certificate as the UI, whose fingerprint the agent **pins** during enrollment (MitM protection). Commands over the agent transport are subject to the same runtime cap as the job watchdog. Details: [LCM Remote](/en/guides/remote/).
+Servers behind NAT connect **outbound** via `lcm-agent` (MQTT over WebSocket) on a **separate, dedicated port** (default `9320`, `internal/remote`) - separate from UI/REST. The enrollment token is shown in plaintext only on first display; at rest only its hash is stored. The agent listener uses the same TLS certificate as the UI, whose fingerprint the agent **pins** during enrollment (MitM protection). Commands over the agent transport are subject to the same silence limit as the job watchdog: they are aborted when no output arrives for longer than the permitted time. Details: [LCM Remote](/en/guides/remote/).
 
 ## MCP interface (AI agents)
 

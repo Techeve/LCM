@@ -1033,6 +1033,7 @@ type updateServerRequest struct {
 	UnreachableGraceDays  *int  `json:"unreachable_grace_days"`
 	DockerUpdatesDisabled *bool `json:"docker_updates_disabled"`
 	DockerCVEsIgnored     *bool `json:"docker_cves_ignored"`
+	Maintenance           *bool `json:"maintenance"`
 }
 
 // UpdateSettings - PATCH /api/v1/servers/:id/settings (servers:write)
@@ -1054,6 +1055,7 @@ func (ctrl *ServerController) UpdateSettings(c fiber.Ctx) error {
 		UnreachableGraceDays:  req.UnreachableGraceDays,
 		DockerUpdatesDisabled: req.DockerUpdatesDisabled,
 		DockerCVEsIgnored:     req.DockerCVEsIgnored,
+		Maintenance:           req.Maintenance,
 	}, actor(c))
 	if err != nil {
 		return mapServerError(err)
@@ -1599,4 +1601,55 @@ func (ctrl *ServerController) Decommission(c fiber.Ctx) error {
 		return mapServerActionError(err)
 	}
 	return c.JSON(fiber.Map{"status": "removed", "output": output})
+}
+
+// Volumes - GET /api/v1/servers/:id/volumes (servers:read)
+//
+// Liefert die erfassten Speicher-Volumes samt Überwachungs-Stand und den
+// Zustand der Speicher-Verbünde (ZFS/Btrfs/RAID/LVM-Thin) in einer Antwort:
+// Die Detailseite zeigt beides in einem Abschnitt.
+func (ctrl *ServerController) Volumes(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	volumes, err := ctrl.servers.Volumes(scopeFor(c), id)
+	if err != nil {
+		return mapServerError(err)
+	}
+	health, err := ctrl.servers.StorageHealth(scopeFor(c), id)
+	if err != nil {
+		return mapServerError(err)
+	}
+	return c.JSON(fiber.Map{"volumes": volumes, "storage_health": health})
+}
+
+// SetVolumeMonitor - PUT /api/v1/servers/:id/volumes/monitor (servers:write)
+//
+// Schaltet die Überwachung eines Volumes ein oder aus. Ein Endpunkt für
+// beides, weil der Mountpoint der Schlüssel ist: Er enthält Schrägstriche und
+// hätte in der URL nur Ärger gemacht.
+func (ctrl *ServerController) SetVolumeMonitor(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Mountpoint       string `json:"mountpoint"`
+		Enabled          bool   `json:"enabled"`
+		WarnPercent      int    `json:"warn_percent"`
+		CritPercent      int    `json:"crit_percent"`
+		InodeWarnPercent int    `json:"inode_warn_percent"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "ungültige Anfrage")
+	}
+	if err := ctrl.servers.SetVolumeMonitor(scopeFor(c), id, req.Mountpoint, req.Enabled,
+		req.WarnPercent, req.CritPercent, req.InodeWarnPercent, actor(c)); err != nil {
+		if errors.Is(err, services.ErrVolumeNotMonitorable) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		return mapServerError(err)
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }

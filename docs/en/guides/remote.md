@@ -256,6 +256,30 @@ Then run `lcm-agent enroll …` on the agent server: the connection test runs
 before any installation and reports a proxy problem in plain text rather than
 burying it in the service log.
 
+## Web console
+
+An interactive shell on a server, in the browser - reachable via the
+**Console** button on the far left of the action bar on the server detail page.
+
+The console is limited at three levels, each of which applies independently:
+
+| Level | Effect |
+|---|---|
+| **Settings → Security** | global switch - removes the capability entirely |
+| **Permission `servers:console`** | governs WHO may use it; by default `admin` only |
+| **Server settings → Web console** | disables it for ONE server |
+
+The permission is deliberately separate from `servers:write`: whoever may
+configure servers should not automatically get a root shell on all of them.
+For the same reason the per-server switch also requires the console
+permission - otherwise a manager could grant themselves what they are not
+entitled to.
+
+If the console is disabled for a server, more than the button disappears: the
+server rejects direct calls as well. Where there is no shell it is not offered
+at all - demo servers, Synology DSM devices, agent servers (the agent
+transport carries no stream) and servers in maintenance.
+
 ## Enrollment token
 
 The token is the agent's **permanent** credential (like an API key). It encodes
@@ -280,7 +304,7 @@ commands:
 2. **Install the agent.** On Debian/Ubuntu from the package channel
    (`sudo apt install lcm-agent`). For the other distributions the same
    package is attached to the
-   [release](https://gitlab.techeve.de/techeve/lcm/-/releases) as an RPM, APK
+   [release](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=doc) as an RPM, APK
    and Arch package - there is no dedicated channel for those yet, so the file
    is installed directly:
 
@@ -325,5 +349,7 @@ rotation, reconnect) are hidden there or rejected with a clear message. The agen
 runs as a **root service** on the target system (no sudo wrapper needed); all
 other functions - scans, package updates, Docker monitoring, firewall, DNS,
 security tools - run over the agent transport unchanged. The SSH logging
-(recorder) and the command limits (connection limiter, runtime watchdog, job
-abort) apply exactly as with the SSH transport.
+(recorder) and the command limits (connection limiter, job watchdog, job
+abort) apply exactly as with the SSH transport. The agent reports every 30
+seconds that a running command is still working - that is how the watchdog
+tells a slow update from a stalled one.

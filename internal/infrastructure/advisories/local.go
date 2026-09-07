@@ -78,6 +78,9 @@ func NewLocalOSV(dir, baseURL string) *LocalOSV {
 
 func (l *LocalOSV) Name() string { return domain.AdvisorySourceOSV }
 
+// Local: Ja - beantwortet wird aus dem gespiegelten Index im Arbeitsspeicher.
+func (l *LocalOSV) Local() bool { return true }
+
 // Available meldet, ob eine brauchbare Kopie vorliegt. Ohne sie darf die
 // Quelle NICHT als verfügbar gelten: Sie würde sonst für jedes Paket „nichts
 // gefunden" melden - also ein sauberes Ergebnis für etwas, das nie geprüft

@@ -319,7 +319,7 @@ curl -fsSL https://repo.techeve.de/setup-enterprise.sh | sudo sh -s -- --revert
 Statt des Skript-Wegs oben kann die Subscription direkt in der LCM-Oberfläche
 verwaltet werden - vorausgesetzt, auf dem Repository-Server läuft der
 **Subscription-Dienst** (eigenes Repository:
-[techeve/lcm-subscription-service](https://gitlab.techeve.de/techeve/lcm-subscription-service)).
+[techeve/lcm-subscription-service](https://gitlab.techeve.de/techeve/lcm-subscription-service?mtm_campaign=linking&mtm_kwd=doc)).
 Der Ablauf:
 
 1. Beim ersten Start erzeugt LCM eine dauerhafte **Instanz-Kennung** (UUID).

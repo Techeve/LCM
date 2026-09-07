@@ -23,11 +23,11 @@ import (
 
 var (
 	// ErrNoOldKernels: Es gibt nichts zu entfernen.
-	ErrNoOldKernels = errors.New("keine alten kernel zum entfernen - es bleiben ohnehin nur der laufende, neuere und die rückfallebene")
+	ErrNoOldKernels = errors.New("keine alten Kernel zum Entfernen - es bleiben ohnehin nur der laufende, neuere und die Rückfallebene")
 	// ErrKernelCleanupUnsupported: Der Aufraeum-Lauf ist bisher nur fuer
 	// Debian/Ubuntu/Proxmox gebaut. Ein halb passendes Kommando auf einer
 	// fremden Paketverwaltung waere schlimmer als keins.
-	ErrKernelCleanupUnsupported = errors.New("alte kernel entfernen ist derzeit nur auf apt-systemen (debian, ubuntu, proxmox) möglich")
+	ErrKernelCleanupUnsupported = errors.New("alte Kernel entfernen ist derzeit nur auf apt-Systemen (Debian, Ubuntu, Proxmox) möglich")
 )
 
 // reKernelReleaseSafe laesst nur Zeichen zu, die in einer Kernel-Fassung

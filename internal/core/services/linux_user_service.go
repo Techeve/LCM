@@ -47,6 +47,23 @@ type LinuxUserService struct {
 	// profiles liefert die Berechtigungsprofile - gebraucht, um das
 	// abgeleitete sudo-Bit aus dem Profil zu bestimmen. Optional.
 	profiles *repositories.PrivilegeProfileRepository
+	// mailer/linkBase verschicken den Aktivierungslink an den Mitarbeiter.
+	// Beide optional: Ohne sie bleibt der Link das, was er bisher war - etwas,
+	// das der Administrator von Hand weitergibt.
+	mailer   func(subject, body string, to []string) error
+	linkBase func() string
+}
+
+// WithMailer verdrahtet den Standard-E-Mail-Versand für Aktivierungslinks.
+func (s *LinuxUserService) WithMailer(fn func(subject, body string, to []string) error) *LinuxUserService {
+	s.mailer = fn
+	return s
+}
+
+// WithLinkBase verdrahtet die öffentliche Basis-URL für den Link in der Mail.
+func (s *LinuxUserService) WithLinkBase(fn func() string) *LinuxUserService {
+	s.linkBase = fn
+	return s
 }
 
 // WithProfiles verdrahtet die Berechtigungsprofile.
@@ -691,4 +708,77 @@ func validSSHPublicKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// --- Aktivierungslink per E-Mail ---------------------------------------------
+
+// linuxActivationURL baut den Link auf die Selbstbedienungs-Seite.
+func linuxActivationURL(linkBase, token string) string {
+	return strings.TrimRight(linkBase, "/") + "/#/linux-aktivierung?token=" + token
+}
+
+// MailActivation schickt einen Aktivierungslink an die E-Mail-Adresse des
+// Linux-Benutzers.
+//
+// Warum das fehlte: Das Feld für die Adresse trägt seit jeher den Kommentar
+// „für den Aktivierungslink" - nur gab es keinen Weg, ihn dorthin zu
+// schicken. Der Administrator musste den Link aus der Oberfläche kopieren und
+// selbst zustellen, üblicherweise über einen Kanal, der schlechter gesichert
+// ist als die Mail (Chat, Zuruf, Zettel).
+//
+// Der Text richtet sich danach, ob der Account schon Zugangsdaten hat: Wer
+// noch keine hat, richtet ein; wer welche hat, setzt zurück. Es ist derselbe
+// Link - aber ein Mitarbeiter, der eine Einladung für einen Zugang bekommt,
+// den er längst nutzt, hält sie im Zweifel für einen Angriffsversuch.
+func (s *LinuxUserService) MailActivation(id uint, token string, expiresAt time.Time) error {
+	if s.mailer == nil {
+		return ErrMailerDisabled
+	}
+	user, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	empfaenger := strings.TrimSpace(user.Email)
+	if empfaenger == "" {
+		return ErrUserNoEmail
+	}
+
+	base := ""
+	if s.linkBase != nil {
+		base = s.linkBase()
+	}
+	name := strings.TrimSpace(user.FullName)
+	if name == "" {
+		name = user.Username
+	}
+
+	betreff := "[LCM] Ihr Serverzugang - Zugangsdaten festlegen"
+	einleitung := "für Sie wurde ein Serverzugang eingerichtet."
+	if user.HasPassword || len(user.SSHKeys) > 0 {
+		betreff = "[LCM] Ihr Serverzugang - Zugangsdaten zurücksetzen"
+		einleitung = "für Ihren Serverzugang wurde ein Link zum Zurücksetzen der Zugangsdaten erzeugt."
+	}
+
+	body := fmt.Sprintf(`Hallo %s,
+
+%s
+
+Benutzername: %s
+
+Über den folgenden Link legen Sie Ihr Passwort und/oder Ihren SSH-Schlüssel fest:
+
+%s
+
+Der Link ist gültig bis %s und kann nur einmal verwendet werden.
+
+Wenn Sie das nicht erwartet haben, ignorieren Sie diese Nachricht und melden
+sich bei Ihrer Administration - der Link verfällt dann von selbst.
+`, name, einleitung, user.Username, linuxActivationURL(base, token),
+		expiresAt.Format("02.01.2006 15:04 MST"))
+
+	if err := s.mailer(betreff, body, []string{empfaenger}); err != nil {
+		return err
+	}
+	s.audit.Log("system", "linux-user.activation-mail", "linux_user", id, user.Username)
+	return nil
 }

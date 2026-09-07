@@ -108,6 +108,56 @@ class ApiClient {
   }
 
   /**
+   * Liest einen Server-Sent-Events-Strom und ruft onEvent je Ereignis auf.
+   *
+   * Bewusst per fetch statt über EventSource: Die Anmeldung läuft über den
+   * Authorization-Header, den EventSource nicht setzen kann. Der naheliegende
+   * Ausweg - den Token an die URL hängen - verbietet sich, weil er dann in
+   * Zugriffs- und Proxy-Protokollen steht. Der Token bleibt so auch hier
+   * gekapselt; die Seite bekommt ihn nie zu sehen.
+   *
+   * @param {string} path    Pfad relativ zu /api/v1
+   * @param {AbortSignal} signal  beendet den Strom
+   * @param {(event: string, data: string) => void} onEvent
+   */
+  async stream(path, signal, onEvent) {
+    const headers = { Accept: 'text/event-stream' };
+    if (this.#session.token) {
+      headers['Authorization'] = `Bearer ${this.#session.token}`;
+    }
+    const response = await fetch(`/api/v1${path}`, { headers, signal });
+    if (response.status === 401 && this.isLoggedIn) {
+      this.logout();
+      throw new ApiError(401, i18n.t('common.sessionExpired'));
+    }
+    if (!response.ok) {
+      throw new ApiError(response.status, `HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let rest = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      rest += decoder.decode(value, { stream: true });
+      // SSE trennt Ereignisse durch eine Leerzeile; ein angefangenes bleibt
+      // liegen, bis es vollständig ist.
+      const blocks = rest.split('\n\n');
+      rest = blocks.pop();
+      for (const block of blocks) {
+        let event = 'message';
+        let data = '';
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event: ')) event = line.slice(7);
+          else if (line.startsWith('data: ')) data += line.slice(6);
+        }
+        if (data) onEvent(event, data);
+      }
+    }
+  }
+
+  /**
    * Lädt eine Datei (mit Auth-Header) und stößt den Browser-Download an.
    * @param {string} path      Pfad relativ zu /api/v1
    * @param {string} filename  Vorgeschlagener Dateiname

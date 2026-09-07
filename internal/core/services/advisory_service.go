@@ -206,7 +206,20 @@ func (s *AdvisoryService) Poll(ctx context.Context) (string, error) {
 	src := s.activeSource()
 	purls := uniquePurls(targets)
 	now := s.now()
+
+	// Der Zwischenspeicher wird nur benutzt, wenn er auch etwas bringt.
+	//
+	// Er ist kein Geschwindigkeits-, sondern ein Vertraulichkeits-Werkzeug:
+	// Er begrenzt, wie viel vom eigenen Bestand einen fremden Dienst
+	// erreicht. Antwortet die Quelle aus der lokalen Kopie (siehe
+	// Source.Local), gibt es nichts zu begrenzen - dann bliebe nur sein
+	// Preis: das Neuschreiben sämtlicher Einträge bei JEDEM Durchgang.
+	// Dasselbe gilt, wenn der Betreiber ihn per TTL 0 abgeschaltet hat.
 	ttl := s.cacheTTL()
+	cacheActive := ttl > 0 && !src.Local()
+	if !cacheActive {
+		ttl = 0
+	}
 
 	cached, err := s.cache.FreshEntries(purls, now, ttl)
 	if err != nil {
@@ -244,8 +257,12 @@ func (s *AdvisoryService) Poll(ctx context.Context) (string, error) {
 				AdvisoryIDs: strings.Join(ids, ","), CheckedAt: now,
 			})
 		}
-		if err := s.cache.PutEntries(entries); err != nil {
-			return "", err
+		// Nur schreiben, was auch wieder gelesen wird - sonst kostet ein
+		// abgeschalteter Zwischenspeicher mehr als ein eingeschalteter.
+		if cacheActive {
+			if err := s.cache.PutEntries(entries); err != nil {
+				return "", err
+			}
 		}
 	}
 
@@ -273,11 +290,32 @@ func (s *AdvisoryService) Poll(ctx context.Context) (string, error) {
 	if err := s.settings.UpdateFields(map[string]any{"advisory_last_poll_at": now}); err != nil {
 		slog.Warn("advisory poll: zeitstempel nicht gespeichert", "error", err)
 	}
-	if err := s.cache.RecordRun(len(purls)-len(missing), len(missing), now); err != nil {
-		slog.Warn("advisory poll: trefferquote nicht gespeichert", "error", err)
+	// Die Trefferquote zählt nur mit, wenn der Zwischenspeicher überhaupt
+	// befragt wurde - sonst stünde dort auf Dauer eine Null, die nichts über
+	// seine Wirksamkeit aussagt, sondern nur darüber, dass er ausgeschaltet ist.
+	if cacheActive {
+		if err := s.cache.RecordRun(len(purls)-len(missing), len(missing), now); err != nil {
+			slog.Warn("advisory poll: trefferquote nicht gespeichert", "error", err)
+		}
 	}
-	return fmt.Sprintf("%d paket(e) geprüft (%d aus dem Zwischenspeicher), %d neue(r) befund(e), %d wiedereröffnet, %d behoben",
-		len(purls), len(purls)-len(missing), totalNew, totalReopened, totalResolved), nil
+	return fmt.Sprintf("%d paket(e) geprüft (%s), %d neue(r) befund(e), %d wiedereröffnet, %d behoben",
+		len(purls), cacheNote(cacheActive, len(purls)-len(missing), src.Local()),
+		totalNew, totalReopened, totalResolved), nil
+}
+
+// cacheNote beschreibt im Protokolleintrag, was der Zwischenspeicher beigetragen
+// hat - und wenn er nicht befragt wurde, warum nicht. „0 aus dem
+// Zwischenspeicher" bei jedem Durchgang war die Meldung, an der jahrelang
+// niemand erkennen konnte, ob er wirkungslos oder schlicht aus war.
+func cacheNote(active bool, hits int, local bool) string {
+	switch {
+	case active:
+		return fmt.Sprintf("%d aus dem Zwischenspeicher", hits)
+	case local:
+		return "lokale Kopie, ohne Zwischenspeicher"
+	default:
+		return "Zwischenspeicher aus"
+	}
 }
 
 // collectTargets lädt die Server samt Paketbestand und baut je Server die
@@ -292,8 +330,9 @@ func (s *AdvisoryService) collectTargets() ([]advisoryTarget, error) {
 		srv := &servers[i]
 		// Dieselben Ausnahmen wie beim CVE-Scan: Demo-Server sind erfunden,
 		// reine API-Geräte (RouterOS, DSM) haben keinen Linux-Paketbestand,
-		// über den eine Aussage möglich wäre.
-		if srv.IsDemo || srv.IsAPIDevice() {
+		// über den eine Aussage möglich wäre - und Server in Wartung sind
+		// bewusst aus dem Betrieb genommen.
+		if srv.IsDemo || srv.IsAPIDevice() || srv.InMaintenance() {
 			continue
 		}
 		pkgs, err := s.servers.FindPackages(srv.ID)

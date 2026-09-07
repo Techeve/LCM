@@ -36,7 +36,7 @@ const (
 
 var (
 	// ErrSecurityToolAction: unbekannte Aktion.
-	ErrSecurityToolAction = errors.New("unbekannte aktion fuer das sicherheits-tool")
+	ErrSecurityToolAction = errors.New("unbekannte Aktion für das Sicherheits-Tool")
 	// ErrInvalidLapiMode: ungültiger CrowdSec-LAPI-Modus (R2-079 - vorher 500).
 	ErrInvalidLapiMode = errors.New("ungültiger LAPI-Modus")
 	// ErrSecurityToolNotInstalled: die Aktion setzt ein installiertes Tool voraus.

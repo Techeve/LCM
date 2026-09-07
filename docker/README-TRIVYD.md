@@ -84,18 +84,18 @@ docker compose up -d
 Alle Details (Variablen, Mounts, Betrieb ohne Compose):
 [techeve/lcm auf Docker Hub](https://hub.docker.com/r/techeve/lcm) und die
 kommentierte Vorlage
-[`docker/docker-compose.yml`](https://gitlab.techeve.de/techeve/lcm/-/blob/community/docker/docker-compose.yml).
+[`docker/docker-compose.yml`](https://gitlab.techeve.de/techeve/lcm/-/blob/community/docker/docker-compose.yml?mtm_campaign=linking&mtm_kwd=README).
 
 ## Enterprise
 
 Neben der Community Edition gibt es **LCM Enterprise**: ein konservativ
 gepflegter Wartungszweig mit **schnellen Sicherheitsupdates**, bewusst
 **längeren Zyklen für Funktionsänderungen** - und **Support**. Anfragen über
-[techeve.de](https://techeve.de).
+[techeve.de](https://techeve.de/?mtm_campaign=linking&mtm_kwd=README).
 
 ## Links
 
-- Produktseite: [techeve.de/lcm](https://techeve.de/lcm) · Firma: [techeve.de](https://techeve.de)
-- Dokumentation: [doc.techeve.de/lcm/](https://doc.techeve.de/lcm/)
-- Quellcode: [gitlab.techeve.de/techeve/lcm](https://gitlab.techeve.de/techeve/lcm) · Spiegel: [github.com/Techeve/LCM](https://github.com/Techeve/LCM)
+- Produktseite: [techeve.de/lcm](https://techeve.de/lcm?mtm_campaign=linking&mtm_kwd=README) · Firma: [techeve.de](https://techeve.de/?mtm_campaign=linking&mtm_kwd=README)
+- Dokumentation: [doc.techeve.de/lcm/](https://doc.techeve.de/lcm/?mtm_campaign=linking&mtm_kwd=README)
+- Quellcode: [gitlab.techeve.de/techeve/lcm](https://gitlab.techeve.de/techeve/lcm?mtm_campaign=linking&mtm_kwd=README) · Spiegel: [github.com/Techeve/LCM](https://github.com/Techeve/LCM)
 - Lizenz: AGPL-3.0

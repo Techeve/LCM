@@ -48,8 +48,8 @@ func notifyListener(t *testing.T) (*net.UnixConn, func() []string) {
 }
 
 // TestLebenszeichenHaengtNichtAmDatenbankPing hält den Kern der Selbstaufsicht
-// fest: Das Lebenszeichen meldet, dass dieser Ablauf noch vorankommt - nicht,
-// dass die Datenbank antwortet.
+// fest: Das Lebenszeichen meldet, dass dieser Prozess noch läuft - nicht, dass
+// die Datenbank antwortet.
 //
 // Andersherum wäre die Toleranz aus unhealthyLimit wertlos: Der Ping-Takt ist
 // WatchdogSec/2, zwei ausgefallene Pings genügen systemd. Wer beim ersten
@@ -66,11 +66,15 @@ func TestLebenszeichenHaengtNichtAmDatenbankPing(t *testing.T) {
 	// Zwei Fehlschläge - der Bereich, in dem systemd bereits zugeschlagen
 	// hätte, wenn das Lebenszeichen ausbliebe.
 	m.tick()
+	m.ping()
 	m.tick()
+	m.ping()
 
+	// Mindestens eines je Durchgang - der erste Fehlschlag schickt zusätzlich
+	// sofort eines hinaus, weil er ein Zustandswechsel ist.
 	msgs := collect()
-	if len(msgs) != 2 {
-		t.Fatalf("%d Lebenszeichen bei zwei Fehlschlägen, erwartet 2: %q", len(msgs), msgs)
+	if len(msgs) < 2 {
+		t.Fatalf("%d Lebenszeichen bei zwei Fehlschlägen, erwartet mindestens 2: %q", len(msgs), msgs)
 	}
 	for _, msg := range msgs {
 		if !strings.HasPrefix(msg, "WATCHDOG=1") {
@@ -85,26 +89,56 @@ func TestLebenszeichenHaengtNichtAmDatenbankPing(t *testing.T) {
 	}
 }
 
-// TestLebenszeichenBleibtBeiHaengenderPruefungAus: Der Fall, für den der
-// Watchdog überhaupt da ist. Kommt die Prüfung nicht zurück, kommt auch das
-// Lebenszeichen nicht - ein blockierter Prozess stürzt nicht ab und wäre
-// sonst von niemandem zu bemerken.
-func TestLebenszeichenBleibtBeiHaengenderPruefungAus(t *testing.T) {
+// TestHaengendePruefungIstEinBefund: Eine Prüfung, die nicht zurückkehrt, war
+// früher schlicht Stille - und Stille beantwortet systemd mit SIGKILL. Genau
+// das ist auf dem LCM-Host jede Nacht passiert, wenn der CVE-Scan die Maschine
+// ausgehungert hat.
+//
+// Jetzt läuft die Prüfung in ein eigenes Zeitlimit und wird damit zu einem
+// Befund: Der Dienst meldet weiter, sagt aber „degraded", und über den
+// Neustart entscheidet er selbst - kontrolliert und mit Begründung.
+func TestHaengendePruefungIstEinBefund(t *testing.T) {
 	safego.Reset()
 	_, collect := notifyListener(t)
 
+	alt := checkTimeout
+	checkTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { checkTimeout = alt })
+
 	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+
+	var reasons []string
 	m := NewMonitor(func() error { <-blocked; return nil }).
-		WithRestart(func(string) {})
+		WithRestart(func(r string) { reasons = append(reasons, r) })
 
-	done := make(chan struct{})
-	go func() { m.tick(); close(done) }()
-
-	if msgs := collect(); len(msgs) != 0 {
-		t.Errorf("Lebenszeichen trotz hängender Prüfung: %q", msgs)
+	for i := 1; i < unhealthyLimit; i++ {
+		m.tick()
+		m.ping()
+		if len(reasons) != 0 {
+			t.Fatalf("zu früh neu gestartet (nach %d hängenden Prüfungen)", i)
+		}
 	}
-	close(blocked)
-	<-done
+
+	msgs := collect()
+	if len(msgs) < unhealthyLimit-1 {
+		t.Fatalf("%d Lebenszeichen bei hängender Prüfung, erwartet mindestens %d: %q",
+			len(msgs), unhealthyLimit-1, msgs)
+	}
+	for _, msg := range msgs {
+		if !strings.Contains(msg, "degraded:") {
+			t.Errorf("hängende Prüfung muss als Störung gemeldet werden: %q", msg)
+		}
+	}
+
+	// Der Tick, der die Grenze erreicht: jetzt - und erst jetzt - der Neustart.
+	m.tick()
+	if len(reasons) != 1 {
+		t.Fatalf("erwartete genau einen Neustart, bekam %d", len(reasons))
+	}
+	if !strings.Contains(reasons[0], "health check") {
+		t.Errorf("Neustart-Begründung nennt die Ursache nicht: %q", reasons[0])
+	}
 }
 
 // TestLebenszeichenImNormalbetrieb: die Gegenprobe - läuft alles, meldet der
@@ -113,10 +147,60 @@ func TestLebenszeichenImNormalbetrieb(t *testing.T) {
 	safego.Reset()
 	_, collect := notifyListener(t)
 
-	NewMonitor(func() error { return nil }).WithRestart(func(string) {}).tick()
+	m := NewMonitor(func() error { return nil }).WithRestart(func(string) {})
+	m.tick()
+	m.ping()
 
 	msgs := collect()
 	if len(msgs) != 1 || !strings.Contains(msgs[0], "STATUS=operational") {
 		t.Errorf("erwartet ein Lebenszeichen mit STATUS=operational, bekam %q", msgs)
+	}
+}
+
+// TestZustandswechselGehtSofortHinaus: Die Trennung von Prüfung und
+// Lebenszeichen hat einen Preis - beide ticken unabhängig, also könnte der
+// Ping noch den Befund des vorigen Durchgangs tragen. Im Testlauf auf der
+// Testumgebung stand deshalb fast eine Minute lang „operational" in
+// `systemctl status`, obwohl die Datenbank längst gesperrt war.
+//
+// Ein WECHSEL des Zustands geht deshalb sofort hinaus, ohne den nächsten
+// Ping-Takt abzuwarten.
+func TestZustandswechselGehtSofortHinaus(t *testing.T) {
+	safego.Reset()
+	_, collect := notifyListener(t)
+
+	kaputt := errors.New("datenbank gesperrt")
+	var fehler error
+	m := NewMonitor(func() error { return fehler }).WithRestart(func(string) {})
+
+	// Erster Durchgang gesund: kein Wechsel (Nullwert bleibt Nullwert).
+	m.tick()
+	if msgs := collect(); len(msgs) != 0 {
+		t.Fatalf("ohne Zustandswechsel darf nichts hinausgehen: %q", msgs)
+	}
+
+	// Jetzt die Störung - der Wechsel muss sofort gemeldet werden.
+	fehler = kaputt
+	m.tick()
+	msgs := collect()
+	if len(msgs) != 1 {
+		t.Fatalf("Zustandswechsel muss genau ein Lebenszeichen auslösen, waren %d: %q", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0], "degraded: datenbank gesperrt") {
+		t.Errorf("die Meldung nennt die Störung nicht: %q", msgs[0])
+	}
+
+	// Bleibt es dabei, wird nicht erneut gedrängelt - das erledigt der Takt.
+	m.tick()
+	if msgs := collect(); len(msgs) != 0 {
+		t.Errorf("unveränderter Zustand darf kein zusätzliches Lebenszeichen auslösen: %q", msgs)
+	}
+
+	// Und die Rückkehr ist ebenfalls ein Wechsel.
+	fehler = nil
+	m.tick()
+	msgs = collect()
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "operational") {
+		t.Errorf("die Erholung muss sofort gemeldet werden: %q", msgs)
 	}
 }

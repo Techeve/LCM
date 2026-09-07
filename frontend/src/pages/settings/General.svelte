@@ -188,11 +188,16 @@
             {t('settings.general.jobsIntro')}
           </p>
           <div style="max-width: 320px">
-            <label class="form-label" for="jobmax">{t('settings.general.jobMaxLabel')}</label>
-            <input id="jobmax" type="number" min="0" max="1440" class="form-control" bind:value={settings.job_max_runtime_minutes} />
+            <label class="form-label" for="jobidle">{t('settings.general.jobIdleLabel')}</label>
+            <input id="jobidle" type="number" min="0" max="1440" class="form-control" bind:value={settings.job_idle_timeout_minutes} />
             <div class="form-text">
-              {t('settings.general.jobMaxHintA')}<code>0</code>{t('settings.general.jobMaxHintB')}
+              {t('settings.general.jobIdleHintA')}<code>0</code>{t('settings.general.jobIdleHintB')}
             </div>
+          </div>
+          <div class="mt-3" style="max-width: 320px">
+            <label class="form-label" for="jobidleslow">{t('settings.general.jobIdleSlowLabel')}</label>
+            <input id="jobidleslow" type="number" min="0" max="1440" class="form-control" bind:value={settings.job_idle_timeout_slow_minutes} />
+            <div class="form-text">{t('settings.general.jobIdleSlowHint')}</div>
           </div>
         </div>
       </div>

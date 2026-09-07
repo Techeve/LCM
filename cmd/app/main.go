@@ -380,16 +380,10 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// erfolgreich abgeschlossen statt als Fehler gemeldet.
 	selfUpdate := services.SelfUpdateOnRestart(serverRepo, updateResult.PreviousVersion, version.Version)
 	jobService.FailInterruptedOnStartup(selfUpdate)
-	// Job-Watchdog: bricht Jobs jenseits der konfigurierten Maximaldauer ab
+	// Job-Watchdog: bricht Jobs ab, die keine Lebenszeichen mehr geben
 	// (hängende Remote-Kommandos geben die Server-Sperre damit selbst frei).
 	safego.Go("job-watchdog", func() {
-		jobService.RunWatchdog(func() time.Duration {
-			st, err := settingsRepo.Get()
-			if err != nil {
-				return 2 * time.Hour
-			}
-			return time.Duration(domain.ClampJobMaxRuntime(st.JobMaxRuntimeMinutes)) * time.Minute
-		})
+		jobService.RunWatchdog(services.JobIdleLimit(settingsRepo, serverRepo))
 	})
 	auditService := services.NewAuditService(auditRepo)
 	jobService.WithAudit(auditService) // R2-067: Abbrüche/Watchdog auditieren
@@ -401,7 +395,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	sshLogRepo := repositories.NewSSHLogRepository(db)
 	// Job-Verbindungen beim JobService registrieren: beim Abbruch (manuell
 	// oder Watchdog) werden sie zwangsweise geschlossen.
-	sshRecorder := services.NewSSHRecorder(sshLogRepo).WithJobAttach(jobService.AttachCloser)
+	sshRecorder := services.NewSSHRecorder(sshLogRepo).WithJobs(jobService)
 	// CVE-Scanner (Trivy): zentral, ohne die verwalteten Server zu kontaktieren.
 	// Zwei Wege, dieselbe Auswertung - die Wahl trifft die Konfiguration:
 	//   trivy_url gesetzt  → Sidecar-Container (cmd/trivyd), Container-Betrieb
@@ -473,21 +467,25 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	}
 	serverService := services.NewServerService(serverRepo, jobService, auditService, cipher, sshx.NewClient()).
 		WithRecorder(sshRecorder).WithLinux(linuxRepo).WithGroups(groupRepo).WithScanner(cveScanner).
+		WithSettings(settingsRepo).
 		WithKnownRepos(knownRepoRepo).WithAptCacheURL(aptCacheURL).WithCVERescanEnabled(cveScanEnabled).
 		WithCVEWeightList(cveWeightList).WithDNSTestDomains(dnsTestDomains).WithCrowdSecConfig(crowdsecConfig).
 		WithPackagePins(packagePinRepo).WithApps(appRepo)
 
 	// LCM Remote: eingebetteter MQTT-Broker + AgentHub für Server, die sich
 	// per lcm-agent AUSGEHEND verbinden (NAT/Roaming). Kommandos laufen dort
-	// über MQTT statt SSH - mit derselben Kommando-Obergrenze wie der
+	// über MQTT statt SSH - mit derselben erlaubten Stille wie der
 	// Job-Watchdog (plus Puffer, damit immer zuerst der Watchdog abbricht).
+	// Maßgeblich ist der größere der beiden Werte: Auf welcher Hardware das
+	// Kommando landet, weiß erst der Watchdog anhand des Ziel-Servers.
 	agentHub := remote.New(serverRepo, slog.Default()).
-		WithMaxRuntime(func() time.Duration {
+		WithIdleTimeout(func() time.Duration {
 			st, err := settingsRepo.Get()
 			if err != nil {
-				return 2*time.Hour + 10*time.Minute
+				return services.DefaultJobIdleTimeout + 10*time.Minute
 			}
-			return time.Duration(domain.ClampJobMaxRuntime(st.JobMaxRuntimeMinutes))*time.Minute + 10*time.Minute
+			minutes := max(st.JobIdleTimeoutMinutes, st.JobIdleTimeoutSlowMinutes)
+			return time.Duration(domain.ClampJobIdleTimeout(minutes))*time.Minute + 10*time.Minute
 		}).
 		WithOnAgentOnline(func(server *domain.Server) {
 			// Erst-Scan beim allerersten Kontakt eines frisch enrollten
@@ -646,11 +644,15 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		return settingsService.SystemMailProvider()
 	})
 	activationService.WithMailer(settingsService.SendSystemMail)
+	// Aktivierungslinks für LINUX-Benutzer über denselben Postausgang: Das
+	// Feld für die Adresse gab es immer, den Weg dorthin nicht.
+	linuxUserService.WithMailer(settingsService.SendSystemMail)
 	// Basis-Adresse für Links in Mails: AUSSCHLIESSLICH aus der Konfiguration,
 	// nie aus dem Host-Header des Requests (sonst könnte ein Angreifer sich
 	// einen gültigen Passwort-Reset-Link auf die eigene Domain ausstellen
 	// lassen - siehe domain.GlobalSettings.PublicBaseURL).
 	activationService.WithLinkBase(settingsService.LinkBaseURL)
+	linuxUserService.WithLinkBase(settingsService.LinkBaseURL)
 	// Onboarding-Key für den Key-Login beim Join/Reconnect (lazy entschlüsselt).
 	// Nachgelagert verdrahtet, weil der SettingsService erst nach dem
 	// ServerService entsteht (er braucht scheduler.Reload).
@@ -775,6 +777,29 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		})
 	}
 
+	// Erst-Erfassung nach einer NEUINSTALLATION. Die Selbst-Registrierung legt
+	// den eigenen Host an, scannt ihn aber nicht - bis dahin steht er ohne
+	// Betriebssystem, ohne Hardware und mit null Kernen in der Übersicht.
+	// Bisher füllte ihn erst der nächtliche System-Sync um vier Uhr, also
+	// ausgerechnet nicht in der Stunde nach der Installation, in der jemand
+	// zum ersten Mal hinschaut.
+	//
+	// Dieselbe Bedingung wie bei frisch enrollten Agent-Servern (siehe
+	// WithOnAgentOnline): noch kein OS erfasst ⇒ einmal alles erheben.
+	// Asynchron, damit der Start nicht auf eine SSH-Sitzung wartet.
+	if !demo {
+		safego.Go("self-register:initial-scan", func() {
+			host := services.LcmHostServer(serverRepo)
+			if host == nil || host.OSName != "" {
+				return
+			}
+			slog.Info("initial scan of the LCM host (not yet recorded)", "server", host.Name)
+			if _, err := serverService.RefreshAll(repositories.ScopeAll(), host.ID, "system:self-register"); err != nil {
+				slog.Warn("initial scan of the LCM host failed", "error", err)
+			}
+		})
+	}
+
 	// Beim Start die Integrität des Audit-Logs prüfen (Hash-Chain).
 	auditService.VerifyChainOnStartup()
 
@@ -813,20 +838,42 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 			"entries", len(cfg.AllowedIPs), "trust_proxy_header", cfg.TrustProxyHeader)
 	}
 
-	// Laufzeit-Selbstüberwachung: Ein Datenbank-Ping ist das ehrlichste
-	// Kriterium für „arbeitsfähig" - ohne Datenbank kann LCM weder Server
-	// verwalten noch Jobs abschließen, würde aber weiterhin HTTP annehmen.
+	// healthCheckTimeout begrenzt eine einzelne Selbstprüfung. Deutlich unter der
+	// Frist, die der Monitor selbst darüberlegt (health.checkTimeout) - so meldet
+	// die Prüfung ihr eigenes Scheitern, statt von außen abgeschnitten zu werden.
+	const healthCheckTimeout = 5 * time.Second
+
+	// Laufzeit-Selbstüberwachung. Sie stellt ZWEI Fragen, weil es zwei
+	// verschiedene Störungen gibt - und nur auf eine davon ein Neustart die
+	// richtige Antwort ist:
+	//
+	//  1. Ist die Datenbank erreichbar? Wenn nein, kann LCM gar nichts mehr
+	//     und nimmt trotzdem weiter HTTP an - dann ist der Neustart richtig.
+	//  2. Nimmt sie Schreibvorgänge an? Ein Ping allein beantwortet das
+	//     NICHT: Im WAL-Modus kommen Leser durch, während die Schreibsperre
+	//     bei einem fremden Vorgang liegt. In genau dieser Lücke meldete der
+	//     Dienst im Test minutenlang „operational" und konnte dabei keine
+	//     einzige Zeile schreiben - zwölf geplante Läufe fielen spurlos aus.
+	//     Hier meldet er jetzt „degraded", startet aber NICHT neu: Die Sperre
+	//     liegt außerhalb, ein neuer Prozess stünde vor derselben.
 	healthMonitor := health.NewMonitor(func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), healthCheckTimeout)
+		defer cancel()
 		sqlDB, err := db.DB()
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return sqlDB.PingContext(ctx)
+		if err := sqlDB.PingContext(ctx); err != nil {
+			return err
+		}
+		if err := storage.ProbeWritable(ctx, db); err != nil {
+			return fmt.Errorf("%w: %v", health.ErrNotWritable, err)
+		}
+		return nil
 	})
 
 	app = router.New(router.Deps{
+		LogFile:                  logFile,
 		Restart:                  restart,
 		Health:                   healthMonitor,
 		DemoPublic:               cfg.DemoPublic,

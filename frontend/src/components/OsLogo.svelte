@@ -13,16 +13,23 @@
   import debianIcon from '../assets/os/debian.png';
   import proxmoxIcon from '../assets/os/proxmox.png';
   import linuxIcon from '../assets/os/linux.png';
+  // Der Raspberry Pi liegt als SVG vor (die Bildmarke ist ein einzelner Pfad -
+  // als Vektor bleibt sie in jeder Größe scharf und wiegt weniger als das PNG);
+  // der Rand steckt wie bei den PNGs schon in der Datei.
+  import raspberryIcon from '../assets/os/raspberrypi.svg';
   // Das LCM-Logo liegt als statisches Asset unter public/ (wie in Navbar/Footer).
   const lcmIcon = '/logo.svg';
 
   // proxmox: Produkttyp ("pve"/"pbs"/"pmg") - hat Vorrang vor dem OS-Namen,
   // weil Proxmox-Systeme im os-release schlicht als Debian erscheinen.
+  // hardware: das erfasste Gerätemodell - aus demselben Grund: Ein Raspberry
+  // Pi meldet sich als Debian, und das Debian-Logo verschweigt genau das,
+  // was den Server hier ausmacht.
   // host/port: ist der Server der LCM-Host selbst (Loopback + Standard-Port),
   // zeigen wir das LCM-Logo statt des OS-Logos. Der Port zählt mit: über
   // 127.0.0.1:<hoher Port> gejointe Systeme sind Port-Forwards auf ANDERE
   // Maschinen (NAT/Container) - kein LCM-Host.
-  let { os = '', proxmox = '', host = '', port = 22, size = 22 } = $props();
+  let { os = '', hardware = '', proxmox = '', host = '', port = 22, size = 22 } = $props();
 
   const proxmoxNames = {
     pve: 'Proxmox VE',
@@ -33,10 +40,12 @@
   // Hosts, die den LCM-Host selbst bezeichnen.
   const LCM_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
-  // Logo + Anzeigename aus LCM-Host / Proxmox-Typ / OS-Namen ableiten.
+  // Logo + Anzeigename aus LCM-Host / Proxmox-Typ / Gerätemodell / OS-Namen ableiten.
   let icon = $derived.by(() => {
     if (LCM_HOSTS.has((host || '').trim().toLowerCase()) && (!port || port === 22)) return { src: lcmIcon, label: 'LCM-Host', lcm: true };
     if (proxmox) return { src: proxmoxIcon, label: proxmoxNames[proxmox] ?? 'Proxmox' };
+    const hw = (hardware || '').trim();
+    if (/raspberry pi/i.test(hw)) return { src: raspberryIcon, label: hw };
     const s = (os || '').toLowerCase();
     if (s.includes('routeros') || s.includes('mikrotik')) return { src: linuxIcon, label: 'MikroTik RouterOS' };
     if (s.includes('synology') || s.includes('dsm')) return { src: linuxIcon, label: 'Synology DSM' };

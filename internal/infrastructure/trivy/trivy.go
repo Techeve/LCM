@@ -69,6 +69,36 @@ type Trivy struct {
 	// scans ist der inhaltsadressierte Ergebnis-Cache (siehe scan_cache.go):
 	// identischer Paketbestand + identische Datenbank ⇒ kein zweiter Lauf.
 	scans scanCache
+
+	// heavy lässt genau EINEN schweren Trivy-Lauf gleichzeitig zu (Scan,
+	// Image-Scan, Datenbank-Download).
+	//
+	// Zwei Gründe, beide im Betrieb belegt. Erstens teilen sich alle Läufe ein
+	// Cache-Verzeichnis, das Trivy exklusiv sperrt: Überlappende Aufrufe
+	// scheiterten reihenweise mit „cache may be in use by another process".
+	// Zweitens ist ein Trivy-Lauf der mit Abstand speicherhungrigste Vorgang
+	// auf dem Host - die Schwachstellen-Datenbank allein ist über ein
+	// Gigabyte groß. Zwei davon nebeneinander verdrängen auf einer kleinen
+	// Maschine den gesamten Seiten-Cache und legen den Dienst still, der sie
+	// gestartet hat.
+	heavy chan struct{}
+}
+
+// newTrivy verdrahtet einen Scanner samt seiner Schranke für schwere Läufe.
+func newTrivy(r runner) *Trivy {
+	return &Trivy{run: r, heavy: make(chan struct{}, 1)}
+}
+
+// acquire belegt den Platz für einen schweren Lauf und achtet dabei auf den
+// Kontext des Aufrufers: Ein abgebrochener Job wartet nicht weiter, nur weil
+// vor ihm noch ein Scan läuft.
+func (t *Trivy) acquire(ctx context.Context) (func(), error) {
+	select {
+	case t.heavy <- struct{}{}:
+		return func() { <-t.heavy }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // infoTTL ist die Lebensdauer des zwischengespeicherten DB-Stands.
@@ -78,14 +108,14 @@ const infoTTL = time.Minute
 // ein Name (via PATH) oder ein absoluter Pfad sein; cacheDir nimmt die
 // heruntergeladene Vuln-DB auf.
 func New(binary, cacheDir string) *Trivy {
-	return &Trivy{run: newLocal(binary, cacheDir)}
+	return newTrivy(newLocal(binary, cacheDir))
 }
 
 // NewRemote erstellt einen Trivy-Scanner, der einen Sidecar über HTTP
 // anspricht (Container-Betrieb, siehe cmd/trivyd). Alles jenseits der
 // Ausführung - SBOM, Cache, Auswertung - ist identisch zum lokalen Weg.
 func NewRemote(baseURL, token string) *Trivy {
-	return &Trivy{run: newRemote(baseURL, token)}
+	return newTrivy(newRemote(baseURL, token))
 }
 
 // Available meldet, ob der Scanner einsatzbereit ist.
@@ -113,6 +143,12 @@ func (t *Trivy) Scan(ctx context.Context, target Target) ([]domain.Vulnerability
 	if err != nil {
 		return nil, fmt.Errorf("sbom erzeugen: %w", err)
 	}
+	release, err := t.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	out, err := t.run.scanSBOM(ctx, sbom)
 	if err != nil {
 		return nil, scanError(err)
@@ -188,6 +224,12 @@ func (t *Trivy) UpdateDB(ctx context.Context) (string, error) {
 	if !t.Available() {
 		return "", fmt.Errorf("trivy nicht verfügbar")
 	}
+	release, err := t.acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+
 	out, err := t.run.updateDB(ctx)
 	// Danach den gemerkten Stand verwerfen, damit die Oberfläche sofort den
 	// neuen zeigt statt bis zu einer Minute den alten.
@@ -202,6 +244,12 @@ func (t *Trivy) ScanImage(ctx context.Context, ref string) ([]domain.Vulnerabili
 	if !t.Available() {
 		return nil, fmt.Errorf("trivy nicht verfügbar")
 	}
+	release, err := t.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	out, err := t.run.scanImage(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("trivy-image-scan fehlgeschlagen: %w", err)

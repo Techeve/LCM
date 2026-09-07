@@ -355,7 +355,7 @@ Großvolumige Konsolen-Ausgaben (Job-/SSH-Output) sowie der Server-Host/-Name la
 
 ## LCM Remote (Agent-Listener)
 
-Server hinter NAT verbinden sich **ausgehend** per `lcm-agent` (MQTT-über-WebSocket) auf einem **eigenen, dedizierten Port** (Default `9320`, `internal/remote`) - getrennt von UI/REST. Der Enrollment-Token wird nur bei der Erstanzeige im Klartext gezeigt; at rest liegt ausschließlich sein Hash. Der Agent-Listener nutzt dasselbe TLS-Zertifikat wie die UI, dessen Fingerprint der Agent beim Enrollment **pinnt** (MitM-Schutz). Kommandos über den Agent-Transport unterliegen derselben Laufzeit-Obergrenze wie der Job-Watchdog. Details: [LCM Remote](/guides/remote/).
+Server hinter NAT verbinden sich **ausgehend** per `lcm-agent` (MQTT-über-WebSocket) auf einem **eigenen, dedizierten Port** (Default `9320`, `internal/remote`) - getrennt von UI/REST. Der Enrollment-Token wird nur bei der Erstanzeige im Klartext gezeigt; at rest liegt ausschließlich sein Hash. Der Agent-Listener nutzt dasselbe TLS-Zertifikat wie die UI, dessen Fingerprint der Agent beim Enrollment **pinnt** (MitM-Schutz). Kommandos über den Agent-Transport unterliegen derselben Stille-Frist wie der Job-Watchdog: Sie werden abgebrochen, wenn über die erlaubte Zeit hinaus keine Ausgabe mehr entsteht. Details: [LCM Remote](/guides/remote/).
 
 ## MCP-Schnittstelle (KI-Agenten)
 

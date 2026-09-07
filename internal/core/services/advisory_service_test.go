@@ -314,3 +314,91 @@ func TestAdvisoryCacheTTLBegrenzt(t *testing.T) {
 		t.Errorf("erwartet Deckelung auf %d, war %d", domain.AdvisoryCacheTTLMax, got.AdvisoryCacheTTLMinutes)
 	}
 }
+
+// TestAdvisoryCacheTTLUnterPollTakt: Ein Wert unterhalb des Poll-Takts wird
+// angehoben. Er war die stille Fehlkonfiguration schlechthin - der
+// Zwischenspeicher galt als eingeschaltet, lief aber vor dem nächsten
+// Durchgang ab: jeder Lauf fragte alles neu UND schrieb alles neu.
+func TestAdvisoryCacheTTLUnterPollTakt(t *testing.T) {
+	env := newTestEnv(t)
+	for _, zuKlein := range []int{1, 10, domain.AdvisoryCacheTTLMin - 1} {
+		got, err := env.Settings.UpdateGlobal(
+			services.GlobalSettingsInput{AdvisoryCacheTTLMinutes: &zuKlein}, "admin")
+		if err != nil {
+			t.Fatalf("Einstellungen (%d): %v", zuKlein, err)
+		}
+		if got.AdvisoryCacheTTLMinutes != domain.AdvisoryCacheTTLMin {
+			t.Errorf("TTL %d sollte auf %d angehoben werden, war %d",
+				zuKlein, domain.AdvisoryCacheTTLMin, got.AdvisoryCacheTTLMinutes)
+		}
+	}
+
+	// 0 bleibt 0: „aus" ist eine gültige Entscheidung, keine Fehlkonfiguration.
+	aus := 0
+	got, err := env.Settings.UpdateGlobal(
+		services.GlobalSettingsInput{AdvisoryCacheTTLMinutes: &aus}, "admin")
+	if err != nil {
+		t.Fatalf("Einstellungen (0): %v", err)
+	}
+	if got.AdvisoryCacheTTLMinutes != 0 {
+		t.Errorf("TTL 0 muss 0 bleiben, war %d", got.AdvisoryCacheTTLMinutes)
+	}
+}
+
+// TestAdvisoryPollLokaleQuelleOhneZwischenspeicher: Bei der lokalen Kopie
+// schreibt der Durchgang KEINE Cache-Einträge. Der Zwischenspeicher schont
+// fremde Dienste - eine Abfrage im eigenen Haus hat nichts zu schonen, und
+// das Schreiben aller Einträge je Durchgang war reine Last.
+func TestAdvisoryPollLokaleQuelleOhneZwischenspeicher(t *testing.T) {
+	env := newTestEnv(t)
+	env.AdvSource.IsLocal = true
+	enableAdvisories(t, env, 30)
+	seedPackages(t, env, "web01",
+		domain.Package{Name: "openssl", Version: "3.0.11"},
+		domain.Package{Name: "bash", Version: "5.2"})
+
+	for i := 1; i <= 2; i++ {
+		if _, err := env.Advisories.Poll(context.Background()); err != nil {
+			t.Fatalf("Poll %d: %v", i, err)
+		}
+	}
+
+	var entries int64
+	if err := env.DB().Table("advisory_cache_entries").Count(&entries).Error; err != nil {
+		t.Fatalf("Cache-Einträge zählen: %v", err)
+	}
+	if entries != 0 {
+		t.Errorf("lokale Quelle darf den Zwischenspeicher nicht füllen, waren %d Einträge", entries)
+	}
+
+	// Und die Trefferquote bleibt unberührt - eine Null dort hieße sonst
+	// „wirkungslos", obwohl er schlicht nicht befragt wurde.
+	rep, err := env.Advisories.CacheStats()
+	if err != nil {
+		t.Fatalf("CacheStats: %v", err)
+	}
+	if rep.Advisory.Runs != 0 {
+		t.Errorf("übergangener Zwischenspeicher darf nicht mitgezählt werden: %d Durchgänge", rep.Advisory.Runs)
+	}
+}
+
+// TestAdvisoryPollTTLNullSchreibtNichts: Auch der abgeschaltete
+// Zwischenspeicher schrieb bisher bei jedem Durchgang alle Einträge - er war
+// damit teurer als der eingeschaltete.
+func TestAdvisoryPollTTLNullSchreibtNichts(t *testing.T) {
+	env := newTestEnv(t)
+	enableAdvisories(t, env, 0)
+	seedPackages(t, env, "web01", domain.Package{Name: "openssl", Version: "3.0.11"})
+
+	if _, err := env.Advisories.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	var entries int64
+	if err := env.DB().Table("advisory_cache_entries").Count(&entries).Error; err != nil {
+		t.Fatalf("Cache-Einträge zählen: %v", err)
+	}
+	if entries != 0 {
+		t.Errorf("abgeschalteter Zwischenspeicher darf nichts schreiben, waren %d Einträge", entries)
+	}
+}

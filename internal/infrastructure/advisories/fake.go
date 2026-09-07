@@ -11,6 +11,7 @@ import (
 type Fake struct {
 	SourceName   string
 	IsAvailable  bool
+	IsLocal      bool
 	QueryFunc    func(purls []string) (map[string][]Advisory, error)
 	DetailsFunc  func(ids []string) (map[string]Detail, error)
 	QueryCalls   int
@@ -27,6 +28,10 @@ func (f *Fake) Name() string {
 }
 
 func (f *Fake) Available() bool { return f != nil && f.IsAvailable }
+
+// IsLocal stellt eine lokale Quelle nach (siehe Source.Local) - damit lässt
+// sich prüfen, dass der Zwischenspeicher dann übergangen wird.
+func (f *Fake) Local() bool { return f != nil && f.IsLocal }
 
 func (f *Fake) Query(_ context.Context, purls []string) (map[string][]Advisory, error) {
 	f.QueryCalls++

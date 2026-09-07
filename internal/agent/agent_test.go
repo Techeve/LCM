@@ -87,7 +87,7 @@ func TestRunnerRun(t *testing.T) {
 	r := NewRunner()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := r.Run(wire.Command{ID: tt.name, Cmd: tt.cmd, Stdin: tt.stdin})
+			res := r.Run(wire.Command{ID: tt.name, Cmd: tt.cmd, Stdin: tt.stdin}, nil)
 			if res.Error != "" {
 				t.Fatalf("unerwarteter fehler: %s", res.Error)
 			}
@@ -101,7 +101,7 @@ func TestRunnerRun(t *testing.T) {
 func TestRunnerCancel(t *testing.T) {
 	r := NewRunner()
 	done := make(chan wire.Result, 1)
-	go func() { done <- r.Run(wire.Command{ID: "long", Cmd: "sleep 30"}) }()
+	go func() { done <- r.Run(wire.Command{ID: "long", Cmd: "sleep 30"}, nil) }()
 	// Warten, bis das Kommando registriert ist, dann abbrechen.
 	deadline := time.After(5 * time.Second)
 	for {

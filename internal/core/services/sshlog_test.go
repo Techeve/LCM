@@ -158,7 +158,9 @@ func TestHealthRuleSessionHasStablePurpose(t *testing.T) {
 	id := joinTestServer(t, env, "web01")
 	health := findSystemHealthRule(t, env)
 
-	env.Executor.RunRule(health, "scheduler")
+	// Von Hand ausgelöst: Ein geplanter Ping entfiele hier, weil der Join
+	// gerade eben Kontakt hatte (siehe skipHealthPing).
+	env.Executor.RunRule(health, "admin")
 
 	sessions, err := env.SSHLogs.ServerSessions(repositories.ScopeAll(), id, 0)
 	if err != nil {

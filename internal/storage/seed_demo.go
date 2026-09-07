@@ -59,6 +59,10 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 	demoServers := []domain.Server{
 		{
 			Name: "web01", Host: "10.10.0.11", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
+			// Abweichender Hostname: Der Server wurde über eine IP aufgenommen,
+			// das System selbst nennt sich anders - genau der Fall, für den die
+			// Anzeige gedacht ist.
+			Hostname:           "web01.intern.example",
 			HostKeyFingerprint: "SHA256:DEMOweb01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO web01",
 			OSName: "Debian GNU/Linux", OSVersion: "12 (bookworm)", OSID: "debian", OSVersionID: "12",
 			Virtualization: "kvm", PackageManager: "apt", HasDocker: true, HasCompose: true, KernelVersion: "6.1.0-13-amd64",
@@ -87,6 +91,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		},
 		{
 			Name: "db01", Host: "10.10.0.12", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
+			Hostname:           "db01", // deckt sich mit dem Anzeigenamen - wird nicht doppelt gezeigt
 			HostKeyFingerprint: "SHA256:DEMOdb01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO db01",
 			OSName: "Ubuntu", OSVersion: "22.04 LTS", OSID: "ubuntu", OSVersionID: "22.04",
 			Virtualization: "lxc", PackageManager: "apt", HasSnap: true, HasDocker: true, KernelVersion: "5.15.0-91-generic",
@@ -381,6 +386,19 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		{ServerID: demoServers[0].ID, Mountpoint: "/data", Device: "/dev/sdb1", Fstype: "xfs", TotalMB: 512000, UsedMB: 384000},
 		{ServerID: demoServers[1].ID, Mountpoint: "/", Device: "/dev/vda1", Fstype: "ext4", TotalMB: 102400, UsedMB: 91000},
 		{ServerID: demoServers[1].ID, Mountpoint: "/var/lib/mysql", Device: "/dev/mapper/vg-db", Fstype: "ext4", TotalMB: 204800, UsedMB: 153600},
+		// Ein Netz-Mount: wird angezeigt, ist aber bewusst nicht überwachbar -
+		// dafür ist der Speicher zuständig, der ihn anbietet.
+		{ServerID: demoServers[0].ID, Mountpoint: "/mnt/backup", Device: "nas01:/export/backup", Fstype: "nfs4", TotalMB: 2097152, UsedMB: 1887436},
+	})
+
+	// Zustand der Speicher-Verbünde: db01 hat einen ZFS-Mirror, dem eine
+	// Platte fehlt - der Fall, den ohne LCM niemand bemerkt.
+	db.Create(&[]domain.StorageHealth{
+		{ServerID: demoServers[1].ID, Kind: domain.StorageKindZFS, Name: "tank", State: domain.StorageStateDegraded,
+			RawState: "DEGRADED", Message: "Pool-Zustand DEGRADED, 7 Lese-/Schreib-/Prüfsummenfehler",
+			UsagePercent: 61, FragmentPercent: 9, Errors: 7},
+		{ServerID: demoServers[0].ID, Kind: domain.StorageKindMDRaid, Name: "md0", State: domain.StorageStateHealthy,
+			RawState: "active"},
 	})
 
 	// Anmeldefähige Linux-Konten (Benutzer-Übersicht): zeigt die typischen

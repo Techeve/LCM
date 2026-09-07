@@ -83,8 +83,17 @@ export class LinuxUsersApi {
   }
 
   // ---- Aktivierungslinks (Self-Service Credentials) ----
-  generateActivation(id, ttlHours) {
-    return this.#client.post(`/linux-users/${id}/activation-links/generate`, { ttl_hours: ttlHours });
+  /**
+   * Erzeugt einen Aktivierungslink. sendEmail schickt ihn zusätzlich an die
+   * am Linux-Benutzer hinterlegte Adresse; der Link kommt in JEDEM Fall auch
+   * in der Antwort zurück - scheitert der Versand, hat der Administrator ihn
+   * trotzdem vor sich.
+   */
+  generateActivation(id, ttlHours, sendEmail = false) {
+    return this.#client.post(`/linux-users/${id}/activation-links/generate`, {
+      ttl_hours: ttlHours,
+      send_email: sendEmail,
+    });
   }
 
   consumeActivation({ token, password, keyName, publicKey, generateKey }) {

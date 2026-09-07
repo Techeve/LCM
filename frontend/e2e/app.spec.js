@@ -214,8 +214,28 @@ test.describe('LCM', () => {
     // Detailseite: LCM-Host-Karte mit Status für Trivy und apt-cacher-ng.
     await row.getByRole('link', { name: 'lcm-self' }).click();
     await expect(page.getByTestId('lcm-host-card')).toBeVisible();
-    await expect(page.getByTestId('trivy-status')).toBeVisible();
-    await expect(page.getByTestId('apt-cacher-status')).toBeVisible();
+
+    // Die Karte zeigt je nach Betriebsart Verschiedenes, und beides ist
+    // richtig: Läuft LCM selbst in einem Container, gibt es dort nichts
+    // einzurichten (kein apt, kein Dienst, der den Neustart überlebt) - dann
+    // erklärt die Karte das, statt Schaltflächen anzubieten, die scheitern
+    // müssen. Auf einem gewöhnlichen Host stehen die Einrichtungs-Zustände.
+    //
+    // Vorher prüfte der Test nur den Host-Fall. Damit hing er daran, WO er
+    // läuft: auf einem Entwicklerrechner grün, im CI-Container zwangsläufig
+    // rot. lcm_host.go weist im Kommentar zu inContainer() ausdrücklich auf
+    // diese Falle hin - die Go-Tests umgehen sie über containerCheck, der
+    // E2E-Test fährt das echte Binary und kann das nicht.
+    const imContainer = page.getByTestId('lcm-host-container');
+    // Erst abwarten, dass sich die Karte überhaupt entschieden hat - sonst
+    // liefe die Abfrage unten ins Leere, solange noch nichts gerendert ist.
+    await expect(imContainer.or(page.getByTestId('trivy-status')).first()).toBeVisible();
+    if (await imContainer.isVisible()) {
+      await expect(imContainer).toContainText('Container');
+    } else {
+      await expect(page.getByTestId('trivy-status')).toBeVisible();
+      await expect(page.getByTestId('apt-cacher-status')).toBeVisible();
+    }
   });
 
   test('Proxmox-Server: Erkennung mit Typ/Version, gesperrte Aktionen', async ({ page }) => {
@@ -580,6 +600,180 @@ test.describe('LCM', () => {
     await expect(volumes).toContainText('/data');
     await expect(volumes).toContainText('System'); // Badge am Root-Volume
     await expect(volumes).toContainText('GiB');
+  });
+
+  test('Server-Detail: Konsole nicht mehr als Kachel, je Server abschaltbar', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/#/servers/1');
+
+    // Die Konsole liegt nicht mehr als Kachel auf der Übersichtsseite.
+    await expect(page.getByTestId('terminal-host')).toHaveCount(0);
+
+    // Die Schaltfläche erscheint hier nicht - und das ist richtig: Alle
+    // Demo-Server tragen is_demo, und auf einem erfundenen Server gibt es
+    // nichts, womit man sprechen könnte (services.terminalPossible). Dass
+    // die Sperre je Server greift, prüft TestKonsoleJeServerAbschaltbar.
+    await expect(page.getByTestId('open-console')).toHaveCount(0);
+
+    // Der Schalter steht in den Einstellungen und hängt am Konsolen-Recht.
+    await page.getByTestId('open-settings').click();
+    const schalter = page.getByTestId('console-disabled-toggle');
+    await expect(schalter).toBeVisible();
+
+    // Von einem bekannten Zustand ausgehen - die Einstellung überlebt
+    // absichtlich einen Testlauf.
+    if (await schalter.isChecked()) {
+      await schalter.click();
+      await expect(schalter).not.toBeChecked();
+    }
+
+    await schalter.click();
+    await expect(schalter).toBeChecked();
+
+    // Und sie bleibt über den Neuaufbau der Seite hinweg stehen.
+    await page.reload();
+    await page.getByTestId('open-settings').click();
+    await expect(page.getByTestId('console-disabled-toggle')).toBeChecked();
+
+    // Wieder freischalten, damit die folgenden Tests den Ausgangszustand
+    // vorfinden.
+    await page.getByTestId('console-disabled-toggle').click();
+    await expect(page.getByTestId('console-disabled-toggle')).not.toBeChecked();
+  });
+
+  test('Server-Detail: Hostname anzeigen und Server umbenennen', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/#/servers/1');
+
+    // web01 wurde über eine IP aufgenommen und nennt sich selbst anders -
+    // genau dann ist der Hostname eine Information und wird gezeigt.
+    await expect(page.getByTestId('server-hostname')).toHaveText('web01.intern.example');
+
+    // Der Dialog bleibt nach dem Speichern offen; er wird deshalb EINMAL
+    // geöffnet - ein zweiter Klick liefe gegen die Überlagerung.
+    await page.getByTestId('open-settings').click();
+    const feld = page.getByTestId('server-name-input');
+    const speichern = page.getByTestId('server-name-apply');
+    await expect(feld).toBeVisible();
+
+    // Von einem bekannten Zustand ausgehen: Ein abgebrochener Lauf kann den
+    // Server umbenannt hinterlassen haben.
+    await feld.fill('web01');
+    if (await speichern.isEnabled()) await speichern.click();
+    await expect(page.locator('h1')).toContainText('web01');
+
+    // Der gemeldete Hostname wird als Vorschlag angeboten - man muss ihn
+    // nicht abtippen.
+    await page.getByTestId('server-name-suggestion').click();
+    await expect(feld).toHaveValue('web01.intern.example');
+
+    // Ein bereits vergebener Name muss mit einer verständlichen Meldung
+    // abgewiesen werden, nicht mit einem Datenbank-Fehler.
+    await feld.fill('db01');
+    await speichern.click();
+    await expect(page.locator('body')).toContainText('bereits');
+    await expect(page.locator('h1')).toContainText('web01');
+    // Das Getippte bleibt stehen - ein abgelehnter Name soll korrigierbar
+    // sein, nicht neu eingegeben werden müssen.
+    await expect(feld).toHaveValue('db01');
+
+    // Und jetzt richtig umbenennen.
+    await feld.fill('web01-umbenannt');
+    await speichern.click();
+    await expect(page.locator('h1')).toContainText('web01-umbenannt');
+
+    // Zurückbenennen, damit die folgenden Tests web01 vorfinden.
+    await feld.fill('web01');
+    await speichern.click();
+    await expect(page.locator('h1')).toContainText('web01');
+  });
+
+  test('Server-Detail: Volume-Überwachung ein-/ausschalten, Netz-Mount gesperrt', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/#/servers/1');
+    await page.getByRole('button', { name: 'Festplatten' }).click();
+    const volumes = page.getByTestId('volumes-table');
+    await expect(volumes).toBeVisible();
+
+    // Inode-Spalte und Überwachungs-Spalte sind da.
+    await expect(volumes).toContainText('Inodes');
+    await expect(volumes).toContainText('Überwachung');
+
+    // /data ist lokal (xfs) und überwachbar: Schalter vorhanden, aus.
+    const data = volumes.locator('[data-testid="volume-row"][data-mount="/data"]');
+    const schalter = data.getByTestId('volume-monitor-toggle');
+    await expect(schalter).toBeVisible();
+
+    // Von einem bekannten Zustand ausgehen: Die Überwachung ist eine
+    // Einstellung, die absichtlich bestehen bleibt - auch über einen
+    // abgebrochenen Testlauf hinweg. Ein Wiederholungslauf fände sie sonst
+    // eingeschaltet vor und scheiterte an der ersten Zusicherung, ohne dass
+    // an der Anwendung etwas wäre.
+    if (await schalter.isChecked()) {
+      await schalter.click();
+    }
+    await expect(schalter).not.toBeChecked();
+    await expect(data.getByTestId('volume-monitor-threshold')).toHaveCount(0);
+
+    // Einschalten: Grenze erscheint mit der Vorgabe 85.
+    await schalter.click();
+    await expect(schalter).toBeChecked();
+    const grenze = data.getByTestId('volume-monitor-threshold');
+    await expect(grenze).toBeVisible();
+    await expect(grenze).toHaveValue('85');
+
+    // Grenze ändern und prüfen, dass sie den Neuaufbau der Seite überlebt -
+    // die Einstellung liegt in einer eigenen Tabelle, nicht im Scan-Ergebnis.
+    await grenze.fill('90');
+    await grenze.dispatchEvent('change');
+    await expect(grenze).toHaveValue('90');
+    await page.reload();
+    await page.getByRole('button', { name: 'Festplatten' }).click();
+    const dataNeu = page.getByTestId('volumes-table').locator('[data-testid="volume-row"][data-mount="/data"]');
+    await expect(dataNeu.getByTestId('volume-monitor-toggle')).toBeChecked();
+    await expect(dataNeu.getByTestId('volume-monitor-threshold')).toHaveValue('90');
+
+    // Ausschalten: Grenze verschwindet.
+    await dataNeu.getByTestId('volume-monitor-toggle').click();
+    await expect(dataNeu.getByTestId('volume-monitor-toggle')).not.toBeChecked();
+    await expect(dataNeu.getByTestId('volume-monitor-threshold')).toHaveCount(0);
+
+    // Der Netz-Mount trägt die Marke und bietet KEINEN Schalter an.
+    const netz = page.getByTestId('volumes-table').locator('[data-testid="volume-row"][data-mount="/mnt/backup"]');
+    await expect(netz).toContainText('Netzspeicher');
+    await expect(netz).toContainText('nicht überwachbar');
+    await expect(netz.getByTestId('volume-monitor-toggle')).toHaveCount(0);
+  });
+
+  test('Server-Detail: Zustand der Speicher-Verbünde zeigt degradierten Pool', async ({ page }) => {
+    await loginAsAdmin(page);
+    // db01 hat im Demo einen ZFS-Mirror ohne Redundanz.
+    await page.goto('/#/servers/2');
+    await page.getByRole('button', { name: 'Festplatten' }).click();
+    await expect(page.locator('body')).toContainText('Zustand der Speicher-Verbünde');
+    const health = page.getByTestId('storage-health-table');
+    await expect(health).toBeVisible();
+    const zeile = health.getByTestId('storage-health-row').first();
+    await expect(zeile).toContainText('ZFS-Pool');
+    await expect(zeile).toContainText('tank');
+    await expect(zeile).toContainText('DEGRADED');
+    await expect(zeile).toContainText('Prüfsummenfehler');
+    // Der Befund färbt den Server: Kopfzeile auf „Warnung", und hinter dem
+    // ⓘ-Knopf steht er als übersetzter Satz - nicht als roher Schlüssel.
+    await expect(page.locator('body')).toContainText('Warnung');
+    // Das Popover schließt sich bei jedem scroll- oder resize-Ereignis von
+    // selbst (StatusBadge.svelte) - das ist gewollt, macht es für einen Test
+    // aber zu einem flüchtigen Ziel. Deshalb Öffnen und Ablesen zusammen
+    // wiederholen, statt sich darauf zu verlassen, dass es offen bleibt.
+    const knopf = page.locator('button[aria-label]', { hasText: 'ⓘ' }).first();
+    await expect(async () => {
+      await knopf.click();
+      const inhalt = await page.getByRole('dialog').innerText();
+      expect(inhalt).toContain('ZFS-Pool tank');
+      // Der Befund muss als übersetzter Satz erscheinen, nicht als roher
+      // i18n-Schlüssel - fehlte die Übersetzung, stünde hier "insights.…".
+      expect(inhalt).not.toContain('insights.');
+    }).toPass({ timeout: 15000 });
   });
 
   test('Server-Detail: Festplatten-Tab zeigt Prognose-Warnung bei db01', async ({ page }) => {
@@ -2350,12 +2544,15 @@ test.describe('LCM', () => {
     await expect(page.locator('body')).toContainText('api.osv.dev');
 
     await page.getByTestId('advisory-enable').check();
+    // 5 Minuten liegen unter dem Poll-Takt von 15 - ein solcher Eintrag waere
+    // beim naechsten Durchgang laengst abgelaufen und wuerde nur geschrieben,
+    // nie gelesen. Der Wert wird deshalb auf den Takt angehoben.
     await page.getByTestId('advisory-ttl').fill('5');
     await page.getByRole('button', { name: 'Speichern' }).first().click();
 
     await page.reload();
     await expect(page.getByTestId('advisory-enable')).toBeChecked();
-    await expect(page.getByTestId('advisory-ttl')).toHaveValue('5');
+    await expect(page.getByTestId('advisory-ttl')).toHaveValue('15');
 
     // Der Hinweis auf der Sicherheitsseite verschwindet damit.
     await page.goto('/#/security');

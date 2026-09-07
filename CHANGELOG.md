@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.36.0 - 2026-09-07
+
+### 🚀 Features
+
+- **console**: Konsole als Schaltfläche oben, je Server abschaltbar (0c7da281)
+- **lcm**: Speicher-Überwachung, Hardware-Erkennung, Job-Warteschlange, Web-Terminal, Verschlüsselungs-Fix (d0c7db30)
+- **servers**: Server umbenennen und den Hostname erfassen (b86f08f2)
+
+### 🐛 Bugfixes
+
+- **deps**: x/crypto auf v0.56.0 - zwei DoS-Lücken in ssh behoben (f965a9ef)
+- **errors**: Substantive in den Fehlermeldungen großschreiben (19ad31b5)
+- **testing**: MD-Reparatur wartet auf den Zielzustand, nicht auf ein Resync-Ende (3216ba27)
+
+### 🔧 Sonstiges
+
+- **storage**: Gegenprobe zur Speicher-Diagnose - behobene Defekte müssen verschwinden (1b188dd5)
+- Go- und Node-Image auf feste Tags (8d8493c0)
+- Kampagnen-Parameter an Links auf eigene Seiten (17e8875b)
+- Prüfjobs nicht doppelt auf den Release-Branches laufen lassen (c252d69b)
+- enterprise wieder mit vollem Testlauf (fdefb7d4)
+
 ## v1.34.2 - 2026-08-29
 
 ### 🐛 Bugfixes

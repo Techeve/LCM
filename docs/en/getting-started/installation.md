@@ -51,7 +51,7 @@ sudo apt update && sudo apt upgrade
 system.
 
 **Alternatively, without the repository** - download a single package from the
-[releases](https://gitlab.techeve.de/techeve/lcm/-/releases)
+[releases](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=doc)
 (`lcm_<version>_amd64.deb` or `..._arm64.deb`; check the architecture with
 `dpkg --print-architecture`) and install it:
 
@@ -162,7 +162,7 @@ docker logs -f lcm     # first start: the generated admin password appears here
 ```
 
 With Docker Compose: take the bundled
-[`docker/docker-compose.yml`](https://gitlab.techeve.de/techeve/lcm/-/blob/community/docker/docker-compose.yml),
+[`docker/docker-compose.yml`](https://gitlab.techeve.de/techeve/lcm/-/blob/community/docker/docker-compose.yml?mtm_campaign=linking&mtm_kwd=doc),
 remove the `build:` block and set `image: techeve/lcm:latest` - all
 hardening flags stay in place.
 

@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // WSPath ist der WebSocket-Pfad des eingebetteten Brokers auf dem
@@ -64,6 +65,12 @@ type Command struct {
 	Cmd    string `json:"cmd,omitempty"`
 	Stdin  string `json:"stdin,omitempty"`
 	Cancel bool   `json:"cancel,omitempty"`
+	// IdleTimeoutSec ist die Notbremse im Agent: Erzeugt das Kommando so
+	// lange keine Ausgabe mehr, gilt es als hängend und wird abgebrochen.
+	// Gemessen wird die STILLE, nicht die Gesamtdauer - ein Upgrade darf
+	// beliebig lange laufen, solange es dabei arbeitet. 0 = eingebauter
+	// Vorgabewert (ältere Server schicken das Feld nicht).
+	IdleTimeoutSec int `json:"idle_timeout_sec,omitempty"`
 }
 
 // Result ist die Antwort des Agents auf ein Command: kombinierter Output
@@ -76,7 +83,23 @@ type Result struct {
 	ExitCode  int    `json:"exit_code"`
 	Error     string `json:"error,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// Progress kennzeichnet ein Lebenszeichen statt eines Ergebnisses: Der
+	// Agent meldet damit im Takt von ProgressInterval, dass das Kommando noch
+	// arbeitet, und nennt in OutputBytes den bisher gesammelten Umfang. Der
+	// Server nimmt es als Aktivität entgegen und wartet weiter - erst ein
+	// Result OHNE dieses Flag schließt den Auftrag ab.
+	//
+	// Bewusst dasselbe Topic und derselbe Typ wie das Ergebnis: Ein Agent, der
+	// noch keine Fortschrittsmeldungen kennt, bleibt damit anschlussfähig, und
+	// ein alter Server ignoriert das unbekannte Feld.
+	Progress    bool `json:"progress,omitempty"`
+	OutputBytes int  `json:"output_bytes,omitempty"`
 }
+
+// ProgressInterval ist der Takt der Lebenszeichen eines laufenden Kommandos.
+// Deutlich kürzer als jede sinnvolle Stille-Frist, damit ein arbeitendes
+// Kommando nie versehentlich als hängend gilt.
+const ProgressInterval = 30 * time.Second
 
 // Inventory schickt der Agent bei jedem Connect - Versions-/Hostinfo für
 // die Anzeige; der vollständige System-Scan läuft weiterhin serverseitig

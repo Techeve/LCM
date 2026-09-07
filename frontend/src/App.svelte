@@ -35,6 +35,7 @@
   import SettingsMCP from './pages/settings/MCP.svelte';
   import SettingsGeneral from './pages/settings/General.svelte';
   import SettingsSecurity from './pages/settings/Security.svelte';
+  import SettingsEvents from './pages/settings/Events.svelte';
   import SettingsRepositories from './pages/settings/Repositories.svelte';
   import SettingsApps from './pages/settings/Apps.svelte';
   import SettingsAptCache from './pages/settings/AptCache.svelte';
@@ -73,6 +74,7 @@
     '/settings/apikeys': SettingsApiKeys,
     '/settings/mcp': SettingsMCP,
     '/settings/security': SettingsSecurity,
+    '/settings/events': SettingsEvents,
     '/settings/general': SettingsGeneral,
     '/settings/repositories': SettingsRepositories,
     '/settings/apps': SettingsApps,

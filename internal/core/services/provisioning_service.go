@@ -125,16 +125,11 @@ func (s *ProvisioningService) SyncServer(server *domain.Server, ctx SessionConte
 	scan := scanServerMode(conn, server.ServiceUser, server.RestrictedSudo)
 	fresh := *server
 	applyScan(&fresh, scan)
-	fields := map[string]any{
-		"os_name": fresh.OSName, "os_version": fresh.OSVersion, "kernel_version": fresh.KernelVersion,
-		"installed_kernels": fresh.InstalledKernels,
-		"proxmox_type":      fresh.ProxmoxType, "proxmox_version": fresh.ProxmoxVersion,
-		"cpu_model": fresh.CPUModel, "cpu_cores": fresh.CPUCores,
-		"mem_total_mb": fresh.MemTotalMB, "mem_used_mb": fresh.MemUsedMB,
-		"disk_total_mb": fresh.DiskTotalMB, "disk_used_mb": fresh.DiskUsedMB,
-		"ip_addresses": fresh.IPAddresses,
-		"has_docker":   fresh.HasDocker, "has_compose": fresh.HasCompose,
-	}
+	// Dieselbe Quelle wie der Voll-Refresh (siehe scanFields). Vorher stand
+	// hier eine eigene, von Hand gepflegte Liste - sie war zurückgeblieben
+	// und warf neunzehn erfasste Werte weg.
+	fields := scanFields(&fresh)
+
 	// DNS gehört zur Grunderfassung - und zwar in JEDEM Scan-Weg. Lief der
 	// Befund nur beim manuellen Hardware-Refresh, blieben die DNS-Daten auf
 	// allen Servern leer, die ausschließlich der geplante Sync anfasst.
@@ -151,6 +146,7 @@ func (s *ProvisioningService) SyncServer(server *domain.Server, ctx SessionConte
 	_ = s.servers.ReplaceSnapPackages(server.ID, scan.Snaps)
 	_ = s.servers.ReplaceRepositories(server.ID, scan.Repositories)
 	_ = s.servers.ReplaceDiskVolumes(server.ID, scan.DiskVolumes)
+	_ = s.servers.ReplaceStorageHealth(server.ID, scan.StorageHealth)
 	_ = s.servers.ReplaceServerUsers(server.ID, scan.Users)
 	_ = s.servers.ReplaceServerUserLogins(server.ID, scan.UserLogins)
 	_ = s.servers.ReplaceDockerContainers(server.ID, scan.DockerContainers)

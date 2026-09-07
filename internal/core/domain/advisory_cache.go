@@ -2,13 +2,31 @@ package domain
 
 import "time"
 
+// AdvisoryPollIntervalMinutes ist der Takt, in dem die Frühwarnung läuft.
+// Er steht hier und nicht nur im Scheduler, weil die Cache-Gültigkeit ohne
+// ihn nicht sinnvoll zu wählen ist: Ein Eintrag, der vor dem nächsten
+// Durchgang abläuft, wird nie gelesen - nur geschrieben.
+const AdvisoryPollIntervalMinutes = 15
+
 // Grenzen der Cache-Gültigkeit. Ein Treffer im Cache heißt: Wir haben NICHT
 // nachgesehen - und zwar genau in dem Zeitfenster, für das die Frühwarnung
 // überhaupt gebaut wurde. Deshalb ist die Obergrenze bewusst niedrig: eine
 // halbe Stunde ist der äußerste Wert, den man noch „frühwarnend" nennen kann,
 // wenn die Trivy-Spur daneben mit 6 bis 12 Stunden läuft.
+//
+// Die UNTERGRENZE ist der Poll-Takt: Darunter kann der Zwischenspeicher gar
+// nicht greifen, denn beim nächsten Durchgang ist jeder Eintrag schon
+// abgelaufen. Ein solcher Wert wäre das Schlechteste aus beiden Welten -
+// jeder Durchgang fragt alles neu UND schreibt alles neu. Genau das war der
+// bisherige Standardwert von 10 Minuten bei 15 Minuten Takt: Die Trefferquote
+// lag über Monate bei null.
+//
+// Der Standard liegt bewusst nicht auf dem Maximum: Er soll greifen, aber die
+// Frühwarnung nicht blinder machen als nötig. Die fünf Minuten Abstand zum
+// Takt sind der Puffer für einen Durchgang, der sich etwas verspätet.
 const (
-	AdvisoryCacheTTLDefault = 10 // Minuten
+	AdvisoryCacheTTLDefault = 20 // Minuten
+	AdvisoryCacheTTLMin     = AdvisoryPollIntervalMinutes
 	AdvisoryCacheTTLMax     = 30 // Minuten; 0 = Cache aus
 )
 

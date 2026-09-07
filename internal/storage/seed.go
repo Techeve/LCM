@@ -172,6 +172,7 @@ func syncRolesAndPermissions(roleRepo *repositories.RoleRepository) (admin, mana
 		domain.PermRolesWrite:      "Rollenzuordnungen ändern",
 		domain.PermServersRead:     "Server, Status, Hardware und Pakete lesen",
 		domain.PermServersWrite:    "Server joinen, konfigurieren, härten, entfernen",
+		domain.PermServersConsole:  "Interaktive Konsole auf einem Server öffnen (Root-Shell im Browser)",
 		domain.PermGroupsRead:      "Servergruppen lesen",
 		domain.PermGroupsWrite:     "Servergruppen anlegen, ändern, auflösen",
 		domain.PermRulesManage:     "Rules und Schedules verwalten und triggern",

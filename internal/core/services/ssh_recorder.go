@@ -2,8 +2,11 @@ package services
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
 
 	"LCM/internal/core/domain"
@@ -31,20 +34,30 @@ type SessionContext struct {
 // Verbindung unverändert zurück, sodass nichts protokolliert wird.
 type SSHRecorder struct {
 	logs *repositories.SSHLogRepository
-	// attachJob registriert die Verbindung beim zugehörigen Job (optional
-	// verdrahtet; JobService.AttachCloser) - Grundlage für den Job-Abbruch:
-	// beim Abort wird die Verbindung zwangsweise geschlossen.
-	attachJob func(jobID string, conn io.Closer)
+	// jobs verbindet eine Verbindung mit ihrem Job: AttachCloser macht sie
+	// abbrechbar (beim Abort wird sie zwangsweise geschlossen), MarkActivity
+	// meldet ihre Lebenszeichen an den Watchdog. Optional (nil = keine
+	// Job-Kopplung; Tests).
+	jobs JobLink
+}
+
+// JobLink ist die Kopplung einer SSH-Verbindung an den Job, für den sie
+// geöffnet wurde - der Ausschnitt des JobService, den der Recorder braucht.
+type JobLink interface {
+	// AttachCloser registriert die Verbindung zum Zwangs-Schließen beim Abbruch.
+	AttachCloser(jobID string, conn io.Closer)
+	// MarkActivity meldet ein Lebenszeichen des laufenden Kommandos.
+	MarkActivity(jobID string)
 }
 
 func NewSSHRecorder(logs *repositories.SSHLogRepository) *SSHRecorder {
 	return &SSHRecorder{logs: logs}
 }
 
-// WithJobAttach verdrahtet die Job-Registrierung geöffneter Verbindungen
-// (für Abbruch/Watchdog). Optional.
-func (r *SSHRecorder) WithJobAttach(fn func(jobID string, conn io.Closer)) *SSHRecorder {
-	r.attachJob = fn
+// WithJobs verdrahtet die Kopplung geöffneter Verbindungen an ihren Job
+// (Abbruch + Lebenszeichen für den Watchdog). Optional.
+func (r *SSHRecorder) WithJobs(jobs JobLink) *SSHRecorder {
+	r.jobs = jobs
 	return r
 }
 
@@ -55,8 +68,13 @@ func (r *SSHRecorder) Record(conn sshx.Conn, ctx SessionContext) sshx.Conn {
 	if r == nil || r.logs == nil || conn == nil {
 		return conn
 	}
-	if ctx.JobID != nil && r.attachJob != nil {
-		r.attachJob(*ctx.JobID, conn)
+	if ctx.JobID != nil && r.jobs != nil {
+		jobID := *ctx.JobID
+		r.jobs.AttachCloser(jobID, conn)
+		// Ab hier gilt der Job als überwacht: Er hat ein Kommando auf der
+		// Gegenseite, das hängen kann - und mit den Lebenszeichen dieser
+		// Verbindung die Grundlage, das zu erkennen.
+		conn.OnActivity(func() { r.jobs.MarkActivity(jobID) })
 	}
 	now := time.Now()
 	sess := &domain.SSHSession{
@@ -100,7 +118,19 @@ func (r *SSHRecorder) CleanupOlderThan(cutoff time.Time) (int64, error) {
 	return r.logs.DeleteOlderThan(cutoff)
 }
 
+// trivialCommands sind Kommandos, deren Protokollzeile nichts trägt.
+//
+// Bisher hinterließ jeder Health-Ping je Server und Viertelstunde eine Zeile
+// mit Kommando und Ausgabe, aufbewahrt so lange wie jedes andere Protokoll -
+// bei dreihundert Servern über neunzig Tage einige Millionen Zeilen für ein
+// „echo". Die Sitzung selbst bleibt erhalten: Auf derselben Verbindung laufen
+// die Grundsatz-Regeln, die Speichermessung und liegengebliebene
+// Benutzer-Abgleiche, und die gehören sehr wohl ins Protokoll.
+var trivialCommands = map[string]bool{healthProbeCmd: true}
+
 // recordingConn ist der Protokoll-Decorator um eine echte SSH-Verbindung.
+// Die Lebenszeichen reicht er unverändert an die innere Verbindung durch -
+// sie allein sieht den Ausgabestrom, während das Kommando noch läuft.
 type recordingConn struct {
 	inner    sshx.Conn
 	logs     *repositories.SSHLogRepository
@@ -113,12 +143,22 @@ func (c *recordingConn) Run(cmd string) (string, int, error) {
 	return c.RunStdin(cmd, "")
 }
 
+func (c *recordingConn) OnActivity(fn func()) { c.inner.OnActivity(fn) }
+
 // RunStdin protokolliert wie Run, speist dem Kommando aber stdin ein. Der
 // stdin-Inhalt (z.B. ein sudo-Passwort) wird BEWUSST nicht mitgeschrieben -
 // nur das Kommando (redigiert) landet im Protokoll.
 func (c *recordingConn) RunStdin(cmd, stdin string) (string, int, error) {
 	start := time.Now()
 	out, code, err := c.inner.RunStdin(cmd, stdin)
+	if trivialCommands[strings.TrimSpace(cmd)] {
+		// Nicht mitschreiben - aber Fehler zählen weiter: Scheitert
+		// ausgerechnet der Ping, ist das die Aussage der ganzen Sitzung.
+		if err != nil || code != 0 {
+			c.hadError = true
+		}
+		return out, code, err
+	}
 	c.seq++
 	entry := &domain.SSHCommand{
 		SSHSessionID: c.sess.ID,
@@ -168,4 +208,97 @@ func (c *recordingConn) RunStdin(cmd, stdin string) (string, int, error) {
 func (c *recordingConn) Close() error {
 	_ = c.logs.FinishSession(c.sess.ID, time.Now(), c.seq, c.hadError)
 	return c.inner.Close()
+}
+
+// --- Terminal-Mitschnitt ------------------------------------------------------
+
+// ErrTerminalUnsupported: Über diesen Transport gibt es keine Konsole. Trifft
+// den Agent-Weg (MQTT kennt nur Frage und Antwort) und jede Verbindung, die
+// kein PTY führen kann.
+var ErrTerminalUnsupported = errors.New("dieser server unterstützt keine konsole")
+
+// Terminal öffnet eine interaktive Sitzung UND schneidet sie mit.
+//
+// Der Mitschnitt ist keine Zutat, sondern Bedingung: LCMs Zusage lautet, dass
+// jedes Kommando im Protokoll steht. Eine Konsole, die daran vorbeiführt,
+// hätte ausgerechnet dort ein Loch, wo am meisten passieren kann.
+//
+// Aufgezeichnet wird der AUSGABE-Strom, nicht die Tastenanschläge. Das ist
+// nicht weniger, sondern genauer: Weil das Terminal die Eingaben spiegelt,
+// steht beides in der richtigen Reihenfolge darin - und was die Gegenseite
+// bewusst NICHT spiegelt, etwa ein Passwort an einer sudo-Abfrage, bleibt
+// auch aus dem Protokoll heraus.
+func (c *recordingConn) Terminal(term string, cols, rows int) (sshx.Terminal, error) {
+	inner, ok := c.inner.(sshx.TerminalConn)
+	if !ok {
+		return nil, ErrTerminalUnsupported
+	}
+	t, err := inner.Terminal(term, cols, rows)
+	if err != nil {
+		return nil, err
+	}
+	c.seq++
+	return &recordingTerminal{
+		Terminal: t, logs: c.logs, sess: c.sess,
+		seq: c.seq, started: time.Now(),
+	}, nil
+}
+
+// recordingTerminal hängt sich in den Ausgabe-Strom und schreibt am Ende einen
+// Protokolleintrag.
+type recordingTerminal struct {
+	sshx.Terminal
+	logs    *repositories.SSHLogRepository
+	sess    *domain.SSHSession
+	seq     int
+	started time.Time
+
+	mu     sync.Mutex
+	buf    strings.Builder
+	closed bool
+}
+
+// transcriptCap begrenzt, wie viel einer Sitzung im Speicher gehalten wird.
+// Das Doppelte der gespeicherten Menge - so bleiben Anfang und Ende erhalten,
+// wenn truncateOutput am Ende mittig kürzt, ohne dass eine stundenlange
+// Sitzung den Arbeitsspeicher füllt.
+const transcriptCap = 2 * maxOutputBytes
+
+func (t *recordingTerminal) Read(p []byte) (int, error) {
+	n, err := t.Terminal.Read(p)
+	if n > 0 {
+		t.mu.Lock()
+		if t.buf.Len() < transcriptCap {
+			t.buf.Write(p[:n])
+		}
+		t.mu.Unlock()
+	}
+	return n, err
+}
+
+// Close beendet die Sitzung und schreibt den Mitschnitt - einmal, auch wenn
+// mehrere Seiten gleichzeitig schließen.
+func (t *recordingTerminal) Close() error {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		return nil
+	}
+	t.closed = true
+	transcript := t.buf.String()
+	t.mu.Unlock()
+
+	err := t.Terminal.Close()
+	entry := &domain.SSHCommand{
+		SSHSessionID: t.sess.ID,
+		Seq:          t.seq,
+		StartedAt:    t.started,
+		DurationMs:   time.Since(t.started).Milliseconds(),
+		Command:      "[interaktive konsole]",
+		Output:       truncateOutput(redactSecrets(transcript)),
+	}
+	if logErr := t.logs.AddCommand(entry); logErr != nil {
+		slog.Error("terminal transcript could not be stored", "session", t.sess.ID, "error", logErr)
+	}
+	return err
 }

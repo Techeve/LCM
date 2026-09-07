@@ -23,12 +23,12 @@ var (
 	// ausgenommen. Proxmox pflegt seine Kernel-Aufbewahrung selbst
 	// (proxmox-boot-tool / eigene Meta-Pakete); eine zweite Schutzliste
 	// daneben wuerde die beiden Mechanismen gegeneinander laufen lassen.
-	ErrPackagePinsUnavailable = errors.New("paket-pins sind auf proxmox-systemen ausgenommen - proxmox verwaltet die kernel-aufbewahrung selbst")
+	ErrPackagePinsUnavailable = errors.New("Paket-Pins sind auf Proxmox-Systemen ausgenommen - Proxmox verwaltet die Kernel-Aufbewahrung selbst")
 	// ErrPackagePinName: leerer oder unzulaessiger Pin-Name.
 	ErrPackagePinName = errors.New("ungueltiger paketname fuer den pin (erlaubt: a-z, 0-9, . _ + - und ein abschliessendes *)")
 	// ErrPackagePinsNotWired: der Pin-Speicher ist nicht verdrahtet (schlanke
 	// Tests) - die Aktion ist dann nicht verfuegbar.
-	ErrPackagePinsNotWired = errors.New("paket-pins sind in dieser instanz nicht verfuegbar")
+	ErrPackagePinsNotWired = errors.New("Paket-Pins sind in dieser Instanz nicht verfügbar")
 	// ErrPackagePinEffect: ein Pin ohne Wirkung waere ein stiller No-op.
 	ErrPackagePinEffect = errors.New("ein pin braucht mindestens eine wirkung (nicht entfernen und/oder version einfrieren)")
 	// ErrPinnedPackage: das Paket ist per Pin vor dem Entfernen geschuetzt.

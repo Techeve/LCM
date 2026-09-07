@@ -130,27 +130,38 @@ func (s *ServerService) runBulkUpdate(targets []domain.Server, actor string) {
 	}
 }
 
-// waitJobTerminal wartet, bis ein Job einen Endzustand erreicht, und meldet, ob
-// er erfolgreich war. Deckelt bei einer Stunde (der Job-Watchdog beendet hängende
-// Jobs ohnehin), damit ein hängender Job den Lauf nicht endlos blockiert.
+// waitJobTerminal wartet, bis ein Job einen Endzustand erreicht, und meldet,
+// ob er erfolgreich war.
+//
+// Bewusst ohne eigene Frist: Ein Update auf schwacher Hardware darf Stunden
+// dauern, und den Unterschied zwischen „langsam" und „hängt" trifft allein
+// der Job-Watchdog - er beendet jeden Job, der keine Lebenszeichen mehr gibt,
+// und löst damit auch dieses Warten auf. Eine zweite Uhr daneben würde nur
+// den langsamen Fall abschneiden, den der Watchdog gerade durchlässt.
 func (s *ServerService) waitJobTerminal(id string) bool {
+	// Ist die Job-Zeile nicht mehr lesbar (gelöscht, DB-Fehler), gibt es
+	// nichts mehr, worauf zu warten wäre - nach ein paar Fehlversuchen zählt
+	// der Job als gescheitert, statt den Sammellauf festzuhalten.
 	const (
-		poll = 300 * time.Millisecond
-		max  = time.Hour
+		poll         = 300 * time.Millisecond
+		maxReadFails = 10
 	)
-	deadline := time.Now().Add(max)
+	readFails := 0
 	for {
 		job, err := s.jobs.Status(id)
-		if err == nil && job != nil {
-			switch job.Status {
-			case domain.JobStatusSuccess:
-				return true
-			case domain.JobStatusFailed, domain.JobStatusBlocked, domain.JobStatusAborted:
+		switch {
+		case err != nil || job == nil:
+			if readFails++; readFails >= maxReadFails {
 				return false
 			}
-		}
-		if time.Now().After(deadline) {
+		case job.Status == domain.JobStatusSuccess:
+			return true
+		case job.Status == domain.JobStatusFailed,
+			job.Status == domain.JobStatusBlocked,
+			job.Status == domain.JobStatusAborted:
 			return false
+		default:
+			readFails = 0
 		}
 		time.Sleep(poll)
 	}

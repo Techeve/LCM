@@ -738,6 +738,87 @@ func (r *ServerRepository) LatestStorageSampleAt(serverID uint) (time.Time, erro
 // ReplaceDiskVolumes ersetzt den erfassten Volume-Bestand eines Servers
 // atomar (analog zu ReplacePackages) - die eingehängten Dateisysteme aus dem
 // letzten Full-Scan.
+// ReplaceStorageHealth ersetzt die erhobenen Speicher-Zustände eines Servers.
+// Reines Scan-Ergebnis - es hängt keine Konfiguration daran (die steht in
+// volume_monitors und überlebt den Scan deshalb).
+func (r *ServerRepository) ReplaceStorageHealth(serverID uint, befunde []domain.StorageHealth) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("server_id = ?", serverID).Delete(&domain.StorageHealth{}).Error; err != nil {
+			return err
+		}
+		for i := range befunde {
+			befunde[i].ID = 0
+			befunde[i].ServerID = serverID
+		}
+		if len(befunde) == 0 {
+			return nil
+		}
+		return tx.Create(befunde).Error
+	})
+}
+
+// FindStorageHealth liefert die Speicher-Zustände eines Servers.
+func (r *ServerRepository) FindStorageHealth(serverID uint) ([]domain.StorageHealth, error) {
+	var befunde []domain.StorageHealth
+	if err := r.db.Where("server_id = ?", serverID).Order("kind, id").Find(&befunde).Error; err != nil {
+		return nil, err
+	}
+	return befunde, nil
+}
+
+// --- Überwachung einzelner Volumes -------------------------------------------
+
+// FindVolumeMonitors liefert die Überwachungs-Einstellungen eines Servers.
+func (r *ServerRepository) FindVolumeMonitors(serverID uint) ([]domain.VolumeMonitor, error) {
+	var monitore []domain.VolumeMonitor
+	if err := r.db.Where("server_id = ?", serverID).Order("id").Find(&monitore).Error; err != nil {
+		return nil, err
+	}
+	return monitore, nil
+}
+
+// SaveVolumeMonitor legt die Überwachung eines Volumes an oder ändert sie.
+// Schlüssel ist (server_id, mountpoint) - die Volume-ID wechselt bei jedem
+// Scan und taugt nicht dafür.
+func (r *ServerRepository) SaveVolumeMonitor(m *domain.VolumeMonitor) error {
+	vorhanden, err := r.findVolumeMonitor(m.ServerID, m.Mountpoint)
+	if err != nil {
+		return err
+	}
+	if vorhanden == nil {
+		return r.db.Create(m).Error
+	}
+	m.ID = vorhanden.ID
+	return r.db.Model(&domain.VolumeMonitor{}).Where("id = ?", vorhanden.ID).
+		Updates(map[string]any{
+			"warn_percent":       m.WarnPercent,
+			"crit_percent":       m.CritPercent,
+			"inode_warn_percent": m.InodeWarnPercent,
+		}).Error
+}
+
+// DeleteVolumeMonitor schaltet die Überwachung eines Volumes ab.
+func (r *ServerRepository) DeleteVolumeMonitor(serverID uint, mountpoint string) error {
+	vorhanden, err := r.findVolumeMonitor(serverID, mountpoint)
+	if err != nil || vorhanden == nil {
+		return err
+	}
+	return r.db.Delete(&domain.VolumeMonitor{}, vorhanden.ID).Error
+}
+
+// findVolumeMonitor sucht die Einstellung zu einem Mountpoint (nil = keine).
+func (r *ServerRepository) findVolumeMonitor(serverID uint, mountpoint string) (*domain.VolumeMonitor, error) {
+	var m domain.VolumeMonitor
+	err := r.db.Where("server_id = ? AND mountpoint = ?", serverID, mountpoint).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 func (r *ServerRepository) ReplaceDiskVolumes(serverID uint, volumes []domain.DiskVolume) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("server_id = ?", serverID).Delete(&domain.DiskVolume{}).Error; err != nil {

@@ -161,8 +161,10 @@ func (s *server) handleScanImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "ungültige image-referenz")
 		return
 	}
+	// --skip-java-db-update wie im lokalen Weg: ein zweiter, rund anderthalb
+	// Gigabyte großer Download, der für Linux-Serverflotten nichts beiträgt.
 	args := []string{"image", "--format", "json", "--quiet", "--scanners", "vuln",
-		"--cache-dir", s.cache, ref}
+		"--skip-java-db-update", "--cache-dir", s.cache, ref}
 	out, err := s.runTrivy(r, imageTimeout, args...)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())

@@ -40,6 +40,12 @@ func Open(path string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("datenbank öffnen: %w", err)
 	}
+	// Feldverschlüsselung auch auf dem Weg über Updates(map) - siehe
+	// encryptMapAssignments. Muss an der Verbindung hängen, nicht an den
+	// Aufrufstellen: Von denen gibt es über achtzig.
+	if err := registerMapUpdateEncryption(db); err != nil {
+		return nil, fmt.Errorf("feldverschlüsselung einhängen: %w", err)
+	}
 	if path != ":memory:" {
 		// Die DB-Datei (samt WAL/SHM) enthält neben feldverschlüsselten
 		// Secrets auch reichlich Klartext (Job-Output, SSH-Protokolle,
@@ -238,23 +244,53 @@ func migrateEncryptLinuxUserFields(db *gorm.DB) error {
 	return nil
 }
 
-// firewallEncColumns sind die at-rest zu verschlüsselnden Firewall-/Port-Felder
-// der Server (nur über den Serializer geschützt - kein Blindindex nötig).
-var firewallEncColumns = []string{
-	"firewall_allowed_ports", "firewall_rules", "firewall_ssh_sources",
-	"firewall_tool", "listening_ports", "listening_packages",
+// spaetVerschluesselteServerSpalten dürfen beim Nachverschlüsseln NICHT im
+// ersten Durchgang mitlaufen: Die v0.3.0-Migration leitet die Paketverwaltung
+// per `LIKE` aus os_name/os_id ab und braucht dort noch Klartext. Sie werden
+// erst nach den versionierten Migrationen behandelt
+// (EncryptServerProfileFields, aufgerufen aus main.go).
+//
+// Alles ANDERE ergibt sich aus dem Schema - siehe serverEncColumns.
+var spaetVerschluesselteServerSpalten = []string{
+	"os_name", "os_version", "os_id", "os_version_id",
+	"kernel_version", "installed_kernels", "cpu_model",
 }
 
-// migrateEncryptServerFirewall verschlüsselt bestehende Klartext-Werte der
-// Firewall-/Port-Felder. Idempotenz über Decrypt-Probe: bereits verschlüsselte
-// Werte (DecryptString erfolgreich) werden übersprungen. Ohne Cipher (Tests)
-// ein No-Op.
-func migrateEncryptServerFirewall(db *gorm.DB) error {
+// serverEncColumns liefert die nachzuverschlüsselnden Server-Spalten für einen
+// der beiden Durchgänge. Die Grundmenge kommt aus dem GORM-Schema, damit hier
+// nichts mehr fehlen kann - zuvor standen dieselben Spalten in drei von Hand
+// gepflegten Listen, und jede war unvollständig.
+//
+// "name" bleibt außen vor: Der Server-Name trägt einen Blindindex und wird
+// samt Index von encryptServerNames behandelt.
+func serverEncColumns(db *gorm.DB, spaet bool) ([]string, error) {
+	alle, err := aesgcmColumns(db, &domain.Server{})
+	if err != nil {
+		return nil, err
+	}
+	istSpaet := make(map[string]bool, len(spaetVerschluesselteServerSpalten))
+	for _, s := range spaetVerschluesselteServerSpalten {
+		istSpaet[s] = true
+	}
+	var spalten []string
+	for _, s := range alle {
+		if s == "name" || istSpaet[s] != spaet {
+			continue
+		}
+		spalten = append(spalten, s)
+	}
+	return spalten, nil
+}
+
+// encryptServerColumns verschlüsselt bestehende Klartext-Werte der genannten
+// Server-Spalten. Idempotent über eine Decrypt-Probe: Was sich entschlüsseln
+// lässt, ist bereits verschlüsselt und bleibt unberührt.
+func encryptServerColumns(db *gorm.DB, spalten []string) error {
 	if fieldCipher == nil {
 		return nil
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		for _, col := range firewallEncColumns {
+		for _, col := range spalten {
 			var rows []struct {
 				ID uint
 				V  string
@@ -280,12 +316,15 @@ func migrateEncryptServerFirewall(db *gorm.DB) error {
 	})
 }
 
-// serverProfileEncColumns sind die at-rest zu verschlüsselnden OS-/Kernel-/CPU-
-// Profilfelder der Server (nur Serializer - nie SQL-gefiltert; Dashboard filtert
-// clientseitig).
-var serverProfileEncColumns = []string{
-	"os_name", "os_version", "os_id", "os_version_id",
-	"kernel_version", "installed_kernels", "cpu_model",
+// migrateEncryptServerFirewall verschlüsselt bestehende Klartext-Werte aller
+// Server-Spalten, die nicht auf den späten Durchgang warten müssen. Ohne
+// Cipher (Tests) ein No-Op.
+func migrateEncryptServerFirewall(db *gorm.DB) error {
+	spalten, err := serverEncColumns(db, false)
+	if err != nil {
+		return err
+	}
+	return encryptServerColumns(db, spalten)
 }
 
 // EncryptServerProfileFields verschlüsselt bestehende Klartext-Werte der OS-/
@@ -294,34 +333,11 @@ var serverProfileEncColumns = []string{
 // leitet die Paketverwaltung per `LIKE` aus os_name/os_id ab und braucht dort
 // noch Klartext. Ohne Cipher (Tests) ein No-Op.
 func EncryptServerProfileFields(db *gorm.DB) error {
-	if fieldCipher == nil {
-		return nil
+	spalten, err := serverEncColumns(db, true)
+	if err != nil {
+		return err
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		for _, col := range serverProfileEncColumns {
-			var rows []struct {
-				ID uint
-				V  string
-			}
-			if err := tx.Raw(fmt.Sprintf("SELECT id, %s AS v FROM servers WHERE %s IS NOT NULL AND %s != ''", col, col, col)).
-				Scan(&rows).Error; err != nil {
-				return err
-			}
-			for _, r := range rows {
-				if _, err := fieldCipher.DecryptString(r.V); err == nil {
-					continue // bereits verschlüsselt
-				}
-				enc, err := fieldCipher.EncryptString(r.V)
-				if err != nil {
-					return err
-				}
-				if err := tx.Exec(fmt.Sprintf("UPDATE servers SET %s = ? WHERE id = ?", col), enc, r.ID).Error; err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
+	return encryptServerColumns(db, spalten)
 }
 
 // addServerRefColumns legt die Spalte server_ref in den Kindtabellen an, BEVOR
@@ -548,67 +564,76 @@ func checkForeignKeys(db *gorm.DB) error {
 		len(verletzungen), strings.Join(betroffen, ", "))
 }
 
+// migratedModels sind alle Entitäten, die AutoMigrate anlegt. Als eigene
+// Liste, damit auch Prüfungen darüber laufen können - etwa, ob jedes
+// verschlüsselte Feld für die Schlüsselrotation registriert ist.
+// Neue Entitäten gehören hierher.
+var migratedModels = []any{
+	&domain.HealthProbe{},
+	&domain.User{},
+	&domain.Role{},
+	&domain.Permission{},
+	&domain.APIKey{},
+	&domain.Server{},
+	&domain.ServerGroup{},
+	&domain.Schedule{},
+	&domain.Rule{},
+	&domain.Job{},
+	&domain.SSHSession{},
+	&domain.SSHCommand{},
+	&domain.AuditLog{},
+	&domain.Package{},
+	&domain.SnapPackage{},
+	&domain.DockerContainer{},
+	&domain.DockerImage{},
+	&domain.Vulnerability{},
+	&domain.DeepScanReport{},
+	&domain.DeepScanFinding{},
+	&domain.StorageHistory{},
+	&domain.DiskVolume{},
+	&domain.ServerUser{},
+	&domain.ServerUserBlock{},
+	&domain.ServerUserLogin{},
+	&domain.AptRepository{},
+	&domain.KnownRepo{},
+	&domain.AppCatalogEntry{},
+	&domain.DetectedApp{},
+	&domain.UnknownApp{},
+	&domain.PackagePin{},
+	&domain.IPAllowlist{},
+	&domain.LinuxUser{},
+	&domain.LinuxUserSSHKey{},
+	&domain.LinuxUserActivation{},
+	&domain.PrivilegeProfile{},
+	&domain.ProfileSudoRule{},
+	&domain.ProfileEditRule{},
+	&domain.ProfilePathRule{},
+	&domain.ProfileBlock{},
+	&domain.ProfileBlockVariant{},
+	&domain.ProfileBlockUse{},
+	&domain.AppliedProfilePath{},
+	&domain.HardenedPath{},
+	// Die beiden Zuordnungstabellen bestehen bereits als
+	// many2many-Verknüpfung; AutoMigrate ergänzt hier nur die Spalte
+	// profile_id. Deshalb MÜSSEN sie nach LinuxUser stehen.
+	&domain.ServerLinuxUser{},
+	&domain.ServerGroupLinuxUser{},
+	&domain.ActivationLink{},
+	&domain.StorageHealth{},
+	&domain.VolumeMonitor{},
+	&domain.GlobalSettings{},
+	&domain.Backup{},
+	&domain.CustomAction{},
+	&domain.NotificationChannel{},
+	&domain.AlertRule{},
+	&domain.PendingUserSync{},
+	&domain.AlertEvent{},
+	&domain.AdvisoryFinding{},
+	&domain.AdvisoryCacheEntry{},
+	&domain.AdvisoryDetail{},
+	&domain.AdvisoryCacheStats{},
+}
+
 func autoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(
-		&domain.User{},
-		&domain.Role{},
-		&domain.Permission{},
-		&domain.APIKey{},
-		&domain.Server{},
-		&domain.ServerGroup{},
-		&domain.Schedule{},
-		&domain.Rule{},
-		&domain.Job{},
-		&domain.SSHSession{},
-		&domain.SSHCommand{},
-		&domain.AuditLog{},
-		&domain.Package{},
-		&domain.SnapPackage{},
-		&domain.DockerContainer{},
-		&domain.DockerImage{},
-		&domain.Vulnerability{},
-		&domain.DeepScanReport{},
-		&domain.DeepScanFinding{},
-		&domain.StorageHistory{},
-		&domain.DiskVolume{},
-		&domain.ServerUser{},
-		&domain.ServerUserBlock{},
-		&domain.ServerUserLogin{},
-		&domain.AptRepository{},
-		&domain.KnownRepo{},
-		&domain.AppCatalogEntry{},
-		&domain.DetectedApp{},
-		&domain.UnknownApp{},
-		&domain.PackagePin{},
-		&domain.IPAllowlist{},
-		&domain.LinuxUser{},
-		&domain.LinuxUserSSHKey{},
-		&domain.LinuxUserActivation{},
-		&domain.PrivilegeProfile{},
-		&domain.ProfileSudoRule{},
-		&domain.ProfileEditRule{},
-		&domain.ProfilePathRule{},
-		&domain.ProfileBlock{},
-		&domain.ProfileBlockVariant{},
-		&domain.ProfileBlockUse{},
-		&domain.AppliedProfilePath{},
-		&domain.HardenedPath{},
-		// Die beiden Zuordnungstabellen bestehen bereits als
-		// many2many-Verknüpfung; AutoMigrate ergänzt hier nur die Spalte
-		// profile_id. Deshalb MÜSSEN sie nach LinuxUser stehen.
-		&domain.ServerLinuxUser{},
-		&domain.ServerGroupLinuxUser{},
-		&domain.ActivationLink{},
-		&domain.GlobalSettings{},
-		&domain.Backup{},
-		&domain.CustomAction{},
-		&domain.NotificationChannel{},
-		&domain.AlertRule{},
-		&domain.PendingUserSync{},
-		&domain.AlertEvent{},
-		&domain.AdvisoryFinding{},
-		&domain.AdvisoryCacheEntry{},
-		&domain.AdvisoryDetail{},
-		&domain.AdvisoryCacheStats{},
-	)
+	return db.AutoMigrate(migratedModels...)
 }

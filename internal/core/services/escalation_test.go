@@ -19,7 +19,8 @@ func (c *scriptedConn) RunStdin(cmd, stdin string) (string, int, error) {
 	out, code := c.handler(cmd, stdin)
 	return out, code, nil
 }
-func (c *scriptedConn) Close() error { return nil }
+func (c *scriptedConn) OnActivity(func()) {}
+func (c *scriptedConn) Close() error      { return nil }
 
 // TestDetectRootEscalationRoot: root braucht keine Proben.
 func TestDetectRootEscalationRoot(t *testing.T) {

@@ -15,7 +15,7 @@ require (
 	github.com/landlock-lsm/go-landlock v0.9.0
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/robfig/cron/v3 v3.0.1
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	gorm.io/gorm v1.31.2
 	modernc.org/sqlite v1.56.0
 )

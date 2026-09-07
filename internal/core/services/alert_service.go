@@ -396,7 +396,13 @@ func (s *AlertService) evaluateSelf(rule *domain.AlertRule) finding {
 // sonst alle Server.
 func (s *AlertService) targetServers(rule *domain.AlertRule) ([]domain.Server, error) {
 	if len(rule.Groups) == 0 {
-		return s.servers.FindAllUnscoped()
+		all, err := s.servers.FindAllUnscoped()
+		if err != nil {
+			return nil, err
+		}
+		// Ein Server in Wartung ist absichtlich aus - ihn zu bemängeln, wäre
+		// genau der Fehlalarm, der die echten unglaubwürdig macht.
+		return domain.ActiveServers(all), nil
 	}
 	seen := map[uint]bool{}
 	var servers []domain.Server
@@ -413,7 +419,7 @@ func (s *AlertService) targetServers(rule *domain.AlertRule) ([]domain.Server, e
 			servers = append(servers, m)
 		}
 	}
-	return servers, nil
+	return domain.ActiveServers(servers), nil
 }
 
 // evaluateServer wertet das Kriterium einer Regel für einen Server aus.

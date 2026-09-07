@@ -105,7 +105,9 @@ type GlobalSettings struct {
 	// Die Obergrenze (AdvisoryCacheTTLMax) ist bewusst niedrig: Ein Treffer
 	// im Zwischenspeicher heißt, dass NICHT nachgesehen wurde - und zwar
 	// genau in dem Zeitfenster, für das die Frühwarnung überhaupt existiert.
-	AdvisoryCacheTTLMinutes int `gorm:"default:10" json:"advisory_cache_ttl_minutes"`
+	// Die Untergrenze ist der Poll-Takt - darunter läuft jeder Eintrag vor
+	// seiner ersten Verwendung ab (siehe AdvisoryCacheTTLMin).
+	AdvisoryCacheTTLMinutes int `gorm:"default:20" json:"advisory_cache_ttl_minutes"`
 
 	// CVEHighWeightPackages: kommagetrennte Liste von Paketen, deren CVEs
 	// eine Schwere-Stufe HÖHER gewichtet werden (exponierte Dienste:
@@ -136,11 +138,34 @@ type GlobalSettings struct {
 	// Minuten. 0 = Vorgabe aus der config.json (access_token_ttl_minutes).
 	SessionTTLMinutes int `gorm:"default:0" json:"session_ttl_minutes"`
 
-	// JobMaxRuntimeMinutes ist die Maximaldauer eines laufenden Jobs. Der
-	// Job-Watchdog bricht Jobs jenseits dieser Frist automatisch ab und gibt
-	// damit die Server-Sperre wieder frei (hängende Kommandos, z.B. apt
-	// wartet auf einen dpkg-Lock). 0 = Watchdog aus.
-	JobMaxRuntimeMinutes int `gorm:"default:120" json:"job_max_runtime_minutes"`
+	// JobIdleTimeoutMinutes ist die erlaubte STILLE eines laufenden Jobs:
+	// Solange von der Gegenseite Ausgabe kommt, arbeitet der Lauf und darf
+	// beliebig lange dauern; kommt so lange gar nichts mehr, bricht der
+	// Job-Watchdog ab und gibt die Server-Sperre wieder frei (z.B. apt, das
+	// auf einen dpkg-Lock wartet). 0 = Watchdog aus.
+	//
+	// Eine Maximaldauer gibt es bewusst nicht mehr: Sie kann einen langsamen
+	// Rechner nicht von einem hängenden Prozess unterscheiden und schnitt
+	// große Upgrades auf schwacher Hardware mitten im Lauf ab.
+	JobIdleTimeoutMinutes int `gorm:"default:5" json:"job_idle_timeout_minutes"`
+	// JobIdleTimeoutSlowMinutes ist dieselbe Frist für schwache Hardware
+	// (Raspberry Pi & Co., siehe Server.IsSlowHardware). Dort sind lange
+	// stille Phasen normal - ein einzelner dpkg-Trigger wie update-initramfs
+	// läuft auf einer SD-Karte minutenlang ohne eine Zeile Ausgabe.
+	JobIdleTimeoutSlowMinutes int `gorm:"default:30" json:"job_idle_timeout_slow_minutes"`
+
+	// TerminalEnabled gibt die Web-Konsole für diese Installation frei.
+	//
+	// Sie ist die eingriffsstärkste Funktion des Systems: Wer sie benutzen
+	// darf, bekommt über LCMs Schlüssel eine Root-Shell auf jedem verwalteten
+	// Server. Die Berechtigung (PermServersConsole) regelt, WER sie benutzen
+	// darf; dieser Schalter entscheidet, ob es sie hier überhaupt gibt.
+	//
+	// Vorgabe an, aber ohne Wirkung für die meisten: Die Berechtigung liegt
+	// im Auslieferungszustand allein bei admin. Ein Betreiber, der die
+	// Fähigkeit gar nicht im Haus haben will, legt hier den Schalter um -
+	// dann führt auch ein versehentlich vergebenes Recht zu nichts.
+	TerminalEnabled bool `gorm:"default:true" json:"terminal_enabled"`
 
 	// APT-Cache (apt-cacher-ng): Basis-URL des zentralen Paket-Caches,
 	// z.B. http://192.168.1.10:3142. Leer = Feature aus. Server leiten ihre
@@ -320,23 +345,23 @@ func ClampStorageHistoryRetention(days int) int {
 	return days
 }
 
-// Grenzen der Job-Maximaldauer (Minuten). 0 bedeutet: Watchdog aus.
+// Grenzen der erlaubten Stille (Minuten). 0 bedeutet: Watchdog aus.
 const (
-	JobMaxRuntimeMin = 5
-	JobMaxRuntimeMax = 24 * 60
+	JobIdleTimeoutMin = 1
+	JobIdleTimeoutMax = 24 * 60
 )
 
-// ClampJobMaxRuntime begrenzt die Job-Maximaldauer auf den erlaubten Bereich;
-// 0 (Watchdog aus) bleibt erhalten.
-func ClampJobMaxRuntime(minutes int) int {
+// ClampJobIdleTimeout begrenzt die erlaubte Stille auf den zulässigen
+// Bereich; 0 (Watchdog aus) bleibt erhalten.
+func ClampJobIdleTimeout(minutes int) int {
 	if minutes <= 0 {
 		return 0
 	}
-	if minutes < JobMaxRuntimeMin {
-		return JobMaxRuntimeMin
+	if minutes < JobIdleTimeoutMin {
+		return JobIdleTimeoutMin
 	}
-	if minutes > JobMaxRuntimeMax {
-		return JobMaxRuntimeMax
+	if minutes > JobIdleTimeoutMax {
+		return JobIdleTimeoutMax
 	}
 	return minutes
 }
@@ -478,10 +503,18 @@ func (g *GlobalSettings) AdvisoryCacheTTL() int {
 	return ClampAdvisoryCacheTTL(g.AdvisoryCacheTTLMinutes)
 }
 
-// ClampAdvisoryCacheTTL begrenzt die Cache-Gültigkeit auf [0, Max].
+// ClampAdvisoryCacheTTL begrenzt die Cache-Gültigkeit auf {0} ∪ [Min, Max].
+//
+// 0 bleibt 0 - „aus" ist eine gültige Entscheidung. Ein Wert dazwischen ist
+// dagegen keine: Er schaltet den Zwischenspeicher ein, lässt ihn aber vor dem
+// nächsten Durchgang ablaufen. Statt dieser wirkungslosen Einstellung gilt
+// der kleinste Wert, der tatsächlich etwas bewirkt.
 func ClampAdvisoryCacheTTL(minutes int) int {
 	if minutes <= 0 {
 		return 0
+	}
+	if minutes < AdvisoryCacheTTLMin {
+		return AdvisoryCacheTTLMin
 	}
 	if minutes > AdvisoryCacheTTLMax {
 		return AdvisoryCacheTTLMax

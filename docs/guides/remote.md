@@ -264,6 +264,32 @@ Danach am Agent-Server `lcm-agent enroll …` ausführen: Der Verbindungstest
 läuft vor jeder Installation und meldet einen Proxy-Fehler sofort im Klartext,
 statt ihn im Dienst-Log zu vergraben.
 
+## Web-Konsole
+
+Eine interaktive Shell auf einem Server, im Browser - erreichbar über die
+Schaltfläche **Konsole** ganz links in der Aktionsleiste der Server-Detailseite.
+
+Die Konsole ist an drei Stellen begrenzt, und alle drei greifen unabhängig
+voneinander:
+
+| Ebene | Wirkung |
+|---|---|
+| **Einstellungen → Sicherheit** | globaler Schalter - nimmt die Fähigkeit aus dem ganzen Haus |
+| **Berechtigung `servers:console`** | regelt, WER sie benutzen darf; im Auslieferungszustand allein `admin` |
+| **Server-Einstellungen → Web-Konsole** | schaltet sie für EINEN Server ab |
+
+Die Berechtigung ist bewusst von `servers:write` getrennt: Wer Server
+konfigurieren darf, soll damit nicht automatisch eine Root-Shell auf allen
+bekommen. Aus demselben Grund verlangt auch der Schalter je Server das
+Konsolen-Recht - sonst könnte sich ein Verwalter freischalten, was ihm nicht
+zusteht.
+
+Ist die Konsole für einen Server abgeschaltet, verschwindet nicht nur die
+Schaltfläche: Der Server weist auch direkte Aufrufe ab. Ohne Shell geht es
+ohnehin nicht - auf Demo-Servern, Synology-DSM-Geräten, Agent-Servern (der
+Agent-Transport führt keinen Strom) und auf Servern in Wartung wird die
+Konsole gar nicht erst angeboten.
+
 ## Enrollment-Token
 
 Das Token ist das **dauerhafte** Credential des Agents (wie ein API-Key). Es
@@ -291,7 +317,7 @@ zeigt die passenden Befehle:
 2. **Agent installieren.** Auf Debian/Ubuntu aus dem Paketkanal
    (`sudo apt install lcm-agent`). Für die übrigen Distributionen hängt
    dasselbe Paket als RPM, APK und Arch-Paket am
-   [Release](https://gitlab.techeve.de/techeve/lcm/-/releases) - es gibt dort
+   [Release](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=doc) - es gibt dort
    bislang keinen eigenen Paketkanal, die Datei wird also direkt installiert:
 
    ```sh
@@ -336,4 +362,6 @@ klaren Hinweis abgewiesen. Der Agent läuft als **Root-Dienst** auf dem Zielsyst
 (kein sudo-Wrapper nötig); alle übrigen Funktionen - Scans, Paket-Updates,
 Docker-Monitoring, Firewall, DNS, Sicherheits-Tools - laufen unverändert über den
 Agent-Transport. Auch die SSH-Protokollierung (Recorder) und die Kommando-Limits
-(ConnLimiter, Laufzeit-Watchdog, Job-Abort) greifen genau wie beim SSH-Transport.
+(ConnLimiter, Job-Watchdog, Job-Abort) greifen genau wie beim SSH-Transport. Der
+Agent meldet dabei alle 30 Sekunden, dass ein laufendes Kommando noch arbeitet -
+darüber unterscheidet der Watchdog ein langsames Update von einem hängenden.

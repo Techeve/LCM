@@ -30,15 +30,26 @@ import (
 // Stdout und Stderr in ZWEI parallelen Goroutinen; würden beide in denselben
 // bytes.Buffer schreiben (der nicht thread-safe ist), gingen bei längeren
 // Ausgaben durch den Data Race Daten verloren. Dieser Mutex verhindert das.
+//
+// onWrite ist das Lebenszeichen des laufenden Kommandos: Der Puffer füllt
+// sich, WÄHREND das Kommando läuft - jeder eintreffende Block belegt, dass
+// die Gegenseite noch arbeitet. Darauf stützt sich der Job-Watchdog, statt
+// eine feste Maximaldauer zu unterstellen. Das Feld wird vor dem Start
+// gesetzt und danach nur noch gelesen.
 type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu      sync.Mutex
+	buf     bytes.Buffer
+	onWrite func()
 }
 
 func (b *syncBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
+	n, err := b.buf.Write(p)
+	b.mu.Unlock()
+	if b.onWrite != nil {
+		b.onWrite()
+	}
+	return n, err
 }
 
 func (b *syncBuffer) String() string {
@@ -75,6 +86,12 @@ type Conn interface {
 	// das Passwort zu übergeben, ohne es in die (protokollierte) Kommandozeile
 	// zu schreiben. Bei leerem stdin verhält es sich wie Run.
 	RunStdin(cmd, stdin string) (output string, exitCode int, err error)
+	// OnActivity hinterlegt einen Rückruf für die Lebenszeichen laufender
+	// Kommandos: Er feuert bei jedem eintreffenden Ausgabe-Block sowie zu
+	// Beginn und Ende jedes Kommandos. Der Job-Watchdog erkennt daran, ob ein
+	// Lauf noch arbeitet oder hängt (siehe JobService.MarkActivity). fn muss
+	// schnell zurückkehren - der Aufruf hält den Ausgabestrom auf.
+	OnActivity(fn func())
 	Close() error
 }
 
@@ -227,6 +244,26 @@ func (c *Client) dial(host string, port int, user string, auth []ssh.AuthMethod,
 
 type clientConn struct {
 	client *ssh.Client
+
+	mu         sync.Mutex
+	onActivity func() // Lebenszeichen-Rückruf, siehe Conn.OnActivity
+}
+
+// OnActivity hinterlegt den Lebenszeichen-Rückruf dieser Verbindung.
+func (c *clientConn) OnActivity(fn func()) {
+	c.mu.Lock()
+	c.onActivity = fn
+	c.mu.Unlock()
+}
+
+// activity meldet ein Lebenszeichen, sofern ein Rückruf hinterlegt ist.
+func (c *clientConn) activity() {
+	c.mu.Lock()
+	fn := c.onActivity
+	c.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // Run führt ein Kommando aus. Stdout und Stderr werden gemeinsam
@@ -244,7 +281,12 @@ func (c *clientConn) RunStdin(cmd, stdin string) (string, int, error) {
 	}
 	defer session.Close()
 
-	var buf syncBuffer
+	// Start und Ende zählen als Lebenszeichen: Ein Ablauf aus vielen kurzen,
+	// stillen Kommandos (Scan) arbeitet sichtbar, ohne Ausgabe zu erzeugen.
+	c.activity()
+	defer c.activity()
+
+	buf := syncBuffer{onWrite: c.activity}
 	session.Stdout = &buf
 	session.Stderr = &buf
 	if stdin != "" {

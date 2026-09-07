@@ -51,8 +51,14 @@ default:
   tags: [docker]
 
 variables:
-  GO_IMAGE: golang:1-alpine
-  NODE_IMAGE: node:lts
+  # Feste Major/Minor statt gleitender Tags. golang:1-alpine wanderte
+  # unbemerkt von Go 1.26 auf 1.27 und riss dabei golangci-lint mit (das
+  # gebündelte staticcheck kannte die neue Standardbibliothek nicht) - ein
+  # roter Job ohne eine einzige Änderung am Code. Ein Wechsel der Toolchain
+  # gehört in den Diff, nicht in den Zufall. Patch-Stände laufen weiterhin
+  # von selbst nach; die tragen Fehlerbehebungen, keine Überraschungen.
+  GO_IMAGE: golang:1.27-alpine
+  NODE_IMAGE: node:24
   # Playwright-Image mit vorinstallierten Browsern. Die Version MUSS zu
   # @playwright/test in frontend/package.json passen -- laufen sie
   # auseinander, laedt Playwright die Browser doch wieder selbst nach und der
@@ -105,6 +111,38 @@ workflow:
     - if: $RENOVATE_BOT == "true"
       when: never
     - if: $GITHUB_ISSUE_SYNC == "true"
+      when: never
+    - when: on_success
+
+# Wie .skip-on-bot-pipelines, zusaetzlich aber nicht auf community und beta.
+#
+# Ein Merge dorthin bringt genau den Stand, den die MR-Pipeline schon geprueft
+# hat: Beide Branches tragen "push = niemand", bekommen Aenderungen also
+# ausschliesslich per Merge Request und sind damit stets Vorfahre des
+# Quellbranches - der Merge-Commit traegt denselben Baum wie der getestete
+# Stand. Dazwischen kann nichts rutschen, weil
+# "only_allow_merge_if_pipeline_succeeds" gesetzt ist und GitLab diese
+# Bedingung an den jeweils LETZTEN Commit des Quellbranches bindet.
+#
+# enterprise steht bewusst NICHT in dieser Liste: Dort duerfen Maintainer
+# direkt pushen, weil der Ablauf das braucht (nach einem fix/*-MR wird der
+# Release-Commit direkt gepusht). Ein solcher Push laeuft durch keine
+# MR-Pipeline - dort sind backend und govulncheck die einzige Pruefung, die
+# den Code je sieht, und bleiben deshalb.
+#
+# Was hier bewusst NICHT haengt:
+#   frontend  liefert das Artefakt frontend/dist, das binaries per go:embed
+#             einbettet - der Job baut, er prueft nicht nur.
+#   e2e       bleibt der Waechter vor Release und Deploy. Er prueft als
+#             einziger das ausgelieferte Binary, und auf den Release-Branches
+#             wird das mit der Release-Version gebaut, nicht mit der aus dem MR.
+.nicht-auf-release-branch:
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $GITHUB_ISSUE_SYNC == "true"
+      when: never
+    - if: $CI_COMMIT_BRANCH =~ /^(community|beta)$/
       when: never
     - when: on_success
 
@@ -292,7 +330,7 @@ frontend:
 
 backend:
   stage: test
-  extends: .skip-on-bot-pipelines
+  extends: .nicht-auf-release-branch
   image: $GO_IMAGE
   cache: *go-cache
   script:
@@ -315,7 +353,7 @@ backend:
 
 govulncheck:
   stage: test
-  extends: .skip-on-bot-pipelines
+  extends: .nicht-auf-release-branch
   image: $GO_IMAGE
   cache: *go-cache-ro
   script:
@@ -446,8 +484,13 @@ binaries:
   cache: *go-cache-cross
   needs:
     - frontend
-    - backend
-    - govulncheck
+    # optional: Auf community und beta laufen diese beiden nicht (siehe
+    # .nicht-auf-release-branch). Ohne die Markierung braeche die Pipeline
+    # dort mit "needs job that is not in any previous stage" ab.
+    - job: backend
+      optional: true
+    - job: govulncheck
+      optional: true
     - job: version
       optional: true
   script:
@@ -720,9 +763,11 @@ upgrade-test:
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
-  # e2e explizit hier: binaries hängt bereits an frontend/backend/govulncheck,
-  # aber NICHT an e2e - ohne diese Zeile liefe das Release trotz rotem e2e.
-  # Damit ist das Release (und der davon abhängige Deploy) an ALLE Tests gebunden.
+  # e2e explizit hier: binaries hängt nicht daran - ohne diese Zeile liefe das
+  # Release trotz rotem e2e. Auf community und beta ist e2e der einzige
+  # verbliebene Testjob (siehe .nicht-auf-release-branch); diese Zeile ist damit
+  # die Sicherung, die Release und den davon abhängigen Deploy an einen grünen
+  # Testlauf gegen das ausgelieferte Binary bindet.
   needs: [version, binaries, packages:deb, e2e]
   rules:
     - if: $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "enterprise"
@@ -914,7 +959,14 @@ release:public:
 mirror:public:
   stage: deploy
   image: alpine:3
-  needs: [frontend, backend, govulncheck, e2e, release]
+  needs:
+    - frontend
+    - job: backend
+      optional: true
+    - job: govulncheck
+      optional: true
+    - e2e
+    - release
   rules:
     - if: $RENOVATE_BOT == "true"
       when: never

@@ -247,12 +247,19 @@
                 </td>
                 <td class="small">
                   <span class="d-inline-flex align-items-center gap-2">
-                    <OsLogo os={s.os_name} proxmox={s.proxmox_type} host={s.host} port={s.ssh_port} size={20} />
+                    <OsLogo os={s.os_name} hardware={s.hardware_model} proxmox={s.proxmox_type} host={s.host} port={s.ssh_port} size={20} />
                     <span>{osLabel(s)}</span>
                   </span>
                 </td>
                 <td>
                   <StatusBadge status={statuses[s.id]?.status} insights={statuses[s.id]?.insights} />
+                  <!-- Wartung steht VOR dem Offline-Kennzeichen: Sie erklärt,
+                       warum der Server nicht antwortet, und macht aus einem
+                       vermeintlichen Ausfall eine Absicht. -->
+                  {#if s.maintenance}
+                    <span class="badge text-bg-warning ms-1" data-testid="maintenance-badge"
+                      title={t('dashboard.maintenanceTitle')}>{t('dashboard.maintenance')}</span>
+                  {/if}
                   {#if isOffline(s)}
                     <span class="badge text-bg-secondary ms-1" data-testid="offline-badge"
                       title={offlineDimmed(s) ? t('dashboard.offlineTolerated') : t('dashboard.offlineTitle', { count: s.failed_checks })}>

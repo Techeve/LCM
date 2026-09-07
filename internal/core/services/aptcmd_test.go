@@ -77,3 +77,32 @@ func TestParseMadison(t *testing.T) {
 		t.Errorf("madison-parse falsch: %v", got)
 	}
 }
+
+// TestAptRetry: Große Rückstände gehen selten in einem Zug durch - Pakete
+// hängen voneinander ab und apt bricht mit halb konfigurierten Paketen ab.
+// Das Skript muss deshalb mehrere Anläufe machen, dazwischen aufräumen und am
+// Ende trotzdem den echten Exit-Code liefern.
+func TestAptRetry(t *testing.T) {
+	script := aptUpgradeAllScript()
+	for _, want := range []string{
+		"for i in 1 2 3;",        // drei Anläufe
+		"dpkg --configure -a",    // angebrochene Installationen abschließen
+		"-f install -y",          // fehlende Abhängigkeiten nachziehen
+		"[ $rc -eq 0 ] && break", // Erfolg beendet den Lauf sofort
+		"exit $rc",               // Fehlschlag bleibt ein Fehlschlag
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("wiederholungslauf ohne %q:\n%s", want, script)
+		}
+	}
+
+	// Auch gezielte und Security-Upgrades bekommen ihre Anläufe.
+	for name, s := range map[string]string{
+		"pakete":   aptUpgradePackagesScript([]string{"htop"}),
+		"security": aptSecurityUpgradeScript(),
+	} {
+		if !strings.Contains(s, "for i in 1 2 3;") {
+			t.Errorf("%s-skript ohne wiederholungslauf:\n%s", name, s)
+		}
+	}
+}

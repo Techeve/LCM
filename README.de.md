@@ -22,7 +22,7 @@
   <a href="README.md">English</a>
 </p>
 
-> **Ohne Installation ausprobieren: [lcm-demo.techeve.de](https://lcm-demo.techeve.de)**
+> **Ohne Installation ausprobieren: [lcm-demo.techeve.de](https://lcm-demo.techeve.de/?mtm_campaign=linking&mtm_kwd=README)**
 > Anmelden mit `demo` / `Just-Testing!26` (Administrator) oder `demo-manager`
 > (eingeschränkte Sicht - sieht nur seine eigene Gruppe). Die Demo läuft gegen
 > simulierte Server, ihr Funktionsumfang ist deshalb bewusst begrenzt: keine
@@ -184,7 +184,7 @@ sudo apt install lcm                                    # installieren
 sudo apt update && sudo apt upgrade                     # später aktualisieren
 ```
 
-Das richtet LCM als unprivilegierten `systemd`-Dienst ein (Autostart, HTTPS). Das initiale Admin-Passwort steht im Journal: `journalctl -u lcm | grep -A3 'Admin-Zugang'`. Ohne Repo: einzelnes `.deb` aus den [Releases](https://gitlab.techeve.de/techeve/lcm/-/releases) mit `sudo apt install ./lcm_<version>_<arch>.deb`. Weitere Wege (Docker, Quellcode): [Installations-Doku](docs/getting-started/installation.md).
+Das richtet LCM als unprivilegierten `systemd`-Dienst ein (Autostart, HTTPS). Das initiale Admin-Passwort steht im Journal: `journalctl -u lcm | grep -A3 'Admin-Zugang'`. Ohne Repo: einzelnes `.deb` aus den [Releases](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=README) mit `sudo apt install ./lcm_<version>_<arch>.deb`. Weitere Wege (Docker, Quellcode): [Installations-Doku](docs/getting-started/installation.md).
 
 ## Quickstart (aus dem Quellcode)
 
@@ -217,7 +217,7 @@ make test-e2e  # Playwright E2E gegen das echte Binary
 ## Dokumentation
 
 Die vollständige Dokumentation ist unter
-**[doc.techeve.de/lcm](https://doc.techeve.de/lcm/)** veröffentlicht (Deutsch
+**[doc.techeve.de/lcm](https://doc.techeve.de/lcm/?mtm_campaign=linking&mtm_kwd=README)** veröffentlicht (Deutsch
 und Englisch) und liegt als **reines Markdown** in diesem Repository unter
 [`docs/`](docs/) - Deutsch in der Wurzel, Englisch unter
 [`docs/en/`](docs/en/). Das Repo enthält bewusst **kein** Astro/Node/npm-Gerüst:
@@ -258,7 +258,7 @@ Funktions-Updates erst nach bewährter Feldphase, Fixes dafür umso schneller).
 
 Entwickelt wird im internen Repository
 (`gitlab.techeve.de/techeve/lcm-intern`) mit geschütztem Workflow; das
-öffentliche Repository [`techeve/lcm`](https://gitlab.techeve.de/techeve/lcm)
+öffentliche Repository [`techeve/lcm`](https://gitlab.techeve.de/techeve/lcm?mtm_campaign=linking&mtm_kwd=README)
 erhält bei jedem Release den Schnappschuss der Branches `community` und `beta`:
 
 - **Gearbeitet wird auf `develop`** (Standard-Branch) bzw. auf Feature-Branches mit MR nach develop.
