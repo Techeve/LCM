@@ -74,22 +74,32 @@ func maxBump(a, b Bump) Bump {
 	return a
 }
 
-// NextVersion berechnet aus "1.2.3" + Bump die nächste Version.
-// Bei BumpNone bleibt die Version unverändert.
-func NextVersion(current string, bump Bump) (string, error) {
-	parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(current), "v"), ".", 3)
+// ParseCore zerlegt den numerischen Teil einer Version; ein Prerelease-Suffix
+// und ein führendes "v" bleiben außen vor ("v1.2.3-beta.1" -> 1, 2, 3).
+func ParseCore(version string) ([3]int, error) {
+	var nums [3]int
+	parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(version), "v"), ".", 3)
 	if len(parts) != 3 {
-		return "", fmt.Errorf("keine gültige SemVer: %q", current)
+		return nums, fmt.Errorf("keine gültige SemVer: %q", version)
 	}
-	nums := make([]int, 3)
 	for i, p := range parts {
 		// Prerelease-Suffix am Patch tolerieren ("3-dev" -> 3).
 		p, _, _ = strings.Cut(p, "-")
 		n, err := strconv.Atoi(p)
 		if err != nil {
-			return "", fmt.Errorf("keine gültige SemVer: %q", current)
+			return nums, fmt.Errorf("keine gültige SemVer: %q", version)
 		}
 		nums[i] = n
+	}
+	return nums, nil
+}
+
+// NextVersion berechnet aus "1.2.3" + Bump die nächste Version.
+// Bei BumpNone bleibt die Version unverändert.
+func NextVersion(current string, bump Bump) (string, error) {
+	nums, err := ParseCore(current)
+	if err != nil {
+		return "", err
 	}
 	switch bump {
 	case BumpMajor:
