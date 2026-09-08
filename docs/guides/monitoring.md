@@ -17,6 +17,14 @@ SSH-Verbindungen; die verwalteten Server brauchen keinen Agent.
   (Bare-Metal, VM, LXC) und OS-Support-Status (Ubuntu, Debian sowie die
   RHEL-Familie: Red Hat Enterprise Linux, Rocky Linux, AlmaLinux, CentOS Stream).
 - **Hardware** - CPU-Modell/Kerne, RAM, Festplatte, IP-Adressen.
+- **Schlüsselaustausch** - das bei der SSH-Verbindung ausgehandelte
+  Verfahren. Steht dort `mlkem…` oder `sntrup…`, ist die Verbindung
+  **quantensicher**; bei `curve25519` oder `ecdh-…` ist sie es nicht. Das
+  ist kein Mangel von heute - die Verbindung ist sicher -, aber wer den
+  Verkehr jetzt mitschneidet, könnte ihn später mit einem Quantenrechner
+  lesen. Abhilfe ist ein Upgrade der Gegenstelle auf OpenSSH 9.9 oder
+  neuer; LCM handelt dann von selbst ML-KEM aus. Auf Agent-Servern
+  (MQTT statt SSH) entfällt die Angabe.
 - **Hostname** - der Name, unter dem sich das System selbst kennt
   (`hostnamectl`, sonst `/etc/hostname`). Er steht neben dem Anzeigenamen,
   wenn beide voneinander abweichen - wer einen Server über eine IP

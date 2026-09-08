@@ -1081,6 +1081,10 @@ func scanFields(fresh *domain.Server) map[string]any {
 	// Der Hostname ist eine Erkennung, kein Zustand: Ein Scan, dem das
 	// Kommando weggebrochen ist, darf den einmal erfassten Namen nicht löschen.
 	keepIfDetected(fields, "hostname", fresh.Hostname)
+	// Das Verfahren stammt aus der Verbindung, über die gerade gescannt wird.
+	// Ein Agent-Server meldet keines - dann bleibt der zuletzt erfasste Wert
+	// stehen, statt die Aussage zu löschen.
+	keepIfDetected(fields, "kex_algorithm", fresh.KexAlgorithm)
 	keepIfDetected(fields, "os_id", fresh.OSID)
 	keepIfDetected(fields, "os_version_id", fresh.OSVersionID)
 	keepIfDetected(fields, "package_manager", fresh.PackageManager)
@@ -1101,6 +1105,7 @@ func keepIfDetected(fields map[string]any, spalte, wert string) {
 // applyScan überträgt das Scan-Ergebnis auf das Server-Struct.
 func applyScan(server *domain.Server, scan *scanResult) {
 	server.Hostname = scan.Hostname
+	server.KexAlgorithm = scan.KexAlgorithm
 	server.OSName = scan.OSName
 	server.OSVersion = scan.OSVersion
 	server.OSID = scan.OSID

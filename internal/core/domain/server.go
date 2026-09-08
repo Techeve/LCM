@@ -200,6 +200,11 @@ type Server struct {
 	// könnte ein Verwalter sie sich freischalten oder jemandem entziehen,
 	// dessen Recht er nicht vergibt.
 	ConsoleDisabled bool `gorm:"default:false" json:"console_disabled"`
+	// KexAlgorithm ist der bei der letzten Verbindung ausgehandelte
+	// SSH-Schlüsselaustausch. Daraus ergibt sich, ob der Verkehr zu diesem
+	// Server gegen einen künftigen Quantenrechner geschützt ist - siehe
+	// postquantum.go. Leer = noch nicht erfasst.
+	KexAlgorithm string `gorm:"serializer:aesgcm" json:"kex_algorithm"`
 	// Hostname ist der Name, unter dem sich das System SELBST kennt
 	// (hostnamectl/etc/hostname) - nicht der Anzeigename in LCM und nicht die
 	// Adresse, über die LCM es erreicht. Alle drei können auseinanderlaufen,
@@ -980,6 +985,19 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 	// Reihenfolge in Protokollen über mehrere Server hinweg, zeitbasierte
 	// Einmalpasswörter und signierte Paket-Metadaten - ohne dass im Betrieb
 	// etwas darauf hindeutet. Deshalb Warnung, nicht bloß Hinweis.
+	// Post-Quanten-Schutz der Verbindung. Bewusst ein HINWEIS, keine Warnung:
+	// Die Verbindung ist heute nicht angreifbar, und behebbar ist es nur
+	// durch ein Upgrade der Gegenstelle - eine Warnung, gegen die man nichts
+	// Kurzfristiges tun kann, wird weggeklickt. Wer den Verkehr heute
+	// mitschneidet, entschlüsselt ihn aber später; deshalb steht es da.
+	if KexKnown(s.KexAlgorithm) && !KexPostQuantum(s.KexAlgorithm) {
+		infos = append(infos, insight("info", "kexClassic",
+			"SSH-Verbindung ohne Post-Quanten-Schutz ("+s.KexAlgorithm+
+				") - mitgeschnittener Verkehr wäre für einen künftigen Quantenrechner lesbar. "+
+				"Abhilfe: OpenSSH "+MinOpenSSHForMLKEM+" oder neuer auf dem Server.",
+			map[string]string{"kex": s.KexAlgorithm, "minOpenSSH": MinOpenSSHForMLKEM}))
+	}
+
 	inContainer := IsContainerVirt(s.Virtualization)
 	if off := s.ClockOffsetSeconds; off >= ClockOffsetWarnSeconds || off <= -ClockOffsetWarnSeconds {
 		dir, key, secs := "vor", "clockAhead", off

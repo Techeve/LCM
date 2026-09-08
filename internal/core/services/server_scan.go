@@ -78,8 +78,11 @@ type scanResult struct {
 	DiskTotalMB   int64
 	DiskUsedMB    int64
 	// Hostname: der Name, unter dem sich das System selbst kennt.
-	Hostname    string
-	DiskVolumes []domain.DiskVolume // alle eingehängten Volumes (inkl. „/")
+	Hostname string
+	// KexAlgorithm: der ausgehandelte SSH-Schlüsselaustausch dieser
+	// Verbindung - Grundlage der Post-Quanten-Bewertung.
+	KexAlgorithm string
+	DiskVolumes  []domain.DiskVolume // alle eingehängten Volumes (inkl. „/")
 	// StorageHealth ist der Zustand der Speicher-Verbünde unterhalb der
 	// Belegung (ZFS-Pools, Btrfs, MD-RAID, LVM-Thin) - leer auf Systemen
 	// ohne diese Techniken.
@@ -183,6 +186,8 @@ func scanServerMode(conn sshx.Conn, loginUser string, restricted bool) *scanResu
 	res.StorageHealth = parseStorageHealth(run("storage-health", wrapSudo(loginUser, restricted, storageHealthCmd)))
 	res.IPAddresses = strings.Join(strings.Fields(run("ips", "hostname -I")), ", ")
 	res.Hostname = firstLine(run("hostname", hostnameCmd))
+	// Kein Kommando, sondern eine Eigenschaft der Verbindung selbst.
+	res.KexAlgorithm = conn.KeyExchange()
 
 	// Paketverwaltung erkennen und bestandsabhängig scannen (apt/dnf/zypper).
 	res.PackageManager = detectPackageManager(run)

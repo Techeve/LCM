@@ -145,6 +145,10 @@ func (c *recordingConn) Run(cmd string) (string, int, error) {
 
 func (c *recordingConn) OnActivity(fn func()) { c.inner.OnActivity(fn) }
 
+// KeyExchange reicht das Verfahren der darunterliegenden Verbindung durch -
+// der Mitschnitt verändert den Handshake nicht.
+func (c *recordingConn) KeyExchange() string { return c.inner.KeyExchange() }
+
 // RunStdin protokolliert wie Run, speist dem Kommando aber stdin ein. Der
 // stdin-Inhalt (z.B. ein sudo-Passwort) wird BEWUSST nicht mitgeschrieben -
 // nur das Kommando (redigiert) landet im Protokoll.

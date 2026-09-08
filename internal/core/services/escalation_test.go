@@ -19,6 +19,8 @@ func (c *scriptedConn) RunStdin(cmd, stdin string) (string, int, error) {
 	out, code := c.handler(cmd, stdin)
 	return out, code, nil
 }
+func (c *scriptedConn) KeyExchange() string { return "" }
+
 func (c *scriptedConn) OnActivity(func()) {}
 func (c *scriptedConn) Close() error      { return nil }
 

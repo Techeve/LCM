@@ -92,6 +92,12 @@ type Conn interface {
 	// Lauf noch arbeitet oder hängt (siehe JobService.MarkActivity). fn muss
 	// schnell zurückkehren - der Aufruf hält den Ausgabestrom auf.
 	OnActivity(fn func())
+	// KeyExchange nennt das beim Handshake ausgehandelte
+	// Schlüsselaustausch-Verfahren (z.B. "mlkem768x25519-sha256"). Daraus
+	// ergibt sich, ob die Verbindung gegen einen künftigen Quantenrechner
+	// geschützt ist - siehe domain.KexPostQuantum. Leer, wenn die Gegenstelle
+	// es nicht preisgibt.
+	KeyExchange() string
 	Close() error
 }
 
@@ -247,6 +253,20 @@ type clientConn struct {
 
 	mu         sync.Mutex
 	onActivity func() // Lebenszeichen-Rückruf, siehe Conn.OnActivity
+}
+
+// KeyExchange liefert das ausgehandelte Schlüsselaustausch-Verfahren.
+//
+// x/crypto/ssh gibt es über AlgorithmsConnMetadata heraus; ältere Fassungen
+// kannten die Schnittstelle nicht, deshalb die Typprüfung statt eines festen
+// Aufrufs - fehlt sie, bleibt der Wert leer und wird als „unbekannt"
+// behandelt, nicht als „unsicher".
+func (c *clientConn) KeyExchange() string {
+	meta, ok := c.client.Conn.(ssh.AlgorithmsConnMetadata)
+	if !ok {
+		return ""
+	}
+	return meta.Algorithms().KeyExchange
 }
 
 // OnActivity hinterlegt den Lebenszeichen-Rückruf dieser Verbindung.

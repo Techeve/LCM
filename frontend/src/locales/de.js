@@ -153,6 +153,8 @@ export default {
       other: '{count} Container-Images mit verfügbaren Updates',
     },
     diskLow: 'Festplattenspeicher wird knapp ({percent}% belegt)',
+    kexClassic:
+      'SSH-Verbindung ohne Post-Quanten-Schutz ({kex}) - mitgeschnittener Verkehr wäre für einen künftigen Quantenrechner lesbar. Abhilfe: OpenSSH {minOpenSSH} oder neuer auf dem Server.',
     volumeLow: 'Volume {mountpoint} zu {percent}% belegt (Grenze {limit}%)',
     volumeCritical: 'Volume {mountpoint} zu {percent}% belegt (kritisch ab {limit}%)',
     volumeInodes: 'Volume {mountpoint}: Inodes zu {percent}% belegt - das Dateisystem kann volllaufen, obwohl noch Platz frei ist',
@@ -2564,6 +2566,13 @@ export default {
       kernel: 'Kernel',
       rebootRequired: 'Neustart nötig',
       rebootYes: 'Ja - vom System angefordert',
+      kex: 'Schlüsselaustausch',
+      kexPq: 'quantensicher',
+      kexPqHint:
+        'Der Schlüsselaustausch enthält ein Post-Quanten-Verfahren. Mitgeschnittener Verkehr bleibt auch gegenüber einem künftigen Quantenrechner geschützt.',
+      kexClassic: 'klassisch',
+      kexClassicHint:
+        'Klassischer Schlüsselaustausch. Die Verbindung ist heute sicher, mitgeschnittener Verkehr wäre für einen künftigen Quantenrechner aber lesbar. Abhilfe: OpenSSH 9.9 oder neuer auf dem Server - LCM handelt dann von selbst ein Post-Quanten-Verfahren aus.',
       sshHardened: 'SSH gehärtet',
       yes: 'Ja',
       no: 'Nein',

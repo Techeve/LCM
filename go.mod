@@ -1,8 +1,6 @@
 module LCM
 
-go 1.26.4
-
-toolchain go1.26.7
+go 1.27.1
 
 require (
 	github.com/alexedwards/argon2id v1.0.0
@@ -12,12 +10,12 @@ require (
 	github.com/gofiber/fiber/v3 v3.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/landlock-lsm/go-landlock v0.9.0
+	github.com/landlock-lsm/go-landlock v0.10.0
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/robfig/cron/v3 v3.0.1
 	golang.org/x/crypto v0.56.0
 	gorm.io/gorm v1.31.2
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.58.0
 )
 
 require (
@@ -45,7 +43,7 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	kernel.org/pub/linux/libs/security/libcap/psx v1.2.78 // indirect
-	modernc.org/libc v1.75.3 // indirect
+	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.12.0 // indirect
+	modernc.org/memory v1.12.1 // indirect
 )

@@ -968,6 +968,13 @@
     if (server && nameInput === null) nameInput = server.name;
   });
 
+  // Post-Quanten-Schutz der Verbindung. Die Liste steht bewusst hier UND im
+  // Domänen-Paket: Die Oberfläche entscheidet nur über eine Marke, die
+  // Bewertung (Befund, Ampel) trifft der Server - dort liegt die Wahrheit.
+  const kexPostQuantum = $derived(
+    /^(mlkem|sntrup)/.test(server?.kex_algorithm ?? ''),
+  );
+
   // Die Konsole steht nur, wo eine Shell überhaupt möglich ist - dieselben
   // Bedingungen wie in services.terminalPossible - und wo sie für diesen
   // Server nicht ausdrücklich abgeschaltet wurde.
@@ -2445,6 +2452,23 @@
                 {/if}
               </dd>
               <dt class="col-5">{t('serverDetail.overview.sshHardened')}</dt><dd class="col-7">{server.ssh_hardened ? t('serverDetail.overview.yes') : t('serverDetail.overview.no')}</dd>
+              <!-- Schlüsselaustausch der Verbindung: Er entscheidet, ob heute
+                   mitgeschnittener Verkehr für einen künftigen Quantenrechner
+                   lesbar wäre. Nur zeigen, wenn erfasst - Agent-Server haben
+                   keinen SSH-Handshake. -->
+              {#if server.kex_algorithm}
+                <dt class="col-5">{t('serverDetail.overview.kex')}</dt>
+                <dd class="col-7" data-testid="kex-row">
+                  <code class="small">{server.kex_algorithm}</code>
+                  {#if kexPostQuantum}
+                    <span class="badge text-bg-success ms-1" data-testid="kex-pq"
+                      title={t('serverDetail.overview.kexPqHint')}>{t('serverDetail.overview.kexPq')}</span>
+                  {:else}
+                    <span class="badge text-bg-secondary ms-1" data-testid="kex-classic"
+                      title={t('serverDetail.overview.kexClassicHint')}>{t('serverDetail.overview.kexClassic')}</span>
+                  {/if}
+                </dd>
+              {/if}
               <dt class="col-5">{t('serverDetail.overview.firewall')}</dt><dd class="col-7">{server.firewall_active ? t('serverDetail.overview.firewallActive') : t('serverDetail.overview.firewallInactive')}{#if server.firewall_tool} <span class="badge text-bg-secondary" data-testid="firewall-tool-badge">{server.firewall_tool}</span>{/if}{#if server.firewall_active} <span class="text-body-secondary">({t('serverDetail.overview.ports')}: {server.ssh_port}{#if server.firewall_allowed_ports},{server.firewall_allowed_ports}{/if})</span>{/if}
                 <!-- Docker veröffentlicht Ports vor der ufw-Kette. Ohne diesen
                      Zusatz behauptet die Zeile darüber etwas Falsches über die

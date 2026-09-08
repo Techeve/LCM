@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.38.0 - 2026-09-08
+
+### 🚀 Features
+
+- **security**: Post-Quanten-Zustand der SSH-Verbindung erfassen und zeigen (8e5365af)
+
+### 🔧 Sonstiges
+
+- **deps**: Go 1.27.1, sqlite 1.58.0, landlock 0.10.0 (a048859f)
+
 ## v1.37.0 - 2026-09-07
 
 ### 🚀 Features
