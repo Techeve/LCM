@@ -117,3 +117,78 @@ func TestHostnameUeberlebtEinenGestoertenScan(t *testing.T) {
 		t.Errorf("der Hostname wurde von einem leeren Scan überschrieben: %q", server.Hostname)
 	}
 }
+
+// TestSchluesselaustauschWirdErfasst geht den ganzen Weg: Die Verbindung
+// meldet ihr ausgehandeltes Verfahren, der Scan schreibt es weg, die
+// Bewertung liest es zurück.
+//
+// Der Wert stammt als einziger NICHT aus einem Kommando, sondern aus der
+// Verbindung selbst - ein Grund mehr, ihn eigens zu prüfen.
+func TestSchluesselaustauschWirdErfasst(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	vollstaendigeErkennung(env)
+	env.Dialer.Kex = "curve25519-sha256"
+
+	env.Executor.RunRule(findSystemSyncRule(t, env), "admin")
+
+	server, err := env.Servers.Get(repositories.ScopeAll(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.KexAlgorithm != "curve25519-sha256" {
+		t.Fatalf("Verfahren nicht erfasst: %q", server.KexAlgorithm)
+	}
+
+	// Und es muss als Hinweis ankommen - klassisch heißt: mitgeschnittener
+	// Verkehr wäre später lesbar.
+	_, hinweise, _, err := env.Servers.Status(repositories.ScopeAll(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gefunden bool
+	for _, h := range hinweise {
+		if h.Key == "kexClassic" {
+			gefunden = true
+		}
+	}
+	if !gefunden {
+		t.Error("die klassische Verbindung erzeugt keinen Hinweis")
+	}
+
+	// Nach einem Upgrade der Gegenstelle verschwindet der Hinweis wieder.
+	env.Dialer.Kex = "mlkem768x25519-sha256"
+	env.Executor.RunRule(findSystemSyncRule(t, env), "admin")
+	_, hinweise, _, err = env.Servers.Status(repositories.ScopeAll(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range hinweise {
+		if h.Key == "kexClassic" {
+			t.Error("der Hinweis steht noch, obwohl die Verbindung jetzt quantensicher ist")
+		}
+	}
+}
+
+// TestAgentServerWirdNichtBewertet: Der Agent-Transport läuft über MQTT und
+// hat keinen SSH-Handshake. Ein leerer Wert darf den zuletzt erfassten nicht
+// löschen - sonst verlöre ein Server seine Aussage, sobald er auf den Agenten
+// umgestellt wird.
+func TestAgentServerWirdNichtBewertet(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	vollstaendigeErkennung(env)
+	env.Dialer.Kex = "mlkem768x25519-sha256"
+	env.Executor.RunRule(findSystemSyncRule(t, env), "admin")
+
+	env.Dialer.Kex = "" // meldet nichts mehr
+	env.Executor.RunRule(findSystemSyncRule(t, env), "admin")
+
+	server, err := env.Servers.Get(repositories.ScopeAll(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.KexAlgorithm != "mlkem768x25519-sha256" {
+		t.Errorf("der erfasste Wert wurde von einer stummen Verbindung überschrieben: %q", server.KexAlgorithm)
+	}
+}

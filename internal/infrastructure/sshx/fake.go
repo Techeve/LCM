@@ -20,6 +20,10 @@ type FakeDialer struct {
 
 	Fingerprint string
 	KeyType     string
+	// Kex ist das Schlüsselaustausch-Verfahren, das die Fake-Verbindung
+	// meldet. Leer = die Gegenstelle gibt keines preis (wird als „unbekannt"
+	// behandelt, nicht als „unsicher").
+	Kex string
 	// Responses bildet Kommando-Substrings auf (Output, ExitCode) ab.
 	// Das erste passende Präfix gewinnt; Default ist ("", 0).
 	Responses map[string]FakeResponse
@@ -120,6 +124,13 @@ type fakeConn struct {
 	dialer     *FakeDialer
 	closed     bool
 	onActivity func()
+}
+
+// KeyExchange meldet das gestellte Schlüsselaustausch-Verfahren.
+func (c *fakeConn) KeyExchange() string {
+	c.dialer.mu.Lock()
+	defer c.dialer.mu.Unlock()
+	return c.dialer.Kex
 }
 
 // OnActivity hinterlegt den Lebenszeichen-Rückruf; die Fake-Verbindung löst

@@ -152,6 +152,8 @@ export default {
       other: '{count} container images with available updates',
     },
     diskLow: 'Disk space is running low ({percent}% used)',
+    kexClassic:
+      'SSH connection without post-quantum protection ({kex}) - recorded traffic would be readable by a future quantum computer. Remedy: OpenSSH {minOpenSSH} or newer on the server.',
     volumeLow: 'Volume {mountpoint} is {percent}% full (threshold {limit}%)',
     volumeCritical: 'Volume {mountpoint} is {percent}% full (critical from {limit}%)',
     volumeInodes: 'Volume {mountpoint}: inodes {percent}% used - the filesystem can fill up while space is still free',
@@ -2560,6 +2562,13 @@ export default {
       kernel: 'Kernel',
       rebootRequired: 'Reboot required',
       rebootYes: 'Yes - requested by the system',
+      kex: 'Key exchange',
+      kexPq: 'quantum-safe',
+      kexPqHint:
+        'The key exchange includes a post-quantum method. Recorded traffic stays protected even against a future quantum computer.',
+      kexClassic: 'classic',
+      kexClassicHint:
+        'Classic key exchange. The connection is secure today, but recorded traffic would be readable by a future quantum computer. Remedy: OpenSSH 9.9 or newer on the server - LCM then negotiates a post-quantum method by itself.',
       sshHardened: 'SSH hardened',
       yes: 'Yes',
       no: 'No',

@@ -602,6 +602,33 @@ test.describe('LCM', () => {
     await expect(volumes).toContainText('GiB');
   });
 
+  test('Server-Detail: Post-Quanten-Zustand des Schlüsselaustauschs', async ({ page }) => {
+    await loginAsAdmin(page);
+
+    // web01 verbindet klassisch - der Regelfall auf OpenSSH älter als 9.9.
+    await page.goto('/#/servers/1');
+    const zeile = page.getByTestId('kex-row');
+    await expect(zeile).toContainText('curve25519-sha256');
+    await expect(page.getByTestId('kex-classic')).toBeVisible();
+    await expect(page.getByTestId('kex-pq')).toHaveCount(0);
+
+    // Und der Befund steht in den Hinweisen - als Hinweis, nicht als Warnung:
+    // Die Verbindung ist heute sicher, behebbar ist es nur auf dem Server.
+    const knopf = page.locator('button[aria-label]', { hasText: 'ⓘ' }).first();
+    await expect(async () => {
+      await knopf.click();
+      const inhalt = await page.getByRole('dialog').innerText();
+      expect(inhalt).toContain('Post-Quanten');
+      expect(inhalt).not.toContain('insights.');
+    }).toPass({ timeout: 15000 });
+
+    // db01 handelt ML-KEM aus - dort keine Beanstandung.
+    await page.goto('/#/servers/2');
+    await expect(page.getByTestId('kex-row')).toContainText('mlkem768x25519-sha256');
+    await expect(page.getByTestId('kex-pq')).toBeVisible();
+    await expect(page.getByTestId('kex-classic')).toHaveCount(0);
+  });
+
   test('Server-Detail: Konsole nicht mehr als Kachel, je Server abschaltbar', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto('/#/servers/1');

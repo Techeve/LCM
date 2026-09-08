@@ -401,6 +401,11 @@ type agentConn struct {
 }
 
 // OnActivity hinterlegt den Lebenszeichen-Rückruf dieser Verbindung.
+// KeyExchange: Der Agent-Transport läuft über MQTT, es gibt keinen
+// SSH-Handshake und damit kein ausgehandeltes Verfahren. Leer heißt
+// „unbekannt" - die Post-Quanten-Bewertung greift hier bewusst nicht.
+func (c *agentConn) KeyExchange() string { return "" }
+
 func (c *agentConn) OnActivity(fn func()) {
 	c.mu.Lock()
 	c.onActivity = fn
