@@ -82,6 +82,12 @@ func (ctrl *LinuxUserController) Create(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkLines(lineField{"username", req.Username, maxNameLen}, lineField{"full_name", req.FullName, maxPersonNameLen}, lineField{"shell", req.Shell, maxNameLen}); err != nil {
+		return err
+	}
+	if err := checkEmail("email", req.Email); err != nil {
+		return err
+	}
 	u, err := ctrl.linux.Create(services.LinuxUserCreateInput{
 		Username: req.Username, FullName: req.FullName, Email: req.Email,
 		Shell: req.Shell, Sudo: req.Sudo, DefaultProfileID: req.DefaultProfileID,
@@ -111,6 +117,12 @@ func (ctrl *LinuxUserController) Update(c fiber.Ctx) error {
 	}
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkOptionalLines(lineField{"full_name", deref(req.FullName), maxPersonNameLen}, lineField{"shell", deref(req.Shell), maxNameLen}); err != nil {
+		return err
+	}
+	if err := checkEmail("email", deref(req.Email)); err != nil {
+		return err
 	}
 	u, err := ctrl.linux.Update(id, services.LinuxUserUpdateInput{
 		FullName: req.FullName, Email: req.Email, Shell: req.Shell,
@@ -178,6 +190,12 @@ func (ctrl *LinuxUserController) ConsumeActivation(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkLines(lineField{"token", req.Token, maxNameLen * 4}, lineField{"password", req.Password, maxPasswordLen}, lineField{"key_name", req.KeyName, maxNameLen}); err != nil {
+		return err
+	}
+	if err := checkText("public_key", req.PublicKey, maxScriptLen); err != nil {
+		return err
+	}
 	u, privateKey, err := ctrl.linux.ConsumeActivation(req.Token, services.LinuxActivationInput{
 		Password: req.Password, KeyName: req.KeyName, PublicKey: req.PublicKey,
 		GenerateKey: req.GenerateKey,
@@ -244,6 +262,12 @@ func (ctrl *LinuxUserController) AddKey(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
+	}
+	if err := checkText("public_key", req.PublicKey, maxScriptLen); err != nil {
+		return err
+	}
 	key, err := ctrl.linux.AddSSHKey(id, req.Name, req.PublicKey, actor(c))
 	if err != nil {
 		return mapLinuxUserError(err)
@@ -263,6 +287,9 @@ func (ctrl *LinuxUserController) GenerateKey(c fiber.Ctx) error {
 	var req sshKeyRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
 	}
 	key, privateKey, err := ctrl.linux.GenerateSSHKey(id, req.Name, actor(c))
 	if err != nil {

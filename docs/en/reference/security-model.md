@@ -177,6 +177,7 @@ The log service (`internal/logging/logging.go`) is based on `log/slog`:
 - **Level** via `log_level` in config.json (`debug`, `info`, `warn`, `error`).
 - **Debug mode at startup:** `./lcm -debug` raises the level to `debug` without changing the config - for development and troubleshooting.
 - **Access log** (`access_log: true`): every API request is logged with method, path, status, duration, IP, and username; 4xx as `WARN`, 5xx as `ERROR`. At debug level, additionally the query string and user agent.
+- **Audit mirror:** every audit entry (permission changes, server actions, settings) is also written as a journal line `audit action=… actor=…` - the database lives on the node, the journal can be forwarded (`journalctl -u lcm | grep -E " (audit|security) "`, forwarding via `rsyslog`/`systemd-journal-upload`).
 - Passwords, tokens, and request bodies are never logged.
 
 ## CVE scan of the package inventory (Trivy)
@@ -286,10 +287,18 @@ CrowdSec LAPI) would stay out of reach on a fresh install until someone
 onboarded the host by hand.
 
 :::caution[What this means]
-`postinstall.sh` creates the account **`lcm-svc` with `NOPASSWD:ALL`**
-(`/etc/sudoers.d/lcm-svc`, mode 0440) and stores an SSH key for it. **The
-service can then act as root on this machine without anyone having entered
-credentials.**
+`postinstall.sh` creates the account **`lcm-svc`**, initially with
+`NOPASSWD:ALL` (`/etc/sudoers.d/lcm-svc`, mode 0440), and stores an SSH key
+for it. **On its first start LCM limits the account to the sudoers whitelist**
+- package management, docker, ufw and the validating `lcm-helper`, whose
+subcommands `host-install`, `host-apt-cacher`, `host-crowdsec-lapi` and
+`host-self-update` carry the host functions. The account has no root shell
+afterwards; the effect check and the fallback to full mode are the same as
+when restricting any other server. It keeps full rights only with
+`LCM_SELF_MANAGE_FULL=1` at install time. What restricted mode does and does
+not achieve is described above: apt and docker execute code as root by
+design - whoever takes over the service still reaches root on the host that
+way, just not with a single command.
 
 This is a deliberate trade-off: a tool that manages its own host needs the same
 rights there as on any other managed server. The installation output states the
@@ -335,6 +344,28 @@ sudo rm -f /etc/sudoers.d/lcm-svc
 sudo userdel -r lcm-svc
 ```
 :::
+
+## File permissions: checked, not assumed
+
+The data directory (`/var/lib/lcm`: database, master key, TLS key, backups)
+belongs to the service user alone: `0700`, secrets `0600`. The configuration
+(`/etc/lcm`) belongs to root, group `lcm` may read and write (restore), nobody
+else. The package script sets this - and LCM **checks it itself at start and
+every 15 minutes** (`internal/perms`): files owned by the service are tightened
+again; what it cannot fix (foreign owner, root-owned configuration with world
+bits) is reported as `security event=permissions.insecure`. A `chmod 777`, a
+restore with the wrong umask or a planted file does not go unnoticed.
+
+## Input: limits at the door
+
+Every path parameter that must be a UUID (jobs, SSH sessions, deep-scan
+reports) is parsed as a UUID before any query runs. Names are single-line and
+at most 64 characters, descriptions 1000, scripts and custom actions 32 KiB;
+control characters are never allowed. Hosts consist only of the characters of
+a hostname or IP address, ports lie in 1-65535, email addresses are exactly one
+address. The check lives in the controllers (`validate.go`) and answers 422
+with the field name - the domain check in the service (name free, role known,
+cron valid) is unaffected.
 
 ## At-rest encryption & master-key rotation
 

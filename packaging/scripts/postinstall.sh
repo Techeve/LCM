@@ -58,11 +58,20 @@ fi
 #    The systemd unit says the same (ReadWritePaths=/var/lib/lcm /etc/lcm);
 #    the permissions now match that intent. Owner stays root, and nobody
 #    outside the group can read the file - it holds the JWT secret.
+#    The data directory holds the database, the master key and the TLS key:
+#    the service alone (0700). Nothing else on the host needs to read it,
+#    and LCM re-checks these permissions at start and every 15 minutes
+#    (internal/perms) - a stray chmod does not stay unnoticed.
 mkdir -p "$DATA_DIR" "$CONF_DIR"
 chown "$LCM_USER:$LCM_GROUP" "$DATA_DIR"
 chown "root:$LCM_GROUP" "$CONF_DIR"
-chmod 0750 "$DATA_DIR"
+chmod 0700 "$DATA_DIR"
 chmod 0770 "$CONF_DIR"
+# Files the service created earlier (key, database, backups) - tighten on
+# upgrade too; nothing outside the service user may read them.
+chmod 0600 "$DATA_DIR"/lcm.key "$DATA_DIR"/lcm-key.pem "$DATA_DIR"/*.db "$DATA_DIR"/*.db-wal "$DATA_DIR"/*.db-shm 2>/dev/null || true
+chmod 0700 "$DATA_DIR"/backups "$DATA_DIR"/logs 2>/dev/null || true
+chmod 0600 "$DATA_DIR"/backups/*.lcmbak 2>/dev/null || true
 
 # 3. Create the production config only if none exists - that keeps the JWT
 #    secret stable across reinstalls/upgrades (otherwise every restart would
@@ -107,9 +116,12 @@ fi
 #     LAPI) stay out of reach on a fresh install.
 #
 #     SECURITY: This creates a service account with sudo rights and hands LCM
-#     a key for it - the service can act as root on this machine afterwards.
-#     That is the price of managing the host itself. Set LCM_NO_SELF_MANAGE=1
-#     during installation to skip it:
+#     a key for it. The account starts with full sudo rights - that is the
+#     only way LCM can install its helper and the sudoers whitelist - and LCM
+#     restricts it on its first start to that whitelist (package management,
+#     docker, ufw, lcm-helper with its validated host subcommands). Only with
+#     LCM_SELF_MANAGE_FULL=1 does the account keep NOPASSWD:ALL. Set
+#     LCM_NO_SELF_MANAGE=1 during installation to skip self-management:
 #         LCM_NO_SELF_MANAGE=1 apt install lcm
 #
 #     The private key is written to a file readable only by the service user.
@@ -153,10 +165,13 @@ else
 
 			# Handover file - only the service user may read it.
 			umask 077
-			printf '{"service_user":"%s","private_key_pem":%s,"public_key":%s,"restricted_sudo":false}\n' \
+			RESTRICTED=true
+			[ "${LCM_SELF_MANAGE_FULL:-0}" = "1" ] && RESTRICTED=false
+			printf '{"service_user":"%s","private_key_pem":%s,"public_key":%s,"restricted_sudo":%s}\n' \
 				"$SVC_USER" \
 				"$(awk 'BEGIN{printf "\""} {gsub(/\\/,"\\\\"); printf "%s\\n", $0} END{printf "\""}' "$KEYFILE")" \
 				"$(awk 'BEGIN{printf "\""} {gsub(/"/,"\\\""); printf "%s", $0} END{printf "\""}' "$KEYFILE.pub")" \
+				"$RESTRICTED" \
 				> "$SELF_ONBOARD"
 			chown "$LCM_USER:$LCM_GROUP" "$SELF_ONBOARD"
 			chmod 0600 "$SELF_ONBOARD"
@@ -239,8 +254,10 @@ if [ "${SELF_MANAGE:-}" = "ready" ]; then
 
   Dafuer wurde das Konto "$SVC_USER" mit sudo-Rechten
   angelegt (/etc/sudoers.d/lcm-svc) und ein Schluessel dafuer
-  hinterlegt. LCM kann auf diesem Rechner also als root
-  handeln.
+  hinterlegt. Beim ersten Start beschraenkt LCM das Konto auf
+  die sudoers-Whitelist (Paketverwaltung, Docker, ufw und den
+  validierenden lcm-helper) - keine Root-Shell. Volle Rechte
+  behaelt es nur mit LCM_SELF_MANAGE_FULL=1 bei der Installation.
 
   Nicht gewuenscht? Den Server in der Weboberflaeche
   loeschen - er wird dann nicht wieder angelegt. Bei kuenftigen
@@ -255,7 +272,10 @@ EOF
 
   For that, the account "$SVC_USER" was created with sudo
   rights (/etc/sudoers.d/lcm-svc) and a key for it was stored.
-  LCM can therefore act as root on this machine.
+  On its first start LCM limits the account to the sudoers
+  whitelist (package management, docker, ufw and the validating
+  lcm-helper) - no root shell. It keeps full rights only with
+  LCM_SELF_MANAGE_FULL=1 at install time.
 
   Not wanted? Delete the server in the web interface - it will
   not be re-created. To opt out of future installs up front:

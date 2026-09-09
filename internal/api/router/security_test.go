@@ -197,3 +197,45 @@ func TestZweitfaktorChallengeGiltEinmal(t *testing.T) {
 		t.Errorf("verbrauchte Challenge: erwartet 401, bekam %d", r.StatusCode)
 	}
 }
+
+// TestEingabegrenzenAnDerAPI: UUID-Parameter, Längen und Steuerzeichen werden
+// an der Tür abgewiesen - bevor ein Service oder die Datenbank sie sieht.
+func TestEingabegrenzenAnDerAPI(t *testing.T) {
+	app := newTestApp(t)
+	admin := loginToken(t, app, "admin", "test-admin-passwort")
+
+	if r := doRequest(t, app, "GET", "/api/v1/jobs/nicht-eine-uuid/ssh-output", admin, ""); r.StatusCode != 400 {
+		t.Errorf("Job-ID ohne UUID-Form: erwartet 400, bekam %d", r.StatusCode)
+	}
+	if r := doRequest(t, app, "GET", "/api/v1/ssh-sessions/1%20OR%201=1", admin, ""); r.StatusCode != 400 {
+		t.Errorf("Session-ID ohne UUID-Form: erwartet 400, bekam %d", r.StatusCode)
+	}
+	if r := doRequest(t, app, "GET", "/api/v1/jobs/00000000-0000-4000-8000-000000000000/ssh-output", admin, ""); r.StatusCode != 404 {
+		t.Errorf("unbekannte, aber wohlgeformte UUID: erwartet 404, bekam %d", r.StatusCode)
+	}
+
+	long := strings.Repeat("a", 65)
+	if r := doRequest(t, app, "POST", "/api/v1/server-groups/create", admin, `{"name":"`+long+`"}`); r.StatusCode != 422 {
+		t.Errorf("65 Zeichen Gruppenname: erwartet 422, bekam %d", r.StatusCode)
+	}
+	// Die JSON-Escape-Folge wird vom Decoder zu einem Steuerzeichen (BEL).
+	if r := doRequest(t, app, "POST", "/api/v1/server-groups/create", admin, `{"name":"ab\u0007"}`); r.StatusCode != 422 {
+		t.Errorf("Steuerzeichen im Gruppennamen: erwartet 422, bekam %d", r.StatusCode)
+	}
+	if r := doRequest(t, app, "POST", "/api/v1/servers/probe", admin, `{"host":"a b; rm -rf /","port":22}`); r.StatusCode != 422 {
+		t.Errorf("Host mit Leerzeichen und Semikolon: erwartet 422, bekam %d", r.StatusCode)
+	}
+	if r := doRequest(t, app, "POST", "/api/v1/servers/probe", admin, `{"host":"10.0.0.1","port":70000}`); r.StatusCode != 422 {
+		t.Errorf("Port 70000: erwartet 422, bekam %d", r.StatusCode)
+	}
+	if r := doRequest(t, app, "POST", "/api/v1/users", admin, `{"username":"neu","email":"kein-at","password":"Regen9-Amsel!Turmfalk","roles":["manager"]}`); r.StatusCode != 422 {
+		t.Errorf("E-Mail ohne @: erwartet 422, bekam %d", r.StatusCode)
+	}
+	if r := doRequest(t, app, "POST", "/api/v1/apikeys", admin, `{"name":"zeile\nzwei"}`); r.StatusCode != 422 {
+		t.Errorf("Zeilenumbruch im Schlüsselnamen: erwartet 422, bekam %d", r.StatusCode)
+	}
+	// Gegenprobe: gewöhnliche Eingaben kommen durch.
+	if r := doRequest(t, app, "POST", "/api/v1/server-groups/create", admin, `{"name":"Büro Süd","description":"Zeile 1\nZeile 2"}`); r.StatusCode != 201 {
+		t.Errorf("normaler Gruppenname mit Umlaut: erwartet 201, bekam %d", r.StatusCode)
+	}
+}

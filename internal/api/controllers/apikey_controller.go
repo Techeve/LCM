@@ -53,6 +53,9 @@ func (ctrl *APIKeyController) Create(c fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest,
 			"ungültiger Request-Body (erlaubte Felder: name, scope, expires_in_days): "+err.Error())
 	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"scope", req.Scope, maxNameLen}); err != nil {
+		return err
+	}
 	if req.Name == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
 	}

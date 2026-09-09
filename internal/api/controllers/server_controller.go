@@ -127,6 +127,12 @@ func (ctrl *ServerController) Probe(c fiber.Ctx) error {
 	if req.Host == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "host ist erforderlich")
 	}
+	if err := checkHost("host", req.Host); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
+	}
 	res, err := ctrl.servers.Probe(req.Host, req.Port)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
@@ -153,6 +159,15 @@ func (ctrl *ServerController) Join(c fiber.Ctx) error {
 	}
 	if req.Name == "" || req.Host == "" || req.LoginUser == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name, host und login_user sind erforderlich")
+	}
+	if err := checkHost("host", req.Host); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"login_user", req.LoginUser, maxLoginUserLen}, lineField{"login_password", req.LoginPassword, maxPasswordLen}, lineField{"auth_method", req.AuthMethod, maxNameLen}, lineField{"confirmed_fingerprint", req.ConfirmedFingerprint, maxNameLen * 2}); err != nil {
+		return err
 	}
 	server, err := ctrl.servers.Join(services.JoinRequest{
 		Name:                 req.Name,
@@ -185,6 +200,9 @@ func (ctrl *ServerController) CreateAgent(c fiber.Ctx) error {
 	if req.Name == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
 	}
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
+	}
 	server, token, err := ctrl.servers.CreateAgentServer(req.Name, actor(c))
 	if err != nil {
 		return mapServerError(err)
@@ -207,6 +225,15 @@ func (ctrl *ServerController) CreateRouterOS(c fiber.Ctx) error {
 	}
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkHost("host", req.Host); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"login_user", req.LoginUser, maxLoginUserLen}, lineField{"login_password", req.LoginPassword, maxPasswordLen}, lineField{"auth_method", req.AuthMethod, maxNameLen}, lineField{"confirmed_fingerprint", req.ConfirmedFingerprint, maxNameLen * 2}); err != nil {
+		return err
 	}
 	res, err := ctrl.servers.CreateRouterOSServer(services.RouterOSRequest{
 		Name:                 req.Name,
@@ -239,6 +266,12 @@ func (ctrl *ServerController) ProbeDSM(c fiber.Ctx) error {
 	if req.Host == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "host ist erforderlich")
 	}
+	if err := checkHost("host", req.Host); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
+	}
 	fp, err := ctrl.servers.ProbeDSM(req.Host, req.Port)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
@@ -259,6 +292,15 @@ func (ctrl *ServerController) CreateDSM(c fiber.Ctx) error {
 	}
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkHost("host", req.Host); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"account", req.Account, maxLoginUserLen}, lineField{"password", req.Password, maxPasswordLen}, lineField{"confirmed_fingerprint", req.ConfirmedFingerprint, maxNameLen * 2}); err != nil {
+		return err
 	}
 	server, err := ctrl.servers.CreateDSMServer(services.DSMRequest{
 		Name: req.Name, Host: req.Host, Port: req.Port,
@@ -310,6 +352,15 @@ func (ctrl *ServerController) Reconnect(c fiber.Ctx) error {
 	// die aussagekräftige Meldung des Services (BUG-029).
 	var req reconnectRequest
 	if err := bindOptionalBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkHost("host", req.Host); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"login_user", req.LoginUser, maxLoginUserLen}, lineField{"login_password", req.LoginPassword, maxPasswordLen}, lineField{"auth_method", req.AuthMethod, maxNameLen}, lineField{"confirmed_fingerprint", req.ConfirmedFingerprint, maxNameLen * 2}); err != nil {
 		return err
 	}
 	server, err := ctrl.servers.Reconnect(scopeFor(c), services.ReconnectRequest{
@@ -1046,6 +1097,15 @@ func (ctrl *ServerController) UpdateSettings(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkHost("host", req.Host); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
+	}
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
+	}
 	server, err := ctrl.servers.UpdateSettings(scopeFor(c), id, services.ServerSettingsInput{
 		Name:                  req.Name,
 		Host:                  req.Host,
@@ -1369,9 +1429,9 @@ func (ctrl *ServerController) DeepScanReportDetail(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	reportID := c.Params("reportId")
-	if reportID == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "report-id fehlt")
+	reportID, err := paramUUID(c, "reportId")
+	if err != nil {
+		return err
 	}
 	report, err := ctrl.servers.DeepScanReportDetail(scopeFor(c), id, reportID)
 	if err != nil {

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.39.0-beta.1 - 2026-09-09
+
+### 🚀 Features
+
+- **security**: Empfehlungen der Sicherheitsanalyse umgesetzt - Helper statt NOPASSWD:ALL, Rechte-Wächter, Eingabegrenzen (2859da5f)
+- **ui**: Warnung in der Browser-Konsole gegen Self-XSS (4ce6fca0)
+
 ## v1.38.1-beta.1 - 2026-09-09
 
 ### 🐛 Bugfixes

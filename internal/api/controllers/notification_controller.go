@@ -100,6 +100,12 @@ func (ctrl *NotificationController) Create(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"secret", req.Secret, maxPasswordLen}); err != nil {
+		return err
+	}
+	if err := checkText("config", string(req.Config), maxScriptLen); err != nil {
+		return err
+	}
 	channel, err := ctrl.channels.Create(req.toInput(), actor(c))
 	if err != nil {
 		return mapNotificationError(err)
@@ -116,6 +122,12 @@ func (ctrl *NotificationController) Update(c fiber.Ctx) error {
 	var req channelRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"secret", req.Secret, maxPasswordLen}); err != nil {
+		return err
+	}
+	if err := checkText("config", string(req.Config), maxScriptLen); err != nil {
+		return err
 	}
 	channel, err := ctrl.channels.Update(id, req.toInput(), actor(c))
 	if err != nil {

@@ -179,6 +179,7 @@ Der Log-Service (`internal/logging/logging.go`) basiert auf `log/slog`:
 - **Level** über `log_level` in der config.json (`debug`, `info`, `warn`, `error`).
 - **Debug-Modus beim Start:** `./lcm -debug` hebt das Level auf `debug`, ohne die Config zu ändern - für Entwicklung und Fehlersuche.
 - **Access-Log** (`access_log: true`): jede API-Anfrage wird mit Methode, Pfad, Status, Dauer, IP und Username protokolliert; 4xx als `WARN`, 5xx als `ERROR`. Im Debug-Level zusätzlich Query-String und User-Agent.
+- **Audit-Spiegel:** Jeder Audit-Eintrag (Rechtevergabe, Server-Aktionen, Einstellungen) steht zusätzlich als Journal-Zeile `audit action=… actor=…` - die Datenbank liegt auf dem Knoten, das Journal lässt sich weiterleiten (`journalctl -u lcm | grep -E "^.* (audit|security) "`, Weiterleitung per `rsyslog`/`systemd-journal-upload`).
 - Es werden niemals Passwörter, Tokens oder Request-Bodies geloggt.
 
 ## CVE-Scan des Paketbestands (Trivy)
@@ -294,10 +295,19 @@ apt-cacher-ng, CrowdSec-LAPI) auf einer frischen Installation erst nach
 manuellem Onboarding erreichbar.
 
 :::caution[Was das bedeutet]
-`postinstall.sh` legt dafür das Konto **`lcm-svc` mit `NOPASSWD:ALL`** an
-(`/etc/sudoers.d/lcm-svc`, Rechte 0440) und hinterlegt LCM einen SSH-Schlüssel
-darauf. **Der Dienst kann anschließend auf dieser Maschine als root handeln,
-ohne dass jemand Zugangsdaten eingegeben hat.**
+`postinstall.sh` legt dafür das Konto **`lcm-svc`** an, zunächst mit
+`NOPASSWD:ALL` (`/etc/sudoers.d/lcm-svc`, Rechte 0440), und hinterlegt LCM
+einen SSH-Schlüssel darauf. **Beim ersten Start beschränkt LCM das Konto auf
+die sudoers-Whitelist** - Paketverwaltung, Docker, ufw und den validierenden
+`lcm-helper`, dessen Unterkommandos `host-install`, `host-apt-cacher`,
+`host-crowdsec-lapi` und `host-self-update` die Host-Funktionen tragen. Eine
+Root-Shell hat das Konto danach nicht mehr; die Wirkungsprobe und der Rückfall
+in den Voll-Modus sind dieselben wie beim Einschränken eines beliebigen Servers.
+Volle Rechte behält das Konto nur mit `LCM_SELF_MANAGE_FULL=1` bei der
+Installation. Was der eingeschränkte Modus leistet und was nicht, steht oben:
+apt und Docker führen konstruktionsbedingt Code als root aus - wer den
+Dienst übernimmt, erreicht darüber weiterhin Root auf dem Host, nur nicht mehr
+mit einem Befehl.
 
 Das ist eine bewusste Abwägung: Ein Werkzeug, das den eigenen Host verwaltet,
 braucht dort dieselben Rechte wie auf jedem anderen verwalteten Server. Die
@@ -344,6 +354,30 @@ sudo rm -f /etc/sudoers.d/lcm-svc
 sudo userdel -r lcm-svc
 ```
 :::
+
+## Dateirechte: geprüft, nicht vorausgesetzt
+
+Das Datenverzeichnis (`/var/lib/lcm`, Datenbank, Master-Key, TLS-Schlüssel,
+Backups) gehört dem Dienstbenutzer allein: `0700`, Geheimnisse `0600`. Die
+Konfiguration (`/etc/lcm`) gehört root, Gruppe `lcm` darf lesen und schreiben
+(Restore), sonst niemand. Das Paketskript setzt das - und LCM **prüft es beim
+Start und alle 15 Minuten selbst** (`internal/perms`): Dateien, die dem Dienst
+gehören, zieht es zurück fest; was es nicht richten kann (fremder Eigentümer,
+root-eigene Konfiguration mit Welt-Rechten), meldet es als
+`security event=permissions.insecure`. Ein `chmod 777`, ein Restore mit
+falschem umask oder eine untergeschobene Datei bleiben so nicht unbemerkt.
+
+## Eingaben: Grenzen an der Tür
+
+Jeder Pfadparameter, der eine UUID sein muss (Jobs, SSH-Sitzungen,
+Deep-Scan-Berichte), wird als UUID geparst, bevor eine Abfrage läuft. Namen
+sind einzeilig und höchstens 64 Zeichen, Beschreibungen 1000, Skripte und
+Custom-Aktionen 32 KiB; Steuerzeichen sind nirgends erlaubt. Hosts bestehen
+nur aus den Zeichen eines Hostnamens oder einer IP-Adresse, Ports liegen in
+1-65535, E-Mail-Adressen sind genau eine Adresse. Die Prüfung sitzt in den
+Controllern (`validate.go`) und antwortet 422 mit dem Feldnamen - die
+fachliche Prüfung im Service (Namen frei, Rollen bekannt, Cron gültig) bleibt
+davon unberührt.
 
 ## At-Rest-Verschlüsselung & Master-Key-Rotation
 

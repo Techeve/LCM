@@ -33,6 +33,12 @@ func (s *AuditService) Log(actor, action, entity string, entityID uint, details 
 		slog.Error("writing audit log failed",
 			"action", action, "entity", entity, "error", err)
 	}
+	// Spiegel ins Journal: Die Datenbank liegt auf demselben Knoten wie
+	// alles andere - wer ihn übernimmt, kann sie ändern. Das Journal lässt
+	// sich weiterleiten (Syslog/SIEM) und ist damit der Nachweis, der bleibt.
+	// Fester Text „audit", dieselbe Form wie die security-Zeilen.
+	slog.Info("audit", "action", action, "actor", actor, "entity", entity,
+		"entity_id", entityID, "details", details)
 }
 
 // Recent liefert die neuesten Einträge für die Audit-Ansicht.

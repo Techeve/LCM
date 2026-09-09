@@ -70,7 +70,7 @@ func (ctrl *TerminalController) Ticket(c fiber.Ctx) error {
 	if err != nil {
 		return mapServerError(err)
 	}
-	token, err := ctrl.tickets.Issue(actor(c), id)
+	token, err := ctrl.tickets.Issue(actor(c), id, middlewares.ClientIP(c))
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "fahrkarte konnte nicht erzeugt werden")
 	}
@@ -91,13 +91,14 @@ type wsMessage struct {
 //
 // Der Endpunkt läuft OHNE die übliche Anmelde-Middleware: Die Fahrkarte ist
 // hier der Nachweis, und sie ist strenger als der Token - einmalig, dreißig
-// Sekunden gültig, an genau diesen Server gebunden.
+// Sekunden gültig, an genau diesen Server und an die Client-Adresse gebunden,
+// die sie geholt hat.
 func (ctrl *TerminalController) Connect(c fiber.Ctx) error {
 	id, err := paramID(c)
 	if err != nil {
 		return err
 	}
-	who, ok := ctrl.tickets.Redeem(c.Query("ticket"), id)
+	who, ok := ctrl.tickets.Redeem(c.Query("ticket"), id, middlewares.ClientIP(c))
 	if !ok {
 		middlewares.SecurityEvent(c, "terminal.ticket.rejected")
 		return fiber.NewError(fiber.StatusUnauthorized, "ungültige oder abgelaufene fahrkarte")

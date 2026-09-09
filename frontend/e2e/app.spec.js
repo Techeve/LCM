@@ -2250,6 +2250,17 @@ test.describe('LCM', () => {
     await expect(nav).not.toContainText('Zwei-Faktor');
   });
 
+  // Self-XSS: Wer die Konsole öffnet, soll die Warnung sehen, bevor er auf
+  // Zuruf etwas einfügt - der Token im localStorage ist die ganze Sitzung.
+  test('Browser-Konsole warnt vor dem Einfügen fremder Befehle', async ({ page }) => {
+    const konsole = [];
+    page.on('console', (msg) => konsole.push(msg.text()));
+    await page.goto('/');
+    await expect(page.getByTestId('app-version')).toBeVisible();
+    expect(konsole.some((text) => text.includes('STOPP!'))).toBe(true);
+    expect(konsole.some((text) => text.includes('nichts einfügen'))).toBe(true);
+  });
+
   test('Footer zeigt Version und Build-Nummer', async ({ page }) => {
     await page.goto('/');
     const version = page.getByTestId('app-version');

@@ -66,6 +66,11 @@ journalctl -u lcm -p warning | grep 'security'
 
 ## nginx
 
+The complete reference configuration lives in the repository under
+`packaging/nginx/lcm.conf` (with the `lcm-proxy.conf` snippet): TLS, both
+throttles, body and time limits per path, health and agent download from the
+own network only. What follows is the short version.
+
 ```nginx
 # Login throttle: 10 requests per minute and source on the auth paths - on
 # top of LCM's own throttle, which only counts per process.
@@ -173,8 +178,42 @@ special treatment. A request throttle exists in Caddy only as an extension
   the client's once `trusted_proxies` is right.
 - **Forward the journal.** The audit log lives in the database on the same
   machine. Whoever takes over the host can edit it - a copy of the journal on
-  another system (syslog, SIEM) is the evidence that remains.
+  another system (syslog, SIEM) is the evidence that remains. LCM also writes
+  every audit entry as a journal line `audit …` and every login/permission
+  event as `security …`; see below.
 - **No script injection.** The Content-Security-Policy allows own scripts only.
   A proxy that injects analytics or banners is blocked by the browser - whoever
   needs that replaces the header deliberately and knows which protection they
   give up.
+
+## Forwarding the journal (syslog/SIEM)
+
+Everything LCM logs ends up in the journal of the `lcm` unit: the security
+events (`security event=…`), the audit mirror (`audit action=…`), the access
+log and the service messages. With `rsyslog` exactly these lines go to a
+second machine - over TLS, so nobody reads or forges them on the way:
+
+```rsyslog
+# /etc/rsyslog.d/50-lcm-forward.conf
+module(load="imjournal" StateFile="imjournal.state")
+module(load="omfwd")
+global(DefaultNetstreamDriver="gtls"
+       DefaultNetstreamDriverCAFile="/etc/ssl/certs/ca-certificates.crt")
+
+# Only the lines of the LCM unit; order and timestamps are preserved.
+if ($programname == "lcm") then {
+    action(type="omfwd" target="syslog.example.com" port="6514" protocol="tcp"
+           StreamDriver="gtls" StreamDriverMode="1" StreamDriverAuthMode="x509/name"
+           StreamDriverPermittedPeers="syslog.example.com"
+           queue.type="LinkedList" queue.filename="lcm-fwd" queue.saveOnShutdown="on"
+           action.resumeRetryCount="-1")
+    stop
+}
+```
+
+Then `apt install rsyslog rsyslog-gnutls`, `systemctl restart rsyslog`, and
+check on the receiving side that `security event=login.ok` arrives after a
+login. The on-disk queue makes sure an outage of the receiver loses no line.
+Without a syslog server of your own, `systemd-journal-upload` to a
+`systemd-journal-remote` works too - the journal format with the same fields
+is kept.

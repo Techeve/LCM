@@ -331,14 +331,13 @@ func installedAsPackage() bool {
 // Neustart, den das Paket selbst auslöst. Das Protokoll steht danach im
 // Journal (`journalctl -u lcm-self-update`).
 //
-// Im eingeschränkten Modus ist systemd-run nicht freigegeben; dort bleibt es
-// beim direkten apt-Lauf. Der Verbindungsabbruch gehört dann zum Ablauf - der
-// Wiederanlauf erkennt ihn und schließt den Job als Erfolg ab
-// (SelfUpdateOnRestart in self_update.go).
+// Im eingeschränkten Modus läuft derselbe Ablauf über das Helper-Unterkommando
+// host-self-update (root über die sudoers-Whitelist) - der Helper trägt das
+// Skript des Voll-Modus.
 func selfUpdateScript(restricted bool) string {
 	apt := aptUpgradePackagesScript([]string{selfPackageName})
 	if restricted {
-		return apt
+		return helperCmd("host-self-update")
 	}
 	return "command -v systemd-run >/dev/null 2>&1 || " +
 		"{ echo 'FEHLER: systemd-run nicht gefunden - das Selbst-Update braucht systemd.' >&2; exit 1; }\n" +

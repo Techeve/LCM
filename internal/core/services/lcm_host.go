@@ -78,6 +78,18 @@ const aptCacherInstallScript = "set -e; " +
 	"systemctl enable --now apt-cacher-ng 2>/dev/null || service apt-cacher-ng start || true; " +
 	"systemctl is-active apt-cacher-ng 2>/dev/null || true"
 
+// hostScript liefert das Skript einer Host-Aktion für den Rechte-Modus des
+// Servers: im Voll-Modus das Skript selbst (läuft als root), im
+// eingeschränkten Modus den Aufruf des passenden Helper-Unterkommandos - der
+// Helper trägt dasselbe Skript (siehe lcm_helper.go) und läuft als root über
+// die sudoers-Whitelist. So braucht auch der LCM-Host kein NOPASSWD:ALL.
+func hostScript(server *domain.Server, full, sub string, args ...string) string {
+	if server.RestrictedSudo {
+		return helperCmd(sub, args...)
+	}
+	return full
+}
+
 // LcmHostStatus beschreibt den Einrichtungszustand des LCM-Hosts.
 type LcmHostStatus struct {
 	IsLcmHost      bool   `json:"is_lcm_host"`
@@ -146,11 +158,13 @@ func (s *ServerService) LcmHostStatus(scope repositories.AccessScope, id uint) (
 // Paketbestand neu erfasst (Trivy erscheint dann im Inventar), und LCM aktiviert
 // den CVE-Scan selbsttätig (Trivy ist dann verfügbar).
 func (s *ServerService) InstallTrivy(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	if _, err := s.requireLcmHostApt(scope, id); err != nil {
+	server, err := s.requireLcmHostApt(scope, id)
+	if err != nil {
 		return nil, err
 	}
+	script := hostScript(server, trivyInstallScript, "host-install", "trivy")
 	job, err := s.startPackageJob(scope, id, domain.RuleTypeScript,
-		"Trivy installieren & einrichten", func(string) string { return trivyInstallScript }, actor)
+		"Trivy installieren & einrichten", func(string) string { return script }, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -169,11 +183,13 @@ func (s *ServerService) InstallTrivy(scope repositories.AccessScope, id uint, ac
 // wertet die Erkennung anschließend neu aus - ohne Neustart des Dienstes.
 // Nur für den LCM-Host und nur auf apt-Systemen.
 func (s *ServerService) InstallSandbox(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	if _, err := s.requireLcmHostApt(scope, id); err != nil {
+	server, err := s.requireLcmHostApt(scope, id)
+	if err != nil {
 		return nil, err
 	}
+	script := hostScript(server, sandboxInstallScript, "host-install", "sandbox")
 	job, err := s.startPackageJob(scope, id, domain.RuleTypeScript,
-		"Sandbox für den CVE-Scanner nachrüsten", func(string) string { return sandboxInstallScript }, actor)
+		"Sandbox für den CVE-Scanner nachrüsten", func(string) string { return script }, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -201,8 +217,9 @@ func (s *ServerService) InstallAptCacher(scope repositories.AccessScope, id uint
 		return nil, err
 	}
 	cacheURL := lcmCacheURL(server)
+	script := hostScript(server, aptCacherInstallScript, "host-install", "apt-cacher")
 	job, err := s.startPackageJob(scope, id, domain.RuleTypeScript,
-		"apt-cacher-ng installieren & einrichten", func(string) string { return aptCacherInstallScript }, actor)
+		"apt-cacher-ng installieren & einrichten", func(string) string { return script }, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -460,24 +477,27 @@ func (s *ServerService) RunLcmHostJob(jobType, name, script, actor string, after
 
 // RestartAptCacher startet den apt-cacher-ng-Dienst auf dem LCM-Host neu.
 func (s *ServerService) RestartAptCacher(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	if _, err := s.requireLcmHostApt(scope, id); err != nil {
+	server, err := s.requireLcmHostApt(scope, id)
+	if err != nil {
 		return nil, err
 	}
+	script := hostScript(server, aptCacherRestartScript, "host-apt-cacher", "restart")
 	return s.startPackageJob(scope, id, domain.RuleTypeScript,
-		"apt-cacher-ng neu starten", func(string) string { return aptCacherRestartScript }, actor)
+		"apt-cacher-ng neu starten", func(string) string { return script }, actor)
 }
 
 // SetAptCacherPermanentCache schaltet den automatischen nächtlichen
 // Wartungs-/Ablauflauf von apt-cacher-ng ab (enabled=true → nichts läuft je
 // ab, "permanentes Caching") bzw. wieder ein.
 func (s *ServerService) SetAptCacherPermanentCache(scope repositories.AccessScope, id uint, enabled bool, actor string) (*domain.Job, error) {
-	if _, err := s.requireLcmHostApt(scope, id); err != nil {
+	server, err := s.requireLcmHostApt(scope, id)
+	if err != nil {
 		return nil, err
 	}
-	name := "apt-cacher-ng: permanentes Caching aktivieren"
+	name, mode := "apt-cacher-ng: permanentes Caching aktivieren", "cache-on"
 	if !enabled {
-		name = "apt-cacher-ng: permanentes Caching deaktivieren"
+		name, mode = "apt-cacher-ng: permanentes Caching deaktivieren", "cache-off"
 	}
-	script := aptCacherPermanentCacheScript(enabled)
+	script := hostScript(server, aptCacherPermanentCacheScript(enabled), "host-apt-cacher", mode)
 	return s.startPackageJob(scope, id, domain.RuleTypeScript, name, func(string) string { return script }, actor)
 }

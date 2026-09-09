@@ -43,6 +43,7 @@ import (
 	"LCM/internal/infrastructure/trivy"
 	"LCM/internal/logging"
 	"LCM/internal/mcp"
+	"LCM/internal/perms"
 	"LCM/internal/remote"
 	"LCM/internal/safego"
 	"LCM/internal/storage"
@@ -200,6 +201,13 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	if err != nil {
 		return err
 	}
+	// Dateirechte: beim Start prüfen und richten, danach regelmäßig. Ein
+	// einziges chmod 777 auf dem Datenverzeichnis macht Datenbank und
+	// Master-Key sonst für jeden Benutzer des Hosts lesbar - und bliebe
+	// unbemerkt.
+	permGuard := perms.New(dataDir, configPath)
+	permGuard.Run()
+	safego.Go("perms-guard", func() { permGuard.Loop(make(chan struct{})) })
 	if demo {
 		cfg.DemoMode = true
 	}
@@ -754,7 +762,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Testdaten, und ein echter SSH-Zugriff auf die Entwicklungsmaschine wäre
 	// unerwünscht.
 	if !demo {
-		services.NewSelfRegisterService(serverRepo, settingsRepo, sshx.NewClient(), cipher, dataDir).Run()
+		services.NewSelfRegisterService(serverRepo, settingsRepo, sshx.NewClient(), cipher, dataDir).
+			WithRestrict(func(id uint) error {
+				_, err := serverService.RestrictSudo(repositories.ScopeAll(), id, "system")
+				return err
+			}).Run()
 	}
 
 	// Nach einem Update den eigenen Host neu erfassen. Das neue Paket ist

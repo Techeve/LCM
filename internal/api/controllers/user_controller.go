@@ -73,6 +73,12 @@ func (ctrl *UserController) Create(c fiber.Ctx) error {
 	if err := strictJSON(c.Body(), &req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
+	if err := checkLines(lineField{"username", req.Username, maxNameLen}, lineField{"first_name", req.FirstName, maxPersonNameLen}, lineField{"last_name", req.LastName, maxPersonNameLen}); err != nil {
+		return err
+	}
+	if err := checkEmail("email", req.Email); err != nil {
+		return err
+	}
 	user, err := ctrl.users.CreateUser(req.Username, req.Email, req.Password, req.FirstName, req.LastName, req.Roles, actor(c))
 	if err != nil {
 		return mapServiceError(err)
@@ -114,6 +120,12 @@ func (ctrl *UserController) UpdateProfile(c fiber.Ctx) error {
 	var req updateProfileRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkLines(lineField{"first_name", req.FirstName, maxPersonNameLen}, lineField{"last_name", req.LastName, maxPersonNameLen}); err != nil {
+		return err
+	}
+	if err := checkEmail("email", req.Email); err != nil {
+		return err
 	}
 	caller := middlewares.CurrentUser(c)
 	if caller.ID == id && !strings.EqualFold(strings.TrimSpace(req.Email), strings.TrimSpace(caller.Email)) {
@@ -300,14 +312,10 @@ func bindOptionalBody(c fiber.Ctx, out any) error {
 	return nil
 }
 
-// paramStrID liest den Pfadparameter "id" als String - für Entitäten mit
-// UUID-Primärschlüssel (Jobs, SSH-Sessions, …). Nur auf Nicht-Leere geprüft.
+// paramStrID liest den Pfadparameter "id" für Entitäten mit UUID-Primär-
+// schlüssel (Jobs, SSH-Sessions, …) und verlangt eine UUID.
 func paramStrID(c fiber.Ctx) (string, error) {
-	id := c.Params("id")
-	if id == "" {
-		return "", fiber.NewError(fiber.StatusBadRequest, "ungültige ID")
-	}
-	return id, nil
+	return paramUUID(c, "id")
 }
 
 // paramNamedID parst einen benannten Pfadparameter als uint.

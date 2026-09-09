@@ -67,6 +67,11 @@ journalctl -u lcm -p warning | grep 'security'
 
 ## nginx
 
+Die vollständige Referenzkonfiguration liegt im Repository unter
+`packaging/nginx/lcm.conf` (samt `lcm-proxy.conf`-Schnipsel): TLS, beide
+Bremsen, Rumpf- und Zeitgrenzen je Pfad, Health und Agent-Download nur aus dem
+eigenen Netz. Das Folgende ist die gekürzte Fassung.
+
 ```nginx
 # Anmelde-Bremse: 10 Anfragen pro Minute und Quelle auf den Anmelde-Pfaden -
 # zusätzlich zur Bremse in LCM, die nur je Prozess zählt.
@@ -174,8 +179,43 @@ Sonderbehandlung. Eine Anfragen-Bremse gibt es in Caddy nur als Erweiterung
   `lcm`. Die Adresse ist die des Clients, sobald `trusted_proxies` stimmt.
 - **Journal weiterleiten.** Das Audit-Log liegt in der Datenbank auf demselben
   Rechner. Wer den Host übernimmt, kann es ändern - eine Kopie des Journals
-  auf einem anderen System (Syslog, SIEM) ist der Nachweis, der bleibt.
+  auf einem anderen System (Syslog, SIEM) ist der Nachweis, der bleibt. LCM
+  schreibt jeden Audit-Eintrag zusätzlich als Journal-Zeile `audit …` und
+  jedes Anmelde-/Rechte-Ereignis als `security …`; siehe unten.
 - **Kein Skript-Injizieren.** Die Content-Security-Policy erlaubt nur eigene
   Skripte. Ein Proxy, der Analytics oder Banner einfügt, wird vom Browser
   blockiert - wer das braucht, ersetzt die Kopfzeile bewusst und weiß, welchen
   Schutz er aufgibt.
+
+## Journal weiterleiten (Syslog/SIEM)
+
+Alles, was LCM protokolliert, landet im Journal der Unit `lcm`: die
+Sicherheitsereignisse (`security event=…`), der Audit-Spiegel
+(`audit action=…`), das Zugriffsprotokoll und die Dienstmeldungen. Mit
+`rsyslog` gehen genau diese Zeilen an einen zweiten Rechner - über TLS, damit
+unterwegs niemand mitliest oder fälscht:
+
+```rsyslog
+# /etc/rsyslog.d/50-lcm-forward.conf
+module(load="imjournal" StateFile="imjournal.state")
+module(load="omfwd")
+global(DefaultNetstreamDriver="gtls"
+       DefaultNetstreamDriverCAFile="/etc/ssl/certs/ca-certificates.crt")
+
+# Nur die Zeilen der LCM-Unit; Reihenfolge und Zeitstempel bleiben erhalten.
+if ($programname == "lcm") then {
+    action(type="omfwd" target="syslog.example.com" port="6514" protocol="tcp"
+           StreamDriver="gtls" StreamDriverMode="1" StreamDriverAuthMode="x509/name"
+           StreamDriverPermittedPeers="syslog.example.com"
+           queue.type="LinkedList" queue.filename="lcm-fwd" queue.saveOnShutdown="on"
+           action.resumeRetryCount="-1")
+    stop
+}
+```
+
+Danach `apt install rsyslog rsyslog-gnutls`, `systemctl restart rsyslog` und
+auf der Gegenseite prüfen, ob `security event=login.ok` nach einer Anmeldung
+ankommt. Die Warteschlange auf der Platte sorgt dafür, dass ein Ausfall der
+Gegenstelle keine Zeile verliert. Ohne eigenen Syslog-Server tut es auch
+`systemd-journal-upload` zu einem `systemd-journal-remote` - dann bleibt es
+das Journal-Format, mit denselben Feldern.

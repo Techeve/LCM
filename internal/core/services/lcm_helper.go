@@ -38,6 +38,15 @@ var lcmHelperScript = strings.NewReplacer(
 	"@@DEEPSCAN_LYNIS@@", lynisRunCmd,
 	"@@DEEPSCAN_CURATED@@", curatedChecksScript(),
 	"@@USERS_SCAN@@", usersScanScript(),
+	"@@HOST_TRIVY@@", trivyInstallScript,
+	"@@HOST_SANDBOX@@", sandboxInstallScript,
+	"@@HOST_APTCACHER@@", aptCacherInstallScript,
+	"@@HOST_APTCACHER_RESTART@@", aptCacherRestartScript,
+	"@@HOST_APTCACHER_CACHE_ON@@", aptCacherPermanentCacheScript(true),
+	"@@HOST_APTCACHER_CACHE_OFF@@", aptCacherPermanentCacheScript(false),
+	"@@HOST_CROWDSEC_BOUNCER@@", crowdsecLapiInstallScript(true),
+	"@@HOST_CROWDSEC_PLAIN@@", crowdsecLapiInstallScript(false),
+	"@@HOST_SELF_UPDATE@@", selfUpdateScript(false),
 	"@@HTTPS_BACKUP_DIR@@", httpsBackupDir,
 	"@@HELPER_VERSION@@", lcmHelperVersion,
 ).Replace(lcmHelperTemplate)
@@ -59,7 +68,10 @@ func helperVersion() string { return shortHash(helperVersionInput()) }
 func helperVersionInput() string {
 	return lcmHelperTemplate + "\x00" + deepScanToolsScript() + "\x00" +
 		needrestartBatchCmd + "\x00" + lynisRunCmd + "\x00" + curatedChecksScript() +
-		"\x00" + usersScanScript()
+		"\x00" + usersScanScript() + "\x00" + trivyInstallScript + sandboxInstallScript +
+		aptCacherInstallScript + aptCacherRestartScript + aptCacherPermanentCacheScript(true) +
+		aptCacherPermanentCacheScript(false) + crowdsecLapiInstallScript(true) +
+		crowdsecLapiInstallScript(false) + selfUpdateScript(false)
 }
 
 const lcmHelperTemplate = `#!/bin/sh
@@ -712,9 +724,52 @@ deep_scan() {
     esac
 }
 
+# host-install <trivy|sandbox|apt-cacher>: Einrichtung auf dem LCM-Host.
+# Die Skripte kommen aus lcm_host.go (eine Quelle fuer beide Modi); der
+# Parameter ist eine feste Auswahl, nichts davon fliesst in ein Kommando ein.
+# Damit braucht der Management-Benutzer des LCM-Hosts kein NOPASSWD:ALL mehr:
+# apt, Schluesselringe und Dienste erreicht er nur ueber diese Einstiege.
+host_install() {
+    case "$1" in
+        trivy)      @@HOST_TRIVY@@ ;;
+        sandbox)    @@HOST_SANDBOX@@ ;;
+        apt-cacher) @@HOST_APTCACHER@@ ;;
+        *) die "host-install trivy|sandbox|apt-cacher" ;;
+    esac
+}
+
+# host-apt-cacher <restart|cache-on|cache-off>: apt-cacher-ng bedienen.
+host_apt_cacher() {
+    case "$1" in
+        restart)   @@HOST_APTCACHER_RESTART@@ ;;
+        cache-on)  @@HOST_APTCACHER_CACHE_ON@@ ;;
+        cache-off) @@HOST_APTCACHER_CACHE_OFF@@ ;;
+        *) die "host-apt-cacher restart|cache-on|cache-off" ;;
+    esac
+}
+
+# host-crowdsec-lapi <bouncer|plain>: CrowdSec-LAPI-Server einrichten.
+host_crowdsec_lapi() {
+    case "$1" in
+        bouncer) @@HOST_CROWDSEC_BOUNCER@@ ;;
+        plain)   @@HOST_CROWDSEC_PLAIN@@ ;;
+        *) die "host-crowdsec-lapi bouncer|plain" ;;
+    esac
+}
+
+# host-self-update: das eigene Paket per systemd-run aktualisieren - der
+# Lauf ueberlebt den Neustart, den das Paket selbst ausloest.
+host_self_update() {
+@@HOST_SELF_UPDATE@@
+}
+
 cmd="${1:-}"
 [ $# -ge 1 ] && shift
 case "$cmd" in
+    host-install)      [ $# -eq 1 ] || die "host-install trivy|sandbox|apt-cacher"; host_install "$@" ;;
+    host-apt-cacher)   [ $# -eq 1 ] || die "host-apt-cacher restart|cache-on|cache-off"; host_apt_cacher "$@" ;;
+    host-crowdsec-lapi) [ $# -eq 1 ] || die "host-crowdsec-lapi bouncer|plain"; host_crowdsec_lapi "$@" ;;
+    host-self-update)  [ $# -eq 0 ] || die "host-self-update"; host_self_update ;;
     repo-add)    [ $# -eq 3 ] || die "repo-add <key> <keyurl_b64> <line_b64>"; repo_add "$@" ;;
     repos-https) repos_https ;;
     repos-http)  [ $# -ge 1 ] || die "repos-http <https-url>..."; repos_http "$@" ;;

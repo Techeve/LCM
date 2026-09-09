@@ -53,6 +53,15 @@ func (ctrl *CustomActionController) Create(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
+	}
+	if err := checkText("description", req.Description, maxDescriptionLen); err != nil {
+		return err
+	}
+	if err := checkText("commands", req.Commands, maxScriptLen); err != nil {
+		return err
+	}
 	action, err := ctrl.actions.Create(req.Name, req.Description, req.Commands, actor(c))
 	if err != nil {
 		return mapCustomActionError(err)
@@ -69,6 +78,15 @@ func (ctrl *CustomActionController) Update(c fiber.Ctx) error {
 	var req customActionRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
+	}
+	if err := checkText("description", req.Description, maxDescriptionLen); err != nil {
+		return err
+	}
+	if err := checkText("commands", req.Commands, maxScriptLen); err != nil {
+		return err
 	}
 	action, err := ctrl.actions.Update(id, req.Name, req.Description, req.Commands, actor(c))
 	if err != nil {

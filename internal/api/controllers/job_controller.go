@@ -35,6 +35,9 @@ func (ctrl *JobController) History(c fiber.Ctx) error {
 	if pageSize <= 0 || pageSize > 500 {
 		pageSize = 100
 	}
+	if err := checkLines(lineField{"q", c.Query("q"), maxQueryLen}, lineField{"triggered_by", c.Query("triggered_by"), maxQueryLen}); err != nil {
+		return err
+	}
 	// Unbekannte Filterwerte werden ABGEWIESEN statt still zu einer leeren
 	// Treffermenge zu führen (R2-069): "status=quatsch" sah aus wie „keine
 	// solchen Jobs", und ein nicht parsbares server_id lieferte ALLE Jobs.

@@ -194,6 +194,9 @@ type TerminalTickets struct {
 type terminalTicket struct {
 	actor    string
 	serverID uint
+	// clientIP ist die Adresse, die die Fahrkarte geholt hat. Nur sie darf
+	// sie einlösen - eine mitgelesene Fahrkarte nützt von woanders nichts.
+	clientIP string
 	expires  time.Time
 }
 
@@ -205,8 +208,9 @@ func NewTerminalTickets() *TerminalTickets {
 	return &TerminalTickets{tickets: map[string]terminalTicket{}}
 }
 
-// Issue stellt eine Fahrkarte für einen Benutzer und einen Server aus.
-func (t *TerminalTickets) Issue(actor string, serverID uint) (string, error) {
+// Issue stellt eine Fahrkarte für einen Benutzer und einen Server aus,
+// gebunden an die Client-Adresse, die sie geholt hat.
+func (t *TerminalTickets) Issue(actor string, serverID uint, clientIP string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -216,18 +220,19 @@ func (t *TerminalTickets) Issue(actor string, serverID uint) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.purgeLocked()
-	t.tickets[token] = terminalTicket{actor: actor, serverID: serverID, expires: time.Now().Add(ticketTTL)}
+	t.tickets[token] = terminalTicket{actor: actor, serverID: serverID, clientIP: clientIP, expires: time.Now().Add(ticketTTL)}
 	return token, nil
 }
 
-// Redeem löst eine Fahrkarte ein. Sie gilt genau einmal und nur für den
-// Server, für den sie ausgestellt wurde.
-func (t *TerminalTickets) Redeem(token string, serverID uint) (string, bool) {
+// Redeem löst eine Fahrkarte ein. Sie gilt genau einmal, nur für den
+// Server, für den sie ausgestellt wurde, und nur von der Adresse, die sie
+// geholt hat.
+func (t *TerminalTickets) Redeem(token string, serverID uint, clientIP string) (string, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.purgeLocked()
 	ticket, ok := t.tickets[token]
-	if !ok || ticket.serverID != serverID {
+	if !ok || ticket.serverID != serverID || ticket.clientIP != clientIP {
 		return "", false
 	}
 	delete(t.tickets, token) // einmal heißt einmal

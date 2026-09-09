@@ -52,6 +52,19 @@ type SelfRegisterService struct {
 	// CI-Container richtig - der Regelfall waere dort nie pruefbar.
 	// Die Erkennung selbst liegt in runtimeenv (dort auch ihre Tests).
 	containerCheck func() bool
+	// restrict schränkt den frisch aufgenommenen Host auf die sudoers-
+	// Whitelist ein (ServerService.RestrictSudo). Das Paketskript legt den
+	// Management-Benutzer zunächst mit vollen Rechten an - nur so lassen sich
+	// Helper und Whitelist installieren -, und LCM nimmt sie ihm gleich beim
+	// ersten Start wieder. Optional (nil = Voll-Modus bleibt).
+	restrict func(serverID uint) error
+}
+
+// WithRestrict verdrahtet das Einschränken des eigenen Hosts nach der
+// Aufnahme (siehe restrict).
+func (s *SelfRegisterService) WithRestrict(fn func(serverID uint) error) *SelfRegisterService {
+	s.restrict = fn
+	return s
 }
 
 func NewSelfRegisterService(
@@ -151,6 +164,12 @@ func (s *SelfRegisterService) register() error {
 		return fmt.Errorf("encrypt key: %w", err)
 	}
 
+	// Der Eintrag entsteht im Voll-Modus - so hat ihn das Paketskript
+	// angelegt. Wünscht die Übergabedatei den eingeschränkten Modus, folgt
+	// das Einschränken direkt danach (mit Wirkungsprobe und Rückfall, siehe
+	// RestrictSudo). Scheitert es, bleibt der Host im Voll-Modus und das
+	// Protokoll sagt warum - besser als ein Eintrag, der „eingeschränkt"
+	// behauptet, während die sudoers noch NOPASSWD:ALL trägt.
 	server := &domain.Server{
 		Name:               SelfHostName,
 		Host:               "localhost",
@@ -159,7 +178,6 @@ func (s *SelfRegisterService) register() error {
 		HostKeyFingerprint: fingerprint,
 		PrivateKeyEnc:      privEnc,
 		PublicKey:          ob.PublicKey,
-		RestrictedSudo:     ob.RestrictedSudo,
 		Transport:          domain.TransportSSH,
 	}
 	if err := s.servers.Create(server); err != nil {
@@ -169,6 +187,15 @@ func (s *SelfRegisterService) register() error {
 	slog.Info("=== this host was added as a managed server ===",
 		"name", SelfHostName, "service_user", ob.ServiceUser,
 		"hint", "remove it in the web interface if it is not wanted; it will not come back")
+	if ob.RestrictedSudo && s.restrict != nil {
+		if err := s.restrict(server.ID); err != nil {
+			slog.Warn("security", "event", "selfhost.restrict.failed",
+				"detail", "the management account keeps full sudo rights on this host", "error", err)
+			return nil
+		}
+		slog.Info("security", "event", "selfhost.restricted.ok",
+			"detail", "management account limited to the sudoers whitelist and lcm-helper")
+	}
 	return nil
 }
 
