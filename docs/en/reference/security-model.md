@@ -85,11 +85,20 @@ without a failure. Check and count happen in **one** operation under the same
 lock - otherwise hundreds of parallel requests could slip past the check together
 before the first failure is recorded.
 
-The client IP comes from the same function as the IP allowlist
-(`middlewares.ClientIP`) and honours `trust_proxy_header`. Without that, the
-address behind a reverse proxy would be identical for **all** clients - five
-failed attempts by an attacker would have locked login for the entire
-installation.
+The client IP is determined **once per request** (`middlewares.ResolveClientIP`)
+and shared by the IP allowlist, the login lockout, the access log and the
+security log. Behind a reverse proxy it comes from `X-Forwarded-For` - but only
+if `trust_proxy_header` is set **and** the peer is listed in `trusted_proxies`
+(`netfilter.ProxyTrust`). Without that, the address behind a proxy would be
+identical for **all** clients - five failed attempts by an attacker would have
+locked login for the entire installation; and without the list anyone reaching
+the port directly could choose their own address.
+
+An accepted **TOTP code is valid exactly once** (RFC 6238): the same code is not
+accepted a second time within the verification window, and the challenge of the
+two-step login is revoked after the second step. At login, passwords above
+1024 bytes are not hashed at all - argon2id is deliberately expensive, and the
+endpoint is reachable anonymously.
 
 ## Links in emails: `public_base_url`
 
@@ -364,7 +373,11 @@ The optional MCP listener (`internal/mcp`, off by default, bind `127.0.0.1:9330`
 - **XSS:** the frontend renders exclusively via Svelte templating (automatic escaping); `{@html}` is not used.
 - **Build gates:** `make build` aborts on `npm audit` or `govulncheck` findings.
 - **Default bind:** `127.0.0.1` - anyone exposing it externally deliberately sets `"host": "0.0.0.0"` and should terminate TLS via a reverse proxy (Caddy, nginx).
-- **IP allowlist:** `allowed_ips` in config.json restricts network access to allowed client addresses (keywords `localhost`/`private` or IP/CIDR); non-matching clients get an early **403** (`IPAllowlist` middleware, before auth/logging). Filtering uses the direct TCP connection; behind a reverse proxy set `trust_proxy_header: true` (evaluates `X-Forwarded-For` - only with a trusted proxy). The matcher lives in the `internal/netfilter` package. See [Security & CVE Scans](/en/guides/security-cve/).
+- **IP allowlist:** `allowed_ips` in config.json restricts network access to allowed client addresses (keywords `localhost`/`private` or IP/CIDR); non-matching clients get an early **403** (`IPAllowlist` middleware, before auth/logging). Filtering uses the direct TCP connection; behind a reverse proxy set `trust_proxy_header: true` **plus** `trusted_proxies` (`X-Forwarded-For` counts from those peers only). The matcher lives in the `internal/netfilter` package. See [Security & CVE Scans](/en/guides/security-cve/) and [Reverse proxy](/en/guides/reverse-proxy/).
+- **Body budget:** 1 MiB per request, checked on the headers before the body is read (`middlewares.BodyBudget`, request streaming). The large 64 MiB limit applies to the backup upload alone. Bodies without a length (chunked) are rejected outside the upload.
+- **Email address only with password:** your own address receives the password reset. Changing it requires the current password - a stolen session alone cannot redirect the account to a foreign address.
+- **Console ticket within scope:** the ticket for the web console is issued only for servers the user may see - the console permission alone is not enough.
+- **Security log:** logins (`login.ok`, `login.failed`, `login.locked`, `login.2fa.*`), password and email changes, second factor, API keys and console tickets are written as **one journal line** with the fixed text `security` and the client address (`middlewares.SecurityEvent`). Successes are INFO, everything else WARN: `journalctl -u lcm -p warning | grep security`. Unlike the audit log in the database, the journal can be forwarded and is usable by fail2ban (`event=login.failed ip=<HOST>`).
 
 ## Deliberate simplifications of the template
 

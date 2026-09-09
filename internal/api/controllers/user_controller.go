@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -87,11 +88,21 @@ type updateProfileRequest struct {
 	Email     string `json:"email"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
+	// CurrentPassword ist nur beim EIGENEN Profil und nur dann nötig, wenn
+	// sich die E-Mail-Adresse ändert (siehe UpdateProfile).
+	CurrentPassword string `json:"current_password"`
 }
 
 // UpdateProfile - PATCH /api/v1/users/:id/profile
 // Admins (users:write) dürfen jeden bearbeiten; jeder eingeloggte User
 // darf sein EIGENES Profil bearbeiten.
+//
+// Die eigene E-Mail-Adresse zu ändern verlangt das aktuelle Passwort. Die
+// Adresse ist der Empfänger des Passwort-Resets: Wer nur eine Sitzung erbeutet
+// hat (Token aus dem Browser), könnte sich sonst eine eigene Adresse
+// eintragen, danach einen Reset anfordern und das Konto dauerhaft übernehmen -
+// auch nachdem der Inhaber sein Passwort geändert und damit alle Sitzungen
+// beendet hat. Name und Vorname sind dafür belanglos und bleiben ohne Hürde.
 func (ctrl *UserController) UpdateProfile(c fiber.Ctx) error {
 	id, err := paramID(c)
 	if err != nil {
@@ -103,6 +114,16 @@ func (ctrl *UserController) UpdateProfile(c fiber.Ctx) error {
 	var req updateProfileRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	caller := middlewares.CurrentUser(c)
+	if caller.ID == id && !strings.EqualFold(strings.TrimSpace(req.Email), strings.TrimSpace(caller.Email)) {
+		ok, err := ctrl.users.CheckPassword(id, req.CurrentPassword)
+		if err != nil || !ok {
+			middlewares.SecurityEvent(c, "email.change.denied", "user", caller.Username)
+			return fiber.NewError(fiber.StatusUnauthorized,
+				"zum Ändern der E-Mail-Adresse ist das aktuelle Passwort erforderlich")
+		}
+		middlewares.SecurityEvent(c, "email.changed", "user", caller.Username)
 	}
 	user, err := ctrl.users.UpdateProfile(id, req.Email, req.FirstName, req.LastName, actor(c))
 	if err != nil {
@@ -143,6 +164,7 @@ func (ctrl *UserController) ResetPassword(c fiber.Ctx) error {
 	if selfService {
 		ok, err := ctrl.users.CheckPassword(id, req.CurrentPassword)
 		if err != nil || !ok {
+			middlewares.SecurityEvent(c, "password.change.denied", "user", caller.Username)
 			return fiber.NewError(fiber.StatusUnauthorized, "das aktuelle Passwort ist nicht korrekt")
 		}
 		if caller.TOTPEnabled {
@@ -155,6 +177,7 @@ func (ctrl *UserController) ResetPassword(c fiber.Ctx) error {
 					"zu viele fehlgeschlagene 2FA-Versuche - bitte später erneut versuchen")
 			}
 			if err := ctrl.totp.Verify(id, req.Code); err != nil {
+				middlewares.SecurityEvent(c, "password.change.denied", "user", caller.Username, "reason", "2fa")
 				return fiber.NewError(fiber.StatusUnauthorized, "ungültiger 2FA-Code")
 			}
 			ctrl.guard.reset(totpGuardKey(id))
@@ -163,6 +186,11 @@ func (ctrl *UserController) ResetPassword(c fiber.Ctx) error {
 
 	if err := ctrl.users.ResetPassword(id, req.Password, selfService, actor(c)); err != nil {
 		return mapServiceError(err)
+	}
+	if selfService {
+		middlewares.SecurityEvent(c, "password.changed", "user", caller.Username)
+	} else {
+		middlewares.SecurityEvent(c, "password.reset.by-admin", "by", actor(c), "target_id", strconv.FormatUint(uint64(id), 10))
 	}
 	return c.JSON(fiber.Map{"status": "password_reset"})
 }

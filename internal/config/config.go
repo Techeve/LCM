@@ -132,6 +132,17 @@ type Config struct {
 	// Header selbst setzt bzw. überschreibt - sonst ließe sich der Filter durch
 	// einen gefälschten Header umgehen.
 	TrustProxyHeader bool `json:"trust_proxy_header"`
+
+	// TrustedProxies grenzt TrustProxyHeader auf die Gegenstellen ein, die
+	// wirklich der Reverse-Proxy sind (IP-Adressen, CIDR-Bereiche oder die
+	// Schlüsselwörter "localhost"/"private"). Nur wenn die direkte
+	// TCP-Verbindung von einer dieser Adressen kommt, gilt X-Forwarded-For.
+	// Leer = jeder Peer wird geglaubt (bisheriges Verhalten; LCM warnt beim
+	// Start) - sicher ist das nur, wenn der LCM-Port ausschließlich vom Proxy
+	// erreichbar ist. Sonst gibt sich ein Client, der den Port direkt
+	// erreicht, mit einer gefälschten Kopfzeile jede beliebige Adresse: in
+	// die IP-Allowlist hinein und aus der Anmeldesperre heraus.
+	TrustedProxies []string `json:"trusted_proxies"`
 }
 
 // AccessTokenTTL liefert die Token-Lebensdauer als time.Duration.
@@ -247,6 +258,9 @@ func (c *Config) validate() error {
 	if _, err := netfilter.Parse(c.AllowedIPs); err != nil {
 		return fmt.Errorf("allowed_ips: %w", err)
 	}
+	if _, err := netfilter.Parse(c.TrustedProxies); err != nil {
+		return fmt.Errorf("trusted_proxies: %w", err)
+	}
 	return nil
 }
 
@@ -255,6 +269,16 @@ func (c *Config) validate() error {
 // hier nur bei programmatisch erzeugten Configs auftreten.
 func (c *Config) IPAllowlist() (netfilter.Allowlist, error) {
 	return netfilter.Parse(c.AllowedIPs)
+}
+
+// ProxyTrust baut aus trust_proxy_header und trusted_proxies die Regel, wessen
+// X-Forwarded-For geglaubt wird.
+func (c *Config) ProxyTrust() (netfilter.ProxyTrust, error) {
+	proxies, err := netfilter.Parse(c.TrustedProxies)
+	if err != nil {
+		return netfilter.ProxyTrust{}, fmt.Errorf("trusted_proxies: %w", err)
+	}
+	return netfilter.ProxyTrust{Enabled: c.TrustProxyHeader, Proxies: proxies}, nil
 }
 
 func (c *Config) save(path string) error {
@@ -287,6 +311,9 @@ func generateDefault() *Config {
 		// damit das Feld in einer neu erzeugten config.json sichtbar auftaucht
 		// (Auffindbarkeit des Sicherheits-Schalters).
 		AllowedIPs: []string{},
+		// Ebenfalls sichtbar leer: Wer trust_proxy_header einschaltet, soll
+		// den Schlüssel daneben stehen sehen.
+		TrustedProxies: []string{},
 	}
 }
 

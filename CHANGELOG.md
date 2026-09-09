@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.38.1-beta.1 - 2026-09-09
+
+### 🐛 Bugfixes
+
+- **security**: Sicherheitsanalyse Runde 1 - Sichtbereich, Proxy-Vertrauen, Re-Auth, Einmal-TOTP (abb21d57)
+
+### 🔧 Sonstiges
+
+- **release**: Versionsableitung an die eigene Linie binden (33d7d381)
+- versehentlich eingechecktes Binary "release" entfernen (7053cc37)
+
 ## v1.38.0 - 2026-09-08
 
 ### 🚀 Features

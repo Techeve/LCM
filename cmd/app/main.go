@@ -837,6 +837,17 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		slog.Info("access restriction active (allowed_ips)",
 			"entries", len(cfg.AllowedIPs), "trust_proxy_header", cfg.TrustProxyHeader)
 	}
+	proxyTrust, err := cfg.ProxyTrust()
+	if err != nil {
+		return err
+	}
+	if proxyTrust.Enabled && proxyTrust.Proxies.IsEmpty() {
+		// Bisheriges Verhalten, aber benannt: Ohne Liste gilt die Kopfzeile
+		// von JEDEM Peer - wer den Port am Proxy vorbei erreicht, wählt seine
+		// Adresse selbst.
+		slog.Warn("trust_proxy_header is set without trusted_proxies - X-Forwarded-For is believed from ANY peer; " +
+			"list the proxy addresses in trusted_proxies unless the port is reachable only from the proxy")
+	}
 
 	// healthCheckTimeout begrenzt eine einzelne Selbstprüfung. Deutlich unter der
 	// Frist, die der Monitor selbst darüberlegt (health.checkTimeout) - so meldet
@@ -878,7 +889,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		Health:                   healthMonitor,
 		DemoPublic:               cfg.DemoPublic,
 		IPAllowlist:              ipAllowlist,
-		TrustProxyHeader:         cfg.TrustProxyHeader,
+		ProxyTrust:               proxyTrust,
 		Auth:                     authService,
 		APIKeys:                  apiKeyService,
 		Users:                    userService,
@@ -918,7 +929,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Agent-Port konfiguriert ist (agent_port != 0) und der Hub existiert.
 	var agentApp *fiber.App
 	if agentHub != nil && cfg.AgentListenerEnabled() {
-		agentApp = router.NewAgentGateway(remote.WSHandler(agentHub), slog.Default())
+		agentApp = router.NewAgentGateway(remote.WSHandler(agentHub, proxyTrust), slog.Default())
 	}
 
 	// Graceful Shutdown bei SIGINT/SIGTERM (wichtig für Service-Betrieb).

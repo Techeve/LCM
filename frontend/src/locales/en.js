@@ -585,6 +585,8 @@ export default {
     profileSaved: 'Profile saved.',
     changePassword: 'Change password',
     currentPassword: 'Current password',
+    currentPasswordForEmail: 'Current password',
+    emailNeedsPassword: 'Your email address receives password reset links - changing it therefore requires your current password.',
     twofaCode: '2FA code',
     sixDigit: '6 digits',
     passwordChanged: 'Password changed. Please sign in again with the new password.',

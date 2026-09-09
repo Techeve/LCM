@@ -2,6 +2,8 @@ package services
 
 import (
 	"errors"
+	"strings"
+	"sync"
 	"time"
 
 	"LCM/internal/core/domain"
@@ -28,10 +30,44 @@ type TOTPService struct {
 	users  *repositories.UserRepository
 	cipher *crypto.Cipher
 	audit  *AuditService
+	// used merkt sich je Benutzer den zuletzt angenommenen Code samt Ablauf.
+	// Ein TOTP-Code ist im Fenster von ±30 s mehrfach „richtig" - wer ihn
+	// mitliest (Schulterblick, Phishing-Proxy), könnte ihn in derselben
+	// Minute noch einmal verwenden. RFC 6238 verlangt deshalb, einen
+	// angenommenen Code nicht ein zweites Mal anzunehmen. In-Memory reicht:
+	// LCM läuft als eine Instanz, und ein Neustart dauert länger als das Fenster.
+	usedMu sync.Mutex
+	used   map[uint]usedCode
 }
 
+type usedCode struct {
+	code  string
+	until time.Time
+}
+
+// usedCodeTTL überspannt das Prüffenster von Validate (±1 Periode) mit Reserve.
+const usedCodeTTL = 2 * time.Minute
+
 func NewTOTPService(users *repositories.UserRepository, cipher *crypto.Cipher, audit *AuditService) *TOTPService {
-	return &TOTPService{users: users, cipher: cipher, audit: audit}
+	return &TOTPService{users: users, cipher: cipher, audit: audit, used: map[uint]usedCode{}}
+}
+
+// consume nimmt einen bereits als gültig erkannten Code für den Benutzer an -
+// oder lehnt ihn ab, wenn genau dieser Code gerade schon angenommen wurde.
+func (s *TOTPService) consume(userID uint, code string) bool {
+	now := time.Now()
+	s.usedMu.Lock()
+	defer s.usedMu.Unlock()
+	for id, u := range s.used {
+		if now.After(u.until) {
+			delete(s.used, id)
+		}
+	}
+	if u, ok := s.used[userID]; ok && u.code == code {
+		return false
+	}
+	s.used[userID] = usedCode{code: code, until: now.Add(usedCodeTTL)}
+	return true
 }
 
 // SetupResult liefert Secret, QR-Provisioning-URI und ein scanbares
@@ -91,7 +127,7 @@ func (s *TOTPService) Enable(userID uint, code string) error {
 	if err != nil || secret == "" {
 		return ErrTOTPNotSetup
 	}
-	if !totp.Validate(secret, code) {
+	if !totp.Validate(secret, code) || !s.consume(userID, strings.TrimSpace(code)) {
 		return ErrTOTPInvalid
 	}
 	if err := s.users.UpdateFields(userID, map[string]any{"totp_enabled": true}); err != nil {
@@ -132,13 +168,14 @@ func (s *TOTPService) Disable(userID uint, code string) error {
 	return nil
 }
 
-// verify prüft einen Code gegen das gespeicherte Secret des Users.
+// verify prüft einen Code gegen das gespeicherte Secret des Users. Ein
+// angenommener Code gilt genau einmal (siehe consume).
 func (s *TOTPService) verify(user *domain.User, code string) error {
 	secret, err := s.cipher.DecryptString(user.TOTPSecretEnc)
 	if err != nil || secret == "" {
 		return ErrTOTPNotSetup
 	}
-	if !totp.Validate(secret, code) {
+	if !totp.Validate(secret, code) || !s.consume(user.ID, strings.TrimSpace(code)) {
 		return ErrTOTPInvalid
 	}
 	return nil

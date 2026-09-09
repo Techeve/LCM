@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,5 +201,34 @@ func TestLoadFromAddsNewKeysToExistingFile(t *testing.T) {
 	}
 	if strings.Contains(string(written), `"host": "127.0.0.1"`) {
 		t.Error("der eigene host-Wert wurde durch den Default ersetzt")
+	}
+}
+
+// TestProxyTrustFromConfig: trusted_proxies wird beim Laden geprüft und
+// grenzt trust_proxy_header auf die genannten Gegenstellen ein.
+func TestProxyTrustFromConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"jwt_secret":"`+config.RandomSecret(48)+`","trust_proxy_header":true,"trusted_proxies":["nicht-ip"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.LoadFrom(path); err == nil || !strings.Contains(err.Error(), "trusted_proxies") {
+		t.Fatalf("ungültige trusted_proxies müssen beim Laden abgewiesen werden, bekam %v", err)
+	}
+
+	cfg := &config.Config{TrustProxyHeader: true, TrustedProxies: []string{"127.0.0.1", "10.0.0.0/8"}}
+	trust, err := cfg.ProxyTrust()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trust.Trusts(netip.MustParseAddr("10.1.2.3")) {
+		t.Error("gelisteter Proxy muss vertraut werden")
+	}
+	if trust.Trusts(netip.MustParseAddr("203.0.113.9")) {
+		t.Error("fremder Peer darf nicht vertraut werden")
+	}
+	cfg.TrustProxyHeader = false
+	trust, _ = cfg.ProxyTrust()
+	if trust.Trusts(netip.MustParseAddr("10.1.2.3")) {
+		t.Error("ohne trust_proxy_header wird niemandem vertraut")
 	}
 }

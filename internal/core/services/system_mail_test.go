@@ -268,7 +268,7 @@ func newActivationEnv(t *testing.T) *activationEnv {
 	users := repositories.NewUserRepository(db)
 	links := repositories.NewActivationRepository(db)
 	mails := &mailRecorder{}
-	activation := services.NewActivationService(links, users, audit).WithMailer(mails.send).
+	activation := services.NewActivationService(links, users, audit).WithMailer(mails.send).SendSync().
 		WithLinkBase(func() string { return "https://lcm.example.com" })
 	return &activationEnv{users: users, links: links, activation: activation, mails: mails}
 }

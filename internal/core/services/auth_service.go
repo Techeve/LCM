@@ -119,10 +119,21 @@ func HashPassword(password string) (string, error) {
 	return argon2id.CreateHash(password, argon2Params)
 }
 
+// MaxLoginPasswordBytes deckelt, was der Login überhaupt an argon2id
+// weiterreicht. Die Policy erlaubt beim Setzen 200 Zeichen (PasswordMaxLength);
+// die Grenze hier liegt bewusst darüber, damit kein gültiges Passwort daran
+// scheitert - aber weit unter dem Rumpf-Limit. Ohne sie hashte der Dienst für
+// jeden anonymen Versuch beliebig lange Eingaben, und das Hashing ist absichtlich
+// teuer.
+const MaxLoginPasswordBytes = 1024
+
 // VerifyPassword prüft ausschließlich die Credentials (ohne Token-
 // Ausgabe) und liefert den User. Grundlage des zweistufigen Logins:
 // der Controller entscheidet danach, ob 2FA nötig ist.
 func (s *AuthService) VerifyPassword(username, password string) (*domain.User, error) {
+	if len(password) > MaxLoginPasswordBytes {
+		return nil, ErrInvalidCredentials
+	}
 	user, err := s.users.FindByUsername(username)
 	if err != nil {
 		if errors.Is(err, repositories.ErrNotFound) {
@@ -194,7 +205,9 @@ func (s *AuthService) ValidateChallenge(tokenString string) (*domain.User, error
 	if err != nil {
 		return nil, ErrChallengeInvalid
 	}
-	if !claims.TwoFAPending {
+	// Eine eingelöste Challenge wird widerrufen (LoginTOTP) - sie darf keine
+	// zweite Sitzung eröffnen.
+	if !claims.TwoFAPending || s.tokenRevoked(tokenString) {
 		return nil, ErrChallengeInvalid
 	}
 	return s.userFromClaims(claims)

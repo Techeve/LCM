@@ -87,11 +87,20 @@ Minuten ohne Fehlversuch. Prüfung und Zählung laufen in **einer** Operation un
 demselben Lock - sonst könnten hunderte parallele Anfragen gemeinsam an der
 Prüfung vorbeilaufen, bevor der erste Fehlversuch verbucht ist.
 
-Die Client-IP stammt aus derselben Funktion wie die IP-Allowlist
-(`middlewares.ClientIP`) und berücksichtigt `trust_proxy_header`. Ohne das wäre
-die Adresse hinter einem Reverse-Proxy für **alle** Clients dieselbe - fünf
-Fehlversuche eines Angreifers hätten die Anmeldung der gesamten Installation
-gesperrt.
+Die Client-IP wird **einmal je Anfrage** bestimmt (`middlewares.ResolveClientIP`)
+und von IP-Allowlist, Anmeldesperre, Zugriffs- und Sicherheitsprotokoll
+gemeinsam gelesen. Hinter einem Reverse-Proxy kommt sie aus `X-Forwarded-For` -
+aber nur, wenn `trust_proxy_header` gesetzt ist **und** der Peer in
+`trusted_proxies` steht (`netfilter.ProxyTrust`). Ohne das wäre die Adresse
+hinter einem Proxy für **alle** Clients dieselbe - fünf Fehlversuche eines
+Angreifers hätten die Anmeldung der gesamten Installation gesperrt; und ohne die
+Liste könnte jeder, der den Port direkt erreicht, seine Adresse selbst wählen.
+
+Ein angenommener **TOTP-Code gilt genau einmal** (RFC 6238): derselbe Code wird
+innerhalb des Prüffensters nicht ein zweites Mal akzeptiert, und die Challenge
+des zweistufigen Logins ist nach dem zweiten Schritt widerrufen. Beim Login
+werden Passwörter über 1024 Bytes gar nicht erst gehasht - argon2id ist
+absichtlich teuer, und der Endpunkt ist anonym erreichbar.
 
 ## Links in E-Mails: `public_base_url`
 
@@ -373,7 +382,11 @@ Der optionale MCP-Listener (`internal/mcp`, Default aus, Bind `127.0.0.1:9330`) 
 - **XSS:** Das Frontend rendert ausschließlich über Svelte-Templating (automatisches Escaping); `{@html}` wird nicht verwendet.
 - **Build-Gates:** `make build` bricht bei `npm audit`- oder `govulncheck`-Funden ab.
 - **Default-Bind:** `127.0.0.1` - wer nach außen exponiert, setzt bewusst `"host": "0.0.0.0"` und sollte TLS über einen Reverse-Proxy (Caddy, nginx) terminieren.
-- **IP-Allowlist:** `allowed_ips` in der config.json beschränkt den Netzwerk-Zugriff auf zugelassene Client-Adressen (Schlüsselwörter `localhost`/`private` oder IP/CIDR); nicht passende Clients erhalten früh **403** (Middleware `IPAllowlist`, vor Auth/Logging). Gefiltert wird die direkte TCP-Verbindung; hinter einem Reverse-Proxy `trust_proxy_header: true` (wertet `X-Forwarded-For` aus - nur bei vertrauenswürdigem Proxy). Der Matcher liegt im Paket `internal/netfilter`. Siehe [Sicherheit & CVE-Scans](/guides/security-cve/).
+- **IP-Allowlist:** `allowed_ips` in der config.json beschränkt den Netzwerk-Zugriff auf zugelassene Client-Adressen (Schlüsselwörter `localhost`/`private` oder IP/CIDR); nicht passende Clients erhalten früh **403** (Middleware `IPAllowlist`, vor Auth/Logging). Gefiltert wird die direkte TCP-Verbindung; hinter einem Reverse-Proxy `trust_proxy_header: true` **plus** `trusted_proxies` (nur von diesen Peers zählt `X-Forwarded-For`). Der Matcher liegt im Paket `internal/netfilter`. Siehe [Sicherheit & CVE-Scans](/guides/security-cve/) und [Reverse-Proxy](/guides/reverse-proxy/).
+- **Rumpf-Budget:** 1 MiB je Anfrage, geprüft an der Kopfzeile, bevor der Rumpf gelesen wird (`middlewares.BodyBudget`, Request-Streaming). Das große Limit von 64 MiB gilt allein dem Backup-Upload. Rümpfe ohne Längenangabe (chunked) werden außerhalb des Uploads abgewiesen.
+- **E-Mail-Adresse nur mit Passwort:** Die eigene Adresse empfängt den Passwort-Reset. Sie zu ändern verlangt das aktuelle Passwort - eine erbeutete Sitzung allein kann das Konto nicht auf eine fremde Adresse umbiegen.
+- **Konsolen-Fahrkarte im Sichtbereich:** Die Fahrkarte für die Web-Konsole gibt es nur für Server, die der Benutzer sehen darf - das Konsolen-Recht allein reicht nicht.
+- **Sicherheitsprotokoll:** Anmeldungen (`login.ok`, `login.failed`, `login.locked`, `login.2fa.*`), Passwort- und E-Mail-Änderungen, Zweitfaktor, API-Schlüssel und Konsolen-Fahrkarten landen als **eine Journal-Zeile** mit dem festen Text `security` und der Client-Adresse (`middlewares.SecurityEvent`). Erfolge sind INFO, alles andere WARN: `journalctl -u lcm -p warning | grep security`. Anders als das Audit-Log in der Datenbank lässt sich das Journal weiterleiten und ist für fail2ban greifbar (`event=login.failed ip=<HOST>`).
 
 ## Bewusste Vereinfachungen des Templates
 

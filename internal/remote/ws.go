@@ -10,6 +10,7 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/netfilter"
 	"LCM/internal/remote/wire"
 	"LCM/internal/safego"
 )
@@ -17,12 +18,13 @@ import (
 // WSHandler liefert den Fiber-Handler für GET /mqtt: Upgrade auf WebSocket
 // und Übergabe der Verbindung an den eingebetteten Broker. Die eigentliche
 // Authentifizierung (AgentID + Token) macht der Broker im CONNECT-Paket -
-// hier gibt es nur ein kleines per-IP-Ratelimit gegen Upgrade-Fluten.
+// hier gibt es nur ein kleines per-IP-Ratelimit gegen Upgrade-Fluten. trust
+// sagt, wessen X-Forwarded-For dabei zählt (siehe netfilter.ProxyTrust).
 //
 // fasthttp/websocket hijackt die Verbindung: der Fiber-Handler kehrt sofort
 // zurück, der Callback läuft anschließend auf der gekaperten Verbindung und
 // blockiert dort bis zum Disconnect des Agents.
-func WSHandler(hub *Hub) fiber.Handler {
+func WSHandler(hub *Hub, trust netfilter.ProxyTrust) fiber.Handler {
 	upgrader := websocket.FastHTTPUpgrader{
 		Subprotocols: []string{"mqtt"}, // [MQTT-6.0.0-3]
 		// Kein CheckOrigin-Override: Agents senden keinen Origin-Header
@@ -32,7 +34,15 @@ func WSHandler(hub *Hub) fiber.Handler {
 	limiter := newUpgradeLimiter(10, time.Minute)
 
 	return func(c fiber.Ctx) error {
-		if !limiter.allow(c.IP()) {
+		// Hinter einem TLS-terminierenden Proxy wäre die Peer-Adresse für
+		// ALLE Agents dieselbe - nach einem LCM-Neustart kämen dann nur zehn
+		// pro Minute wieder herein, der Rest liefe in die Sperre. Deshalb
+		// dieselbe Adressermittlung wie auf dem UI-Port (trusted_proxies).
+		ip := c.IP()
+		if addr, ok := netfilter.ClientIP(c.IP(), c.Get("X-Forwarded-For"), trust); ok {
+			ip = addr.String()
+		}
+		if !limiter.allow(ip) {
 			return fiber.NewError(fiber.StatusTooManyRequests,
 				"zu viele Verbindungsversuche - bitte später erneut versuchen")
 		}

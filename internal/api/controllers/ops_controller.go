@@ -24,6 +24,16 @@ import (
 // Upload ab, bevor der Handler mit seiner eigenen Prüfung überhaupt läuft.
 const MaxUploadBytes = 64 << 20 // 64 MiB
 
+// MaxBodyBytes ist das Rumpf-Budget aller ÜBRIGEN Routen (middlewares.
+// BodyBudget). Der größte reguläre Rumpf ist eine Firewall-Konfiguration mit
+// Regeln - weit unter einem Mebibyte.
+const MaxBodyBytes = 1 << 20 // 1 MiB
+
+// IsLargeUploadPath nennt die Routen, die das große Limit wirklich brauchen.
+func IsLargeUploadPath(path string) bool {
+	return path == "/api/v1/system/backups/restore-upload"
+}
+
 // maxRestoreUpload begrenzt eine hochgeladene Backup-Datei.
 const maxRestoreUpload = MaxUploadBytes
 

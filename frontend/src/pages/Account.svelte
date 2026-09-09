@@ -11,6 +11,10 @@
   const t = (k, p) => i18n.t(k, p);
 
   let profile = $state({ email: '', firstName: '', lastName: '' });
+  // Nur beim Ändern der E-Mail-Adresse nötig: Sie empfängt den Passwort-Reset,
+  // deshalb verlangt der Server dafür das aktuelle Passwort.
+  let profilePassword = $state('');
+  let emailChanged = $derived((profile.email ?? '').trim().toLowerCase() !== (auth.user?.email ?? '').trim().toLowerCase());
   let password = $state('');
   let passwordValid = $state(false);
   let currentPassword = $state('');
@@ -38,9 +42,10 @@
     error = '';
     notice = '';
     try {
-      const updated = await api.users.updateProfile(auth.user.id, profile);
+      const updated = await api.users.updateProfile(auth.user.id, { ...profile, currentPassword: profilePassword });
       // Session-Profil aktualisieren, damit die Navbar den neuen Namen zeigt.
       api.client.startSession(localStorage.getItem('lcm.token'), { ...auth.user, ...updated });
+      profilePassword = '';
       notice = t('account.profileSaved');
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
@@ -116,6 +121,14 @@
               <label class="form-label" for="acc-email">{t('account.email')}</label>
               <input id="acc-email" type="email" class="form-control" bind:value={profile.email} />
             </div>
+            {#if emailChanged}
+              <div class="mb-2">
+                <label class="form-label" for="acc-email-pw">{t('account.currentPasswordForEmail')}</label>
+                <input id="acc-email-pw" type="password" autocomplete="current-password"
+                  class="form-control" bind:value={profilePassword} />
+                <div class="form-text">{t('account.emailNeedsPassword')}</div>
+              </div>
+            {/if}
             <div class="row g-2 mb-3">
               <div class="col">
                 <label class="form-label" for="acc-first">{t('account.firstName')}</label>

@@ -17,6 +17,7 @@ import (
 
 	"LCM/internal/agent"
 	"LCM/internal/core/domain"
+	"LCM/internal/netfilter"
 	"LCM/internal/remote"
 	"LCM/internal/remote/wire"
 	"LCM/internal/storage"
@@ -53,7 +54,7 @@ func TestAgentEndToEnd(t *testing.T) {
 	t.Cleanup(hub.Close)
 
 	app := fiber.New()
-	app.Get("/mqtt", remote.WSHandler(hub))
+	app.Get("/mqtt", remote.WSHandler(hub, netfilter.ProxyTrust{}))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

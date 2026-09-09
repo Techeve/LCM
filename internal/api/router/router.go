@@ -72,10 +72,10 @@ type Deps struct {
 	// IPAllowlist beschränkt den Zugriff auf zugelassene Client-Adressen
 	// (leerer Matcher = keine Einschränkung, bisheriges Verhalten).
 	IPAllowlist netfilter.Allowlist
-	// TrustProxyHeader lässt den IP-Filter die Client-IP aus X-Forwarded-For
-	// nehmen statt aus der direkten Verbindung (nur hinter vertrauenswürdigem
-	// Reverse-Proxy sinnvoll).
-	TrustProxyHeader bool
+	// ProxyTrust sagt, wessen X-Forwarded-For als Client-Adresse gilt
+	// (trust_proxy_header + trusted_proxies) - für IP-Filter, Anmeldesperre
+	// und Protokolle gleichermaßen.
+	ProxyTrust netfilter.ProxyTrust
 	// Restart löst einen Prozess-Neustart aus (für Auto-Apply eines Restores).
 	// nil in Tests / wenn kein Supervisor den Prozess neu startet.
 	Restart func()
@@ -117,6 +117,11 @@ func New(deps Deps) *fiber.App {
 		// 4 MiB hatte den Restore in der Praxis unmöglich gemacht: fasthttp
 		// wies jedes reale Archiv mit 413 ab, bevor der Handler lief.
 		BodyLimit: controllers.MaxUploadBytes,
+		// Rümpfe erst lesen, wenn ein Handler sie braucht. Erst damit greift
+		// middlewares.BodyBudget VOR dem Lesen: Ohne Streaming läge ein
+		// 64-MiB-Rumpf auf /auth/login bereits im Speicher, bevor irgendeine
+		// Middleware läuft.
+		StreamRequestBody: true,
 	})
 
 	logger := deps.Logger
@@ -125,15 +130,21 @@ func New(deps Deps) *fiber.App {
 	}
 
 	app.Use(recover.New())
+	// Client-Adresse EINMAL bestimmen - alles Folgende (Allowlist, Log,
+	// Anmeldesperre, Sicherheitsprotokoll) liest dieselbe.
+	app.Use(middlewares.ResolveClientIP(deps.ProxyTrust))
 	// IP-Allowlist so früh wie möglich (nach recover): nicht zugelassene
 	// Clients werden mit 403 abgewiesen, bevor Logging, Auth oder Controller
 	// laufen. Nur registrieren, wenn konfiguriert - sonst kein Overhead.
 	if !deps.IPAllowlist.IsEmpty() {
-		app.Use(middlewares.IPAllowlist(deps.IPAllowlist, deps.TrustProxyHeader, logger))
+		app.Use(middlewares.IPAllowlist(deps.IPAllowlist, logger))
 	}
 	if deps.AccessLog {
 		app.Use(middlewares.AccessLog(logger))
 	}
+	// Rumpf-Budget je Route, bevor irgendjemand den Rumpf liest: 1 MiB für
+	// alles, das große Limit nur für den Backup-Upload.
+	app.Use(middlewares.BodyBudget(controllers.MaxBodyBytes, controllers.IsLargeUploadPath))
 	app.Use(middlewares.SecurityHeaders())
 	// Rate-Limit VOR der Key-Validierung: drosselt auch Brute-Force
 	// mit ungültigen Keys. Betrifft nur Requests mit X-API-Key-Header.
@@ -151,7 +162,7 @@ func New(deps Deps) *fiber.App {
 	// müssen endpunktübergreifend greifen (Login, 2FA-Deaktivierung,
 	// Passwortwechsel prüfen alle denselben zweiten Faktor).
 	loginGuard := controllers.NewLoginGuard()
-	authCtrl := controllers.NewAuthController(deps.Auth, deps.TOTP, deps.Settings, deps.Activation, loginGuard, deps.TrustProxyHeader)
+	authCtrl := controllers.NewAuthController(deps.Auth, deps.TOTP, deps.Settings, deps.Activation, loginGuard)
 	userCtrl := controllers.NewUserController(deps.Users, deps.TOTP, loginGuard)
 	apiKeyCtrl := controllers.NewAPIKeyController(deps.APIKeys)
 	systemCtrl := controllers.NewSystemController(deps.System)

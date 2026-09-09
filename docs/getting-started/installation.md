@@ -183,7 +183,8 @@ Beim ersten Start entstehen im Host-Ordner `./data` die Konfiguration, die
 SQLite-Datenbank und `version.json`. Das Runtime-Image ist minimal gehärtet
 (Alpine, non-root, `read-only`, `cap_drop: ALL`). Der Container spricht standardmäßig
 HTTPS mit selbstsigniertem Zertifikat - für öffentliche Deployments einen
-Reverse-Proxy mit echtem Zertifikat davorschalten.
+Reverse-Proxy mit echtem Zertifikat davorschalten (Beispiele und was dabei
+in LCM einzustellen ist: [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/)).
 
 Details und alle Härtungs-Flags: [Docker-Betrieb](/guides/docker/) und
 [Paketierung](/reference/packaging/).

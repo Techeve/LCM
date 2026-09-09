@@ -249,7 +249,8 @@ By default, any IP that can reach the LCM port may call the web UI and API
 ```json
 {
   "allowed_ips": ["private"],
-  "trust_proxy_header": false
+  "trust_proxy_header": false,
+  "trusted_proxies": []
 }
 ```
 
@@ -267,9 +268,12 @@ Entries can be mixed, e.g. `["localhost", "192.168.10.0/24"]`.
 :::caution[Behind a reverse proxy]
 Filtering uses the **direct TCP connection** (spoof-proof). If LCM runs behind
 a reverse proxy (e.g. for TLS), the direct peer is the proxy - in that case set
-`"trust_proxy_header": true` so LCM takes the client IP from `X-Forwarded-For`.
-Only enable this if the proxy sets/overwrites that header itself - otherwise the
-filter could be bypassed with a forged header.
+`"trust_proxy_header": true` so LCM takes the client IP from `X-Forwarded-For`,
+**and** list the proxy address(es) in `trusted_proxies`. The header is believed
+from those peers only; any other peer counts with its own address. Without the
+list the header counts from anyone - a client reaching the port past the proxy
+would enter the allowlist with a forged header. Details and proxy examples:
+[Reverse proxy & external hardening](/en/guides/reverse-proxy/).
 :::
 
 :::note[Docker healthcheck]
