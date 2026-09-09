@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.40.0-beta.1 - 2026-09-09
+
+### 🚀 Features
+
+- **backup**: Reste abgebrochener Sicherungsläufe selbst wegräumen (7b86dbd6)
+
 ## v1.39.1-beta.1 - 2026-09-09
 
 ### 🐛 Bugfixes

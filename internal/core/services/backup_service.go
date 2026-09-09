@@ -252,6 +252,74 @@ func (s *BackupService) Prune(keep int) {
 			slog.Error("deleting backup file failed", "file", b.FileName, "error", err)
 		}
 	}
+	// Bei der Gelegenheit die Reste abgebrochener Läufe mitnehmen - Prune
+	// läuft nach jeder Sicherung, hier ist der Ordner ohnehin schon offen.
+	s.CleanStaleTemp(staleTempAge)
+}
+
+// staleTempAge ist das Alter, ab dem eine Zwischendatei als liegengeblieben
+// gilt, wenn im laufenden Betrieb aufgeräumt wird. Ein echter Sicherungslauf
+// schreibt seine Momentaufnahme in Minuten; sechs Stunden liegen so weit
+// darüber, dass eine gerade entstehende Datei nie erwischt wird.
+const staleTempAge = 6 * time.Hour
+
+// isStaleTempName meldet die Zwischendateien eines Sicherungslaufs: die
+// Momentaufnahme der Datenbank (.snap-…​.db) und das halbfertige Archiv
+// (….lcmbak.part).
+func isStaleTempName(name string) bool {
+	if strings.HasPrefix(name, ".snap-") && strings.HasSuffix(name, ".db") {
+		return true
+	}
+	return strings.HasSuffix(name, BackupExt+".part")
+}
+
+// CleanStaleTemp entfernt liegengebliebene Zwischendateien aus dem
+// Backup-Verzeichnis und meldet, wie viele es waren.
+//
+// Warum es sie überhaupt gibt: Der reguläre Lauf räumt selbst auf, aber ein
+// hart beendeter Prozess kommt nicht mehr dazu - ein Neustart mitten im
+// Kopieren genügt. Zurück bleibt dann eine Momentaufnahme der Datenbank, und
+// die ist ANDERS als die Archive daneben nicht verschlüsselt. Auf einem
+// Produktivsystem lag so eine Datei vier Wochen lang herum (143 MB), ohne
+// dass irgendetwas sie je wieder angefasst hätte.
+//
+// olderThan schützt einen gerade laufenden Sicherungslauf: 0 beim Start des
+// Dienstes (dort kann keiner laufen, der Prozess ist neu), sonst staleTempAge.
+func (s *BackupService) CleanStaleTemp(olderThan time.Duration) int {
+	dir, err := s.backupDir()
+	if err != nil {
+		slog.Error("stale backup files: backup directory not determinable", "error", err)
+		return 0
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() || !isStaleTempName(e.Name()) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if olderThan > 0 && time.Since(info.ModTime()) < olderThan {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if err := os.Remove(path); err != nil {
+			slog.Error("removing a leftover backup file failed", "file", e.Name(), "error", err)
+			continue
+		}
+		// Eine Warnung, keine Nebenbemerkung: Die Datei belegt, dass ein
+		// Sicherungslauf abgebrochen ist - und bis hierher lag eine
+		// unverschlüsselte Kopie der Datenbank auf der Platte.
+		slog.Warn("leftover file of an interrupted backup removed",
+			"file", e.Name(), "size", info.Size(), "modified", info.ModTime().Format(time.RFC3339))
+		removed++
+	}
+	return removed
 }
 
 // List liefert alle Backup-Metadaten.

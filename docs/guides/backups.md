@@ -104,6 +104,23 @@ keines), wird **sofort ein Backup nachgeholt** - kurz nach dem Start, ohne
 Zutun. Auch ein frisches manuelles Backup zählt dabei als Abdeckung des
 Intervalls.
 
+### Reste eines abgebrochenen Laufs
+
+Ein Sicherungslauf legt zwei Zwischendateien an: eine Momentaufnahme der
+Datenbank (`.snap-…​.db`) und das halbfertige Archiv (`….lcmbak.part`). Im
+Regelfall räumt er sie selbst wieder weg. Wird der Dienst mitten im Kopieren
+hart beendet, etwa durch einen Neustart, bleiben sie liegen - und die
+Momentaufnahme ist, anders als das fertige Archiv, **nicht verschlüsselt**.
+
+LCM räumt solche Reste deshalb selbst ab: beim Start sofort, danach nach jeder
+Sicherung, dort nur, was älter als sechs Stunden ist (ein gerade laufender
+Lauf soll seine eigene Datei behalten). Jede entfernte Datei steht mit Größe
+und Datum im Protokoll:
+
+```bash
+journalctl -u lcm | grep 'leftover file of an interrupted backup'
+```
+
 ## Wiederherstellen
 
 Zwei Wege:

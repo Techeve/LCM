@@ -103,6 +103,22 @@ newest backup is older than the interval (or none exists yet), a backup is
 **caught up immediately** - shortly after startup, with no action required. A
 fresh manual backup also counts as covering the interval.
 
+### Leftovers of an interrupted run
+
+A backup run creates two intermediate files: a snapshot of the database
+(`.snap-…​.db`) and the half-finished archive (`….lcmbak.part`). Normally it
+removes them itself. If the service is killed mid-copy, for instance by a
+restart, they stay behind - and unlike the finished archive, the snapshot is
+**not encrypted**.
+
+LCM therefore clears such leftovers on its own: immediately at start, and after
+every backup, there only those older than six hours (a run in progress must
+keep its own file). Every removed file is logged with size and date:
+
+```bash
+journalctl -u lcm | grep 'leftover file of an interrupted backup'
+```
+
 ## Restore
 
 Two paths:

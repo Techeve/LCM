@@ -519,6 +519,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	packageService := services.NewPackageService(serverRepo)
 	backupService := services.NewBackupService(db, settingsRepo, dataDir, dbPath, configPath).
 		WithConfigDir(cfg.BackupDir).WithCipher(cipher)
+	// Reste eines abgebrochenen Sicherungslaufs jetzt wegräumen: Ein neuer
+	// Prozess hat keinen laufenden Lauf, den er stören könnte, und eine
+	// liegengebliebene Momentaufnahme ist eine unverschlüsselte Kopie der
+	// Datenbank. Danach übernimmt Prune nach jeder Sicherung.
+	backupService.CleanStaleTemp(0)
 	// R2-027: Das geplante Backup war ab Werk aktiv, konnte aber ohne
 	// Passphrase PRINZIPBEDINGT nie laufen - 13 stille Fehlversuche im
 	// Langzeittest. Ist es aktiviert und existiert nirgends eine Passphrase
