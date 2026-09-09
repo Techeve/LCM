@@ -304,7 +304,15 @@ die sudoers-Whitelist** - Paketverwaltung, Docker, ufw und den validierenden
 Root-Shell hat das Konto danach nicht mehr; die Wirkungsprobe und der Rückfall
 in den Voll-Modus sind dieselben wie beim Einschränken eines beliebigen Servers.
 Volle Rechte behält das Konto nur mit `LCM_SELF_MANAGE_FULL=1` bei der
-Installation. Was der eingeschränkte Modus leistet und was nicht, steht oben:
+Installation.
+
+**Bestehende Installationen bleiben, wie sie sind.** Ein Upgrade fasst ein
+vorhandenes `lcm-svc` nicht mehr an - weder die sudoers-Regel noch die
+`authorized_keys`. Das ist Absicht: Früher schrieb jedes Paket-Update die
+Zeile `NOPASSWD:ALL` neu und hätte damit eine eingeschränkte Whitelist still
+wieder aufgehoben. Wer den eigenen Host umstellen will, nutzt die
+Server-Aktion **Rechte einschränken**; beim Start sagt LCM im Protokoll an,
+woran man ist (`security event=selfhost.full-sudo` bzw. `selfhost.restricted`). Was der eingeschränkte Modus leistet und was nicht, steht oben:
 apt und Docker führen konstruktionsbedingt Code als root aus - wer den
 Dienst übernimmt, erreicht darüber weiterhin Root auf dem Host, nur nicht mehr
 mit einem Befehl.

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.39.1-beta.1 - 2026-09-09
+
+### 🐛 Bugfixes
+
+- **packaging**: Upgrade hebt die Einschränkung des LCM-Hosts nicht mehr auf (73d625ff)
+
 ## v1.39.0-beta.1 - 2026-09-09
 
 ### 🚀 Features

@@ -139,6 +139,17 @@ elif [ ! -d /run/systemd/system ]; then
 	SELF_MANAGE=skipped
 elif ! command -v sshd > /dev/null 2>&1 && [ ! -x /usr/sbin/sshd ]; then
 	SELF_MANAGE=nossh
+elif [ -f /etc/sudoers.d/lcm-svc ] && getent passwd "$SVC_USER" > /dev/null 2>&1; then
+	# Upgrade einer bestehenden Installation: Konto, Schluessel und
+	# sudo-Regel stehen bereits, LCM traegt den passenden Private Key
+	# verschluesselt in seiner Datenbank. Hier NICHTS anzufassen ist die
+	# Voraussetzung dafuer, dass die Einschraenkung haelt: Ein erneutes
+	# Schreiben ersetzte eine eingeschraenkte Whitelist durch NOPASSWD:ALL
+	# (der eingeschraenkte Modus waere nach jedem Upgrade still weg), und
+	# jedes Upgrade legte einen weiteren Schluessel in authorized_keys, den
+	# LCM nie benutzt - die Uebergabedatei wird bei einem bereits
+	# aufgenommenen Host beim Start verworfen.
+	SELF_MANAGE=existing
 else
 	if ! getent passwd "$SVC_USER" > /dev/null 2>&1; then
 		adduser --system --group --home "/home/$SVC_USER" --shell /bin/sh \

@@ -199,6 +199,34 @@ func (s *SelfRegisterService) register() error {
 	return nil
 }
 
+// ReportHostMode meldet beim Start, in welchem Rechte-Modus der eigene Host
+// verwaltet wird. Der eingeschraenkte Modus ist seit 1.39 die Vorgabe fuer
+// NEUE Installationen; eine bestehende bleibt im Voll-Modus, bis jemand
+// "Rechte einschraenken" ausloest. Ohne diese Zeile bliebe genau das
+// unsichtbar - das Konto lcm-svc traegt dann weiterhin NOPASSWD:ALL, und wer
+// den Dienst uebernimmt, ist mit einem Befehl root auf dem LCM-Host.
+func (s *SelfRegisterService) ReportHostMode() {
+	servers, err := s.servers.FindAllUnscoped()
+	if err != nil {
+		return
+	}
+	for i := range servers {
+		if !servers[i].IsLcmHost() {
+			continue
+		}
+		if servers[i].RestrictedSudo {
+			slog.Info("security", "event", "selfhost.restricted",
+				"server", servers[i].Name, "service_user", servers[i].ServiceUser)
+			return
+		}
+		slog.Warn("security", "event", "selfhost.full-sudo",
+			"server", servers[i].Name, "service_user", servers[i].ServiceUser,
+			"detail", "the management account has full sudo rights on this host - "+
+				"restrict it in the web interface (server action \"restrict privileges\")")
+		return
+	}
+}
+
 // removeOnboardFile ueberschreibt die Uebergabedatei vor dem Loeschen. Das
 // ist kein sicheres Loeschen auf modernen Dateisystemen (Journaling,
 // Copy-on-Write, SSD-Wear-Leveling), verhindert aber, dass der Schluessel in

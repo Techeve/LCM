@@ -762,11 +762,16 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Testdaten, und ein echter SSH-Zugriff auf die Entwicklungsmaschine wäre
 	// unerwünscht.
 	if !demo {
-		services.NewSelfRegisterService(serverRepo, settingsRepo, sshx.NewClient(), cipher, dataDir).
+		selfReg := services.NewSelfRegisterService(serverRepo, settingsRepo, sshx.NewClient(), cipher, dataDir).
 			WithRestrict(func(id uint) error {
 				_, err := serverService.RestrictSudo(repositories.ScopeAll(), id, "system")
 				return err
-			}).Run()
+			})
+		selfReg.Run()
+		// Und danach ansagen, woran man ist: Eine bestehende Installation
+		// bleibt im Voll-Modus, bis jemand sie umstellt - das gehoert ins
+		// Protokoll, nicht in eine Annahme.
+		selfReg.ReportHostMode()
 	}
 
 	// Nach einem Update den eigenen Host neu erfassen. Das neue Paket ist

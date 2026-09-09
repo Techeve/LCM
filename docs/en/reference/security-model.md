@@ -295,7 +295,14 @@ subcommands `host-install`, `host-apt-cacher`, `host-crowdsec-lapi` and
 `host-self-update` carry the host functions. The account has no root shell
 afterwards; the effect check and the fallback to full mode are the same as
 when restricting any other server. It keeps full rights only with
-`LCM_SELF_MANAGE_FULL=1` at install time. What restricted mode does and does
+`LCM_SELF_MANAGE_FULL=1` at install time.
+
+**Existing installations stay as they are.** An upgrade no longer touches an
+existing `lcm-svc` - neither the sudoers rule nor its `authorized_keys`. That
+is deliberate: previously every package update rewrote the `NOPASSWD:ALL` line
+and would silently have undone a restricted whitelist. To switch your own host,
+use the server action **restrict privileges**; at start LCM states where you
+stand (`security event=selfhost.full-sudo` or `selfhost.restricted`). What restricted mode does and does
 not achieve is described above: apt and docker execute code as root by
 design - whoever takes over the service still reaches root on the host that
 way, just not with a single command.
