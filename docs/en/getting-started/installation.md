@@ -269,11 +269,11 @@ The agent port carries **only** the agent interface, the UI/REST port carries
 [MCP interface](/en/guides/mcp/).
 
 :::note[Every restart ends all sessions]
-The JWT signing material is re-bound on every start to a random, RAM-only
-instance nonce. As a result, after a (re)start **all** previously issued tokens
-are invalid - everyone has to log in again. This holds even with an unchanged
-`jwt_secret` and covers, among others, rebuilds, process restarts and a fresh
-database seeding.
+The JWT signing material is generated fresh on every start and lives only in
+memory; there is no stored secret behind it. As a result, after a (re)start
+**all** previously issued tokens are invalid - everyone has to log in again.
+This covers, among others, rebuilds, process restarts and a fresh database
+seeding.
 :::
 
 ## First login

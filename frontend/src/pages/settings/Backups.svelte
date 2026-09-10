@@ -21,8 +21,13 @@
   // erste geantwortet hat.
   let busy = $state('');
 
-  // Passphrase für ein manuelles Backup (leer = LCM_BACKUP_PASSPHRASE).
+  // Passphrase für ein manuelles Backup (leer = Empfänger-Schlüssel bzw.
+  // LCM_BACKUP_PASSPHRASE).
   let backupPass = $state('');
+
+  // Frisch erzeugtes Schlüsselpaar: Der private Teil wird genau einmal
+  // angezeigt und nirgends gespeichert.
+  let generated = $state(null);
 
   // Rollback aus der Historie: gewähltes Backup + Passphrase.
   let restoreTarget = $state(null);
@@ -64,12 +69,32 @@
         dir: settings.backup_dir,
         auto_restart: settings.restore_auto_restart,
         passphrase: schedulePass,
+        recipients: settings.backup_recipients,
       });
       schedulePass = '';
+      generated = null;
       notice = t('settings.backups.savedSchedule');
       await load();
     } catch (e) {
       fail(e);
+    }
+  }
+
+  // Erzeugt ein Schlüsselpaar und hängt den öffentlichen Teil an die
+  // Empfänger-Liste; gespeichert wird erst mit dem Formular.
+  async function generateRecipient() {
+    if (busy) return;
+    busy = 'generate';
+    error = '';
+    notice = '';
+    try {
+      generated = await api.system.generateBackupRecipient();
+      const current = (settings.backup_recipients ?? '').trim();
+      settings.backup_recipients = current ? `${current}\n${generated.public_key}` : generated.public_key;
+    } catch (e) {
+      fail(e);
+    } finally {
+      busy = '';
     }
   }
 
@@ -193,14 +218,16 @@
       <div class="card-body">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
           <h3 class="h6 mb-0">{t('settings.backups.autoBackup')}</h3>
-          <!-- Passphrase-Status: nur das Flag aus der Umgebung, nie der Wert. -->
-          {#if settings.backup_passphrase_set}
+          <!-- Schlüssel-Status: nur Flags, nie ein Wert. -->
+          {#if settings.backup_recipients_set}
+            <span class="badge text-bg-success" title={t('settings.backups.recipientsOkHint')} data-testid="backup-pass-badge">{t('settings.backups.recipientsOk')}</span>
+          {:else if settings.backup_passphrase_set}
             <span class="badge text-bg-success" title={t('settings.backups.passOkHint')} data-testid="backup-pass-badge">{t('settings.backups.passOk')}</span>
           {:else}
             <span class="badge text-bg-warning" data-testid="backup-pass-badge">{t('settings.backups.passMissing')}</span>
           {/if}
         </div>
-        {#if settings.backup_enabled && !settings.backup_passphrase_set}
+        {#if settings.backup_enabled && !settings.backup_passphrase_set && !settings.backup_recipients_set}
           <div class="alert alert-warning" data-testid="backup-pass-warning">
             <p class="mb-2">{t('settings.backups.passMissingBody')}</p>
             <pre class="small mb-2"><code>{`# /etc/systemd/system/lcm.service.d/backup.conf
@@ -235,6 +262,23 @@ Environment=LCM_BACKUP_PASSPHRASE=ein-langes-geheimnis`}</code></pre>
               <input id="bd" class="form-control" bind:value={settings.backup_dir} placeholder={t('settings.backups.dirPlaceholder')} />
               <div class="form-text">{t('settings.backups.dirHint')}</div>
             </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="brec">{t('settings.backups.recipientsLabel')}</label>
+            <textarea id="brec" class="form-control font-monospace small" rows="3" spellcheck="false"
+              bind:value={settings.backup_recipients} placeholder="age1…" data-testid="backup-recipients"></textarea>
+            <div class="form-text">{t('settings.backups.recipientsHint')}</div>
+            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" data-testid="backup-recipient-generate"
+              disabled={!!busy} onclick={generateRecipient}>
+              {busy === 'generate' ? t('common.loading') : t('settings.backups.generateRecipient')}
+            </button>
+            {#if generated}
+              <div class="alert alert-warning mt-2 mb-0" data-testid="backup-recipient-generated">
+                <p class="mb-2"><strong>{t('settings.backups.generatedBold')}</strong>{t('settings.backups.generatedBody')}</p>
+                <pre class="small mb-2 user-select-all"><code>{generated.private_key}</code></pre>
+                <p class="small mb-0">{t('settings.backups.generatedOutro')}</p>
+              </div>
+            {/if}
           </div>
           <div class="row g-3 mb-3">
             <div class="col-md-6">
@@ -287,13 +331,20 @@ Environment=LCM_BACKUP_PASSPHRASE=ein-langes-geheimnis`}</code></pre>
       {/if}
       <div class="table-responsive">
         <table class="table table-sm mb-0 align-middle">
-          <thead><tr><th>{t('settings.backups.colFile')}</th><th>{t('settings.backups.colSize')}</th><th>{t('settings.backups.colTrigger')}</th><th>{t('settings.backups.colTime')}</th><th class="text-end">{t('settings.backups.colActions')}</th></tr></thead>
+          <thead><tr><th>{t('settings.backups.colFile')}</th><th>{t('settings.backups.colSize')}</th><th>{t('settings.backups.colTrigger')}</th><th>{t('settings.backups.colEncryption')}</th><th>{t('settings.backups.colTime')}</th><th class="text-end">{t('settings.backups.colActions')}</th></tr></thead>
           <tbody>
             {#each backups as b (b.id)}
               <tr>
                 <td class="small">{b.file_name}</td>
                 <td class="small">{Math.round(b.size_bytes / 1024)} KB</td>
                 <td class="small">{b.trigger}</td>
+                <td class="small">
+                  {#if b.encryption === 'recipients'}
+                    <span class="badge text-bg-info">{t('settings.backups.encRecipients')}</span>
+                  {:else}
+                    <span class="badge text-bg-secondary">{t('settings.backups.encPassphrase')}</span>
+                  {/if}
+                </td>
                 <td class="small text-body-secondary">{new Date(b.created_at).toLocaleString()}</td>
                 <td class="text-end text-nowrap">
                   <button class="btn btn-sm btn-outline-secondary" onclick={() => download(b.file_name)}>{t('settings.backups.download')}</button>
@@ -303,7 +354,7 @@ Environment=LCM_BACKUP_PASSPHRASE=ein-langes-geheimnis`}</code></pre>
               </tr>
               {#if restoreTarget === b.file_name}
                 <tr>
-                  <td colspan="5">
+                  <td colspan="6">
                     <div class="alert alert-warning mb-0">
                       <p class="mb-2">
                         <strong>{t('settings.backups.restoreWarnBold')}</strong>{t('settings.backups.restoreWarn')}
@@ -328,7 +379,7 @@ Environment=LCM_BACKUP_PASSPHRASE=ein-langes-geheimnis`}</code></pre>
                 </tr>
               {/if}
             {:else}
-              <tr><td colspan="5" class="text-body-secondary small">{t('settings.backups.noBackups')}</td></tr>
+              <tr><td colspan="6" class="text-body-secondary small">{t('settings.backups.noBackups')}</td></tr>
             {/each}
           </tbody>
         </table>

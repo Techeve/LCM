@@ -129,7 +129,7 @@ irreführend. Für den Produktivbetrieb sollte die Adresse gesetzt werden.
 
 Das JWT-Secret wird beim ersten Start kryptografisch zufällig generiert (48 Bytes aus `crypto/rand`) und liegt nur in der `config.json` (Dateirechte 0600). Secrets unter 32 Zeichen werden beim Laden abgelehnt.
 
-**Sitzungs-Invalidierung bei jedem Neustart:** Das effektive HS256-Signaturmaterial ist **nicht** direkt das `jwt_secret`, sondern `HMAC-SHA256(jwt_secret, Instanz-Nonce)`. Das Nonce wird bei jedem Prozessstart neu aus `crypto/rand` gezogen und lebt ausschließlich im Arbeitsspeicher (`deriveSigningKey` in `auth_service.go`). Damit entsteht bei jedem (Neu-)Start ein anderer Signaturschlüssel und **alle** zuvor ausgestellten Tokens fallen bei der Signaturprüfung durch - jede Sitzung endet, ein neues Login ist nötig. Das gilt auch bei unverändertem `jwt_secret` und deckt insbesondere den Fall ab, dass eine alte, weiterhin gültige Session sonst einem frisch geseedeten Admin mit derselben ID vertrauen würde (Rebuild, Prozess-Neustart, neu angelegte Datenbank).
+**Sitzungs-Invalidierung bei jedem Neustart:** Das HS256-Signaturmaterial wird bei jedem Prozessstart neu aus `crypto/rand` gezogen und lebt ausschließlich im Arbeitsspeicher (`newSigningKey` in `auth_service.go`). Ein gespeichertes Geheimnis gibt es dafür nicht mehr - frühere Fassungen mischten ein `jwt_secret` aus der `config.json` hinein, das seit der Bindung an den Prozessstart keinen Zweck mehr hatte; ein noch vorhandener Eintrag wird ignoriert und beim nächsten Schreiben der Datei entfernt. Folge: Bei jedem (Neu-)Start entsteht ein anderer Signaturschlüssel und **alle** zuvor ausgestellten Tokens fallen bei der Signaturprüfung durch - jede Sitzung endet, ein neues Login ist nötig. Das deckt insbesondere den Fall ab, dass eine alte, weiterhin gültige Session sonst einem frisch geseedeten Admin mit derselben ID vertrauen würde (Rebuild, Prozess-Neustart, neu angelegte Datenbank).
 
 ## RBAC: User → Rolle → Permission
 
@@ -389,7 +389,55 @@ davon unberührt.
 
 ## At-Rest-Verschlüsselung & Master-Key-Rotation
 
-Alle Geheimnisse in der Datenbank werden feldweise mit **AES-256-GCM** verschlüsselt. Der **Master-Key** liegt getrennt von der DB in `lcm.key` (Dateirechte 0600) im Datenverzeichnis und wird beim ersten Start erzeugt (`internal/infrastructure/crypto`). Ohne ihn sind die verschlüsselten Felder unlesbar - deshalb gehört er in jedes [Backup](/guides/backups/).
+Alle Geheimnisse in der Datenbank werden feldweise mit **AES-256-GCM** verschlüsselt. Der **Master-Key** liegt getrennt von der DB: beim ersten Start als `lcm.key` (Dateirechte 0600) im Datenverzeichnis, nach der Umstellung als systemd-Credential (siehe unten) nur noch verschlüsselt im Credential-Speicher (`internal/infrastructure/crypto`). Ohne ihn sind die verschlüsselten Felder unlesbar - deshalb gehört er in jedes [Backup](/guides/backups/); das Archiv trägt ihn auch dann, wenn keine Datei mehr existiert.
+
+### Master-Key als systemd-Credential
+
+`lcm credentials init` (als root) überführt den Schlüssel von der Datei in
+ein systemd-Credential:
+
+```bash
+sudo lcm credentials init            # Bindung: TPM2 + Host-Schlüssel, wenn ein TPM da ist, sonst Host-Schlüssel
+sudo lcm credentials init --with-key=tpm2
+sudo systemctl restart lcm
+```
+
+Das Kommando verschlüsselt den Schlüssel mit `systemd-creds` nach
+`/etc/credstore.encrypted/lcm.key`, prüft per Gegenprobe, dass genau der
+aktuelle Schlüssel zurückkommt, schreibt die Unit-Ergänzung
+`LoadCredentialEncrypted=lcm.key:…` und vernichtet erst dann `lcm.key`. Beim
+Start entschlüsselt systemd das Credential in ein Verzeichnis im
+Arbeitsspeicher, das nur der Dienst sieht (`$CREDENTIALS_DIRECTORY`); das
+Journal meldet `master key source=credential`.
+
+Was das bringt: Im Datenverzeichnis liegt kein Klartext-Schlüssel mehr. Eine
+Kopie des Verzeichnisses, ein Archiv ohne Passphrase, ein verirrtes `rsync` -
+alles ohne Wert. Mit TPM-Bindung gilt das auch für ein Abbild der ganzen
+Maschine; mit reiner Host-Bindung (Container ohne TPM) enthält ein
+Container-Backup den Host-Schlüssel von systemd mit - dort schließt erst
+eine verschlüsselte Container-Sicherung die Lücke. Was es nicht bringt: Wer
+root auf der laufenden Maschine hat, kommt weiterhin an den Schlüssel; das
+ist der Preis des unbeaufsichtigten Neustarts.
+
+Reihenfolge beim Start: `LCM_ENCRYPTION_KEY` (ausdrückliche Vorgabe), dann
+`lcm.key`, dann das Credential. Die Datei gewinnt bewusst gegen das
+Credential: Nach einem Restore oder `rotate-db-key` liegt sie wieder da und
+gehört zur Datenbank. LCM meldet den Zustand dann als
+`security event=masterkey.file-overrides-credential`; `lcm credentials init`
+erneut ausführen bringt den neuen Schlüssel ins Credential und entfernt die
+Datei wieder.
+
+Dasselbe Verfahren trägt zwei weitere Geheimnisse, jeweils als
+`SetCredentialEncrypted=` in der Unit-Ergänzung: `trivy_token` (statt
+`config.json`/Umgebung) und `backup_passphrase` (statt
+`LCM_BACKUP_PASSPHRASE`). Ein Credential hat Vorrang vor Datei und Umgebung.
+
+Für die Sicherungen selbst geht es noch einen Schritt weiter: Mit
+**Empfänger-Schlüsseln** ([age](https://age-encryption.org), X25519) werden
+die Archive an öffentliche Schlüssel verschlüsselt - auf dem Server liegt
+dann für das geplante Backup **kein Geheimnis mehr**, der private Schlüssel
+bleibt offline beim Betreiber. Wer den Host übernimmt, hat die Archive, aber
+nicht den Schlüssel dazu. Einrichtung in der [Backup-Anleitung](/guides/backups/).
 
 Verschlüsselt gespeichert werden u.&nbsp;a. (vollständige Liste in `internal/storage/rotate.go`):
 

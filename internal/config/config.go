@@ -1,8 +1,11 @@
 // Package config verwaltet die Anwendungskonfiguration (config.json).
 //
 // Beim Start wird nach einer config.json im Verzeichnis des Binaries gesucht.
-// Fehlt sie, wird sie mit sicheren, randomisierten Standardwerten erzeugt
-// (inkl. kryptografisch starkem JWT-Secret).
+// Fehlt sie, wird sie mit Standardwerten erzeugt. Geheimnisse stehen nicht
+// darin: Der Signaturschlüssel der Sitzungen entsteht bei jedem Start neu im
+// Speicher, der Master-Key liegt in lcm.key oder in einem systemd-Credential.
+// Ein `jwt_secret` aus älteren Fassungen wird beim Laden ignoriert und beim
+// nächsten Schreiben der Datei entfernt.
 package config
 
 import (
@@ -38,10 +41,6 @@ type Config struct {
 
 	// DatabasePath ist der Pfad zur SQLite-Datei (relativ zum Binary oder absolut).
 	DatabasePath string `json:"database_path"`
-
-	// JWTSecret signiert die Access-Tokens (HS256). Wird bei Erstellung
-	// der Datei kryptografisch zufällig generiert. Niemals einchecken!
-	JWTSecret string `json:"jwt_secret"`
 
 	// AccessTokenTTLMinutes bestimmt die Lebensdauer eines JWT in Minuten.
 	AccessTokenTTLMinutes int `json:"access_token_ttl_minutes"`
@@ -223,9 +222,6 @@ func LoadFrom(path string) (*Config, error) {
 }
 
 func (c *Config) validate() error {
-	if len(c.JWTSecret) < 32 {
-		return fmt.Errorf("jwt_secret ist zu kurz (min. 32 Zeichen) - bitte config.json löschen und neu generieren lassen")
-	}
 	if c.Port <= 0 || c.Port > 65535 {
 		return fmt.Errorf("ungültiger Port: %d", c.Port)
 	}
@@ -300,7 +296,6 @@ func generateDefault() *Config {
 		AgentHost:                "0.0.0.0",
 		AgentPort:                9320,
 		DatabasePath:             "app.db",
-		JWTSecret:                RandomSecret(48),
 		AccessTokenTTLMinutes:    60,
 		AdminInitialPassword:     "",
 		LogLevel:                 "info",

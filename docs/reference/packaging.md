@@ -46,7 +46,7 @@ Die Architektur ermittelst du mit `dpkg --print-architecture`
 | `/usr/bin/lcm` | die Programmdatei (einzelne Binary, Web-UI eingebettet) |
 | `/lib/systemd/system/lcm.service` | die gehärtete systemd-Unit |
 | `/etc/lcm/config.json` | Konfiguration (beim ersten Mal mit zufälligem JWT-Secret erzeugt) |
-| `/var/lib/lcm/` | Zustand: verschlüsselte SQLite-DB, Master-Key (`lcm.key`), TLS-Zertifikat, Backups |
+| `/var/lib/lcm/` | Zustand: verschlüsselte SQLite-DB, Master-Key (`lcm.key`, sofern nicht als systemd-Credential hinterlegt), TLS-Zertifikat, Backups |
 
 Der Dienst läuft unter dem eigens angelegten System-Benutzer **`lcm`** ohne
 root-Rechte - LCM verwaltet *andere* Server per SSH und braucht auf dem
@@ -83,8 +83,9 @@ Dienst neu starten (`systemctl restart lcm`). Wichtige Werte:
   einen Reverse-Proxy mit gültigem Zertifikat davorschalten. Für rein lokalen
   Betrieb `host` auf `127.0.0.1` setzen.
 - `port` (Default `9310`).
-- `jwt_secret`: signiert die Sitzungen - **nicht** ändern (sonst werden alle
-  Anmeldungen ungültig) und **nicht** weitergeben.
+- Ein Geheimnis steht nicht in der Datei: Der Signaturschlüssel der
+  Sitzungen entsteht bei jedem Start neu im Speicher. Ein `jwt_secret` aus
+  älteren Fassungen wird ignoriert und beim nächsten Schreiben entfernt.
 
 ### Aktualisieren
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.41.0-beta.1 - 2026-09-10
+
+### 🚀 Features
+
+- **security**: Schlüssel aus dem Datenverzeichnis holen - Credentials, kein jwt_secret, Empfänger-Backups (29cdf536)
+
 ## v1.40.0-beta.1 - 2026-09-09
 
 ### 🚀 Features

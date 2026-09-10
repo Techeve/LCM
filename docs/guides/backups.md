@@ -5,13 +5,13 @@ title: Backups
 description: Verschlüsselte, portable .lcmbak-Archive erstellen, herunterladen und wiederherstellen.
 ---
 
-LCM sichert seinen **eigenen** Zustand in ein passphrase-verschlüsseltes,
-portables Archiv. Ein Backup enthält alles, was eine Instanz ausmacht - es lässt
-sich auf einer **frischen** Instanz vollständig wiederherstellen.
+LCM sichert seinen **eigenen** Zustand in ein verschlüsseltes, portables
+Archiv. Ein Backup enthält alles, was eine Instanz ausmacht - es lässt sich auf
+einer **frischen** Instanz vollständig wiederherstellen.
 
 ## Was im Archiv steckt
 
-Ein `.lcmbak` (ZIP mit AES-256-GCM / scrypt-Schlüsselableitung) bündelt:
+Ein `.lcmbak` ist ein verschlüsseltes ZIP. Es bündelt:
 
 - die **Datenbank-Momentaufnahme** (konsistenter SQLite-Snapshot),
 - den **Master-Key** (`lcm.key`) - ohne ihn wären die at-rest verschlüsselten
@@ -19,21 +19,56 @@ Ein `.lcmbak` (ZIP mit AES-256-GCM / scrypt-Schlüsselableitung) bündelt:
 - die **Konfiguration** (`config.json`),
 - das **TLS-Zertifikat**.
 
-:::caution[Passphrase]
-Die Backup-Passphrase kommt aus der Umgebungsvariable
-`LCM_BACKUP_PASSPHRASE` (oder wird beim manuellen Erstellen abgefragt) und wird
-**niemals** in Datenbank oder Konfiguration gespeichert. Ohne sie ist ein
-Backup nicht wiederherstellbar - sicher aufbewahren.
+Verschlüsselt wird auf eine von zwei Arten - die Spalte *Verschlüsselung* in
+der Backup-Liste zeigt, welche:
+
+| Art | Wie | Zum Wiederherstellen nötig |
+|---|---|---|
+| **Empfänger-Schlüssel** (empfohlen) | [age](https://age-encryption.org), X25519: das Archiv wird an einen oder mehrere **öffentliche** Schlüssel verschlüsselt. Auf dem Server liegt kein Geheimnis. | der **private** Schlüssel eines Empfängers |
+| **Passphrase** | scrypt-Ableitung + AES-256-GCM. | die Passphrase |
+
+:::caution[Ohne Schlüssel kein Restore]
+Weder den privaten Empfänger-Schlüssel noch die Passphrase kann LCM
+wiederbeschaffen. Ohne sie ist ein Backup nicht wiederherstellbar - sicher
+aufbewahren, an einem Ort, der das Backup überlebt (Passwortmanager, Tresor,
+zwei Personen).
 :::
 
 ![Backup-Einstellungen: automatisches Backup, erstellte Archive, Wiederherstellen](./img/backups-settings.png)
 
 ## Backup jetzt erstellen
 
-Unter *Einstellungen → Backups* legt **„Backup jetzt erstellen"** sofort ein
-Archiv an; die Passphrase wird dabei abgefragt. LCM zieht dafür eine
-**konsistente** Momentaufnahme der Datenbank (`VACUUM INTO`) - ein Backup
-lässt sich also im laufenden Betrieb erstellen.
+Unter *Einstellungen → Backups* legt **„Jetzt sichern"** sofort ein Archiv an.
+Bleibt das Passphrase-Feld daneben leer, gilt dieselbe Reihenfolge wie beim
+geplanten Backup (Empfänger-Schlüssel, sonst hinterlegte Passphrase); eine
+eingetippte Passphrase gewinnt und verschlüsselt genau dieses Archiv damit.
+LCM zieht dafür eine **konsistente** Momentaufnahme der Datenbank
+(`VACUUM INTO`) - ein Backup lässt sich also im laufenden Betrieb erstellen.
+
+## Empfänger-Schlüssel (empfohlen)
+
+Mit Empfänger-Schlüsseln braucht das geplante Backup **kein Geheimnis auf dem
+Server**: Zum Verschlüsseln genügt der öffentliche Schlüssel, der private liegt
+bei dir. Wer den Host übernimmt, hat damit die Archive - aber nicht den
+Schlüssel dazu.
+
+1. Unter *Einstellungen → Backups* auf **„Schlüsselpaar erzeugen"** klicken.
+   LCM zeigt den privaten Schlüssel (`AGE-SECRET-KEY-1…`) **genau einmal** und
+   speichert ihn nirgends - jetzt in den Passwortmanager übernehmen.
+2. Der öffentliche Schlüssel (`age1…`) steht danach in der Empfänger-Liste;
+   mit **Speichern** wird er wirksam. Mehrere Empfänger sind erlaubt, einer je
+   Zeile - jeder davon kann später wiederherstellen.
+3. Das Badge wechselt auf **„Empfänger-Schlüssel gesetzt"**; die Passphrase
+   wird ab jetzt nicht mehr benutzt (sie bleibt gespeichert und greift wieder,
+   sobald die Liste leer ist).
+
+Ein Schlüsselpaar lässt sich genauso mit dem Werkzeug `age-keygen` erzeugen -
+das Format ist dasselbe; dann nur den öffentlichen Teil eintragen. Ein Archiv
+lässt sich mit dem privaten Schlüssel auch ohne LCM öffnen:
+
+```bash
+age -d -i schluessel.txt lcm-backup-20260910-033000.lcmbak > backup.zip
+```
 
 ## Automatische Backups
 
@@ -42,16 +77,19 @@ zeigt die Seite *Einstellungen → Backups* direkt an:
 
 1. **„Automatische Backups aktiv"** ist eingeschaltet (Standard: an, alle
    24 Stunden).
-2. Die **Passphrase ist als Umgebungsvariable gesetzt** -
-   `LCM_BACKUP_PASSPHRASE` für den LCM-Dienst. Ein unbeaufsichtigtes Backup
-   kann sie nicht abfragen; ohne sie schlägt **jedes** geplante Backup fehl
-   (sichtbar als fehlgeschlagener Job „System-Backup" auf der *Jobs*-Seite).
+2. **Ein Schlüssel ist hinterlegt**: Empfänger-Schlüssel (siehe oben) oder
+   eine Passphrase - im Feld „Passphrase für geplante Backups"
+   (verschlüsselt gespeichert), als systemd-Credential `backup_passphrase`
+   oder als Umgebungsvariable `LCM_BACKUP_PASSPHRASE`. Ein unbeaufsichtigtes
+   Backup kann nach nichts fragen; ohne Schlüssel lässt sich der Zeitplan gar
+   nicht erst aktivieren, und ein beim Start vorgefundener aktiver Zeitplan
+   ohne Schlüssel wird abgeschaltet (Warnung im Protokoll).
 
-Ob die Passphrase gesetzt ist, zeigt die Backups-Seite als Badge
-(**„Passphrase gesetzt"** / **„Passphrase fehlt"**); fehlt sie bei aktivierten
-automatischen Backups, erscheint zusätzlich eine deutliche Warnung mit
-Anleitung. So setzt du sie - als systemd-Drop-in
-(`/etc/systemd/system/lcm.service.d/backup.conf`):
+Was hinterlegt ist, zeigt die Backups-Seite als Badge (**„Empfänger-Schlüssel
+gesetzt"** / **„Passphrase gesetzt"** / **„Schlüssel fehlt"**); fehlt beides
+bei aktivierten automatischen Backups, erscheint zusätzlich eine deutliche
+Warnung mit Anleitung. Die Passphrase per Umgebung setzt du so - als
+systemd-Drop-in (`/etc/systemd/system/lcm.service.d/backup.conf`):
 
 ```ini
 [Service]
@@ -74,9 +112,9 @@ services:
 ```
 
 :::caution
-Ohne gesetzte `LCM_BACKUP_PASSPHRASE` schlägt ein geplantes Backup mit einem
-Passphrase-Fehler fehl - es entsteht kein unverschlüsseltes Archiv. Manuelle
-Backups funktionieren weiterhin (Passphrase wird im Formular abgefragt).
+Ohne Empfänger-Schlüssel und ohne Passphrase schlägt ein geplantes Backup mit
+einem Schlüssel-Fehler fehl - es entsteht **nie** ein unverschlüsseltes
+Archiv. Manuelle Backups funktionieren weiterhin (Passphrase im Formular).
 :::
 
 Weitere Einstellungen:
@@ -129,6 +167,11 @@ Zwei Wege:
    auswählen.
 2. **Aus hochgeladenem Archiv** - ein `.lcmbak` hochladen, auch auf einer
    **frischen** Instanz (Fresh-Instance-Restore).
+
+In das Feld „Passphrase oder privater age-Schlüssel" kommt, womit das Archiv
+verschlüsselt wurde - LCM erkennt am Präfix `AGE-SECRET-KEY-1`, dass es ein
+Schlüssel ist. Eine Passphrase für ein Empfänger-verschlüsseltes Archiv wird
+mit einer klaren Meldung abgewiesen.
 
 Der Restore läuft über **Staging + Apply-on-Startup**: LCM legt die
 wiederherzustellenden Dateien bereit und wendet sie beim nächsten Start an.

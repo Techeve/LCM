@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"LCM/internal/config"
 	"LCM/internal/infrastructure/crypto"
@@ -40,7 +41,9 @@ func (s *BackupService) StageRestore(archive []byte, passphrase string) error {
 
 // StageRestoreReader entschlüsselt ein Backup-Archiv und legt seinen Inhalt im
 // Staging-Verzeichnis ab. Angewendet wird es erst beim nächsten Start
-// (ApplyStagedRestore). Falsche Passphrase → ErrBackupPassphrase.
+// (ApplyStagedRestore). secret ist die Passphrase oder der private Schlüssel
+// eines Empfängers (AGE-SECRET-KEY-1…) - keyFromSecret unterscheidet das.
+// Falscher Schlüssel → ErrBackupPassphrase.
 //
 // Jede Datei wird einzeln aus dem Archiv in ihre Staging-Datei kopiert - die
 // Datenbank liegt dabei nie vollständig im Speicher.
@@ -49,8 +52,8 @@ func (s *BackupService) StageRestore(archive []byte, passphrase string) error {
 // komprimiert - ohne Grenze könnte ein präpariertes Archiv die Platte füllen.
 // Für Archive aus der eigenen Historie gibt es die Grenze nicht: Dort ist die
 // Datenbank so groß, wie sie eben ist, und sie muss zurückspielbar bleiben.
-func (s *BackupService) StageRestoreReader(archive io.Reader, passphrase string, maxExtracted int64) error {
-	if passphrase == "" {
+func (s *BackupService) StageRestoreReader(archive io.Reader, secret string, maxExtracted int64) error {
+	if strings.TrimSpace(secret) == "" {
 		return ErrBackupNoPassphrase
 	}
 	staging := filepath.Join(s.dataDir, restoreStagingName)
@@ -62,7 +65,7 @@ func (s *BackupService) StageRestoreReader(archive io.Reader, passphrase string,
 	hasDB := false
 	count := 0
 	var extracted int64
-	err := extractEncryptedArchive(archive, passphrase, s.dataDir, func(name string, r io.Reader) error {
+	err := extractEncryptedArchive(archive, keyFromSecret(secret), s.dataDir, func(name string, r io.Reader) error {
 		// Pfad-Traversal ausschließen: nur einfache Dateinamen zulassen.
 		if filepath.Base(name) != name {
 			return fmt.Errorf("ungültiger dateiname im archiv: %q", name)

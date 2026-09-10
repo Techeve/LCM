@@ -4,7 +4,6 @@
 package services
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -56,10 +55,10 @@ type Claims struct {
 // AuthService verantwortet Login, Passwort-Hashing und JWT-Lifecycle.
 type AuthService struct {
 	users *repositories.UserRepository
-	// signingKey ist das effektive HS256-Signaturmaterial. Es wird NICHT
-	// direkt aus dem jwt_secret gebildet, sondern an diesen Prozessstart
-	// gebunden (siehe deriveSigningKey) - dadurch überlebt keine Session
-	// einen Neustart.
+	// signingKey ist das HS256-Signaturmaterial dieses Prozesses - bei jedem
+	// Start neu aus crypto/rand (siehe newSigningKey). Es gibt kein
+	// gespeichertes Geheimnis dahinter: Eine Sitzung überlebt keinen Neustart,
+	// also braucht auch nichts den Neustart zu überleben.
 	signingKey []byte
 	// tokenTTL liefert die aktuelle Session-Lebensdauer. Als Funktion, damit die
 	// UI-Einstellung (GlobalSettings.SessionTTLMinutes) zur Login-Zeit greift.
@@ -73,8 +72,8 @@ type AuthService struct {
 	revoked   map[string]time.Time // Token-Hash -> Ablauf
 }
 
-func NewAuthService(users *repositories.UserRepository, jwtSecret string, tokenTTL time.Duration) *AuthService {
-	return &AuthService{users: users, signingKey: deriveSigningKey(jwtSecret),
+func NewAuthService(users *repositories.UserRepository, tokenTTL time.Duration) *AuthService {
+	return &AuthService{users: users, signingKey: newSigningKey(),
 		tokenTTL: func() time.Duration { return tokenTTL }, revoked: map[string]time.Time{}}
 }
 
@@ -88,30 +87,28 @@ func (s *AuthService) WithSessionTTL(fn func() time.Duration) *AuthService {
 	return s
 }
 
-// deriveSigningKey bindet das JWT-Signaturmaterial an DIESEN Prozessstart:
-// HMAC-SHA256(jwt_secret, zufälliges Instanz-Nonce). Das Nonce wird bei jedem
-// Start neu aus crypto/rand gezogen und lebt ausschließlich im Arbeitsspeicher.
+// newSigningKey zieht das JWT-Signaturmaterial für DIESEN Prozessstart aus
+// crypto/rand. Es lebt ausschließlich im Arbeitsspeicher.
 //
 // Folge: Bei jedem (Neu-)Start entsteht ein anderer Signaturschlüssel, wodurch
 // ALLE zuvor ausgestellten Tokens ihre Signaturprüfung nicht mehr bestehen -
-// alle Sessions sind beendet, ein neues Login ist erforderlich. Das gilt auch,
-// wenn das jwt_secret in der config.json unverändert bleibt, und deckt damit
+// alle Sessions sind beendet, ein neues Login ist erforderlich. Das deckt
 // insbesondere ab: Rebuild, Prozess-Neustart und das Neuanlegen der Datenbank
 // (ein frisches DB-Seeding erfordert stets einen Neustart - sonst würde eine
 // alte, weiterhin signatur-gültige Session dem neu erzeugten Admin mit
 // derselben ID vertrauen). Da LCM als Einzelinstanz läuft (eingebettetes
 // SQLite), ist das gemeinsame Nutzen von Tokens über mehrere Prozesse hinweg
-// ohnehin kein Anwendungsfall.
-func deriveSigningKey(jwtSecret string) []byte {
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
+// kein Anwendungsfall - und damit gibt es keinen Grund, ein Geheimnis dafür
+// auf der Platte zu halten. Frühere Fassungen mischten ein jwt_secret aus der
+// config.json hinein; das war ein Geheimnis ohne Zweck.
+func newSigningKey() []byte {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
 		// crypto/rand darf praktisch nie fehlschlagen; wenn doch, ist ein
 		// sicherer Betrieb unmöglich - hart abbrechen statt schwach signieren.
-		panic("auth: instanz-nonce konnte nicht erzeugt werden: " + err.Error())
+		panic("auth: signaturschlüssel konnte nicht erzeugt werden: " + err.Error())
 	}
-	mac := hmac.New(sha256.New, []byte(jwtSecret))
-	mac.Write(nonce)
-	return mac.Sum(nil)
+	return key
 }
 
 // HashPassword hasht ein Klartext-Passwort mit argon2id.

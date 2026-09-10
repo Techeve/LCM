@@ -274,11 +274,11 @@ Auf dem Agent-Port liegt **nur** die Agent-Schnittstelle, auf dem UI/REST-Port
 [MCP-Schnittstelle](/guides/mcp/).
 
 :::note[Jeder Neustart beendet alle Sitzungen]
-Das JWT-Signaturmaterial wird bei jedem Start neu an ein zufälliges,
-nur-im-RAM-lebendes Instanz-Nonce gebunden. Folge: Nach einem (Neu-)Start
-sind **alle** zuvor ausgestellten Tokens ungültig - jeder muss sich neu
-anmelden. Das gilt auch bei unverändertem `jwt_secret` und deckt u.&nbsp;a.
-Rebuild, Prozess-Neustart und ein frisches Datenbank-Seeding ab.
+Das JWT-Signaturmaterial wird bei jedem Start neu erzeugt und lebt nur im
+Arbeitsspeicher; ein gespeichertes Geheimnis gibt es dafür nicht. Folge: Nach
+einem (Neu-)Start sind **alle** zuvor ausgestellten Tokens ungültig - jeder
+muss sich neu anmelden. Das deckt u.&nbsp;a. Rebuild, Prozess-Neustart und
+ein frisches Datenbank-Seeding ab.
 :::
 
 ## Erste Anmeldung

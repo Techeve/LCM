@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"LCM/internal/infrastructure/creds"
 )
 
 func TestEncryptDecryptRoundtrip(t *testing.T) {
@@ -63,12 +65,12 @@ func TestInvalidKeySize(t *testing.T) {
 func TestLoadOrCreateMasterKey(t *testing.T) {
 	dir := t.TempDir()
 
-	key1, created, err := LoadOrCreateMasterKey(dir)
+	key1, source, err := LoadOrCreateMasterKey(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created || len(key1) != KeySize {
-		t.Fatalf("erststart: created=%v len=%d", created, len(key1))
+	if source != SourceGenerated || len(key1) != KeySize {
+		t.Fatalf("erststart: source=%v len=%d", source, len(key1))
 	}
 	// Datei mit 0600 angelegt?
 	info, err := os.Stat(filepath.Join(dir, KeyFileName))
@@ -79,10 +81,10 @@ func TestLoadOrCreateMasterKey(t *testing.T) {
 		t.Errorf("lcm.key hat rechte %v, erwartet 0600", info.Mode().Perm())
 	}
 
-	// Zweiter Aufruf liest denselben Key.
-	key2, created, err := LoadOrCreateMasterKey(dir)
-	if err != nil || created {
-		t.Fatalf("zweiter aufruf: err=%v created=%v", err, created)
+	// Zweiter Aufruf liest denselben Key aus der Datei.
+	key2, source, err := LoadOrCreateMasterKey(dir)
+	if err != nil || source != SourceFile {
+		t.Fatalf("zweiter aufruf: err=%v source=%v", err, source)
 	}
 	if string(key1) != string(key2) {
 		t.Error("key muss stabil bleiben")
@@ -92,11 +94,74 @@ func TestLoadOrCreateMasterKey(t *testing.T) {
 func TestMasterKeyFromEnv(t *testing.T) {
 	key := GenerateKey()
 	t.Setenv(EnvKeyName, " "+base64.StdEncoding.EncodeToString(key)+" ")
-	got, created, err := LoadOrCreateMasterKey(t.TempDir())
-	if err != nil || created {
-		t.Fatalf("env-key: err=%v created=%v", err, created)
+	got, source, err := LoadOrCreateMasterKey(t.TempDir())
+	if err != nil || source != SourceEnv {
+		t.Fatalf("env-key: err=%v source=%v", err, source)
 	}
 	if string(got) != string(key) {
 		t.Error("env-key wurde nicht übernommen")
+	}
+}
+
+// TestMasterKeyAusSystemdCredential: Nach der Umstellung liegt kein lcm.key
+// mehr im Datenverzeichnis - der Schlüssel kommt aus dem Verzeichnis, das
+// systemd dem Dienst beim Start hinstellt. Beide Ablageformen gelten:
+// base64 wie in der Datei und die rohen 32 Bytes.
+func TestMasterKeyAusSystemdCredential(t *testing.T) {
+	key := GenerateKey()
+	credDir := t.TempDir()
+	t.Setenv(creds.DirEnv, credDir)
+	t.Setenv(EnvKeyName, "")
+	if err := os.WriteFile(filepath.Join(credDir, creds.MasterKey), KeyFileContent(key), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	got, source, err := LoadOrCreateMasterKey(dataDir)
+	if err != nil || source != SourceCredential {
+		t.Fatalf("credential: err=%v source=%v", err, source)
+	}
+	if string(got) != string(key) {
+		t.Error("Schlüssel aus dem Credential stimmt nicht")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, KeyFileName)); !os.IsNotExist(err) {
+		t.Error("mit Credential darf keine lcm.key entstehen")
+	}
+
+	// Rohe Bytes statt base64.
+	if err := os.WriteFile(filepath.Join(credDir, creds.MasterKey), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, err := LoadOrCreateMasterKey(dataDir); err != nil || string(got) != string(key) {
+		t.Errorf("rohe 32 Bytes: err=%v", err)
+	}
+}
+
+// TestDateiUeberstimmtCredential: Nach einem Restore oder einer Rotation liegt
+// wieder eine lcm.key - sie gehört zur Datenbank und gewinnt. Der Zustand ist
+// als „veraltetes Credential" erkennbar.
+func TestDateiUeberstimmtCredential(t *testing.T) {
+	credDir := t.TempDir()
+	t.Setenv(creds.DirEnv, credDir)
+	t.Setenv(EnvKeyName, "")
+	if err := os.WriteFile(filepath.Join(credDir, creds.MasterKey), KeyFileContent(GenerateKey()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	fileKey := GenerateKey()
+	if err := WriteKeyFile(filepath.Join(dataDir, KeyFileName), fileKey); err != nil {
+		t.Fatal(err)
+	}
+	got, source, err := LoadOrCreateMasterKey(dataDir)
+	if err != nil || source != SourceFile || string(got) != string(fileKey) {
+		t.Fatalf("Datei muss gewinnen: err=%v source=%v", err, source)
+	}
+	if !CredentialStale(source) {
+		t.Error("Datei neben Credential muss als veraltet gemeldet werden")
+	}
+	if err := ShredKeyFile(filepath.Join(dataDir, KeyFileName)); err != nil {
+		t.Fatal(err)
+	}
+	if _, source, _ := LoadOrCreateMasterKey(dataDir); source != SourceCredential {
+		t.Errorf("nach dem Vernichten der Datei gilt das Credential, bekam %v", source)
 	}
 }

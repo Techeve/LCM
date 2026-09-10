@@ -127,7 +127,7 @@ address should be set.
 
 The JWT secret is generated cryptographically at random on first start (48 bytes from `crypto/rand`) and lives only in the `config.json` (file permissions 0600). Secrets shorter than 32 characters are rejected on load.
 
-**Session invalidation on every restart:** The effective HS256 signing material is **not** the `jwt_secret` directly, but `HMAC-SHA256(jwt_secret, instance nonce)`. The nonce is drawn fresh from `crypto/rand` on every process start and lives only in memory (`deriveSigningKey` in `auth_service.go`). So every (re)start produces a different signing key and **all** previously issued tokens fail signature verification - every session ends, a new login is required. This holds even with an unchanged `jwt_secret` and specifically covers the case where an old, still-valid session would otherwise trust a freshly seeded admin with the same ID (rebuild, process restart, newly created database).
+**Session invalidation on every restart:** The HS256 signing material is drawn fresh from `crypto/rand` on every process start and lives only in memory (`newSigningKey` in `auth_service.go`). There is no stored secret behind it any more - earlier versions mixed in a `jwt_secret` from `config.json`, which had no purpose once the key was bound to the process start; a leftover entry is ignored and removed the next time the file is written. So every (re)start produces a different signing key and **all** previously issued tokens fail signature verification - every session ends, a new login is required. This specifically covers the case where an old, still-valid session would otherwise trust a freshly seeded admin with the same ID (rebuild, process restart, newly created database).
 
 ## RBAC: user → role → permission
 
@@ -376,7 +376,52 @@ cron valid) is unaffected.
 
 ## At-rest encryption & master-key rotation
 
-All secrets in the database are encrypted field by field with **AES-256-GCM**. The **master key** lives separately from the DB in `lcm.key` (file permissions 0600) in the data directory and is created on first start (`internal/infrastructure/crypto`). Without it the encrypted fields are unreadable - which is why it belongs in every [backup](/en/guides/backups/).
+All secrets in the database are encrypted field by field with **AES-256-GCM**. The **master key** lives separately from the DB: on first start as `lcm.key` (file permissions 0600) in the data directory, after the migration as a systemd credential (see below) only encrypted in the credential store (`internal/infrastructure/crypto`). Without it the encrypted fields are unreadable - which is why it belongs in every [backup](/en/guides/backups/); the archive carries it even when no file exists any more.
+
+### Master key as a systemd credential
+
+`lcm credentials init` (as root) moves the key from the file into a systemd
+credential:
+
+```bash
+sudo lcm credentials init            # binding: TPM2 + host key if a TPM exists, otherwise host key
+sudo lcm credentials init --with-key=tpm2
+sudo systemctl restart lcm
+```
+
+The command encrypts the key with `systemd-creds` into
+`/etc/credstore.encrypted/lcm.key`, verifies that exactly the current key
+comes back, writes the unit drop-in `LoadCredentialEncrypted=lcm.key:…` and
+only then destroys `lcm.key`. At start systemd decrypts the credential into an
+in-memory directory only the service can see (`$CREDENTIALS_DIRECTORY`); the
+journal reports `master key source=credential`.
+
+What it buys: no plaintext key in the data directory any more. A copy of the
+directory, an archive without passphrase, a stray `rsync` - all worthless.
+With TPM binding that also holds for an image of the whole machine; with host
+binding only (container without TPM) a container backup includes systemd's
+host key - there only an encrypted container backup closes the gap. What it
+does not buy: whoever has root on the running machine still reaches the key;
+that is the price of unattended restarts.
+
+Order at start: `LCM_ENCRYPTION_KEY` (explicit override), then `lcm.key`, then
+the credential. The file deliberately wins over the credential: after a
+restore or `rotate-db-key` it is back and belongs to the database. LCM then
+reports `security event=masterkey.file-overrides-credential`; running
+`lcm credentials init` again moves the new key into the credential and removes
+the file.
+
+The same mechanism carries two more secrets, each as `SetCredentialEncrypted=`
+in the unit drop-in: `trivy_token` (instead of `config.json`/environment) and
+`backup_passphrase` (instead of `LCM_BACKUP_PASSPHRASE`). A credential takes
+precedence over file and environment.
+
+For the backups themselves it goes one step further: with **recipient keys**
+([age](https://age-encryption.org), X25519) the archives are encrypted to
+public keys - the scheduled backup then needs **no secret on the server** at
+all, the private key stays offline with the operator. Whoever takes over the
+host gets the archives, but not the key to them. Setup in the
+[backup guide](/en/guides/backups/).
 
 Stored encrypted are, among others (full list in `internal/storage/rotate.go`):
 

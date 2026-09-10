@@ -7599,7 +7599,8 @@ paths:
       operationId: opsCtrl_RestoreUpload
       description: 'Bereitet die Wiederherstellung aus einem HOCHGELADENEN Archiv vor. Damit lässt sich
         ein Backup auch auf einer frischen/leeren Instanz einspielen (nach Anmeldung mit dem Admin-Konto).
-        Multipart: Feld "archive" + "passphrase".
+        Multipart: Feld "archive" + "passphrase" - im Passphrase-Feld steht bei Empfänger-verschlüsselten
+        Archiven der private age-Schlüssel (AGE-SECRET-KEY-1…).
 
 
         Benötigte Berechtigung: `backups:manage`.'
@@ -7641,6 +7642,17 @@ paths:
                   type: string
                 auto_restart:
                   type: boolean
+                passphrase:
+                  type: string
+                  description: >-
+                    Passphrase für geplante Backups (write-only, verschlüsselt
+                    gespeichert). Leer = unverändert.
+                recipients:
+                  type: string
+                  description: >-
+                    Öffentliche age-Schlüssel (age1…), einer je Zeile. Sind welche
+                    gesetzt, werden geplante Backups an sie verschlüsselt statt
+                    mit der Passphrase. Wird immer übernommen; leer = keine.
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -7652,13 +7664,47 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/system/backups/recipients/generate:
+    post:
+      tags:
+      - System
+      summary: Erzeugt ein age-Schlüsselpaar für Empfänger-verschlüsselte Backups.
+      operationId: opsCtrl_GenerateBackupRecipient
+      description: 'Erzeugt ein X25519-Schlüsselpaar. Der private Schlüssel steht NUR in dieser
+        Antwort - LCM speichert ihn nicht. Der öffentliche gehört in die Empfänger-Liste der
+        Backup-Einstellungen (`recipients`).
+
+
+        Benötigte Berechtigung: `backups:manage`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '201':
+          description: Schlüsselpaar.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  public_key:
+                    type: string
+                    example: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+                  private_key:
+                    type: string
+                    example: AGE-SECRET-KEY-1…
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/system/backups/trigger-now:
     post:
       tags:
       - System
-      summary: Optionale Passphrase im Body; sonst greift LCM_BACKUP_PASSPHRASE.
+      summary: Optionale Passphrase im Body; sonst greifen Empfänger-Schlüssel oder LCM_BACKUP_PASSPHRASE.
       operationId: opsCtrl_TriggerBackup
-      description: 'Optionale Passphrase im Body; sonst greift LCM_BACKUP_PASSPHRASE.
+      description: 'Optionale Passphrase im Body; sonst greifen die hinterlegten Empfänger-Schlüssel,
+        sonst LCM_BACKUP_PASSPHRASE bzw. die gespeicherte Passphrase.
 
 
         Benötigte Berechtigung: `backups:manage`.'

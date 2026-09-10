@@ -87,3 +87,40 @@ func TestBackupPassphraseHinterlegbar(t *testing.T) {
 		t.Error("BackupPassphraseStored muss true melden")
 	}
 }
+
+// TestBackupEmpfaengerErsetzenPassphrase: Mit hinterlegten Empfänger-Schlüsseln
+// lässt sich das geplante Backup ohne Passphrase aktivieren; Müll in der
+// Liste wird beim Speichern abgewiesen, ein leeres Feld räumt sie wieder ab.
+func TestBackupEmpfaengerErsetzenPassphrase(t *testing.T) {
+	env := newTestEnv(t)
+	t.Setenv(services.EnvBackupPassphrase, "")
+	pub, _, err := services.GenerateBackupRecipient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = env.Settings.UpdateBackupSettings(services.BackupSettingsInput{
+		Enabled: true, IntervalHours: 24, Retention: 14, Recipients: "kein-schluessel",
+	}, "admin")
+	if !errors.Is(err, services.ErrSettingInvalid) {
+		t.Fatalf("ungültiger empfänger muss abgewiesen werden, bekam %v", err)
+	}
+
+	got, err := env.Settings.UpdateBackupSettings(services.BackupSettingsInput{
+		Enabled: true, IntervalHours: 24, Retention: 14, Recipients: "# tony\n" + pub + "\n",
+	}, "admin")
+	if err != nil {
+		t.Fatalf("aktivieren mit empfängern: %v", err)
+	}
+	if got.BackupRecipients != pub {
+		t.Errorf("empfänger nicht bereinigt gespeichert: %q", got.BackupRecipients)
+	}
+
+	// Empfänger weg und keine Passphrase: „eingeschaltet" wäre wieder leer.
+	_, err = env.Settings.UpdateBackupSettings(services.BackupSettingsInput{
+		Enabled: true, IntervalHours: 24, Retention: 14,
+	}, "admin")
+	if !errors.Is(err, services.ErrBackupNeedsPassphrase) {
+		t.Fatalf("ohne empfänger und passphrase muss abgelehnt werden, bekam %v", err)
+	}
+}

@@ -30,7 +30,7 @@ publishing process?
 |:-:|---|---|
 | 5 | Go team at Google or equivalent: multi-stage review, public history, security team | `golang.org/x/*`, `google/uuid`, `svelte`, `vite`, `@playwright/test` |
 | 4 | Organization with several active maintainers and a release process | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `bootstrap` |
-| 3 | Small organization or a well-regarded individual, demonstrably active | `mochi-mqtt/server`, `fasthttp/websocket`, `svelte-spa-router` |
+| 3 | Small organization or a well-regarded individual, demonstrably active | `mochi-mqtt/server`, `fasthttp/websocket`, `svelte-spa-router`, `filippo.io/age` |
 | 2 | Individual, sporadic releases, bus factor 1 | `glebarez/sqlite` |
 | 1 | Individual, inactive for years, no release process, untagged versions | - (deliberately empty, see below) |
 

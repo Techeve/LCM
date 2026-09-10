@@ -3,10 +3,12 @@ package controllers
 import (
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/middlewares"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
 	"LCM/internal/safego"
@@ -168,6 +170,8 @@ func (ctrl *OpsController) DeleteBackup(c fiber.Ctx) error {
 // auf einen früheren Stand). Passphrase im Body.
 func (ctrl *OpsController) RestoreBackup(c fiber.Ctx) error {
 	name := c.Params("name")
+	// Im Feld steht die Passphrase ODER der private Schlüssel eines Empfängers
+	// (AGE-SECRET-KEY-1…) - der Service erkennt selbst, was es ist.
 	var req struct {
 		Passphrase string `json:"passphrase"`
 	}
@@ -178,6 +182,19 @@ func (ctrl *OpsController) RestoreBackup(c fiber.Ctx) error {
 		return mapRestoreError(err)
 	}
 	return ctrl.respondStaged(c)
+}
+
+// GenerateBackupRecipient - POST /api/v1/system/backups/recipients/generate
+// (backups:manage). Erzeugt ein Schlüsselpaar für die Sicherungen. Der private
+// Schlüssel steht NUR in dieser Antwort; LCM speichert ihn nicht. Der
+// öffentliche gehört in die Empfänger-Liste.
+func (ctrl *OpsController) GenerateBackupRecipient(c fiber.Ctx) error {
+	publicKey, privateKey, err := services.GenerateBackupRecipient()
+	if err != nil {
+		return err
+	}
+	middlewares.SecurityEvent(c, "backup.recipient.generated", "by", actor(c))
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"public_key": publicKey, "private_key": privateKey})
 }
 
 // RestoreUpload - POST /api/v1/system/backups/restore-upload (backups:manage)
@@ -238,8 +255,10 @@ func mapRestoreError(err error) error {
 		return fiber.NewError(fiber.StatusNotFound, "backup nicht gefunden")
 	case errors.Is(err, services.ErrBackupNoPassphrase):
 		return fiber.NewError(fiber.StatusBadRequest, "Passphrase erforderlich")
+	case errors.Is(err, services.ErrBackupNoIdentity):
+		return fiber.NewError(fiber.StatusBadRequest, "Das Archiv ist an Empfänger-Schlüssel verschlüsselt - der private Schlüssel eines Empfängers ist erforderlich")
 	case errors.Is(err, services.ErrBackupPassphrase):
-		return fiber.NewError(fiber.StatusBadRequest, "Passphrase falsch oder Datei beschädigt")
+		return fiber.NewError(fiber.StatusBadRequest, "Passphrase oder Schlüssel falsch, oder Datei beschädigt")
 	case errors.Is(err, services.ErrBackupFormat):
 		return fiber.NewError(fiber.StatusBadRequest, "kein gültiges LCM-Backup-Archiv")
 	case errors.Is(err, services.ErrBackupIncomplete):
@@ -259,6 +278,9 @@ type backupSettingsRequest struct {
 	// Passphrase für geplante Backups: write-only (leer = unverändert),
 	// verschlüsselt abgelegt (R2-027).
 	Passphrase string `json:"passphrase"`
+	// Recipients: öffentliche age-Schlüssel, einer je Zeile; wird immer
+	// übernommen (leer = keine Empfänger, dann gilt die Passphrase).
+	Recipients string `json:"recipients"`
 }
 
 // ConfigureBackups - PATCH /api/v1/system/backups/settings (backups:manage)
@@ -278,6 +300,7 @@ func (ctrl *OpsController) ConfigureBackups(c fiber.Ctx) error {
 		Dir:           req.Dir,
 		AutoRestart:   req.AutoRestart,
 		Passphrase:    req.Passphrase,
+		Recipients:    req.Recipients,
 	}, actor(c))
 	if err != nil {
 		if errors.Is(err, services.ErrBackupNeedsPassphrase) ||
@@ -562,8 +585,10 @@ func (ctrl *OpsController) GetSettings(c fiber.Ctx) error {
 		CrowdSecLapiConfigured    bool `json:"crowdsec_lapi_configured"`
 		CrowdSecConsoleConfigured bool `json:"crowdsec_console_configured"`
 		BackupPassphraseSet       bool `json:"backup_passphrase_set"`
+		BackupRecipientsSet       bool `json:"backup_recipients_set"`
 	}{settings, settings.CrowdSecLapiConfigured(), settings.CrowdSecConsoleConfigured(),
-		services.BackupPassphraseSet() || ctrl.settings.BackupPassphraseStored()})
+		services.BackupPassphraseSet() || ctrl.settings.BackupPassphraseStored(),
+		strings.TrimSpace(settings.BackupRecipients) != ""})
 }
 
 // SetMCP - PUT /api/v1/settings/mcp (settings:manage)

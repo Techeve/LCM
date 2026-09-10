@@ -73,21 +73,15 @@ chmod 0600 "$DATA_DIR"/lcm.key "$DATA_DIR"/lcm-key.pem "$DATA_DIR"/*.db "$DATA_D
 chmod 0700 "$DATA_DIR"/backups "$DATA_DIR"/logs 2>/dev/null || true
 chmod 0600 "$DATA_DIR"/backups/*.lcmbak 2>/dev/null || true
 
-# 3. Create the production config only if none exists - that keeps the JWT
-#    secret stable across reinstalls/upgrades (otherwise every restart would
-#    invalidate all sessions).
+# 3. Create the production config only if none exists. It holds no secret:
+#    the session signing key is generated in memory on every start, the
+#    master key lives in lcm.key or a systemd credential.
 if [ ! -e "$CONF_FILE" ]; then
-	if command -v openssl >/dev/null 2>&1; then
-		JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')
-	else
-		JWT_SECRET=$(head -c 48 /dev/urandom | base64 | tr -d '\n')
-	fi
 	cat > "$CONF_FILE" <<EOF
 {
   "host": "0.0.0.0",
   "port": 9310,
   "database_path": "app.db",
-  "jwt_secret": "$JWT_SECRET",
   "access_token_ttl_minutes": 60,
   "admin_initial_password": "",
   "log_level": "info",

@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/storage/repositories"
 )
 
@@ -104,4 +105,43 @@ func TestPruneRaeumtResteMit(t *testing.T) {
 	if _, err := os.Stat(alt); !os.IsNotExist(err) {
 		t.Error("Prune hat den Rest liegen lassen")
 	}
+}
+
+// TestBackupTraegtMasterKeyAuchOhneDatei: Nach der Umstellung auf ein
+// systemd-Credential gibt es keine lcm.key im Datenverzeichnis. Das Archiv
+// muss den Schlüssel trotzdem enthalten - sonst wäre die Sicherung auf einer
+// anderen Maschine wertlos.
+func TestBackupTraegtMasterKeyAuchOhneDatei(t *testing.T) {
+	bs, _ := staleEnv(t)
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	bs.WithMasterKey(key)
+
+	b, err := bs.Create("test", "Korrekt-Pferd-Batterie-42")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	path, err := bs.BackupPath(b.FileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := openEncryptedArchive(raw, "Korrekt-Pferd-Batterie-42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Name == "lcm.key" {
+			if string(f.Data) != string(crypto.KeyFileContent(key)) {
+				t.Error("Master-Key im Archiv stimmt nicht mit dem Speicher überein")
+			}
+			return
+		}
+	}
+	t.Error("Archiv enthält keinen Master-Key, obwohl er im Speicher lag")
 }

@@ -17,11 +17,19 @@ func TestLoadFromCreatesSecureDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.JWTSecret) < 32 {
-		t.Errorf("generiertes JWT-Secret zu kurz: %d Zeichen", len(cfg.JWTSecret))
+	if cfg.Port != 9310 || cfg.AccessTokenTTLMinutes != 60 {
+		t.Errorf("unerwartete Vorgaben: port=%d ttl=%d", cfg.Port, cfg.AccessTokenTTLMinutes)
 	}
 
-	// Datei existiert mit restriktiven Rechten (enthält Secrets).
+	// Die Datei enthält kein Geheimnis mehr - und bleibt trotzdem restriktiv,
+	// weil ein Betreiber dort welche eintragen kann (Trivy-Token).
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "jwt_secret") {
+		t.Error("eine neue config.json darf kein jwt_secret mehr tragen")
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -30,23 +38,34 @@ func TestLoadFromCreatesSecureDefaults(t *testing.T) {
 		t.Errorf("config.json sollte 0600 sein, ist %o", perm)
 	}
 
-	// Zweites Laden liefert dieselben Werte (kein Neu-Generieren).
+	// Zweites Laden liefert dieselben Werte.
 	cfg2, err := config.LoadFrom(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg2.JWTSecret != cfg.JWTSecret {
-		t.Error("JWT-Secret hat sich beim erneuten Laden geändert")
+	if cfg2.Port != cfg.Port {
+		t.Error("Konfiguration hat sich beim erneuten Laden geändert")
 	}
 }
 
-func TestLoadFromRejectsWeakSecret(t *testing.T) {
+// TestLoadFromDropsLegacyJWTSecret: Ältere Dateien tragen ein jwt_secret.
+// Es hat keine Funktion mehr - der Signaturschlüssel entsteht pro Start im
+// Speicher - und darf weder das Laden stören noch stehen bleiben.
+func TestLoadFromDropsLegacyJWTSecret(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"jwt_secret":"kurz","port":8080,"access_token_ttl_minutes":60}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := config.LoadFrom(path); err == nil {
-		t.Fatal("schwaches jwt_secret wurde akzeptiert")
+	cfg, err := config.LoadFrom(path)
+	if err != nil {
+		t.Fatalf("altes jwt_secret darf das Laden nicht stören: %v", err)
+	}
+	if cfg.Port != 8080 {
+		t.Errorf("port = %d", cfg.Port)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), "jwt_secret") {
+		t.Error("jwt_secret muss beim Nachtragen der Optionen aus der Datei verschwinden")
 	}
 }
 
@@ -60,8 +79,7 @@ func TestRandomSecretIsUnique(t *testing.T) {
 
 func TestLoadFromRejectsInvalidAllowedIPs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	secret := config.RandomSecret(48)
-	body := `{"jwt_secret":"` + secret + `","port":8080,"access_token_ttl_minutes":60,` +
+	body := `{"port":8080,"access_token_ttl_minutes":60,` +
 		`"log_level":"info","allowed_ips":["localhost","nicht-eine-ip"]}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -73,8 +91,7 @@ func TestLoadFromRejectsInvalidAllowedIPs(t *testing.T) {
 
 func TestLoadFromAcceptsAllowedIPs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	secret := config.RandomSecret(48)
-	body := `{"jwt_secret":"` + secret + `","port":8080,"access_token_ttl_minutes":60,` +
+	body := `{"port":8080,"access_token_ttl_minutes":60,` +
 		`"log_level":"info","allowed_ips":["localhost","192.168.0.0/16"],"trust_proxy_header":true}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -130,8 +147,7 @@ func TestAgentAddressFallsBackToAllInterfaces(t *testing.T) {
 // Listener ab (kein Remote-Transport) und ist eine gültige Konfiguration.
 func TestAgentPortZeroDisablesListener(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	secret := config.RandomSecret(48)
-	body := `{"jwt_secret":"` + secret + `","port":8080,"access_token_ttl_minutes":60,` +
+	body := `{"port":8080,"access_token_ttl_minutes":60,` +
 		`"log_level":"info","agent_port":0}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -149,8 +165,7 @@ func TestAgentPortZeroDisablesListener(t *testing.T) {
 // Port kollidieren - sonst können die beiden Listener nicht gleichzeitig binden.
 func TestAgentPortCollisionRejected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	secret := config.RandomSecret(48)
-	body := `{"jwt_secret":"` + secret + `","port":8080,"access_token_ttl_minutes":60,` +
+	body := `{"port":8080,"access_token_ttl_minutes":60,` +
 		`"log_level":"info","agent_port":8080}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -208,7 +223,7 @@ func TestLoadFromAddsNewKeysToExistingFile(t *testing.T) {
 // grenzt trust_proxy_header auf die genannten Gegenstellen ein.
 func TestProxyTrustFromConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"jwt_secret":"`+config.RandomSecret(48)+`","trust_proxy_header":true,"trusted_proxies":["nicht-ip"]}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"trust_proxy_header":true,"trusted_proxies":["nicht-ip"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := config.LoadFrom(path); err == nil || !strings.Contains(err.Error(), "trusted_proxies") {

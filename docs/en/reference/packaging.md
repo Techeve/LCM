@@ -81,8 +81,9 @@ All settings live in `/etc/lcm/config.json` - after changes restart the service
   restrict access via firewall and/or put a reverse proxy with a valid
   certificate in front. For purely local operation set `host` to `127.0.0.1`.
 - `port` (default `9310`).
-- `jwt_secret`: signs the sessions - do **not** change it (otherwise all logins
-  become invalid) and do **not** share it.
+- No secret lives in the file: the session signing key is generated in memory
+  on every start. A `jwt_secret` from older versions is ignored and removed the
+  next time the file is written.
 
 ### Updating
 

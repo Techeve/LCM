@@ -644,6 +644,7 @@ func New(deps Deps) *fiber.App {
 	// Restore: hochgeladenes Archiv (auch auf frischer Instanz) oder aus der
 	// Historie (Rollback). Download eines vorhandenen Backups.
 	api.Post("/system/backups/restore-upload", middlewares.RequirePermission(domain.PermBackupsManage), opsCtrl.RestoreUpload)
+	api.Post("/system/backups/recipients/generate", middlewares.RequirePermission(domain.PermBackupsManage), opsCtrl.GenerateBackupRecipient)
 	api.Get("/system/backups/:name/download", middlewares.RequirePermission(domain.PermBackupsManage), opsCtrl.DownloadBackup)
 	api.Delete("/system/backups/:name", middlewares.RequirePermission(domain.PermBackupsManage), opsCtrl.DeleteBackup)
 	api.Post("/system/backups/:name/restore", middlewares.RequirePermission(domain.PermBackupsManage), opsCtrl.RestoreBackup)

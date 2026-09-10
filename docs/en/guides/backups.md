@@ -5,13 +5,13 @@ title: Backups
 description: Create, download, and restore encrypted, portable .lcmbak archives.
 ---
 
-LCM backs up its **own** state into a passphrase-encrypted,
-portable archive. A backup contains everything that makes up an instance - it can
-be fully restored on a **fresh** instance.
+LCM backs up its **own** state into an encrypted, portable archive. A backup
+contains everything that makes up an instance - it can be fully restored on a
+**fresh** instance.
 
 ## What's in the archive
 
-An `.lcmbak` (ZIP with AES-256-GCM / scrypt key derivation) bundles:
+An `.lcmbak` is an encrypted ZIP. It bundles:
 
 - the **database snapshot** (consistent SQLite snapshot),
 - the **master key** (`lcm.key`) - without it the at-rest encrypted
@@ -19,21 +19,54 @@ An `.lcmbak` (ZIP with AES-256-GCM / scrypt key derivation) bundles:
 - the **configuration** (`config.json`),
 - the **TLS certificate**.
 
-:::caution[Passphrase]
-The backup passphrase comes from the environment variable
-`LCM_BACKUP_PASSPHRASE` (or is prompted for during manual creation) and is
-**never** stored in the database or configuration. Without it a
-backup cannot be restored - keep it safe.
+It is encrypted in one of two ways - the *Encryption* column of the backup
+list shows which:
+
+| Mode | How | Needed to restore |
+|---|---|---|
+| **Recipient keys** (recommended) | [age](https://age-encryption.org), X25519: the archive is encrypted to one or more **public** keys. No secret lives on the server. | the **private** key of one recipient |
+| **Passphrase** | scrypt derivation + AES-256-GCM. | the passphrase |
+
+:::caution[No key, no restore]
+LCM cannot recover a private recipient key or a passphrase. Without it a
+backup cannot be restored - keep it somewhere that outlives the backup
+(password manager, vault, two people).
 :::
 
 ![Backup settings: automatic backup, created archives, restore](./img/backups-settings.png)
 
 ## Create a backup now
 
-Under *Settings → Backups*, **"Create backup now"** immediately produces an
-archive; the passphrase is prompted for. LCM takes a **consistent** snapshot of
-the database (`VACUUM INTO`) for this - so a backup can be created while
-running.
+Under *Settings → Backups*, **"Back up now"** immediately produces an archive.
+If the passphrase field next to it stays empty, the same order applies as for
+scheduled backups (recipient keys, otherwise the stored passphrase); a typed
+passphrase wins and encrypts exactly this archive with it. LCM takes a
+**consistent** snapshot of the database (`VACUUM INTO`) for this - so a backup
+can be created while running.
+
+## Recipient keys (recommended)
+
+With recipient keys the scheduled backup needs **no secret on the server**:
+the public key is enough to encrypt, the private key stays with you. Whoever
+takes over the host gets the archives - but not the key to them.
+
+1. Under *Settings → Backups* click **"Generate key pair"**. LCM shows the
+   private key (`AGE-SECRET-KEY-1…`) **exactly once** and stores it nowhere -
+   put it into your password manager now.
+2. The public key (`age1…`) is then in the recipient list; **Save** makes it
+   effective. Several recipients are allowed, one per line - each of them can
+   restore later.
+3. The badge switches to **"Recipient keys set"**; the passphrase is no longer
+   used from now on (it stays stored and applies again once the list is
+   empty).
+
+A key pair can equally be generated with the `age-keygen` tool - the format
+is the same; then enter only the public part. An archive can also be opened
+with the private key without LCM:
+
+```bash
+age -d -i key.txt lcm-backup-20260910-033000.lcmbak > backup.zip
+```
 
 ## Automatic backups
 
@@ -42,16 +75,19 @@ shown directly on the *Settings → Backups* page:
 
 1. **"Automatic backups enabled"** is switched on (default: on, every
    24 hours).
-2. The **passphrase is set as an environment variable** -
-   `LCM_BACKUP_PASSPHRASE` for the LCM service. An unattended backup cannot
-   prompt for it; without it, **every** scheduled backup fails (visible as a
-   failed "System-Backup" job on the *Jobs* page).
+2. **A key is configured**: recipient keys (see above) or a passphrase - in
+   the "Passphrase for scheduled backups" field (stored encrypted), as the
+   systemd credential `backup_passphrase`, or as the environment variable
+   `LCM_BACKUP_PASSPHRASE`. An unattended backup cannot prompt for anything;
+   without a key the schedule cannot be enabled at all, and an enabled
+   schedule found without a key at startup is switched off (warning in the
+   log).
 
-Whether the passphrase is set is shown on the Backups page as a badge
-(**"Passphrase set"** / **"Passphrase missing"**); if it is missing while
+What is configured is shown on the Backups page as a badge (**"Recipient keys
+set"** / **"Passphrase set"** / **"Key missing"**); if both are missing while
 automatic backups are enabled, a prominent warning with instructions appears
-as well. This is how to set it - as a systemd drop-in
-(`/etc/systemd/system/lcm.service.d/backup.conf`):
+as well. This is how to set the passphrase via the environment - as a systemd
+drop-in (`/etc/systemd/system/lcm.service.d/backup.conf`):
 
 ```ini
 [Service]
@@ -74,9 +110,9 @@ services:
 ```
 
 :::caution
-Without `LCM_BACKUP_PASSPHRASE` set, a scheduled backup fails with a passphrase
-error - no unencrypted archive is ever created. Manual backups keep working
-(the form prompts for the passphrase).
+Without recipient keys and without a passphrase, a scheduled backup fails with
+a key error - an unencrypted archive is **never** created. Manual backups keep
+working (passphrase in the form).
 :::
 
 Further settings:
@@ -127,6 +163,11 @@ Two paths:
    restoration.
 2. **From an uploaded archive** - upload an `.lcmbak`, even on a
    **fresh** instance (fresh-instance restore).
+
+The field "Passphrase or private age key" takes whatever the archive was
+encrypted with - LCM recognises a key by its `AGE-SECRET-KEY-1` prefix. A
+passphrase given for a recipient-encrypted archive is rejected with a clear
+message.
 
 The restore runs via **staging + apply-on-startup**: LCM stages the
 files to be restored and applies them on the next start.

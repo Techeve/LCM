@@ -34,6 +34,7 @@ import (
 	"LCM/internal/health"
 	"LCM/internal/i18n"
 	"LCM/internal/infrastructure/advisories"
+	"LCM/internal/infrastructure/creds"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/notify"
 	"LCM/internal/infrastructure/registry"
@@ -98,6 +99,17 @@ func main() {
 		}
 		return
 	}
+	// Subcommand: lcm credentials init - Master-Key in ein systemd-Credential
+	// überführen (kein Klartext-Schlüssel mehr auf der Platte).
+	if flag.Arg(0) == "credentials" {
+		if flag.Arg(1) != "init" {
+			log.Fatal("verwendung: lcm credentials init [--with-key auto|host|tpm2|host+tpm2]")
+		}
+		if err := credentialsInit(*configPath, *dataDir, flag.Args()[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	if err := run(*configPath, *dataDir, *debug, *demo || *demoPublic, *dev, *demoPublic); err != nil {
 		log.Fatal(err)
@@ -139,11 +151,12 @@ func rotateDBKey(configPath, dataDir string) error {
 		return err
 	}
 
-	oldKey, created, err := crypto.LoadOrCreateMasterKey(dataDir)
+	oldKey, source, err := crypto.LoadOrCreateMasterKey(dataDir)
 	if err != nil {
 		return err
 	}
-	if created {
+	if source == crypto.SourceGenerated {
+		_ = crypto.ShredKeyFile(filepath.Join(dataDir, crypto.KeyFileName))
 		return fmt.Errorf("kein bestehender master-key gefunden - rotation nicht möglich")
 	}
 	oldCipher, err := crypto.NewCipher(oldKey)
@@ -175,6 +188,7 @@ func rotateDBKey(configPath, dataDir string) error {
 		"Master key rotated - all encrypted fields were re-encrypted with the new key from %s.",
 		"Master-Key rotiert - alle verschlüsselten Felder wurden mit dem neuen Key aus %s verschlüsselt.",
 		keyPath))
+	credentialHint(defaultCredstore)
 	return nil
 }
 
@@ -216,7 +230,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 
 	// Master-Key für die At-Rest-Verschlüsselung (AES-256-GCM) laden
 	// oder beim Erststart erzeugen (lcm.key, chmod 600).
-	masterKey, keyCreated, err := crypto.LoadOrCreateMasterKey(dataDir)
+	masterKey, keySource, err := crypto.LoadOrCreateMasterKey(dataDir)
 	if err != nil {
 		return err
 	}
@@ -224,6 +238,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	if err != nil {
 		return err
 	}
+	keyCreated := keySource == crypto.SourceGenerated
 	if keyCreated {
 		fmt.Println(i18n.Tf(
 			"crypto: new master key created (%s) - keep it safe!",
@@ -265,6 +280,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	if token := os.Getenv("LCM_TRIVY_TOKEN"); token != "" {
 		cfg.TrivyToken = token
 	}
+	// Ein systemd-Credential (SetCredentialEncrypted=trivy_token:…) schlägt
+	// beides: Es steht weder in der config.json noch in der Umgebung.
+	if token, ok := creds.Read(creds.TrivyToken); ok {
+		cfg.TrivyToken = token
+	}
 	// Nach den Overrides erneut prüfen: Beim Laden lag das Token womöglich
 	// noch nicht vor, und ein Sidecar ohne Token bekäme auf jede Anfrage
 	// eine 401 - der CVE-Scan wäre still tot.
@@ -286,6 +306,15 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	slog.Info("=== LCM service started ===",
 		"version", version.Version, "build", version.Build,
 		"pid", os.Getpid(), "data_dir", dataDir, "log_file", logFile)
+	// Woher der Master-Key kam, gehört ins Protokoll: Nur so sieht ein
+	// Betreiber, ob die Umstellung auf ein systemd-Credential greift - und ob
+	// nach einem Restore oder einer Rotation wieder eine Klartext-Datei liegt.
+	slog.Info("master key", "source", keySource)
+	if crypto.CredentialStale(keySource) {
+		slog.Warn("security", "event", "masterkey.file-overrides-credential",
+			"detail", "lcm.key lies next to the database although a systemd credential exists - "+
+				"the file wins (restore or rotation); run `lcm credentials init` to move it back")
+	}
 
 	// 2. Datenbank: relativer Pfad wird im Datenverzeichnis aufgelöst,
 	// damit sich der Service unabhängig vom Arbeitsverzeichnis verhält.
@@ -367,7 +396,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	linuxRepo := repositories.NewLinuxUserRepository(db)
 	profileRepo := repositories.NewPrivilegeProfileRepository(db)
 
-	authService := services.NewAuthService(userRepo, cfg.JWTSecret, cfg.AccessTokenTTL()).
+	authService := services.NewAuthService(userRepo, cfg.AccessTokenTTL()).
 		WithSessionTTL(func() time.Duration {
 			// Session-Dauer aus den globalen Einstellungen (0 = config-Vorgabe).
 			if st, err := settingsRepo.Get(); err == nil && st.SessionTTLMinutes > 0 {
@@ -518,7 +547,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	})
 	packageService := services.NewPackageService(serverRepo)
 	backupService := services.NewBackupService(db, settingsRepo, dataDir, dbPath, configPath).
-		WithConfigDir(cfg.BackupDir).WithCipher(cipher)
+		WithConfigDir(cfg.BackupDir).WithCipher(cipher).WithMasterKey(masterKey)
 	// Reste eines abgebrochenen Sicherungslaufs jetzt wegräumen: Ein neuer
 	// Prozess hat keinen laufenden Lauf, den er stören könnte, und eine
 	// liegengebliebene Momentaufnahme ist eine unverschlüsselte Kopie der
@@ -530,9 +559,9 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// (weder Umgebung noch Einstellungen), wird es EINMALIG deaktiviert und
 	// das laut gesagt, statt Nacht für Nacht still zu scheitern.
 	if st, err := settingsRepo.Get(); err == nil &&
-		st.BackupEnabled && st.BackupPassphraseEnc == "" && !services.BackupPassphraseSet() {
+		st.BackupEnabled && st.BackupPassphraseEnc == "" && !services.BackupPassphraseSet() && st.BackupRecipients == "" {
 		if err := settingsRepo.UpdateFields(map[string]any{"backup_enabled": false}); err == nil {
-			slog.Warn("automatic backups disabled: no passphrase configured - " +
+			slog.Warn("automatic backups disabled: neither recipient keys nor a passphrase configured - " +
 				"set one under Einstellungen → Backups (or LCM_BACKUP_PASSPHRASE) and re-enable")
 		}
 	}
