@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.42.0-beta.1 - 2026-09-11
+
+### 🚀 Features
+
+- **ui**: Barrierefreiheit und Tastaturbedienung - Kontraste, Screenreader, Tastenkürzel mit Hilfe (89e1fe4e)
+
 ## v1.41.0-beta.1 - 2026-09-10
 
 ### 🚀 Features

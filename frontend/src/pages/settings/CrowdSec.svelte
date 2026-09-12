@@ -252,6 +252,6 @@
       <div class="form-text">{t('settings.crowdsec.consoleHint')}</div>
     </div></div>
 
-    <button class="btn btn-primary" onclick={save} disabled={saving} data-testid="cs-save">{t('common.save')}</button>
+    <button class="btn btn-primary" onclick={save} disabled={saving} data-testid="cs-save" data-hotkey="mod+s">{t('common.save')}</button>
   {/if}
 </SettingsLayout>

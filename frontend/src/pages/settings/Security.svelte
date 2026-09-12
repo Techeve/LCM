@@ -175,7 +175,7 @@
         </div>
       </div>
 
-      <button class="btn btn-primary">{t('common.save')}</button>
+      <button class="btn btn-primary" data-hotkey="mod+s">{t('common.save')}</button>
     </form>
   {/if}
 </SettingsLayout>

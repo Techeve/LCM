@@ -5,6 +5,7 @@ export default {
     title: 'Docs',
     intro: 'Short guides for working with LCM day to day.',
     empty: 'No page available in this language yet.',
+    navLabel: 'Documentation pages',
   },
   nav: {
     docs: 'Docs',
@@ -21,6 +22,7 @@ export default {
     loggedInAs: 'Signed in as',
     accountMenu: 'Account menu: {name}',
     toggleMenu: 'Toggle menu',
+    main: 'Main navigation',
   },
   // Password policy: strings for the strength meter. The problem codes come
   // from lib/passwordPolicy.js AND from the server (internal/core/services/
@@ -90,6 +92,28 @@ export default {
     status: 'Status',
     active: 'active',
     close: 'Close',
+    actions: 'Actions',
+  },
+  a11y: {
+    skipToContent: 'Skip to content',
+  },
+  hotkeys: {
+    title: 'Keyboard shortcuts',
+    openHelp: 'Show keyboard shortcuts (?)',
+    intro:
+      'Shortcuts apply while no input field has focus. Jumps are two keys in a row: first G, then the letter of the page.',
+    groupGoto: 'Go to',
+    gotoHint: 'Press G first, then the key.',
+    groupGlobal: 'Everywhere',
+    groupPage: 'On this page',
+    noPageActions: 'This page has no shortcuts of its own.',
+    help: 'Open or close this help',
+    search: 'Jump to the search field of the page',
+    save: 'Save the form',
+    escape: 'Close dialog or menu',
+    arrows: 'Move between controls in menus and tables',
+    tab: 'Next control (Shift+Tab: back)',
+    showBadges: 'Show shortcuts as badges on buttons',
   },
   severity: {
     critical: 'Critical',
@@ -1089,6 +1113,7 @@ export default {
   },
   settings: {
     title: 'Settings',
+    navLabel: 'Settings sections',
     noPages: 'No settings pages are available for your role.',
     security: {
       title: 'Security',
@@ -1237,6 +1262,7 @@ export default {
       mcp: 'MCP (AI agents)',
       general: 'General',
       security: 'Security',
+      events: 'Events',
       repositories: 'Repositories',
       apps: 'Applications',
       aptCache: 'APT cache',

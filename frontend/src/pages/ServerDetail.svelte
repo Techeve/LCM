@@ -2619,7 +2619,7 @@
             </div>
             {#if auth.can('groups:write') && availableGroups.length > 0}
               <div class="input-group input-group-sm" style="max-width: 360px">
-                <select class="form-select" bind:value={addGroupId}>
+                <select class="form-select" bind:value={addGroupId} aria-label={t('serverDetail.overview.addToGroupOption')}>
                   <option value="">{t('serverDetail.overview.addToGroupOption')}</option>
                   {#each availableGroups as g (g.id)}<option value={g.id}>{g.name}</option>{/each}
                 </select>
@@ -2691,7 +2691,7 @@
                   <th>{t('serverDetail.pins.colScope')}</th>
                   <th>{t('serverDetail.pins.colEffect')}</th>
                   <th>{t('serverDetail.pins.colNote')}</th>
-                  <th></th>
+                  <th><span class="visually-hidden">{t('common.actions')}</span></th>
                 </tr></thead>
                 <tbody>
                   {#each [...pins.global, ...pins.server] as pin (pin.id)}
@@ -2759,7 +2759,7 @@
       {/if}
       <div class="input-group input-group-sm mb-2" style="max-width: 320px">
         <span class="input-group-text">{@html icons.search}</span>
-        <input class="form-control" type="search" data-testid="pkg-search"
+        <input class="form-control" type="search" data-testid="pkg-search" data-hotkey="/"
           placeholder={t('serverDetail.packages.searchPlaceholder')}
           aria-label={t('serverDetail.packages.searchPlaceholder')}
           bind:value={pkgSearch} />
@@ -2876,7 +2876,7 @@
       {/if}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
-          <thead><tr><th>{t('serverDetail.snaps.colSnap')}</th><th>{t('serverDetail.snaps.colVersion')}</th><th>{t('serverDetail.snaps.colChannel')}</th><th>{t('serverDetail.snaps.colPublisher')}</th><th>{t('serverDetail.snaps.colUpdate')}</th><th class="text-end"></th></tr></thead>
+          <thead><tr><th>{t('serverDetail.snaps.colSnap')}</th><th>{t('serverDetail.snaps.colVersion')}</th><th>{t('serverDetail.snaps.colChannel')}</th><th>{t('serverDetail.snaps.colPublisher')}</th><th>{t('serverDetail.snaps.colUpdate')}</th><th class="text-end"><span class="visually-hidden">{t('common.actions')}</span></th></tr></thead>
           <tbody>
             {#each pageSlice(snaps, snapPage) as s (s.id)}
               {@const hasUpdate = s.candidate_version && s.candidate_version !== s.version}
@@ -3128,7 +3128,7 @@
               <h3 class="h6">{@html icons.users} {t('serverDetail.users.assignTitle')}</h3>
               <p class="small text-body-secondary mb-2">{t('serverDetail.users.assignIntro')}</p>
               <div class="d-flex flex-wrap gap-2">
-                <select class="form-select" style="max-width: 20rem" bind:value={assignUserId} data-testid="users-assign-select">
+                <select class="form-select" style="max-width: 20rem" bind:value={assignUserId} data-testid="users-assign-select" aria-label={t('serverDetail.users.assignPlaceholder')}>
                   <option value="">{t('serverDetail.users.assignPlaceholder')}</option>
                   {#each assignable as lu (lu.id)}
                     <option value={lu.id}>{lu.username}{lu.full_name ? ` - ${lu.full_name}` : ''}</option>
@@ -3151,7 +3151,7 @@
             <th>{t('serverDetail.users.colKeys')}</th>
             <th>2FA</th>
             <th>{t('serverDetail.users.colLastLogin')}</th>
-            <th></th>
+            <th><span class="visually-hidden">{t('common.actions')}</span></th>
           </tr></thead>
           <tbody>
             {#each pageSlice(serverUsers ?? [], userPage) as u (u.username)}
@@ -3584,7 +3584,7 @@
                       <th>{t('serverDetail.securityTool.manage.colIp')}</th>
                       <th>{t('serverDetail.securityTool.manage.colScope')}</th>
                       <th>{t('serverDetail.securityTool.manage.colDuration')}</th>
-                      <th></th>
+                      <th><span class="visually-hidden">{t('common.actions')}</span></th>
                     </tr></thead>
                     <tbody>
                       {#each secBans[tl.key] ?? [] as ban (ban.tool + ban.scope + ban.ip)}
@@ -4179,7 +4179,7 @@
             </span>
           {:else if serverKnownRepos.length > 0}
             <div class="input-group input-group-sm ms-auto" style="max-width: 420px">
-              <select class="form-select" bind:value={addRepoKey} disabled={busy}>
+              <select class="form-select" bind:value={addRepoKey} disabled={busy} aria-label={t('serverDetail.repos.addKnownOption')}>
                 <option value="">{t('serverDetail.repos.addKnownOption')}</option>
                 {#each serverKnownRepos as kr (kr.key)}<option value={kr.key}>{kr.name}</option>{/each}
               </select>

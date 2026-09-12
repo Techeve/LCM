@@ -263,7 +263,7 @@
     </p>
     <div class="text-nowrap ms-3">
       <button class="btn btn-sm btn-outline-secondary" onclick={evaluate}>{t('settings.alerts.evaluateBtn')}</button>
-      <button class="btn btn-sm btn-primary" onclick={openNew}>{t('settings.alerts.addRule')}</button>
+      <button class="btn btn-sm btn-primary" onclick={openNew} data-hotkey="n">{t('settings.alerts.addRule')}</button>
     </div>
   </div>
 
@@ -300,7 +300,7 @@
     </table>
   </div>
 
-  <h6 class="mt-4">{t('settings.alerts.historyTitle')}</h6>
+  <h3 class="h6 mt-4">{t('settings.alerts.historyTitle')}</h3>
   <div class="table-responsive">
     <table class="table table-sm align-middle">
       <thead>

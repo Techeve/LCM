@@ -231,7 +231,7 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <p class="small text-body-secondary mb-0">{t('linuxUsers.intro')}</p>
     {#if canWrite}
-      <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={() => (createOpen = true)}>
+      <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={() => (createOpen = true)} data-hotkey="n">
         {t('linuxUsers.addUser')}
       </button>
     {/if}
@@ -243,7 +243,7 @@
       <thead>
         <tr>
           <th>{t('linuxUsers.colUsername')}</th><th>{t('linuxUsers.colDisplayName')}</th><th>{t('linuxUsers.colEmail')}</th>
-          <th>{t('linuxUsers.colRights')}</th><th>{t('linuxUsers.colKeys')}</th><th>{t('linuxUsers.colServers')}</th><th>{t('linuxUsers.colStatus')}</th><th></th>
+          <th>{t('linuxUsers.colRights')}</th><th>{t('linuxUsers.colKeys')}</th><th>{t('linuxUsers.colServers')}</th><th>{t('linuxUsers.colStatus')}</th><th><span class="visually-hidden">{t('common.actions')}</span></th>
         </tr>
       </thead>
       <tbody>

@@ -297,7 +297,7 @@ Environment=LCM_BACKUP_PASSPHRASE=ein-langes-geheimnis`}</code></pre>
               {t('settings.backups.autoRestartHintA')}<code>LCM_RESTORE_AUTO_RESTART</code>{t('settings.backups.autoRestartHintB')}
             </div>
           </div>
-          <button class="btn btn-primary">{t('common.save')}</button>
+          <button class="btn btn-primary" data-hotkey="mod+s">{t('common.save')}</button>
         </form>
       </div>
     </div>
@@ -396,7 +396,7 @@ Environment=LCM_BACKUP_PASSPHRASE=ein-langes-geheimnis`}</code></pre>
       <form onsubmit={uploadRestore}>
         <div class="row g-2 align-items-center">
           <div class="col-md-5">
-            <input class="form-control form-control-sm" type="file" accept=".lcmbak" onchange={onUploadPick} />
+            <input class="form-control form-control-sm" type="file" accept=".lcmbak" onchange={onUploadPick} aria-label={t('settings.backups.fromFile')} />
           </div>
           <div class="col-md-4">
             <input

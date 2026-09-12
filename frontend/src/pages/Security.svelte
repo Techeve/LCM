@@ -227,6 +227,7 @@
       type="button"
       class="btn btn-sm btn-primary"
       data-testid="bulk-update-all"
+      data-hotkey="u"
       onclick={updateAll}
       disabled={starting || bulk?.running}
       title={t('security.updateAllHint')}

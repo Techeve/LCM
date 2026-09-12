@@ -6,6 +6,7 @@ export default {
     title: 'Doku',
     intro: 'Kurzanleitungen für die tägliche Arbeit mit LCM.',
     empty: 'Für diese Sprache ist noch keine Seite hinterlegt.',
+    navLabel: 'Doku-Seiten',
   },
   nav: {
     docs: 'Doku',
@@ -22,6 +23,7 @@ export default {
     loggedInAs: 'Angemeldet als',
     accountMenu: 'Konto-Menü: {name}',
     toggleMenu: 'Menü umschalten',
+    main: 'Hauptnavigation',
   },
   // Passwort-Policy: Texte für die Stärkeanzeige. Die Problem-Codes kommen
   // aus lib/passwordPolicy.js UND vom Server (internal/core/services/
@@ -91,6 +93,28 @@ export default {
     status: 'Status',
     active: 'aktiv',
     close: 'Schließen',
+    actions: 'Aktionen',
+  },
+  a11y: {
+    skipToContent: 'Zum Inhalt springen',
+  },
+  hotkeys: {
+    title: 'Tastenkürzel',
+    openHelp: 'Tastenkürzel anzeigen (?)',
+    intro:
+      'Kürzel gelten, solange kein Eingabefeld den Fokus hat. Sprünge bestehen aus zwei Tasten nacheinander: erst G, dann der Buchstabe der Seite.',
+    groupGoto: 'Springen zu',
+    gotoHint: 'Erst G drücken, dann die Taste.',
+    groupGlobal: 'Überall',
+    groupPage: 'Auf dieser Seite',
+    noPageActions: 'Diese Seite hat keine eigenen Kürzel.',
+    help: 'Diese Hilfe öffnen oder schließen',
+    search: 'In das Suchfeld der Seite springen',
+    save: 'Formular speichern',
+    escape: 'Dialog oder Menü schließen',
+    arrows: 'In Menüs und Tabellen zwischen Bedienelementen wandern',
+    tab: 'Zum nächsten Bedienelement (Umschalt+Tab: zurück)',
+    showBadges: 'Kürzel als Abzeichen an Schaltflächen anzeigen',
   },
   severity: {
     critical: 'Kritisch',
@@ -1093,6 +1117,7 @@ export default {
   },
   settings: {
     title: 'Einstellungen',
+    navLabel: 'Einstellungsbereiche',
     noPages: 'Für deine Rolle sind keine Einstellungs-Seiten verfügbar.',
     security: {
       title: 'Sicherheit',
@@ -1241,6 +1266,7 @@ export default {
       mcp: 'MCP (KI-Agenten)',
       general: 'Allgemein',
       security: 'Sicherheit',
+      events: 'Ereignisse',
       repositories: 'Repositories',
       apps: 'Anwendungen',
       aptCache: 'APT-Cache',

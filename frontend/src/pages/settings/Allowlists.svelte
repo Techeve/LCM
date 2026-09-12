@@ -88,7 +88,7 @@
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h3 class="h6 mb-0">{t('allowlists.listTitle')}</h3>
-        <button class="btn btn-sm btn-primary text-nowrap ms-3" data-testid="allowlist-new" onclick={openNew}>{t('allowlists.add')}</button>
+        <button class="btn btn-sm btn-primary text-nowrap ms-3" data-testid="allowlist-new" onclick={openNew} data-hotkey="n">{t('allowlists.add')}</button>
       </div>
       <p class="small text-body-secondary">{t('allowlists.intro')}</p>
       <div class="table-responsive">

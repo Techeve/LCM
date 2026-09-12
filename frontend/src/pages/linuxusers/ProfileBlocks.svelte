@@ -186,7 +186,7 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <p class="small text-body-secondary mb-0">{t('settings.blocks.intro')}</p>
     {#if canWrite}
-      <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew}>{t('settings.blocks.addBlock')}</button>
+      <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew} data-hotkey="n">{t('settings.blocks.addBlock')}</button>
     {/if}
   </div>
 
@@ -194,6 +194,7 @@
     <input
       class="form-control form-control-sm"
       type="search"
+      data-hotkey="/"
       placeholder={t('settings.blocks.filterPlaceholder')}
       bind:value={filter}
       data-testid="block-filter"

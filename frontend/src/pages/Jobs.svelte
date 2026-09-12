@@ -196,7 +196,7 @@
       </div>
       <div class="col-12 col-md-3">
         <label class="form-label small mb-1" for="f-q">{t('jobs.filterName')}</label>
-        <input id="f-q" class="form-control form-control-sm" placeholder={t('jobs.searchName')} bind:value={filters.q} oninput={onSearchInput} />
+        <input id="f-q" class="form-control form-control-sm" placeholder={t('jobs.searchName')} data-hotkey="/" bind:value={filters.q} oninput={onSearchInput} />
       </div>
       <div class="col-6 col-md-2">
         <label class="form-label small mb-1" for="f-by">{t('jobs.filterTriggeredBy')}</label>
@@ -235,7 +235,7 @@
     <div class="mb-2 small text-body-secondary">{total} {t('jobs.countLabel')}</div>
     <div class="table-responsive">
       <table class="table table-hover table-sm align-middle">
-        <thead><tr><th>{t('jobs.colJob')}</th><th>{t('jobs.colType')}</th><th>{t('jobs.colStatus')}</th><th>{t('jobs.colTriggeredBy')}</th><th>{t('jobs.colTime')}</th><th></th></tr></thead>
+        <thead><tr><th>{t('jobs.colJob')}</th><th>{t('jobs.colType')}</th><th>{t('jobs.colStatus')}</th><th>{t('jobs.colTriggeredBy')}</th><th>{t('jobs.colTime')}</th><th><span class="visually-hidden">{t('common.actions')}</span></th></tr></thead>
         <tbody>
           {#each jobs as j (j.id)}
             <tr class={expandedId === j.id ? 'table-active' : ''}>

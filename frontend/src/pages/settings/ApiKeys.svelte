@@ -87,7 +87,7 @@
   <div class="table-responsive">
     <table class="table align-middle">
       <thead>
-        <tr><th>{t('common.name')}</th><th>{t('settings.apiKeys.colPrefix')}</th><th>{t('settings.apiKeys.colScope')}</th><th>{t('settings.apiKeys.colLastUsed')}</th><th>{t('common.status')}</th><th></th></tr>
+        <tr><th>{t('common.name')}</th><th>{t('settings.apiKeys.colPrefix')}</th><th>{t('settings.apiKeys.colScope')}</th><th>{t('settings.apiKeys.colLastUsed')}</th><th>{t('common.status')}</th><th><span class="visually-hidden">{t('common.actions')}</span></th></tr>
       </thead>
       <tbody>
         {#each restKeys as key (key.id)}

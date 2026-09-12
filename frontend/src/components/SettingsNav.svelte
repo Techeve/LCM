@@ -12,10 +12,10 @@
   }
 </script>
 
-<div class="list-group">
+<nav class="list-group" aria-label={t('settings.navLabel')} data-arrow-nav="vertical">
   {#each visibleSettingsItems() as item (item.path)}
     <a class="list-group-item list-group-item-action {active(item.path)}" href={item.path} use:link>
       {t(item.labelKey)}
     </a>
   {/each}
-</div>
+</nav>

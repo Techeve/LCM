@@ -115,7 +115,7 @@
     <div class="col-lg-6">
       <div class="card mb-4">
         <div class="card-body">
-          <h3 class="h6">{t('account.profile')}</h3>
+          <h2 class="h6">{t('account.profile')}</h2>
           <form onsubmit={saveProfile}>
             <div class="mb-2">
               <label class="form-label" for="acc-email">{t('account.email')}</label>
@@ -146,7 +146,7 @@
 
       <div class="card">
         <div class="card-body">
-          <h3 class="h6">{t('account.changePassword')}</h3>
+          <h2 class="h6">{t('account.changePassword')}</h2>
           <form onsubmit={changePassword}>
             <div style="max-width: 360px">
               <div class="mb-2">
@@ -173,7 +173,7 @@
     <div class="col-lg-6">
       <div class="card">
         <div class="card-body">
-          <h3 class="h6">{t('account.twofaTitle')}</h3>
+          <h2 class="h6">{t('account.twofaTitle')}</h2>
           {#if auth.user?.totp_enabled}
             <p class="text-success">{t('account.twofaActive')}</p>
             <button class="btn btn-outline-danger" onclick={disable2fa}>{t('account.twofaDisable')}</button>

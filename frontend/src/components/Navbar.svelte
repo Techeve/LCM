@@ -10,6 +10,7 @@
   import { theme } from '../stores/theme.svelte.js';
   import { i18n, LOCALES } from '../stores/i18n.svelte.js';
   import { visibleSettingsItems } from './settingsNavItems.js';
+  import { hotkeys } from '../lib/hotkeys.svelte.js';
 
   const t = (k, p) => i18n.t(k, p);
 
@@ -76,14 +77,25 @@
   function onDocClick(e) {
     if (userMenuEl && !userMenuEl.contains(e.target)) userMenu = false;
   }
+  // Escape schließt das Menü und stellt den Fokus auf die Pille zurück.
+  function onMenuKey(e) {
+    if (e.key === 'Escape') {
+      userMenu = false;
+      userMenuEl?.querySelector('button')?.focus();
+    }
+  }
   $effect(() => {
     if (!userMenu) return;
     document.addEventListener('click', onDocClick, true);
-    return () => document.removeEventListener('click', onDocClick, true);
+    document.addEventListener('keydown', onMenuKey);
+    return () => {
+      document.removeEventListener('click', onDocClick, true);
+      document.removeEventListener('keydown', onMenuKey);
+    };
   });
 </script>
 
-<nav class="navbar navbar-expand-lg bg-dark navbar-dark mb-4">
+<nav class="navbar navbar-expand-lg bg-dark navbar-dark mb-4" aria-label={t('nav.main')}>
   <div class="container">
     <a class="navbar-brand d-inline-flex align-items-center" href="/" use:link onclick={nav}>
       <img src="/logo-wordmark.svg" alt="LCM" height="30" width="81" />
@@ -100,7 +112,7 @@
     </button>
 
     <div class="collapse navbar-collapse {open ? 'show' : ''}">
-      <ul class="navbar-nav me-auto">
+      <ul class="navbar-nav me-auto" data-arrow-nav="horizontal">
         {#if auth.can('servers:read')}
           <li class="nav-item"><a class="nav-link {isActive('/')}" href="/" use:link onclick={nav}>{t('nav.dashboard')}</a></li>
         {/if}
@@ -150,6 +162,18 @@
             onclick={cycleLocale}
           >{@html currentLangSvg}</button>
 
+          <button
+            type="button"
+            class="btn btn-outline-light btn-sm d-inline-flex align-items-center justify-content-center p-0 fw-bold"
+            style="width: 38px; height: 31px;"
+            data-testid="hotkey-help-button"
+            aria-label={t('hotkeys.openHelp')}
+            title={t('hotkeys.openHelp')}
+            aria-haspopup="dialog"
+            aria-expanded={hotkeys.helpOpen}
+            onclick={() => { nav(); hotkeys.helpOpen = !hotkeys.helpOpen; }}
+          >?</button>
+
           <!-- Konto: gleiche Größe/Design; öffnet das Dropdown mit Username,
                „Mein Konto" und „Abmelden". -->
           <div class="dropdown" bind:this={userMenuEl}>
@@ -171,6 +195,7 @@
             <div
               class="dropdown-menu mt-1 {userMenu ? 'show' : ''}"
               style="min-width: 220px; right: 0; left: auto"
+              data-arrow-nav="vertical"
             >
               <div class="px-3 py-2">
                 <div class="small text-body-secondary">{t('nav.loggedInAs')}</div>
@@ -181,6 +206,9 @@
               <a class="dropdown-item" href="/account" use:link data-testid="account-link" onclick={nav}>
                 {t('nav.account')}
               </a>
+              <button class="dropdown-item" onclick={() => { nav(); hotkeys.helpOpen = true; }} data-testid="menu-hotkeys">
+                {t('hotkeys.title')} <kbd class="ms-1">?</kbd>
+              </button>
               <button class="dropdown-item" onclick={logout}>{t('nav.logout')}</button>
             </div>
           </div>

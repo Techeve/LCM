@@ -46,11 +46,19 @@
   $effect(() => {
     if (!open) return;
     const close = () => (open = false);
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        close();
+        btnEl?.focus();
+      }
+    };
     document.addEventListener('click', onDocClick, true);
+    document.addEventListener('keydown', onKey);
     window.addEventListener('resize', close);
     window.addEventListener('scroll', close, true);
     return () => {
       document.removeEventListener('click', onDocClick, true);
+      document.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', close);
       window.removeEventListener('scroll', close, true);
     };
@@ -80,6 +88,7 @@
       style="text-decoration: none; font-size: 1rem"
       title={popTitle}
       aria-label={popTitle}
+      aria-expanded={open}
       onclick={toggle}>ⓘ</button>
   {/if}
 </span>
@@ -88,7 +97,8 @@
   <div
     class="card shadow border"
     style="position: fixed; left: {px}px; top: {py}px; z-index: 1090; min-width: 260px; max-width: 340px"
-    role="dialog">
+    role="dialog"
+    aria-label={popTitle}>
     <div class="card-body p-2">
       <div class="small fw-semibold mb-2">{popTitle}</div>
       <ul class="list-unstyled mb-0 small">

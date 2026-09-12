@@ -122,7 +122,7 @@
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h3 class="h6 mb-0">{t('settings.apps.catalogTitle')}</h3>
-        <button class="btn btn-sm btn-primary text-nowrap ms-3" data-testid="app-add" onclick={openNew}>
+        <button class="btn btn-sm btn-primary text-nowrap ms-3" data-testid="app-add" onclick={openNew} data-hotkey="n">
           {t('settings.apps.add')}
         </button>
       </div>

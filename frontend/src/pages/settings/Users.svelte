@@ -157,13 +157,13 @@
 
   {#if auth.can('users:write')}
     <div class="mb-3">
-      <button class="btn btn-primary" onclick={openCreate}>{t('settings.users.addUser')}</button>
+      <button class="btn btn-primary" onclick={openCreate} data-hotkey="n">{t('settings.users.addUser')}</button>
     </div>
   {/if}
 
   <div class="table-responsive">
     <table class="table table-hover align-middle">
-      <thead><tr><th>{t('settings.users.colUser')}</th><th>{t('settings.users.colRoles')}</th><th></th></tr></thead>
+      <thead><tr><th>{t('settings.users.colUser')}</th><th>{t('settings.users.colRoles')}</th><th><span class="visually-hidden">{t('common.actions')}</span></th></tr></thead>
       <tbody>
         {#each users as user (user.id)}
           <tr data-testid="user-row">

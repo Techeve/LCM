@@ -145,3 +145,14 @@ func TestAuszeichnungUeberDenZeilenumbruch(t *testing.T) {
 		t.Errorf("erwartet zwei Absätze:\n%s", zwei)
 	}
 }
+
+// TestFortsetzungszeileBleibtImListenpunkt: Eingerückter Folgetext gehört in
+// den Punkt, nicht als loser Text unter die Liste - Screenreader lesen ihn
+// sonst außerhalb der Aufzählung vor, und HTML-Prüfer melden es als Fehler.
+func TestFortsetzungszeileBleibtImListenpunkt(t *testing.T) {
+	got := Render("- **erster** Punkt\n  geht weiter\n- zweiter\n")
+	want := "<ul>\n<li><strong>erster</strong> Punkt geht weiter</li>\n<li>zweiter</li>\n</ul>\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

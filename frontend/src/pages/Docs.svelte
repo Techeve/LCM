@@ -58,7 +58,7 @@
       <!-- Seitenliste: erst ab zwei Seiten sinnvoll. -->
       {#if pages.length > 1}
         <div class="col-12 col-md-3">
-          <nav class="list-group" data-testid="docs-nav">
+          <nav class="list-group" data-testid="docs-nav" aria-label={t('docs.navLabel')} data-arrow-nav="vertical">
             {#each pages as p (p.slug)}
               <button
                 class="list-group-item list-group-item-action {p.slug === page?.slug ? 'active' : ''}"

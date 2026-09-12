@@ -192,7 +192,7 @@
     <p class="small text-body-secondary mb-0">
       {t('settings.notifications.introA')}<em>{t('settings.notifications.introEm')}</em>{t('settings.notifications.introB')}
     </p>
-    <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew}>{t('settings.notifications.addChannel')}</button>
+    <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew} data-hotkey="n">{t('settings.notifications.addChannel')}</button>
   </div>
 
   <div class="table-responsive">
