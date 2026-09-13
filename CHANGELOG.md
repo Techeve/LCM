@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.42.1-beta.1 - 2026-09-13
+
+### 🐛 Bugfixes
+
+- **onboarding**: fehlendes sudo selbst nachinstallieren statt die Aufnahme abzubrechen (b34e78e7)
+
 ## v1.42.0-beta.1 - 2026-09-11
 
 ### 🚀 Features

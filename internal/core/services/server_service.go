@@ -923,6 +923,14 @@ func (s *ServerService) establishAccess(conn sshx.Conn, host string, port int, f
 	if esc.method != "root" {
 		log.WriteString("### Rechte-Erkennung\nProvisionierung läuft per " + esc.method + "\n")
 	}
+	// sudo muss da sein, BEVOR das Konto und die sudoers-Datei entstehen:
+	// Debian und Proxmox liefern es nicht mit, und ohne das Programm zeigt
+	// jeder sudoers-Eintrag ins Leere (siehe ensure_sudo.go). Scheitert die
+	// Nachinstallation, ist auf dem Zielsystem noch nichts anzulegen gewesen -
+	// es bleibt nichts zurückzunehmen.
+	if err := ensureSudo(conn, esc, host, &log); err != nil {
+		return nil, withProvisionLog(err, log.String())
+	}
 	sudoCmd, sudoStdin := esc.wrap(provision)
 	if err := must("service-user provisionieren", sudoCmd, sudoStdin); err != nil {
 		cleanupProvisioning(conn, esc, svcUser, &log)
@@ -966,10 +974,12 @@ func (s *ServerService) establishAccess(conn sshx.Conn, host string, port int, f
 			}
 			return failVerification(fmt.Errorf(
 				"der Service-User %q erreicht auf %s keine Root-Rechte (%s). "+
-					"Häufigste Ursache: das Paket sudo ist nicht installiert - Proxmox VE/PBS/PDM "+
-					"liefern zwar /etc/sudoers.d/ mit, aber nicht das Programm selbst, sodass der "+
-					"geschriebene sudoers-Eintrag ins Leere zeigt. "+
-					"Auf dem Zielsystem sudo installieren (z.B. apt-get install sudo) und erneut verbinden",
+					"Ein fehlendes sudo installiert LCM beim Onboarding selbst; bleibt es dabei, "+
+					"liegt es an der sudoers-Konfiguration des Systems - etwa an einem "+
+					"nachgelagerten Eintrag in /etc/sudoers.d/, der den Service-User wieder "+
+					"ausschließt, oder an einer sudoers-Datei, die das Verzeichnis gar nicht "+
+					"einbindet (fehlendes #includedir /etc/sudoers.d). "+
+					"Prüfe das auf dem Zielsystem (visudo) und verbinde erneut",
 				svcUser, host, detail))
 		}
 	}

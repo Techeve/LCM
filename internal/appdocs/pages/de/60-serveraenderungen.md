@@ -63,6 +63,24 @@ systemctl daemon-reload && systemctl restart ssh.socket
 Ist die Firewall aktiv, hat LCM den neuen Port dort mit geöffnet - siehe
 Abschnitt *Firewall*.
 
+### sudo nachinstalliert
+
+Debian liefert `sudo` nicht mit der Grundinstallation, die darauf aufbauenden
+Proxmox-Systeme (VE, PBS, PDM) ebenso wenig. `/etc/sudoers.d/` ist dort
+trotzdem vorhanden, ein Eintrag darin zeigte also ins Leere. Fehlt `sudo` beim
+Aufnehmen, installiert LCM es deshalb über die Paketverwaltung des Systems,
+bevor es den Management-Benutzer anlegt. Steht es im Protokoll der Aufnahme,
+war es vorher nicht da.
+
+Entfernt wird es nie wieder - auch nicht, wenn eine Aufnahme scheitert und
+zurückgenommen wird: Andere Dienste und Anmeldungen können es inzwischen
+benutzen. Rückgängig machst du es von Hand, wenn du sicher bist, dass niemand
+sonst darauf angewiesen ist:
+
+```sh
+apt-get remove sudo
+```
+
 ### Eingeschränkter Modus
 
 Statt voller Rechte bekommt der Management-Benutzer eine Positivliste:

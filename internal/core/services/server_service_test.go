@@ -17,8 +17,9 @@ import (
 func joinTestServer(t *testing.T, env *testEnv, name string) uint {
 	t.Helper()
 	env.Dialer.Responses = map[string]sshx.FakeResponse{
-		"apt-get dnf zypper": {Output: "apt-get\n"}, // Debian → apt (Join prüft das)
-		"sudo -n id -u":      {Output: "0\n"},       // Service-User erreicht root
+		"apt-get dnf zypper": {Output: "apt-get\n"},       // Debian → apt (Join prüft das)
+		"command -v sudo":    {Output: "/usr/bin/sudo\n"}, // sudo ist installiert
+		"sudo -n id -u":      {Output: "0\n"},             // Service-User erreicht root
 		"os-release":         {Output: "NAME=\"Debian GNU/Linux\"\nVERSION=\"12 (bookworm)\"\n"},
 		"uname -r":           {Output: "6.1.0-13-amd64\n"},
 		"nproc":              {Output: "4\n"},
@@ -50,16 +51,20 @@ func stdScanResponses() map[string]sshx.FakeResponse {
 		// hier still auf apt zurück, weshalb die Tests den Blindfleck nicht
 		// bemerkten (BUG-012).
 		"apt-get dnf zypper": {Output: "apt-get\n"},
-		"sudo -n id -u":      {Output: "0\n"}, // Service-User erreicht root
-		"os-release":         {Output: "NAME=\"Debian GNU/Linux\"\nVERSION=\"12 (bookworm)\"\n"},
-		"uname -r":           {Output: "6.1.0-13-amd64\n"},
-		"nproc":              {Output: "4\n"},
-		"/^Mem:/":            {Output: "7861 2130\n"},
-		"df -BM":             {Output: "40000 8000\n"},
-		"hostname -I":        {Output: "10.0.0.5 \n"},
-		"dpkg-query":         {Output: "nginx 1.22.1\nopenssl 3.0.11\n"},
-		"apt list":           {Output: "Listing...\nopenssl/stable-security 3.0.14 amd64 [upgradable from: 3.0.11]\n"},
-		"@@@DEB822@@@":       {Output: "deb https://deb.debian.org/debian bookworm main\n"},
+		// Ein normales Debian hat sudo installiert. Die Proxmox-Konstellation
+		// (sudoers.d vorhanden, sudo nicht) setzen die Tests, die genau davon
+		// handeln, gezielt dagegen.
+		"command -v sudo": {Output: "/usr/bin/sudo\n"},
+		"sudo -n id -u":   {Output: "0\n"}, // Service-User erreicht root
+		"os-release":      {Output: "NAME=\"Debian GNU/Linux\"\nVERSION=\"12 (bookworm)\"\n"},
+		"uname -r":        {Output: "6.1.0-13-amd64\n"},
+		"nproc":           {Output: "4\n"},
+		"/^Mem:/":         {Output: "7861 2130\n"},
+		"df -BM":          {Output: "40000 8000\n"},
+		"hostname -I":     {Output: "10.0.0.5 \n"},
+		"dpkg-query":      {Output: "nginx 1.22.1\nopenssl 3.0.11\n"},
+		"apt list":        {Output: "Listing...\nopenssl/stable-security 3.0.14 amd64 [upgradable from: 3.0.11]\n"},
+		"@@@DEB822@@@":    {Output: "deb https://deb.debian.org/debian bookworm main\n"},
 	}
 }
 
@@ -941,5 +946,86 @@ func TestSandboxNachruesten(t *testing.T) {
 	}
 	if strings.Contains(all, "trivy") {
 		t.Errorf("Trivy wird angefasst, obwohl nur die Sandbox fehlt:\n%s", all)
+	}
+}
+
+// TestJoinInstalliertFehlendesSudo bildet den Proxmox-/Debian-Fall nach:
+// /etc/sudoers.d/ ist da, sudo nicht. Bisher lief die Provisionierung durch,
+// der Rechte-Funktionstest scheiterte mit "sudo: command not found", und der
+// Join wurde samt Rücknahme abgebrochen - der Administrator musste sudo von
+// Hand nachinstallieren (BUG-030). Jetzt installiert LCM es selbst, bevor es
+// das Konto anlegt.
+func TestJoinInstalliertFehlendesSudo(t *testing.T) {
+	env := newTestEnv(t)
+	env.Dialer.Responses = stdScanResponses()
+	// Das System kennt sudo nicht - bis es installiert wird.
+	env.Dialer.Responses["command -v sudo"] = sshx.FakeResponse{ExitCode: 127}
+	env.Dialer.Responses["apt-get install -y sudo"] = sshx.FakeResponse{
+		Output: "Setting up sudo (1.9.13p3-1+deb12u1) ...\n",
+	}
+
+	if _, err := env.Servers.Join(services.JoinRequest{
+		Name: "pve01", Host: "10.0.0.241", Port: 22, LoginUser: "root",
+		LoginPassword: "secret", ConfirmedFingerprint: env.Dialer.Fingerprint, Actor: "admin",
+	}); err != nil {
+		t.Fatalf("join sollte sudo nachinstallieren statt abzubrechen: %v", err)
+	}
+
+	all := strings.Join(env.Dialer.Commands, "\n")
+	if !strings.Contains(all, "apt-get install -y sudo") {
+		t.Errorf("sudo wurde nicht nachinstalliert:\n%s", all)
+	}
+	// Und zwar VOR dem Anlegen des Kontos - sonst entsteht ein Konto mit einer
+	// sudoers-Datei, die ins Leere zeigt.
+	if strings.Index(all, "apt-get install -y sudo") > strings.Index(all, "useradd") {
+		t.Errorf("sudo muss vor der Benutzeranlage installiert werden:\n%s", all)
+	}
+	// Andere Paketverwaltungen kennt dasselbe Skript ebenfalls.
+	for _, mgr := range []string{"dnf install -y sudo", "zypper --non-interactive install sudo", "apk add --no-cache sudo"} {
+		if !strings.Contains(all, mgr) {
+			t.Errorf("Installationsskript deckt %q nicht ab", mgr)
+		}
+	}
+}
+
+// TestJoinMeldetFehlgeschlageneSudoInstallation: Ohne Paketquelle (kein Netz,
+// leeres Repository) kann auch LCM sudo nicht beschaffen. Dann soll der Join
+// mit der Ursache abbrechen - und zwar bevor auf dem Zielsystem irgendetwas
+// angelegt wurde.
+func TestJoinMeldetFehlgeschlageneSudoInstallation(t *testing.T) {
+	env := newTestEnv(t)
+	env.Dialer.Responses = stdScanResponses()
+	env.Dialer.Responses["command -v sudo"] = sshx.FakeResponse{ExitCode: 127}
+	env.Dialer.Responses["apt-get install -y sudo"] = sshx.FakeResponse{
+		Output: "E: Unable to locate package sudo\n", ExitCode: 100,
+	}
+
+	_, err := env.Servers.Join(services.JoinRequest{
+		Name: "pve01", Host: "10.0.0.241", Port: 22, LoginUser: "root",
+		LoginPassword: "secret", ConfirmedFingerprint: env.Dialer.Fingerprint, Actor: "admin",
+	})
+	if err == nil {
+		t.Fatal("erwartete eine Ablehnung - sudo fehlt und ließ sich nicht installieren")
+	}
+	if !strings.Contains(err.Error(), "nachinstallieren") || !strings.Contains(err.Error(), "Unable to locate package") {
+		t.Errorf("die Meldung soll Ursache und Ausgabe nennen, bekam: %v", err)
+	}
+	// Kein halb provisioniertes Zielsystem: Das Konto wurde nie angelegt.
+	if all := strings.Join(env.Dialer.Commands, "\n"); strings.Contains(all, "useradd") {
+		t.Errorf("vor der gescheiterten sudo-Installation darf kein Konto entstehen:\n%s", all)
+	}
+	if servers, _ := env.Servers.List(repositories.ScopeAll()); len(servers) != 0 {
+		t.Errorf("ein abgelehnter Join darf keinen Server hinterlassen, fand %d", len(servers))
+	}
+}
+
+// TestJoinInstalliertSudoNichtUnnoetig: Ist sudo vorhanden, fasst LCM die
+// Paketverwaltung nicht an - ein Onboarding soll so wenig wie möglich am
+// Zielsystem ändern.
+func TestJoinInstalliertSudoNichtUnnoetig(t *testing.T) {
+	env := newTestEnv(t)
+	joinTestServer(t, env, "web01")
+	if all := strings.Join(env.Dialer.Commands, "\n"); strings.Contains(all, "install -y sudo") {
+		t.Errorf("sudo ist vorhanden und darf nicht installiert werden:\n%s", all)
 	}
 }
