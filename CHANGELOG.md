@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.42.2-beta.1 - 2026-09-14
+
+### 🐛 Bugfixes
+
+- **ui**: Tastenkürzel gelten nur in der angemeldeten Oberfläche (9e8ee0f9)
+
 ## v1.42.1-beta.1 - 2026-09-13
 
 ### 🐛 Bugfixes

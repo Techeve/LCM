@@ -219,6 +219,17 @@ function createHotkeys() {
       return;
     }
 
+    // Ab hier die angekündigten Kürzel. Sie gehören zur angemeldeten
+    // Oberfläche - genau wie die Schaltfläche, die die Hilfe öffnet, und die
+    // erscheint erst nach der Anmeldung. Auf dem Anmeldebildschirm gäbe es
+    // weder etwas anzuspringen noch anzuzeigen; die Hilfe stünde dort mit
+    // einer fast leeren Liste. Pfeiltasten und Escape bleiben erlaubt: Das
+    // eine ist reines Fokus-Wandern, das andere schließt Dialoge.
+    if (!auth.isLoggedIn) {
+      clearPending();
+      return;
+    }
+
     if (pending === 'g') {
       clearPending();
       if (goto(e.key.toLowerCase())) e.preventDefault();
@@ -235,7 +246,6 @@ function createHotkeys() {
       pendingTimer = setTimeout(clearPending, SEQUENCE_MS);
       return;
     }
-    if (!auth.isLoggedIn) return;
     const target = hotkeyTarget(e.key.length === 1 ? e.key.toLowerCase() : e.key);
     if (target) {
       e.preventDefault();

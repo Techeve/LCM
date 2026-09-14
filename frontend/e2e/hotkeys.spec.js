@@ -91,3 +91,23 @@ test.describe('Tastatur', () => {
     await expect(page.locator('html')).toHaveAttribute('data-hotkey-badges', 'on');
   });
 });
+
+test.describe('Ohne Anmeldung', () => {
+  test.use({ angemeldet: false });
+
+  // Die Kürzel gehören zur angemeldeten Oberfläche: Auf dem Anmeldebildschirm
+  // erscheint die Schaltfläche dafür nicht, also darf auch die Taste nichts
+  // öffnen - sonst stünde dort eine Hilfe mit fast leerer Sprungliste.
+  test('? öffnet auf der Anmeldeseite nichts', async ({ page }) => {
+    await page.goto('/#/login');
+    await expect(page.locator('#username')).toBeVisible();
+    await expect(page.getByTestId('hotkey-help-button')).toHaveCount(0);
+    await page.locator('main').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('?');
+    await expect(page.getByTestId('hotkey-help')).toHaveCount(0);
+    // Und ein Sprung-Kürzel führt nirgendwo hin.
+    await page.keyboard.press('g');
+    await page.keyboard.press('j');
+    await expect(page).toHaveURL(/#\/login$/);
+  });
+});

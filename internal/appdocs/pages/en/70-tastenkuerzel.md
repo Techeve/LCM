@@ -2,7 +2,8 @@
 
 The interface can be operated without a mouse. **`?`** opens the overview of
 all shortcuts at any time - also via the `?` button at the top right of the
-bar. Shortcuts apply while no input field has focus; only Save (`Ctrl+S` or
+bar. Shortcuts apply in the signed-in interface while no input field has
+focus; only Save (`Ctrl+S` or
 `⌘S`) also works inside a field.
 
 ## Jump

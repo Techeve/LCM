@@ -16,8 +16,11 @@ Kontraste nach WCAG 2.1 AA in beiden Farbmodi.
 Schaltfläche `?` oben rechts in der Leiste und den Link in der Fußzeile. Die
 Übersicht zeigt zusätzlich die Kürzel der gerade geöffneten Seite.
 
-Kürzel gelten, solange kein Eingabefeld den Fokus hat. Wer tippt, tippt
-Buchstaben - nur Speichern (`Strg+S` bzw. `⌘S`) greift auch im Feld.
+Kürzel gelten in der angemeldeten Oberfläche, solange kein Eingabefeld den
+Fokus hat. Wer tippt, tippt Buchstaben - nur Speichern (`Strg+S` bzw. `⌘S`)
+greift auch im Feld. Auf dem Anmeldebildschirm sind die Kürzel aus: Dort gibt
+es nichts anzuspringen, und die Schaltfläche dafür erscheint ebenfalls erst
+nach der Anmeldung.
 
 ### Springen
 

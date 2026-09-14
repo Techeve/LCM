@@ -2,7 +2,8 @@
 
 Die Oberfläche lässt sich ohne Maus bedienen. **`?`** öffnet jederzeit die
 Übersicht aller Kürzel - auch über die Schaltfläche `?` oben rechts in der
-Leiste. Kürzel gelten, solange kein Eingabefeld den Fokus hat; nur Speichern
+Leiste. Kürzel gelten in der angemeldeten Oberfläche, solange kein
+Eingabefeld den Fokus hat; nur Speichern
 (`Strg+S` bzw. `⌘S`) greift auch im Feld.
 
 ## Springen

@@ -16,8 +16,10 @@ colour modes.
 button at the top right of the bar and the link in the footer. The overview
 additionally shows the shortcuts of the page currently open.
 
-Shortcuts apply while no input field has focus. Whoever types, types letters -
-only Save (`Ctrl+S` or `⌘S`) also works inside a field.
+Shortcuts apply in the signed-in interface while no input field has focus.
+Whoever types, types letters - only Save (`Ctrl+S` or `⌘S`) also works inside a
+field. On the sign-in screen the shortcuts are off: there is nothing to jump
+to, and the button for them appears only after signing in.
 
 ### Jump
 
