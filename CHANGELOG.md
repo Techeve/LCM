@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.42.3-beta.1 - 2026-09-19
+
+### 🐛 Bugfixes
+
+- **ui**: abgelaufene Sitzung nicht erst zum Server schicken (fba23c86)
+
 ## v1.42.2-beta.1 - 2026-09-14
 
 ### 🐛 Bugfixes

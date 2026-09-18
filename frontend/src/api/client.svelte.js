@@ -30,12 +30,47 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Ist das Token erkennbar abgelaufen?
+ *
+ * Gelesen wird nur der exp-Anspruch des JWT, ohne Signaturprüfung - das ist
+ * hier keine Sicherheitsentscheidung, sondern eine Höflichkeit: Ein
+ * abgelaufenes Token nicht erst zum Server zu schicken, spart der Oberfläche
+ * das kurze Aufblitzen der angemeldeten Ansicht und dem Anwender drei
+ * 401-Fehler in der Browser-Konsole. Über die Gültigkeit entscheidet weiter
+ * ausschließlich der Server.
+ *
+ * Alles Unlesbare gilt als "nicht abgelaufen" - dann fragt eben der Server.
+ */
+function expired(token) {
+  try {
+    const payload = token.split('.')[1];
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const exp = JSON.parse(json).exp;
+    return typeof exp === 'number' && exp * 1000 <= Date.now();
+  } catch {
+    return false;
+  }
+}
+
+/** Gespeicherte Sitzung lesen; eine abgelaufene wird gleich weggeräumt. */
+function storedSession() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token || expired(token)) {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+    return { token: null, user: null };
+  }
+  try {
+    return { token, user: JSON.parse(localStorage.getItem(USER_KEY) ?? 'null') };
+  } catch {
+    return { token, user: null };
+  }
+}
+
 class ApiClient {
   /** Reaktiver Auth-Zustand (Svelte 5 Runes). */
-  #session = $state({
-    token: localStorage.getItem(TOKEN_KEY),
-    user: JSON.parse(localStorage.getItem(USER_KEY) ?? 'null'),
-  });
+  #session = $state(storedSession());
 
   get user() {
     return this.#session.user;
