@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.42.3 - 2026-09-23
+
+### 🚀 Features
+
+- **backup**: Reste abgebrochener Sicherungsläufe selbst wegräumen (7b86dbd6)
+- **security**: Empfehlungen der Sicherheitsanalyse umgesetzt - Helper statt NOPASSWD:ALL, Rechte-Wächter, Eingabegrenzen (2859da5f)
+- **security**: Schlüssel aus dem Datenverzeichnis holen - Credentials, kein jwt_secret, Empfänger-Backups (29cdf536)
+- **ui**: Barrierefreiheit und Tastaturbedienung - Kontraste, Screenreader, Tastenkürzel mit Hilfe (89e1fe4e)
+- **ui**: Warnung in der Browser-Konsole gegen Self-XSS (4ce6fca0)
+
+### 🐛 Bugfixes
+
+- **onboarding**: fehlendes sudo selbst nachinstallieren statt die Aufnahme abzubrechen (b34e78e7)
+- **packaging**: Upgrade hebt die Einschränkung des LCM-Hosts nicht mehr auf (73d625ff)
+- **security**: Sicherheitsanalyse Runde 1 - Sichtbereich, Proxy-Vertrauen, Re-Auth, Einmal-TOTP (abb21d57)
+- **ui**: Tastenkürzel gelten nur in der angemeldeten Oberfläche (9e8ee0f9)
+- **ui**: abgelaufene Sitzung nicht erst zum Server schicken (fba23c86)
+
+### 🔧 Sonstiges
+
+- **release**: Versionsableitung an die eigene Linie binden (33d7d381)
+- versehentlich eingechecktes Binary "release" entfernen (7053cc37)
+
 ## v1.38.0 - 2026-09-08
 
 ### 🚀 Features

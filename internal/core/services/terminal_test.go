@@ -102,14 +102,14 @@ func TestKonsoleNichtAufJedemServertyp(t *testing.T) {
 func TestFahrkarteGiltNurEinmal(t *testing.T) {
 	tickets := services.NewTerminalTickets()
 
-	token, err := tickets.Issue("admin", 7)
+	token, err := tickets.Issue("admin", 7, "203.0.113.9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if actor, ok := tickets.Redeem(token, 7); !ok || actor != "admin" {
+	if actor, ok := tickets.Redeem(token, 7, "203.0.113.9"); !ok || actor != "admin" {
 		t.Fatalf("erstes Einlösen fehlgeschlagen: actor=%q ok=%v", actor, ok)
 	}
-	if _, ok := tickets.Redeem(token, 7); ok {
+	if _, ok := tickets.Redeem(token, 7, "203.0.113.9"); ok {
 		t.Error("die Fahrkarte wurde ein zweites Mal angenommen")
 	}
 }
@@ -120,15 +120,15 @@ func TestFahrkarteGiltNurEinmal(t *testing.T) {
 func TestFahrkarteGiltNurFuerIhrenServer(t *testing.T) {
 	tickets := services.NewTerminalTickets()
 
-	token, err := tickets.Issue("admin", 7)
+	token, err := tickets.Issue("admin", 7, "203.0.113.9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := tickets.Redeem(token, 8); ok {
+	if _, ok := tickets.Redeem(token, 8, "203.0.113.9"); ok {
 		t.Error("die Fahrkarte galt für einen fremden Server")
 	}
 	// Und sie ist dadurch nicht verbraucht - der richtige Server geht noch.
-	if _, ok := tickets.Redeem(token, 7); !ok {
+	if _, ok := tickets.Redeem(token, 7, "203.0.113.9"); !ok {
 		t.Error("ein Fehlversuch auf einem fremden Server hat die Fahrkarte entwertet")
 	}
 }
@@ -136,7 +136,7 @@ func TestFahrkarteGiltNurFuerIhrenServer(t *testing.T) {
 // TestUnbekannteFahrkarteWirdAbgewiesen: die Gegenprobe zum Raten.
 func TestUnbekannteFahrkarteWirdAbgewiesen(t *testing.T) {
 	tickets := services.NewTerminalTickets()
-	if _, ok := tickets.Redeem("ausgedacht", 1); ok {
+	if _, ok := tickets.Redeem("ausgedacht", 1, "203.0.113.9"); ok {
 		t.Error("eine erfundene Fahrkarte wurde angenommen")
 	}
 }
@@ -148,5 +148,21 @@ func TestKonsolenRechtIstNichtImVerwalterRecht(t *testing.T) {
 		if p == domain.PermServersConsole {
 			t.Fatal("servers:console steckt in den Verwalter-Rechten - es gehört allein zu admin")
 		}
+	}
+}
+
+// TestFahrkarteGiltNurVonIhrerAdresse: Eine mitgelesene Fahrkarte (Proxy-Log,
+// Schulterblick) nützt von einem anderen Rechner aus nichts.
+func TestFahrkarteGiltNurVonIhrerAdresse(t *testing.T) {
+	tickets := services.NewTerminalTickets()
+	token, err := tickets.Issue("admin", 7, "203.0.113.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tickets.Redeem(token, 7, "198.51.100.7"); ok {
+		t.Error("die Fahrkarte galt von einer fremden Adresse")
+	}
+	if _, ok := tickets.Redeem(token, 7, "203.0.113.9"); !ok {
+		t.Error("von der eigenen Adresse muss sie gelten")
 	}
 }

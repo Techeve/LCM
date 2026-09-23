@@ -2,6 +2,7 @@ package services
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
@@ -11,12 +12,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
+	"filippo.io/age"
 	"golang.org/x/crypto/scrypt"
 )
 
-// Backup-Archivformat: eine passphrase-verschlüsselte Datei, die intern ein
-// ZIP mehrerer Dateien (DB, Master-Key, Config, TLS) trägt.
+// Backup-Archivformat: eine verschlüsselte Datei, die intern ein ZIP mehrerer
+// Dateien (DB, Master-Key, Config, TLS) trägt. Zwei Verschlüsselungen:
+//
+//   - Empfänger-Schlüssel (age, X25519): das ZIP wird an einen oder mehrere
+//     öffentliche Schlüssel verschlüsselt; der private Schlüssel liegt nie auf
+//     dem Server (writeAgeArchive). Erkennbar an der ersten Zeile
+//     "age-encryption.org/v1".
+//   - Passphrase (LCMBAK): scrypt-Ableitung + AES-256-GCM, siehe unten.
 //
 // Aktuelles Format (LCMBAK3) - blockweise verschlüsselt, damit weder beim
 // Schreiben noch beim Lesen das ganze Archiv im Speicher liegt:
@@ -144,9 +153,18 @@ func writeEncryptedArchive(dst io.Writer, sources []archiveSource, passphrase st
 	}
 
 	cw := newChunkWriter(dst, aead, nonceBase)
-	zw := zip.NewWriter(cw)
+	if err := packSources(cw, sources); err != nil {
+		return err
+	}
+	return cw.Close()
+}
+
+// packSources schreibt die Quellen als ZIP in w - der gemeinsame Kern beider
+// Archivformate. Dateien werden streamend gelesen, nie am Stück geladen.
+func packSources(w io.Writer, sources []archiveSource) error {
+	zw := zip.NewWriter(w)
 	for _, src := range sources {
-		w, err := zw.Create(src.Name)
+		zf, err := zw.Create(src.Name)
 		if err != nil {
 			return err
 		}
@@ -155,22 +173,69 @@ func writeEncryptedArchive(dst io.Writer, sources []archiveSource, passphrase st
 			if err != nil {
 				return fmt.Errorf("%s lesen: %w", src.Name, err)
 			}
-			_, err = io.Copy(w, f)
+			_, err = io.Copy(zf, f)
 			f.Close()
 			if err != nil {
 				return fmt.Errorf("%s packen: %w", src.Name, err)
 			}
 			continue
 		}
-		if _, err := w.Write(src.Data); err != nil {
+		if _, err := zf.Write(src.Data); err != nil {
 			return err
 		}
 	}
-	if err := zw.Close(); err != nil {
+	return zw.Close()
+}
+
+// ageMagic ist die erste Zeile jedes age-Archivs (Empfänger-Schlüssel).
+const ageMagic = "age-encryption.org/v1\n"
+
+// writeAgeArchive verschlüsselt das ZIP an die Empfänger - X25519 nach dem
+// age-Format. age verschlüsselt in 64-KiB-Blöcken mit ChaCha20-Poly1305 und
+// bindet das Ende des Stroms ein: Ein abgeschnittenes Archiv fällt beim
+// Entschlüsseln auf. Es gibt keine Passphrase; wer das Archiv öffnen will,
+// braucht den privaten Schlüssel eines Empfängers.
+func writeAgeArchive(dst io.Writer, sources []archiveSource, recipients []age.Recipient) error {
+	if len(recipients) == 0 {
+		return errors.New("keine empfänger")
+	}
+	w, err := age.Encrypt(dst, recipients...)
+	if err != nil {
 		return err
 	}
-	return cw.Close()
+	if err := packSources(w, sources); err != nil {
+		return err
+	}
+	return w.Close()
 }
+
+// archiveKey ist, womit ein Archiv geöffnet wird: die Passphrase (LCMBAK-
+// Format) oder ein privater age-Schlüssel (Empfänger-Format).
+type archiveKey struct {
+	passphrase string
+	identities []age.Identity
+}
+
+// keyFromSecret nimmt das, was ein Mensch in das Feld „Passphrase oder
+// privater Schlüssel" tippt, und erkennt selbst, was es ist: Ein privater
+// age-Schlüssel beginnt mit AGE-SECRET-KEY-1.
+func keyFromSecret(secret string) archiveKey {
+	secret = strings.TrimSpace(secret)
+	if strings.HasPrefix(strings.ToUpper(secret), "AGE-SECRET-KEY-1") {
+		// Bech32 kennt nur ganz groß oder ganz klein; age will groß.
+		ids, err := age.ParseIdentities(strings.NewReader(strings.ToUpper(secret)))
+		if err == nil && len(ids) > 0 {
+			return archiveKey{identities: ids}
+		}
+	}
+	return archiveKey{passphrase: secret}
+}
+
+func (k archiveKey) empty() bool { return k.passphrase == "" && len(k.identities) == 0 }
+
+// ErrBackupNoIdentity: Das Archiv ist an Empfänger-Schlüssel verschlüsselt,
+// mitgegeben wurde aber nur eine Passphrase (oder gar nichts).
+var ErrBackupNoIdentity = errors.New("das archiv ist an empfänger-schlüssel verschlüsselt - der private schlüssel eines empfängers ist erforderlich")
 
 // chunkWriter verschlüsselt den Datenstrom blockweise. Jeder volle Block wird
 // sofort geschrieben; Close() versiegelt den Rest als Abschlussblock.
@@ -347,8 +412,8 @@ func decryptSealed(src io.Reader, dst io.Writer, aead cipher.AEAD) error {
 // Datei einzeln als Datenstrom an fn weiter. Das entschlüsselte ZIP landet
 // dabei in einer temporären Datei in tmpDir (ZIP braucht wahlfreien Zugriff)
 // und nicht im Speicher.
-func extractEncryptedArchive(src io.Reader, passphrase, tmpDir string, fn func(name string, r io.Reader) error) error {
-	if passphrase == "" {
+func extractEncryptedArchive(src io.Reader, key archiveKey, tmpDir string, fn func(name string, r io.Reader) error) error {
+	if key.empty() {
 		return ErrBackupNoPassphrase
 	}
 	tmp, err := os.CreateTemp(tmpDir, ".lcmbak-*.zip")
@@ -360,7 +425,7 @@ func extractEncryptedArchive(src io.Reader, passphrase, tmpDir string, fn func(n
 		os.Remove(tmp.Name())
 	}()
 
-	if err := decryptArchiveTo(src, tmp, passphrase); err != nil {
+	if err := decryptAnyArchiveTo(src, tmp, key); err != nil {
 		return err
 	}
 	size, err := tmp.Seek(0, io.SeekEnd)
@@ -381,6 +446,46 @@ func extractEncryptedArchive(src io.Reader, passphrase, tmpDir string, fn func(n
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// decryptAnyArchiveTo erkennt das Format am Anfang der Datei und entschlüsselt
+// in dst: age-Archive mit dem privaten Schlüssel, LCMBAK-Archive mit der
+// Passphrase.
+func decryptAnyArchiveTo(src io.Reader, dst io.Writer, key archiveKey) error {
+	br := bufio.NewReaderSize(src, 64<<10)
+	head, _ := br.Peek(4096) // Kennung und Kopf stehen ganz vorn
+	if !bytes.HasPrefix(head, []byte(ageMagic)) {
+		if key.passphrase == "" {
+			return ErrBackupNoPassphrase
+		}
+		return decryptArchiveTo(br, dst, key.passphrase)
+	}
+	ids := key.identities
+	if len(ids) == 0 {
+		// Aus LCM gibt es kein age-Archiv mit Passphrase - aber ein von Hand
+		// mit `age -p` erzeugtes; das erkennt man am scrypt-Eintrag im Kopf.
+		if !bytes.Contains(head, []byte("\n-> scrypt ")) {
+			return ErrBackupNoIdentity
+		}
+		id, err := age.NewScryptIdentity(key.passphrase)
+		if err != nil {
+			return ErrBackupPassphrase
+		}
+		ids = []age.Identity{id}
+	}
+	r, err := age.Decrypt(br, ids...)
+	if err != nil {
+		var noMatch *age.NoIdentityMatchError
+		if errors.As(err, &noMatch) || errors.Is(err, age.ErrIncorrectIdentity) {
+			return ErrBackupPassphrase
+		}
+		return ErrBackupFormat
+	}
+	if _, err := io.Copy(dst, r); err != nil {
+		// Abgeschnitten oder manipuliert - age prüft jeden Block.
+		return ErrBackupPassphrase
 	}
 	return nil
 }
@@ -406,7 +511,7 @@ func buildEncryptedArchive(files []archiveFile, passphrase string) ([]byte, erro
 func openEncryptedArchive(data []byte, passphrase string) ([]archiveFile, error) {
 	var files []archiveFile
 	var total int64
-	err := extractEncryptedArchive(bytes.NewReader(data), passphrase, "", func(name string, r io.Reader) error {
+	err := extractEncryptedArchive(bytes.NewReader(data), keyFromSecret(passphrase), "", func(name string, r io.Reader) error {
 		content, err := io.ReadAll(io.LimitReader(r, maxArchiveSize-total+1))
 		if err != nil {
 			return err

@@ -30,7 +30,6 @@ cat > "$E2E_DIR/config.json" <<EOF
   "port": $E2E_PORT,
   "agent_port": $E2E_AGENT_PORT,
   "database_path": "e2e.db",
-  "jwt_secret": "e2e-test-secret-nur-fuer-lokale-tests-1234",
   "access_token_ttl_minutes": 60,
   "admin_initial_password": "e2e-admin-passwort"
 }

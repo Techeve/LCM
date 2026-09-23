@@ -11,6 +11,7 @@
     "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.62.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "svelte": "^5.56.9",

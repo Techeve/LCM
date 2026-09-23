@@ -120,7 +120,7 @@
           <input id="mcp-port" type="number" class="form-control" bind:value={port} />
         </div>
       </div>
-      <button class="btn btn-primary mt-3" onclick={save} data-testid="mcp-save">{t('common.save')}</button>
+      <button class="btn btn-primary mt-3" onclick={save} data-testid="mcp-save" data-hotkey="mod+s">{t('common.save')}</button>
     </div>
   </div>
 
@@ -147,7 +147,7 @@
   <div class="table-responsive mb-4">
     <table class="table align-middle">
       <thead>
-        <tr><th>{t('common.name')}</th><th>{t('settings.apiKeys.colPrefix')}</th><th>{t('settings.apiKeys.colLastUsed')}</th><th>{t('common.status')}</th><th></th></tr>
+        <tr><th>{t('common.name')}</th><th>{t('settings.apiKeys.colPrefix')}</th><th>{t('settings.apiKeys.colLastUsed')}</th><th>{t('common.status')}</th><th><span class="visually-hidden">{t('common.actions')}</span></th></tr>
       </thead>
       <tbody>
         {#each mcpKeys as key (key.id)}

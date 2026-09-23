@@ -19,8 +19,16 @@ description: |
   (verschlüsselte SQLite-DB, Master-Key, TLS-Zertifikat) in /var/lib/lcm.
 
 # adduser/addgroup werden im postinstall-Skript benötigt.
+#
+# sudo ist auf Debian NICHT Teil der Grundinstallation, und die darauf
+# aufbauenden Proxmox-Systeme (VE, PBS, PDM) liefern es ebenfalls nicht mit.
+# /etc/sudoers.d/ ist dort trotzdem vorhanden: Das postinstall-Skript legte
+# also eine Regel an, die auf ein nicht existierendes Programm zeigte, und
+# LCM konnte auf dem eigenen Host nichts ausführen (BUG-030). Als harte
+# Abhängigkeit bringt apt sudo gleich mit.
 depends:
   - adduser
+  - sudo
 
 # Trivy ist eine WEICHE Abhängigkeit: LCM nutzt es für den CVE-Scan des
 # Paketbestands. Fehlt es, deaktiviert sich das Feature sauber (graceful

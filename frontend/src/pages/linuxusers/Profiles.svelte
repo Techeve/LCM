@@ -175,7 +175,7 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <p class="small text-body-secondary mb-0">{t('settings.profiles.intro')}</p>
     {#if canWrite}
-      <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew}>{t('settings.profiles.addProfile')}</button>
+      <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew} data-hotkey="n">{t('settings.profiles.addProfile')}</button>
     {/if}
   </div>
 

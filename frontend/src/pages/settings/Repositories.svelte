@@ -94,7 +94,7 @@
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h3 class="h6 mb-0">{t('settings.repositories.catalogTitle')}</h3>
-        <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew}>{t('settings.repositories.addSource')}</button>
+        <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew} data-hotkey="n">{t('settings.repositories.addSource')}</button>
       </div>
       <p class="small text-body-secondary">
         {t('settings.repositories.catalogIntroA')}<code>/etc/apt/keyrings/&lt;key&gt;.asc</code>{t('settings.repositories.catalogIntroB')}<code>lcm-&lt;key&gt;.list</code>{t('settings.repositories.catalogIntroC')}<code>$ID</code>{t('settings.repositories.catalogIntroD')}<code>$CODENAME</code>{t('settings.repositories.catalogIntroE')}<code>$ARCH</code>{t('settings.repositories.catalogIntroF')}

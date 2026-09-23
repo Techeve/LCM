@@ -76,6 +76,9 @@ func (ctrl *AlertController) Create(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"severity", req.Severity, maxNameLen}, lineField{"min_severity", req.MinSeverity, maxNameLen}); err != nil {
+		return err
+	}
 	rule, err := ctrl.alerts.Create(req.toInput(), actor(c))
 	if err != nil {
 		return mapAlertError(err)
@@ -92,6 +95,9 @@ func (ctrl *AlertController) Update(c fiber.Ctx) error {
 	var req alertRuleRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"severity", req.Severity, maxNameLen}, lineField{"min_severity", req.MinSeverity, maxNameLen}); err != nil {
+		return err
 	}
 	rule, err := ctrl.alerts.Update(id, req.toInput(), actor(c))
 	if err != nil {

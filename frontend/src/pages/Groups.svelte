@@ -328,7 +328,7 @@
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h2 class="h6 mb-0">{t('groups.listTitle')}</h2>
         {#if auth.can('groups:write')}
-          <button class="btn btn-sm btn-primary" onclick={openNewGroup} title={t('groups.newGroup')}>+</button>
+          <button class="btn btn-sm btn-primary" onclick={openNewGroup} title={t('groups.newGroup')} aria-label={t('groups.newGroup')} data-hotkey="n">+</button>
         {/if}
       </div>
       <div class="list-group">
@@ -392,7 +392,7 @@
         </div>
         <div class="table-responsive mb-4">
           <table class="table table-sm align-middle">
-            <thead><tr><th>{t('groups.colName')}</th><th>{t('groups.colHost')}</th>{#if auth.can('groups:write')}<th></th>{/if}</tr></thead>
+            <thead><tr><th>{t('groups.colName')}</th><th>{t('groups.colHost')}</th>{#if auth.can('groups:write')}<th><span class="visually-hidden">{t('common.actions')}</span></th>{/if}</tr></thead>
             <tbody>
               {#each selected.servers ?? [] as s (s.id)}
                 <tr>
@@ -429,7 +429,7 @@
           <p class="text-body-secondary small">{t('groups.managersHint')}</p>
           <div class="table-responsive mb-4">
             <table class="table table-sm align-middle" data-testid="group-managers-table">
-              <thead><tr><th>{t('groups.colUser')}</th><th>{t('groups.colEmail')}</th>{#if auth.can('groups:write')}<th></th>{/if}</tr></thead>
+              <thead><tr><th>{t('groups.colUser')}</th><th>{t('groups.colEmail')}</th>{#if auth.can('groups:write')}<th><span class="visually-hidden">{t('common.actions')}</span></th>{/if}</tr></thead>
               <tbody>
                 {#each selected.managers ?? [] as u (u.id)}
                   <tr>

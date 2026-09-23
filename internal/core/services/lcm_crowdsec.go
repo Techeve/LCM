@@ -109,7 +109,12 @@ func (s *ServerService) runCrowdSecLapiJob(job *domain.Job, server *domain.Serve
 	}
 	defer conn.Close()
 
-	output, code, runErr := conn.Run(privRun(server, crowdsecLapiInstallScript(in.Bouncer)))
+	variant := "plain"
+	if in.Bouncer {
+		variant = "bouncer"
+	}
+	script := hostScript(server, crowdsecLapiInstallScript(in.Bouncer), "host-crowdsec-lapi", variant)
+	output, code, runErr := conn.Run(privRun(server, script))
 	if runErr == nil && code != 0 {
 		runErr = fmt.Errorf("einrichtung endete mit exit-code %d", code)
 	}

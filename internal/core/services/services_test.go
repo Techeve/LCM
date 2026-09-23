@@ -151,7 +151,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	activation := services.NewActivationService(repositories.NewActivationRepository(db), userRepo, audit)
 
 	return &testEnv{
-		Auth:          services.NewAuthService(userRepo, "test-secret-mit-mindestens-32-zeichen!!", time.Hour),
+		Auth:          services.NewAuthService(userRepo, time.Hour),
 		Users:         services.NewUserService(userRepo, roleRepo).WithAudit(audit),
 		APIKeys:       services.NewAPIKeyService(repositories.NewAPIKeyRepository(db)).WithAudit(audit),
 		Servers:       servers,
@@ -273,15 +273,14 @@ func authTestUser(t *testing.T) (*repositories.UserRepository, *domain.User) {
 	return repo, u
 }
 
-// TestSessionsInvalidatedOnRestart bildet den gemeldeten Angriff ab: gleiches
-// jwt_secret, gleiche DB/User-ID, aber ein neuer Prozess (= neue AuthService-
-// Instanz). Ein vor dem "Neustart" ausgestelltes Token darf danach NICHT mehr
-// akzeptiert werden, weil der Signaturschlüssel an den Prozessstart gebunden ist.
+// TestSessionsInvalidatedOnRestart bildet den gemeldeten Angriff ab: gleiche
+// DB/User-ID, aber ein neuer Prozess (= neue AuthService-Instanz). Ein vor
+// dem "Neustart" ausgestelltes Token darf danach NICHT mehr akzeptiert werden,
+// weil der Signaturschlüssel an den Prozessstart gebunden ist.
 func TestSessionsInvalidatedOnRestart(t *testing.T) {
 	repo, u := authTestUser(t)
-	const secret = "test-secret-mit-mindestens-32-zeichen!!"
 
-	first := services.NewAuthService(repo, secret, time.Hour)
+	first := services.NewAuthService(repo, time.Hour)
 	token, err := first.IssueToken(u)
 	if err != nil {
 		t.Fatal(err)
@@ -291,8 +290,8 @@ func TestSessionsInvalidatedOnRestart(t *testing.T) {
 		t.Fatalf("gültiges Token in derselben Instanz abgelehnt: %v", err)
 	}
 
-	// "Neustart": neue Instanz, IDENTISCHES Secret, dieselbe DB.
-	second := services.NewAuthService(repo, secret, time.Hour)
+	// "Neustart": neue Instanz, dieselbe DB.
+	second := services.NewAuthService(repo, time.Hour)
 	if _, err := second.ValidateToken(token); !errors.Is(err, services.ErrInvalidToken) {
 		t.Fatalf("Alt-Token muss nach Neustart abgelehnt werden, bekam: %v", err)
 	}
@@ -311,7 +310,7 @@ func TestSessionsInvalidatedOnRestart(t *testing.T) {
 // ausgestellt wurden, werden auch innerhalb derselben Instanz abgelehnt.
 func TestTokenRejectedBeforePasswordChangedAt(t *testing.T) {
 	repo, u := authTestUser(t)
-	auth := services.NewAuthService(repo, "test-secret-mit-mindestens-32-zeichen!!", time.Hour)
+	auth := services.NewAuthService(repo, time.Hour)
 
 	token, err := auth.IssueToken(u)
 	if err != nil {

@@ -85,11 +85,20 @@ without a failure. Check and count happen in **one** operation under the same
 lock - otherwise hundreds of parallel requests could slip past the check together
 before the first failure is recorded.
 
-The client IP comes from the same function as the IP allowlist
-(`middlewares.ClientIP`) and honours `trust_proxy_header`. Without that, the
-address behind a reverse proxy would be identical for **all** clients - five
-failed attempts by an attacker would have locked login for the entire
-installation.
+The client IP is determined **once per request** (`middlewares.ResolveClientIP`)
+and shared by the IP allowlist, the login lockout, the access log and the
+security log. Behind a reverse proxy it comes from `X-Forwarded-For` - but only
+if `trust_proxy_header` is set **and** the peer is listed in `trusted_proxies`
+(`netfilter.ProxyTrust`). Without that, the address behind a proxy would be
+identical for **all** clients - five failed attempts by an attacker would have
+locked login for the entire installation; and without the list anyone reaching
+the port directly could choose their own address.
+
+An accepted **TOTP code is valid exactly once** (RFC 6238): the same code is not
+accepted a second time within the verification window, and the challenge of the
+two-step login is revoked after the second step. At login, passwords above
+1024 bytes are not hashed at all - argon2id is deliberately expensive, and the
+endpoint is reachable anonymously.
 
 ## Links in emails: `public_base_url`
 
@@ -118,7 +127,7 @@ address should be set.
 
 The JWT secret is generated cryptographically at random on first start (48 bytes from `crypto/rand`) and lives only in the `config.json` (file permissions 0600). Secrets shorter than 32 characters are rejected on load.
 
-**Session invalidation on every restart:** The effective HS256 signing material is **not** the `jwt_secret` directly, but `HMAC-SHA256(jwt_secret, instance nonce)`. The nonce is drawn fresh from `crypto/rand` on every process start and lives only in memory (`deriveSigningKey` in `auth_service.go`). So every (re)start produces a different signing key and **all** previously issued tokens fail signature verification - every session ends, a new login is required. This holds even with an unchanged `jwt_secret` and specifically covers the case where an old, still-valid session would otherwise trust a freshly seeded admin with the same ID (rebuild, process restart, newly created database).
+**Session invalidation on every restart:** The HS256 signing material is drawn fresh from `crypto/rand` on every process start and lives only in memory (`newSigningKey` in `auth_service.go`). There is no stored secret behind it any more - earlier versions mixed in a `jwt_secret` from `config.json`, which had no purpose once the key was bound to the process start; a leftover entry is ignored and removed the next time the file is written. So every (re)start produces a different signing key and **all** previously issued tokens fail signature verification - every session ends, a new login is required. This specifically covers the case where an old, still-valid session would otherwise trust a freshly seeded admin with the same ID (rebuild, process restart, newly created database).
 
 ## RBAC: user → role → permission
 
@@ -168,6 +177,7 @@ The log service (`internal/logging/logging.go`) is based on `log/slog`:
 - **Level** via `log_level` in config.json (`debug`, `info`, `warn`, `error`).
 - **Debug mode at startup:** `./lcm -debug` raises the level to `debug` without changing the config - for development and troubleshooting.
 - **Access log** (`access_log: true`): every API request is logged with method, path, status, duration, IP, and username; 4xx as `WARN`, 5xx as `ERROR`. At debug level, additionally the query string and user agent.
+- **Audit mirror:** every audit entry (permission changes, server actions, settings) is also written as a journal line `audit action=… actor=…` - the database lives on the node, the journal can be forwarded (`journalctl -u lcm | grep -E " (audit|security) "`, forwarding via `rsyslog`/`systemd-journal-upload`).
 - Passwords, tokens, and request bodies are never logged.
 
 ## CVE scan of the package inventory (Trivy)
@@ -277,10 +287,25 @@ CrowdSec LAPI) would stay out of reach on a fresh install until someone
 onboarded the host by hand.
 
 :::caution[What this means]
-`postinstall.sh` creates the account **`lcm-svc` with `NOPASSWD:ALL`**
-(`/etc/sudoers.d/lcm-svc`, mode 0440) and stores an SSH key for it. **The
-service can then act as root on this machine without anyone having entered
-credentials.**
+`postinstall.sh` creates the account **`lcm-svc`**, initially with
+`NOPASSWD:ALL` (`/etc/sudoers.d/lcm-svc`, mode 0440), and stores an SSH key
+for it. **On its first start LCM limits the account to the sudoers whitelist**
+- package management, docker, ufw and the validating `lcm-helper`, whose
+subcommands `host-install`, `host-apt-cacher`, `host-crowdsec-lapi` and
+`host-self-update` carry the host functions. The account has no root shell
+afterwards; the effect check and the fallback to full mode are the same as
+when restricting any other server. It keeps full rights only with
+`LCM_SELF_MANAGE_FULL=1` at install time.
+
+**Existing installations stay as they are.** An upgrade no longer touches an
+existing `lcm-svc` - neither the sudoers rule nor its `authorized_keys`. That
+is deliberate: previously every package update rewrote the `NOPASSWD:ALL` line
+and would silently have undone a restricted whitelist. To switch your own host,
+use the server action **restrict privileges**; at start LCM states where you
+stand (`security event=selfhost.full-sudo` or `selfhost.restricted`). What restricted mode does and does
+not achieve is described above: apt and docker execute code as root by
+design - whoever takes over the service still reaches root on the host that
+way, just not with a single command.
 
 This is a deliberate trade-off: a tool that manages its own host needs the same
 rights there as on any other managed server. The installation output states the
@@ -327,9 +352,76 @@ sudo userdel -r lcm-svc
 ```
 :::
 
+## File permissions: checked, not assumed
+
+The data directory (`/var/lib/lcm`: database, master key, TLS key, backups)
+belongs to the service user alone: `0700`, secrets `0600`. The configuration
+(`/etc/lcm`) belongs to root, group `lcm` may read and write (restore), nobody
+else. The package script sets this - and LCM **checks it itself at start and
+every 15 minutes** (`internal/perms`): files owned by the service are tightened
+again; what it cannot fix (foreign owner, root-owned configuration with world
+bits) is reported as `security event=permissions.insecure`. A `chmod 777`, a
+restore with the wrong umask or a planted file does not go unnoticed.
+
+## Input: limits at the door
+
+Every path parameter that must be a UUID (jobs, SSH sessions, deep-scan
+reports) is parsed as a UUID before any query runs. Names are single-line and
+at most 64 characters, descriptions 1000, scripts and custom actions 32 KiB;
+control characters are never allowed. Hosts consist only of the characters of
+a hostname or IP address, ports lie in 1-65535, email addresses are exactly one
+address. The check lives in the controllers (`validate.go`) and answers 422
+with the field name - the domain check in the service (name free, role known,
+cron valid) is unaffected.
+
 ## At-rest encryption & master-key rotation
 
-All secrets in the database are encrypted field by field with **AES-256-GCM**. The **master key** lives separately from the DB in `lcm.key` (file permissions 0600) in the data directory and is created on first start (`internal/infrastructure/crypto`). Without it the encrypted fields are unreadable - which is why it belongs in every [backup](/en/guides/backups/).
+All secrets in the database are encrypted field by field with **AES-256-GCM**. The **master key** lives separately from the DB: on first start as `lcm.key` (file permissions 0600) in the data directory, after the migration as a systemd credential (see below) only encrypted in the credential store (`internal/infrastructure/crypto`). Without it the encrypted fields are unreadable - which is why it belongs in every [backup](/en/guides/backups/); the archive carries it even when no file exists any more.
+
+### Master key as a systemd credential
+
+`lcm credentials init` (as root) moves the key from the file into a systemd
+credential:
+
+```bash
+sudo lcm credentials init            # binding: TPM2 + host key if a TPM exists, otherwise host key
+sudo lcm credentials init --with-key=tpm2
+sudo systemctl restart lcm
+```
+
+The command encrypts the key with `systemd-creds` into
+`/etc/credstore.encrypted/lcm.key`, verifies that exactly the current key
+comes back, writes the unit drop-in `LoadCredentialEncrypted=lcm.key:…` and
+only then destroys `lcm.key`. At start systemd decrypts the credential into an
+in-memory directory only the service can see (`$CREDENTIALS_DIRECTORY`); the
+journal reports `master key source=credential`.
+
+What it buys: no plaintext key in the data directory any more. A copy of the
+directory, an archive without passphrase, a stray `rsync` - all worthless.
+With TPM binding that also holds for an image of the whole machine; with host
+binding only (container without TPM) a container backup includes systemd's
+host key - there only an encrypted container backup closes the gap. What it
+does not buy: whoever has root on the running machine still reaches the key;
+that is the price of unattended restarts.
+
+Order at start: `LCM_ENCRYPTION_KEY` (explicit override), then `lcm.key`, then
+the credential. The file deliberately wins over the credential: after a
+restore or `rotate-db-key` it is back and belongs to the database. LCM then
+reports `security event=masterkey.file-overrides-credential`; running
+`lcm credentials init` again moves the new key into the credential and removes
+the file.
+
+The same mechanism carries two more secrets, each as `SetCredentialEncrypted=`
+in the unit drop-in: `trivy_token` (instead of `config.json`/environment) and
+`backup_passphrase` (instead of `LCM_BACKUP_PASSPHRASE`). A credential takes
+precedence over file and environment.
+
+For the backups themselves it goes one step further: with **recipient keys**
+([age](https://age-encryption.org), X25519) the archives are encrypted to
+public keys - the scheduled backup then needs **no secret on the server** at
+all, the private key stays offline with the operator. Whoever takes over the
+host gets the archives, but not the key to them. Setup in the
+[backup guide](/en/guides/backups/).
 
 Stored encrypted are, among others (full list in `internal/storage/rotate.go`):
 
@@ -364,7 +456,11 @@ The optional MCP listener (`internal/mcp`, off by default, bind `127.0.0.1:9330`
 - **XSS:** the frontend renders exclusively via Svelte templating (automatic escaping); `{@html}` is not used.
 - **Build gates:** `make build` aborts on `npm audit` or `govulncheck` findings.
 - **Default bind:** `127.0.0.1` - anyone exposing it externally deliberately sets `"host": "0.0.0.0"` and should terminate TLS via a reverse proxy (Caddy, nginx).
-- **IP allowlist:** `allowed_ips` in config.json restricts network access to allowed client addresses (keywords `localhost`/`private` or IP/CIDR); non-matching clients get an early **403** (`IPAllowlist` middleware, before auth/logging). Filtering uses the direct TCP connection; behind a reverse proxy set `trust_proxy_header: true` (evaluates `X-Forwarded-For` - only with a trusted proxy). The matcher lives in the `internal/netfilter` package. See [Security & CVE Scans](/en/guides/security-cve/).
+- **IP allowlist:** `allowed_ips` in config.json restricts network access to allowed client addresses (keywords `localhost`/`private` or IP/CIDR); non-matching clients get an early **403** (`IPAllowlist` middleware, before auth/logging). Filtering uses the direct TCP connection; behind a reverse proxy set `trust_proxy_header: true` **plus** `trusted_proxies` (`X-Forwarded-For` counts from those peers only). The matcher lives in the `internal/netfilter` package. See [Security & CVE Scans](/en/guides/security-cve/) and [Reverse proxy](/en/guides/reverse-proxy/).
+- **Body budget:** 1 MiB per request, checked on the headers before the body is read (`middlewares.BodyBudget`, request streaming). The large 64 MiB limit applies to the backup upload alone. Bodies without a length (chunked) are rejected outside the upload.
+- **Email address only with password:** your own address receives the password reset. Changing it requires the current password - a stolen session alone cannot redirect the account to a foreign address.
+- **Console ticket within scope:** the ticket for the web console is issued only for servers the user may see - the console permission alone is not enough.
+- **Security log:** logins (`login.ok`, `login.failed`, `login.locked`, `login.2fa.*`), password and email changes, second factor, API keys and console tickets are written as **one journal line** with the fixed text `security` and the client address (`middlewares.SecurityEvent`). Successes are INFO, everything else WARN: `journalctl -u lcm -p warning | grep security`. Unlike the audit log in the database, the journal can be forwarded and is usable by fail2ban (`event=login.failed ip=<HOST>`).
 
 ## Deliberate simplifications of the template
 

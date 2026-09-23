@@ -69,6 +69,11 @@ import { Steps } from '@astrojs/starlight/components';
      Man-in-the-Middle abzusichern.
    - LCM legt auf dem Server einen dedizierten **Service-User** an, hinterlegt
      ein **eigenes Schlüsselpaar** und nimmt eine erste Bestandsaufnahme vor.
+   - Fehlt auf dem Zielsystem `sudo`, installiert LCM es vorher nach. Debian
+     bringt es nicht mit, und die darauf aufbauenden Proxmox-Systeme (VE, PBS,
+     PDM) ebenso wenig - `/etc/sudoers.d/` ist dort aber vorhanden, sodass ein
+     Eintrag darin ohne das Programm ins Leere zeigen würde. Was installiert
+     wurde, steht im Protokoll der Aufnahme.
 
 3. **Ampel & Details ansehen.**
 

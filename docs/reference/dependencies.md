@@ -31,7 +31,7 @@ Veröffentlichungsprozess zu bekommen?
 |:-:|---|---|
 | 5 | Go-Team/Google oder vergleichbar: mehrstufiges Review, öffentliche Historie, Security-Team | `golang.org/x/*`, `google/uuid`, `svelte`, `vite`, `@playwright/test` |
 | 4 | Organisation mit mehreren aktiven Maintainern und Release-Prozess | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `bootstrap` |
-| 3 | Kleine Organisation oder renommierte Einzelperson, nachweislich aktiv | `mochi-mqtt/server`, `fasthttp/websocket`, `svelte-spa-router` |
+| 3 | Kleine Organisation oder renommierte Einzelperson, nachweislich aktiv | `mochi-mqtt/server`, `fasthttp/websocket`, `svelte-spa-router`, `filippo.io/age` |
 | 2 | Einzelperson, sporadische Releases, Bus-Faktor 1 | `glebarez/sqlite` |
 | 1 | Einzelperson, seit Jahren inaktiv, kein Release-Prozess, ungetaggte Versionen | - (bewusst leer, siehe unten) |
 

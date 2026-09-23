@@ -11,6 +11,7 @@ import (
 
 	"LCM/internal/config"
 	"LCM/internal/core/domain"
+	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -37,6 +38,8 @@ type ActivationService struct {
 	// Reset-Link mit gültigem Token auf seine eigene Domain ausstellen
 	// lassen (Kontoübernahme). Siehe domain.GlobalSettings.PublicBaseURL.
 	linkBase func() string
+	// sendSync schaltet den Hintergrundversand ab (Tests).
+	sendSync bool
 }
 
 func NewActivationService(links *repositories.ActivationRepository, users *repositories.UserRepository, audit *AuditService) *ActivationService {
@@ -250,14 +253,35 @@ Falls Sie das nicht angefordert haben, können Sie diese Mail ignorieren -
 Ihr Passwort bleibt unverändert.
 `, displayName(user), user.Username, activationURL(s.base(), token),
 		link.ExpiresAt.Format("02.01.2006 15:04 MST"))
-	if err := s.mailer("[LCM] Passwort zurücksetzen", body, []string{user.Email}); err != nil {
-		// Mailer-Fehler nicht an den (anonymen) Aufrufer durchreichen -
-		// das wäre ein Enumerations-Seitenkanal. Loggen reicht.
-		slog.Error("password reset mail failed", "error", err)
-		return nil
-	}
+	// Der Versand läuft im Hintergrund: Ein SMTP-Handshake dauert spürbar,
+	// und nur bekannte Adressen lösen ihn aus - die Antwortzeit verriete
+	// sonst, welche Adressen ein Konto haben (Enumeration über die Uhr).
+	// Mailer-Fehler erreichen den anonymen Aufrufer aus demselben Grund nie;
+	// sie stehen im Protokoll.
+	email = user.Email
+	s.sendAsync("password-reset-mail", func() {
+		if err := s.mailer("[LCM] Passwort zurücksetzen", body, []string{email}); err != nil {
+			slog.Error("password reset mail failed", "error", err)
+		}
+	})
 	s.audit.Log("self-service", "user.password-reset-request", "user", user.ID, "")
 	return nil
+}
+
+// sendAsync stößt den Versand nebenläufig an. Tests ersetzen die Funktion
+// über SendSync, um das Ergebnis sofort prüfen zu können.
+func (s *ActivationService) sendAsync(name string, send func()) {
+	if s.sendSync {
+		send()
+		return
+	}
+	safego.Go(name, send)
+}
+
+// SendSync lässt Mails synchron verschicken (nur für Tests).
+func (s *ActivationService) SendSync() *ActivationService {
+	s.sendSync = true
+	return s
 }
 
 // displayName liefert den Anzeigenamen für die Mail-Anrede.

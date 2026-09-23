@@ -190,6 +190,9 @@ func (s *UserService) UpdateProfile(userID uint, email, firstName, lastName stri
 // CheckPassword prüft ein Klartext-Passwort gegen den gespeicherten Hash
 // eines Users - für die Re-Authentifizierung beim Self-Service-Passwortwechsel.
 func (s *UserService) CheckPassword(userID uint, password string) (bool, error) {
+	if len(password) > MaxLoginPasswordBytes {
+		return false, nil
+	}
 	user, err := s.users.FindByID(userID)
 	if err != nil {
 		return false, err

@@ -116,6 +116,9 @@ func (ctrl *PrivilegeProfileController) Create(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkProfileRequest(req); err != nil {
+		return err
+	}
 	profile, err := ctrl.profiles.Create(req.toInput(), actor(c))
 	if err != nil {
 		return mapProfileError(err)
@@ -155,6 +158,9 @@ func (ctrl *PrivilegeProfileController) Update(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkProfileRequest(req); err != nil {
+		return err
+	}
 	profile, err := ctrl.profiles.Update(id, req.toInput(), actor(c))
 	if err != nil {
 		return mapProfileError(err)
@@ -172,4 +178,32 @@ func (ctrl *PrivilegeProfileController) Delete(c fiber.Ctx) error {
 		return mapProfileError(err)
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// checkProfileRequest prüft Namen, Beschreibung und jede Regelzeile. Die
+// Regeln landen in sudoers - der Service prüft ihre Bedeutung, hier geht es um
+// Länge und Steuerzeichen.
+func checkProfileRequest(req profileRequest) error {
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"slug", req.Slug, maxNameLen}, lineField{"account_type", req.AccountType, maxNameLen}); err != nil {
+		return err
+	}
+	if err := checkText("description", req.Description, maxDescriptionLen); err != nil {
+		return err
+	}
+	for _, r := range req.SudoRules {
+		if err := checkLines(lineField{"sudo_rules.command", r.Command, maxCommandLen}, lineField{"sudo_rules.run_as", r.RunAs, maxNameLen}); err != nil {
+			return err
+		}
+	}
+	for _, r := range req.EditRules {
+		if err := checkLine("edit_rules.path", r.Path, maxPathLen); err != nil {
+			return err
+		}
+	}
+	for _, r := range req.PathRules {
+		if err := checkLines(lineField{"path_rules.path", r.Path, maxPathLen}, lineField{"path_rules.mode", r.Mode, maxNameLen}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

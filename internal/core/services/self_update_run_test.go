@@ -87,14 +87,12 @@ func TestSelfUpdateScriptSurvivesTheRestart(t *testing.T) {
 		}
 	}
 
-	// Im eingeschränkten Modus ist systemd-run nicht freigegeben - dort bleibt
-	// es beim direkten apt-Lauf, und der Verbindungsabbruch gehört zum Ablauf.
+	// Im eingeschränkten Modus darf der Service-User kein systemd-run - der
+	// Lauf geht deshalb über das Helper-Unterkommando, das denselben Ablauf
+	// als root trägt (siehe lcm_helper.go, host-self-update).
 	restricted := services.SelfUpdateScriptForTest(true)
-	if strings.Contains(restricted, "systemd-run") {
-		t.Errorf("eingeschränkter Modus darf systemd-run nicht verwenden:\n%s", restricted)
-	}
-	if !strings.Contains(restricted, "--only-upgrade -y lcm") {
-		t.Errorf("eingeschränkter Modus aktualisiert das lcm-Paket nicht:\n%s", restricted)
+	if restricted != "lcm-helper host-self-update" {
+		t.Errorf("eingeschränkter Modus muss über den Helper laufen, bekam:\n%s", restricted)
 	}
 }
 

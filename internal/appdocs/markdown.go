@@ -1,6 +1,7 @@
 package appdocs
 
 import (
+	"bytes"
 	"fmt"
 	"html"
 	"regexp"
@@ -40,7 +41,7 @@ type openList struct {
 
 // Render wandelt Markdown in HTML.
 func Render(md string) string {
-	var out strings.Builder
+	var out bytes.Buffer
 	lines := strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n")
 
 	// lists hält die offenen Listen (ul/ol) samt Einrücktiefe, damit
@@ -147,9 +148,11 @@ func Render(md string) string {
 			continue
 		}
 
-		// Fortsetzungszeile innerhalb einer Liste (eingerückter Fließtext).
+		// Fortsetzungszeile innerhalb einer Liste (eingerückter Fließtext):
+		// gehört IN den letzten Punkt. Text direkt unter <ul>/<ol> wäre
+		// ungültiges HTML, das Screenreader nicht der Liste zuordnen.
 		if len(lists) > 0 && strings.HasPrefix(line, "  ") {
-			out.WriteString(" " + inline(trimmed) + "\n")
+			appendToLastItem(&out, inline(trimmed))
 			continue
 		}
 
@@ -159,6 +162,17 @@ func Render(md string) string {
 	closePara()
 	closeLists(0)
 	return out.String()
+}
+
+// appendToLastItem hängt text an den zuletzt geschriebenen Listenpunkt an.
+func appendToLastItem(out *bytes.Buffer, text string) {
+	const closing = "</li>\n"
+	if bytes.HasSuffix(out.Bytes(), []byte(closing)) {
+		out.Truncate(out.Len() - len(closing))
+		out.WriteString(" " + text + closing)
+		return
+	}
+	out.WriteString(" " + text + "\n")
 }
 
 // isTableDivider erkennt die Trennzeile einer Tabelle (|---|:--:|).
@@ -177,7 +191,7 @@ func isTableDivider(line string) bool {
 
 // renderTable gibt die Tabelle aus und liefert die Zahl der verbrauchten
 // Zeilen (abzüglich der aktuellen).
-func renderTable(out *strings.Builder, lines []string) int {
+func renderTable(out *bytes.Buffer, lines []string) int {
 	cells := func(s string) []string {
 		s = strings.TrimSpace(s)
 		s = strings.TrimPrefix(s, "|")
@@ -260,7 +274,7 @@ func slugify(s string) string {
 // openListFor sorgt dafür, dass für die gegebene Einrücktiefe die passende
 // Liste offen ist: tiefere Ebenen werden geschlossen, eine neue wird geöffnet,
 // wenn es auf dieser Tiefe noch keine gibt.
-func openListFor(out *strings.Builder, lists []openList, tag string, indent int) []openList {
+func openListFor(out *bytes.Buffer, lists []openList, tag string, indent int) []openList {
 	for len(lists) > 0 && lists[len(lists)-1].indent > indent {
 		fmt.Fprintf(out, "</%s>\n", lists[len(lists)-1].tag)
 		lists = lists[:len(lists)-1]

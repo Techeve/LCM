@@ -6,6 +6,7 @@ export default {
     title: 'Doku',
     intro: 'Kurzanleitungen für die tägliche Arbeit mit LCM.',
     empty: 'Für diese Sprache ist noch keine Seite hinterlegt.',
+    navLabel: 'Doku-Seiten',
   },
   nav: {
     docs: 'Doku',
@@ -22,6 +23,7 @@ export default {
     loggedInAs: 'Angemeldet als',
     accountMenu: 'Konto-Menü: {name}',
     toggleMenu: 'Menü umschalten',
+    main: 'Hauptnavigation',
   },
   // Passwort-Policy: Texte für die Stärkeanzeige. Die Problem-Codes kommen
   // aus lib/passwordPolicy.js UND vom Server (internal/core/services/
@@ -91,6 +93,28 @@ export default {
     status: 'Status',
     active: 'aktiv',
     close: 'Schließen',
+    actions: 'Aktionen',
+  },
+  a11y: {
+    skipToContent: 'Zum Inhalt springen',
+  },
+  hotkeys: {
+    title: 'Tastenkürzel',
+    openHelp: 'Tastenkürzel anzeigen (?)',
+    intro:
+      'Kürzel gelten, solange kein Eingabefeld den Fokus hat. Sprünge bestehen aus zwei Tasten nacheinander: erst G, dann der Buchstabe der Seite.',
+    groupGoto: 'Springen zu',
+    gotoHint: 'Erst G drücken, dann die Taste.',
+    groupGlobal: 'Überall',
+    groupPage: 'Auf dieser Seite',
+    noPageActions: 'Diese Seite hat keine eigenen Kürzel.',
+    help: 'Diese Hilfe öffnen oder schließen',
+    search: 'In das Suchfeld der Seite springen',
+    save: 'Formular speichern',
+    escape: 'Dialog oder Menü schließen',
+    arrows: 'In Menüs und Tabellen zwischen Bedienelementen wandern',
+    tab: 'Zum nächsten Bedienelement (Umschalt+Tab: zurück)',
+    showBadges: 'Kürzel als Abzeichen an Schaltflächen anzeigen',
   },
   severity: {
     critical: 'Kritisch',
@@ -587,6 +611,8 @@ export default {
     profileSaved: 'Profil gespeichert.',
     changePassword: 'Passwort ändern',
     currentPassword: 'Aktuelles Passwort',
+    currentPasswordForEmail: 'Aktuelles Passwort',
+    emailNeedsPassword: 'Die E-Mail-Adresse empfängt Links zum Zurücksetzen des Passworts - eine Änderung braucht deshalb dein aktuelles Passwort.',
     twofaCode: '2FA-Code',
     sixDigit: '6-stellig',
     passwordChanged: 'Passwort geändert. Bitte melde dich mit dem neuen Passwort neu an.',
@@ -1091,6 +1117,7 @@ export default {
   },
   settings: {
     title: 'Einstellungen',
+    navLabel: 'Einstellungsbereiche',
     noPages: 'Für deine Rolle sind keine Einstellungs-Seiten verfügbar.',
     security: {
       title: 'Sicherheit',
@@ -1239,6 +1266,7 @@ export default {
       mcp: 'MCP (KI-Agenten)',
       general: 'Allgemein',
       security: 'Sicherheit',
+      events: 'Ereignisse',
       repositories: 'Repositories',
       apps: 'Anwendungen',
       aptCache: 'APT-Cache',
@@ -1788,16 +1816,31 @@ export default {
       dirHint: 'Vorbelegt mit dem Standard-Verzeichnis. Leeren und Speichern setzt den Standard wieder ein.',
       passOk: 'Passphrase gesetzt',
       passOkHint:
-        'LCM_BACKUP_PASSPHRASE ist in der Umgebung hinterlegt - automatische Backups sind startklar.',
-      passMissing: 'Passphrase fehlt',
+        'Eine Passphrase ist hinterlegt (Einstellungen, Umgebung oder Credential) - automatische Backups sind startklar.',
+      passMissing: 'Schlüssel fehlt',
       passMissingBody:
-        'Automatische Backups können NICHT laufen: Jedes Backup wird mit einer Passphrase verschlüsselt, und ein unbeaufsichtigtes Backup kann sie nicht abfragen. Hinterlege sie unten im Feld „Passphrase für geplante Backups" (verschlüsselt gespeichert) - oder alternativ als Umgebungsvariable LCM_BACKUP_PASSPHRASE für den LCM-Dienst, z. B. als systemd-Drop-in:',
+        'Automatische Backups können NICHT laufen: Jedes Backup wird verschlüsselt, und ein unbeaufsichtigtes Backup kann nach nichts fragen. Hinterlege unten Empfänger-Schlüssel (empfohlen - dann liegt kein Geheimnis auf dem Server) oder eine Passphrase im Feld „Passphrase für geplante Backups" (verschlüsselt gespeichert) - oder die Umgebungsvariable LCM_BACKUP_PASSPHRASE für den LCM-Dienst, z. B. als systemd-Drop-in:',
       passMissingOutro:
         'Danach den Dienst neu starten (systemctl daemon-reload && systemctl restart lcm). Manuelle Backups funktionieren weiterhin - die Passphrase wird dabei im Formular abgefragt.',
+      recipientsOk: 'Empfänger-Schlüssel gesetzt',
+      recipientsOkHint:
+        'Sicherungen werden an die hinterlegten öffentlichen Schlüssel verschlüsselt - auf dem Server liegt dafür kein Geheimnis.',
+      recipientsLabel: 'Empfänger-Schlüssel (age, einer je Zeile)',
+      recipientsHint:
+        'Öffentliche X25519-Schlüssel im age-Format (age1…). Sind welche hinterlegt, verschlüsselt LCM jedes geplante Backup an sie statt mit der Passphrase; zum Wiederherstellen braucht es den privaten Schlüssel eines Empfängers, der nie auf dem Server liegt. Leer = Passphrase.',
+      generateRecipient: 'Schlüsselpaar erzeugen',
+      generatedBold: 'Privaten Schlüssel jetzt sichern.',
+      generatedBody:
+        ' Er wird nur dieses eine Mal angezeigt und nirgends gespeichert - Passwortmanager, Tresor, zwei Personen. Ohne ihn lässt sich kein damit verschlüsseltes Backup mehr öffnen.',
+      generatedOutro:
+        'Der öffentliche Schlüssel steht schon in der Liste oben - erst mit „Speichern" wird er wirksam.',
+      colEncryption: 'Verschlüsselung',
+      encRecipients: 'Empfänger-Schlüssel',
+      encPassphrase: 'Passphrase',
       passLabel: 'Passphrase für geplante Backups',
       passUnchanged: '•••••• (unverändert)',
       passHint:
-        'Verschlüsselt jedes automatische Backup; wird AES-verschlüsselt gespeichert. Leer lassen = unverändert. Ohne Passphrase (hier oder LCM_BACKUP_PASSPHRASE) lässt sich das automatische Backup nicht aktivieren.',
+        'Greift nur, wenn keine Empfänger-Schlüssel hinterlegt sind; wird AES-verschlüsselt gespeichert. Leer lassen = unverändert. Ohne Empfänger-Schlüssel und ohne Passphrase (hier oder LCM_BACKUP_PASSPHRASE) lässt sich das automatische Backup nicht aktivieren.',
       autoRestartLabel: 'Nach einer Wiederherstellung automatisch neu starten',
       autoRestartHintA:
         'Nur sinnvoll unter einem Prozess-Supervisor (systemd/Docker). Ist der Schalter aus, bleibt eine Wiederherstellung vorbereitet und wird beim nächsten Start angewendet. ',
@@ -1816,7 +1859,7 @@ export default {
       restoreWarnBold: 'Achtung:',
       restoreWarn:
         ' Die Wiederherstellung ersetzt die gesamte Datenbank, den Master-Key und die Konfiguration durch den Stand dieses Backups. Der bisherige Stand geht verloren.',
-      restorePassPlaceholder: 'Passphrase des Backups',
+      restorePassPlaceholder: 'Passphrase oder privater age-Schlüssel',
       confirmRestore: 'Wiederherstellen bestätigen',
       noBackups: 'Noch keine Backups.',
       fromFile: 'Aus Datei wiederherstellen',

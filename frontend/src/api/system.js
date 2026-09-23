@@ -104,7 +104,18 @@ export class SystemApi {
     return this.#client.download(`/system/backups/${encodeURIComponent(name)}/download`, name);
   }
 
-  /** Wiederherstellung aus einem Backup der Historie vorbereiten (Rollback). */
+  /**
+   * Schlüsselpaar für Empfänger-verschlüsselte Backups erzeugen. Der private
+   * Schlüssel kommt nur in dieser Antwort - LCM speichert ihn nicht.
+   */
+  generateBackupRecipient() {
+    return this.#client.post('/system/backups/recipients/generate');
+  }
+
+  /**
+   * Wiederherstellung aus einem Backup der Historie vorbereiten (Rollback).
+   * passphrase ist die Passphrase oder der private Schlüssel eines Empfängers.
+   */
   restoreBackup(name, passphrase) {
     return this.#client.post(`/system/backups/${encodeURIComponent(name)}/restore`, { passphrase });
   }

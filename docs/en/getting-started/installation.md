@@ -178,7 +178,8 @@ On first start, the host folder `./data` gets the configuration, the SQLite
 database and `version.json`. The runtime image is minimally hardened (Alpine,
 non-root, `read-only`, `cap_drop: ALL`). The container speaks HTTPS with a
 self-signed certificate by default - put a reverse proxy with a real
-certificate in front for public deployments.
+certificate in front for public deployments (examples and what to set in LCM:
+[Reverse proxy & external hardening](/en/guides/reverse-proxy/)).
 
 Details and all hardening flags: [Docker operation](/en/guides/docker/) and
 [Packaging](/en/reference/packaging/).
@@ -268,11 +269,11 @@ The agent port carries **only** the agent interface, the UI/REST port carries
 [MCP interface](/en/guides/mcp/).
 
 :::note[Every restart ends all sessions]
-The JWT signing material is re-bound on every start to a random, RAM-only
-instance nonce. As a result, after a (re)start **all** previously issued tokens
-are invalid - everyone has to log in again. This holds even with an unchanged
-`jwt_secret` and covers, among others, rebuilds, process restarts and a fresh
-database seeding.
+The JWT signing material is generated fresh on every start and lives only in
+memory; there is no stored secret behind it. As a result, after a (re)start
+**all** previously issued tokens are invalid - everyone has to log in again.
+This covers, among others, rebuilds, process restarts and a fresh database
+seeding.
 :::
 
 ## First login

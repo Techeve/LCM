@@ -29,11 +29,14 @@ export class UsersApi {
   }
 
   // Profil bearbeiten (E-Mail, Name) - Admin für alle, jeder für sich selbst.
-  updateProfile(id, { email, firstName, lastName }) {
+  // Eine geänderte EIGENE E-Mail-Adresse verlangt currentPassword (sie
+  // empfängt den Passwort-Reset).
+  updateProfile(id, { email, firstName, lastName, currentPassword = '' }) {
     return this.#client.patch(`/users/${id}/profile`, {
       email,
       first_name: firstName,
       last_name: lastName,
+      current_password: currentPassword,
     });
   }
 

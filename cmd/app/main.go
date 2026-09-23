@@ -34,6 +34,7 @@ import (
 	"LCM/internal/health"
 	"LCM/internal/i18n"
 	"LCM/internal/infrastructure/advisories"
+	"LCM/internal/infrastructure/creds"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/notify"
 	"LCM/internal/infrastructure/registry"
@@ -43,6 +44,7 @@ import (
 	"LCM/internal/infrastructure/trivy"
 	"LCM/internal/logging"
 	"LCM/internal/mcp"
+	"LCM/internal/perms"
 	"LCM/internal/remote"
 	"LCM/internal/safego"
 	"LCM/internal/storage"
@@ -97,6 +99,17 @@ func main() {
 		}
 		return
 	}
+	// Subcommand: lcm credentials init - Master-Key in ein systemd-Credential
+	// überführen (kein Klartext-Schlüssel mehr auf der Platte).
+	if flag.Arg(0) == "credentials" {
+		if flag.Arg(1) != "init" {
+			log.Fatal("verwendung: lcm credentials init [--with-key auto|host|tpm2|host+tpm2]")
+		}
+		if err := credentialsInit(*configPath, *dataDir, flag.Args()[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	if err := run(*configPath, *dataDir, *debug, *demo || *demoPublic, *dev, *demoPublic); err != nil {
 		log.Fatal(err)
@@ -138,11 +151,12 @@ func rotateDBKey(configPath, dataDir string) error {
 		return err
 	}
 
-	oldKey, created, err := crypto.LoadOrCreateMasterKey(dataDir)
+	oldKey, source, err := crypto.LoadOrCreateMasterKey(dataDir)
 	if err != nil {
 		return err
 	}
-	if created {
+	if source == crypto.SourceGenerated {
+		_ = crypto.ShredKeyFile(filepath.Join(dataDir, crypto.KeyFileName))
 		return fmt.Errorf("kein bestehender master-key gefunden - rotation nicht möglich")
 	}
 	oldCipher, err := crypto.NewCipher(oldKey)
@@ -174,6 +188,7 @@ func rotateDBKey(configPath, dataDir string) error {
 		"Master key rotated - all encrypted fields were re-encrypted with the new key from %s.",
 		"Master-Key rotiert - alle verschlüsselten Felder wurden mit dem neuen Key aus %s verschlüsselt.",
 		keyPath))
+	credentialHint(defaultCredstore)
 	return nil
 }
 
@@ -200,6 +215,13 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	if err != nil {
 		return err
 	}
+	// Dateirechte: beim Start prüfen und richten, danach regelmäßig. Ein
+	// einziges chmod 777 auf dem Datenverzeichnis macht Datenbank und
+	// Master-Key sonst für jeden Benutzer des Hosts lesbar - und bliebe
+	// unbemerkt.
+	permGuard := perms.New(dataDir, configPath)
+	permGuard.Run()
+	safego.Go("perms-guard", func() { permGuard.Loop(make(chan struct{})) })
 	if demo {
 		cfg.DemoMode = true
 	}
@@ -208,7 +230,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 
 	// Master-Key für die At-Rest-Verschlüsselung (AES-256-GCM) laden
 	// oder beim Erststart erzeugen (lcm.key, chmod 600).
-	masterKey, keyCreated, err := crypto.LoadOrCreateMasterKey(dataDir)
+	masterKey, keySource, err := crypto.LoadOrCreateMasterKey(dataDir)
 	if err != nil {
 		return err
 	}
@@ -216,6 +238,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	if err != nil {
 		return err
 	}
+	keyCreated := keySource == crypto.SourceGenerated
 	if keyCreated {
 		fmt.Println(i18n.Tf(
 			"crypto: new master key created (%s) - keep it safe!",
@@ -257,6 +280,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	if token := os.Getenv("LCM_TRIVY_TOKEN"); token != "" {
 		cfg.TrivyToken = token
 	}
+	// Ein systemd-Credential (SetCredentialEncrypted=trivy_token:…) schlägt
+	// beides: Es steht weder in der config.json noch in der Umgebung.
+	if token, ok := creds.Read(creds.TrivyToken); ok {
+		cfg.TrivyToken = token
+	}
 	// Nach den Overrides erneut prüfen: Beim Laden lag das Token womöglich
 	// noch nicht vor, und ein Sidecar ohne Token bekäme auf jede Anfrage
 	// eine 401 - der CVE-Scan wäre still tot.
@@ -278,6 +306,15 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	slog.Info("=== LCM service started ===",
 		"version", version.Version, "build", version.Build,
 		"pid", os.Getpid(), "data_dir", dataDir, "log_file", logFile)
+	// Woher der Master-Key kam, gehört ins Protokoll: Nur so sieht ein
+	// Betreiber, ob die Umstellung auf ein systemd-Credential greift - und ob
+	// nach einem Restore oder einer Rotation wieder eine Klartext-Datei liegt.
+	slog.Info("master key", "source", keySource)
+	if crypto.CredentialStale(keySource) {
+		slog.Warn("security", "event", "masterkey.file-overrides-credential",
+			"detail", "lcm.key lies next to the database although a systemd credential exists - "+
+				"the file wins (restore or rotation); run `lcm credentials init` to move it back")
+	}
 
 	// 2. Datenbank: relativer Pfad wird im Datenverzeichnis aufgelöst,
 	// damit sich der Service unabhängig vom Arbeitsverzeichnis verhält.
@@ -359,7 +396,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	linuxRepo := repositories.NewLinuxUserRepository(db)
 	profileRepo := repositories.NewPrivilegeProfileRepository(db)
 
-	authService := services.NewAuthService(userRepo, cfg.JWTSecret, cfg.AccessTokenTTL()).
+	authService := services.NewAuthService(userRepo, cfg.AccessTokenTTL()).
 		WithSessionTTL(func() time.Duration {
 			// Session-Dauer aus den globalen Einstellungen (0 = config-Vorgabe).
 			if st, err := settingsRepo.Get(); err == nil && st.SessionTTLMinutes > 0 {
@@ -510,16 +547,21 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	})
 	packageService := services.NewPackageService(serverRepo)
 	backupService := services.NewBackupService(db, settingsRepo, dataDir, dbPath, configPath).
-		WithConfigDir(cfg.BackupDir).WithCipher(cipher)
+		WithConfigDir(cfg.BackupDir).WithCipher(cipher).WithMasterKey(masterKey)
+	// Reste eines abgebrochenen Sicherungslaufs jetzt wegräumen: Ein neuer
+	// Prozess hat keinen laufenden Lauf, den er stören könnte, und eine
+	// liegengebliebene Momentaufnahme ist eine unverschlüsselte Kopie der
+	// Datenbank. Danach übernimmt Prune nach jeder Sicherung.
+	backupService.CleanStaleTemp(0)
 	// R2-027: Das geplante Backup war ab Werk aktiv, konnte aber ohne
 	// Passphrase PRINZIPBEDINGT nie laufen - 13 stille Fehlversuche im
 	// Langzeittest. Ist es aktiviert und existiert nirgends eine Passphrase
 	// (weder Umgebung noch Einstellungen), wird es EINMALIG deaktiviert und
 	// das laut gesagt, statt Nacht für Nacht still zu scheitern.
 	if st, err := settingsRepo.Get(); err == nil &&
-		st.BackupEnabled && st.BackupPassphraseEnc == "" && !services.BackupPassphraseSet() {
+		st.BackupEnabled && st.BackupPassphraseEnc == "" && !services.BackupPassphraseSet() && st.BackupRecipients == "" {
 		if err := settingsRepo.UpdateFields(map[string]any{"backup_enabled": false}); err == nil {
-			slog.Warn("automatic backups disabled: no passphrase configured - " +
+			slog.Warn("automatic backups disabled: neither recipient keys nor a passphrase configured - " +
 				"set one under Einstellungen → Backups (or LCM_BACKUP_PASSPHRASE) and re-enable")
 		}
 	}
@@ -754,7 +796,16 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Testdaten, und ein echter SSH-Zugriff auf die Entwicklungsmaschine wäre
 	// unerwünscht.
 	if !demo {
-		services.NewSelfRegisterService(serverRepo, settingsRepo, sshx.NewClient(), cipher, dataDir).Run()
+		selfReg := services.NewSelfRegisterService(serverRepo, settingsRepo, sshx.NewClient(), cipher, dataDir).
+			WithRestrict(func(id uint) error {
+				_, err := serverService.RestrictSudo(repositories.ScopeAll(), id, "system")
+				return err
+			})
+		selfReg.Run()
+		// Und danach ansagen, woran man ist: Eine bestehende Installation
+		// bleibt im Voll-Modus, bis jemand sie umstellt - das gehoert ins
+		// Protokoll, nicht in eine Annahme.
+		selfReg.ReportHostMode()
 	}
 
 	// Nach einem Update den eigenen Host neu erfassen. Das neue Paket ist
@@ -837,6 +888,17 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		slog.Info("access restriction active (allowed_ips)",
 			"entries", len(cfg.AllowedIPs), "trust_proxy_header", cfg.TrustProxyHeader)
 	}
+	proxyTrust, err := cfg.ProxyTrust()
+	if err != nil {
+		return err
+	}
+	if proxyTrust.Enabled && proxyTrust.Proxies.IsEmpty() {
+		// Bisheriges Verhalten, aber benannt: Ohne Liste gilt die Kopfzeile
+		// von JEDEM Peer - wer den Port am Proxy vorbei erreicht, wählt seine
+		// Adresse selbst.
+		slog.Warn("trust_proxy_header is set without trusted_proxies - X-Forwarded-For is believed from ANY peer; " +
+			"list the proxy addresses in trusted_proxies unless the port is reachable only from the proxy")
+	}
 
 	// healthCheckTimeout begrenzt eine einzelne Selbstprüfung. Deutlich unter der
 	// Frist, die der Monitor selbst darüberlegt (health.checkTimeout) - so meldet
@@ -878,7 +940,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		Health:                   healthMonitor,
 		DemoPublic:               cfg.DemoPublic,
 		IPAllowlist:              ipAllowlist,
-		TrustProxyHeader:         cfg.TrustProxyHeader,
+		ProxyTrust:               proxyTrust,
 		Auth:                     authService,
 		APIKeys:                  apiKeyService,
 		Users:                    userService,
@@ -918,7 +980,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Agent-Port konfiguriert ist (agent_port != 0) und der Hub existiert.
 	var agentApp *fiber.App
 	if agentHub != nil && cfg.AgentListenerEnabled() {
-		agentApp = router.NewAgentGateway(remote.WSHandler(agentHub), slog.Default())
+		agentApp = router.NewAgentGateway(remote.WSHandler(agentHub, proxyTrust), slog.Default())
 	}
 
 	// Graceful Shutdown bei SIGINT/SIGTERM (wichtig für Service-Betrieb).

@@ -87,11 +87,20 @@ Minuten ohne Fehlversuch. Prüfung und Zählung laufen in **einer** Operation un
 demselben Lock - sonst könnten hunderte parallele Anfragen gemeinsam an der
 Prüfung vorbeilaufen, bevor der erste Fehlversuch verbucht ist.
 
-Die Client-IP stammt aus derselben Funktion wie die IP-Allowlist
-(`middlewares.ClientIP`) und berücksichtigt `trust_proxy_header`. Ohne das wäre
-die Adresse hinter einem Reverse-Proxy für **alle** Clients dieselbe - fünf
-Fehlversuche eines Angreifers hätten die Anmeldung der gesamten Installation
-gesperrt.
+Die Client-IP wird **einmal je Anfrage** bestimmt (`middlewares.ResolveClientIP`)
+und von IP-Allowlist, Anmeldesperre, Zugriffs- und Sicherheitsprotokoll
+gemeinsam gelesen. Hinter einem Reverse-Proxy kommt sie aus `X-Forwarded-For` -
+aber nur, wenn `trust_proxy_header` gesetzt ist **und** der Peer in
+`trusted_proxies` steht (`netfilter.ProxyTrust`). Ohne das wäre die Adresse
+hinter einem Proxy für **alle** Clients dieselbe - fünf Fehlversuche eines
+Angreifers hätten die Anmeldung der gesamten Installation gesperrt; und ohne die
+Liste könnte jeder, der den Port direkt erreicht, seine Adresse selbst wählen.
+
+Ein angenommener **TOTP-Code gilt genau einmal** (RFC 6238): derselbe Code wird
+innerhalb des Prüffensters nicht ein zweites Mal akzeptiert, und die Challenge
+des zweistufigen Logins ist nach dem zweiten Schritt widerrufen. Beim Login
+werden Passwörter über 1024 Bytes gar nicht erst gehasht - argon2id ist
+absichtlich teuer, und der Endpunkt ist anonym erreichbar.
 
 ## Links in E-Mails: `public_base_url`
 
@@ -120,7 +129,7 @@ irreführend. Für den Produktivbetrieb sollte die Adresse gesetzt werden.
 
 Das JWT-Secret wird beim ersten Start kryptografisch zufällig generiert (48 Bytes aus `crypto/rand`) und liegt nur in der `config.json` (Dateirechte 0600). Secrets unter 32 Zeichen werden beim Laden abgelehnt.
 
-**Sitzungs-Invalidierung bei jedem Neustart:** Das effektive HS256-Signaturmaterial ist **nicht** direkt das `jwt_secret`, sondern `HMAC-SHA256(jwt_secret, Instanz-Nonce)`. Das Nonce wird bei jedem Prozessstart neu aus `crypto/rand` gezogen und lebt ausschließlich im Arbeitsspeicher (`deriveSigningKey` in `auth_service.go`). Damit entsteht bei jedem (Neu-)Start ein anderer Signaturschlüssel und **alle** zuvor ausgestellten Tokens fallen bei der Signaturprüfung durch - jede Sitzung endet, ein neues Login ist nötig. Das gilt auch bei unverändertem `jwt_secret` und deckt insbesondere den Fall ab, dass eine alte, weiterhin gültige Session sonst einem frisch geseedeten Admin mit derselben ID vertrauen würde (Rebuild, Prozess-Neustart, neu angelegte Datenbank).
+**Sitzungs-Invalidierung bei jedem Neustart:** Das HS256-Signaturmaterial wird bei jedem Prozessstart neu aus `crypto/rand` gezogen und lebt ausschließlich im Arbeitsspeicher (`newSigningKey` in `auth_service.go`). Ein gespeichertes Geheimnis gibt es dafür nicht mehr - frühere Fassungen mischten ein `jwt_secret` aus der `config.json` hinein, das seit der Bindung an den Prozessstart keinen Zweck mehr hatte; ein noch vorhandener Eintrag wird ignoriert und beim nächsten Schreiben der Datei entfernt. Folge: Bei jedem (Neu-)Start entsteht ein anderer Signaturschlüssel und **alle** zuvor ausgestellten Tokens fallen bei der Signaturprüfung durch - jede Sitzung endet, ein neues Login ist nötig. Das deckt insbesondere den Fall ab, dass eine alte, weiterhin gültige Session sonst einem frisch geseedeten Admin mit derselben ID vertrauen würde (Rebuild, Prozess-Neustart, neu angelegte Datenbank).
 
 ## RBAC: User → Rolle → Permission
 
@@ -170,6 +179,7 @@ Der Log-Service (`internal/logging/logging.go`) basiert auf `log/slog`:
 - **Level** über `log_level` in der config.json (`debug`, `info`, `warn`, `error`).
 - **Debug-Modus beim Start:** `./lcm -debug` hebt das Level auf `debug`, ohne die Config zu ändern - für Entwicklung und Fehlersuche.
 - **Access-Log** (`access_log: true`): jede API-Anfrage wird mit Methode, Pfad, Status, Dauer, IP und Username protokolliert; 4xx als `WARN`, 5xx als `ERROR`. Im Debug-Level zusätzlich Query-String und User-Agent.
+- **Audit-Spiegel:** Jeder Audit-Eintrag (Rechtevergabe, Server-Aktionen, Einstellungen) steht zusätzlich als Journal-Zeile `audit action=… actor=…` - die Datenbank liegt auf dem Knoten, das Journal lässt sich weiterleiten (`journalctl -u lcm | grep -E "^.* (audit|security) "`, Weiterleitung per `rsyslog`/`systemd-journal-upload`).
 - Es werden niemals Passwörter, Tokens oder Request-Bodies geloggt.
 
 ## CVE-Scan des Paketbestands (Trivy)
@@ -285,10 +295,27 @@ apt-cacher-ng, CrowdSec-LAPI) auf einer frischen Installation erst nach
 manuellem Onboarding erreichbar.
 
 :::caution[Was das bedeutet]
-`postinstall.sh` legt dafür das Konto **`lcm-svc` mit `NOPASSWD:ALL`** an
-(`/etc/sudoers.d/lcm-svc`, Rechte 0440) und hinterlegt LCM einen SSH-Schlüssel
-darauf. **Der Dienst kann anschließend auf dieser Maschine als root handeln,
-ohne dass jemand Zugangsdaten eingegeben hat.**
+`postinstall.sh` legt dafür das Konto **`lcm-svc`** an, zunächst mit
+`NOPASSWD:ALL` (`/etc/sudoers.d/lcm-svc`, Rechte 0440), und hinterlegt LCM
+einen SSH-Schlüssel darauf. **Beim ersten Start beschränkt LCM das Konto auf
+die sudoers-Whitelist** - Paketverwaltung, Docker, ufw und den validierenden
+`lcm-helper`, dessen Unterkommandos `host-install`, `host-apt-cacher`,
+`host-crowdsec-lapi` und `host-self-update` die Host-Funktionen tragen. Eine
+Root-Shell hat das Konto danach nicht mehr; die Wirkungsprobe und der Rückfall
+in den Voll-Modus sind dieselben wie beim Einschränken eines beliebigen Servers.
+Volle Rechte behält das Konto nur mit `LCM_SELF_MANAGE_FULL=1` bei der
+Installation.
+
+**Bestehende Installationen bleiben, wie sie sind.** Ein Upgrade fasst ein
+vorhandenes `lcm-svc` nicht mehr an - weder die sudoers-Regel noch die
+`authorized_keys`. Das ist Absicht: Früher schrieb jedes Paket-Update die
+Zeile `NOPASSWD:ALL` neu und hätte damit eine eingeschränkte Whitelist still
+wieder aufgehoben. Wer den eigenen Host umstellen will, nutzt die
+Server-Aktion **Rechte einschränken**; beim Start sagt LCM im Protokoll an,
+woran man ist (`security event=selfhost.full-sudo` bzw. `selfhost.restricted`). Was der eingeschränkte Modus leistet und was nicht, steht oben:
+apt und Docker führen konstruktionsbedingt Code als root aus - wer den
+Dienst übernimmt, erreicht darüber weiterhin Root auf dem Host, nur nicht mehr
+mit einem Befehl.
 
 Das ist eine bewusste Abwägung: Ein Werkzeug, das den eigenen Host verwaltet,
 braucht dort dieselben Rechte wie auf jedem anderen verwalteten Server. Die
@@ -336,9 +363,81 @@ sudo userdel -r lcm-svc
 ```
 :::
 
+## Dateirechte: geprüft, nicht vorausgesetzt
+
+Das Datenverzeichnis (`/var/lib/lcm`, Datenbank, Master-Key, TLS-Schlüssel,
+Backups) gehört dem Dienstbenutzer allein: `0700`, Geheimnisse `0600`. Die
+Konfiguration (`/etc/lcm`) gehört root, Gruppe `lcm` darf lesen und schreiben
+(Restore), sonst niemand. Das Paketskript setzt das - und LCM **prüft es beim
+Start und alle 15 Minuten selbst** (`internal/perms`): Dateien, die dem Dienst
+gehören, zieht es zurück fest; was es nicht richten kann (fremder Eigentümer,
+root-eigene Konfiguration mit Welt-Rechten), meldet es als
+`security event=permissions.insecure`. Ein `chmod 777`, ein Restore mit
+falschem umask oder eine untergeschobene Datei bleiben so nicht unbemerkt.
+
+## Eingaben: Grenzen an der Tür
+
+Jeder Pfadparameter, der eine UUID sein muss (Jobs, SSH-Sitzungen,
+Deep-Scan-Berichte), wird als UUID geparst, bevor eine Abfrage läuft. Namen
+sind einzeilig und höchstens 64 Zeichen, Beschreibungen 1000, Skripte und
+Custom-Aktionen 32 KiB; Steuerzeichen sind nirgends erlaubt. Hosts bestehen
+nur aus den Zeichen eines Hostnamens oder einer IP-Adresse, Ports liegen in
+1-65535, E-Mail-Adressen sind genau eine Adresse. Die Prüfung sitzt in den
+Controllern (`validate.go`) und antwortet 422 mit dem Feldnamen - die
+fachliche Prüfung im Service (Namen frei, Rollen bekannt, Cron gültig) bleibt
+davon unberührt.
+
 ## At-Rest-Verschlüsselung & Master-Key-Rotation
 
-Alle Geheimnisse in der Datenbank werden feldweise mit **AES-256-GCM** verschlüsselt. Der **Master-Key** liegt getrennt von der DB in `lcm.key` (Dateirechte 0600) im Datenverzeichnis und wird beim ersten Start erzeugt (`internal/infrastructure/crypto`). Ohne ihn sind die verschlüsselten Felder unlesbar - deshalb gehört er in jedes [Backup](/guides/backups/).
+Alle Geheimnisse in der Datenbank werden feldweise mit **AES-256-GCM** verschlüsselt. Der **Master-Key** liegt getrennt von der DB: beim ersten Start als `lcm.key` (Dateirechte 0600) im Datenverzeichnis, nach der Umstellung als systemd-Credential (siehe unten) nur noch verschlüsselt im Credential-Speicher (`internal/infrastructure/crypto`). Ohne ihn sind die verschlüsselten Felder unlesbar - deshalb gehört er in jedes [Backup](/guides/backups/); das Archiv trägt ihn auch dann, wenn keine Datei mehr existiert.
+
+### Master-Key als systemd-Credential
+
+`lcm credentials init` (als root) überführt den Schlüssel von der Datei in
+ein systemd-Credential:
+
+```bash
+sudo lcm credentials init            # Bindung: TPM2 + Host-Schlüssel, wenn ein TPM da ist, sonst Host-Schlüssel
+sudo lcm credentials init --with-key=tpm2
+sudo systemctl restart lcm
+```
+
+Das Kommando verschlüsselt den Schlüssel mit `systemd-creds` nach
+`/etc/credstore.encrypted/lcm.key`, prüft per Gegenprobe, dass genau der
+aktuelle Schlüssel zurückkommt, schreibt die Unit-Ergänzung
+`LoadCredentialEncrypted=lcm.key:…` und vernichtet erst dann `lcm.key`. Beim
+Start entschlüsselt systemd das Credential in ein Verzeichnis im
+Arbeitsspeicher, das nur der Dienst sieht (`$CREDENTIALS_DIRECTORY`); das
+Journal meldet `master key source=credential`.
+
+Was das bringt: Im Datenverzeichnis liegt kein Klartext-Schlüssel mehr. Eine
+Kopie des Verzeichnisses, ein Archiv ohne Passphrase, ein verirrtes `rsync` -
+alles ohne Wert. Mit TPM-Bindung gilt das auch für ein Abbild der ganzen
+Maschine; mit reiner Host-Bindung (Container ohne TPM) enthält ein
+Container-Backup den Host-Schlüssel von systemd mit - dort schließt erst
+eine verschlüsselte Container-Sicherung die Lücke. Was es nicht bringt: Wer
+root auf der laufenden Maschine hat, kommt weiterhin an den Schlüssel; das
+ist der Preis des unbeaufsichtigten Neustarts.
+
+Reihenfolge beim Start: `LCM_ENCRYPTION_KEY` (ausdrückliche Vorgabe), dann
+`lcm.key`, dann das Credential. Die Datei gewinnt bewusst gegen das
+Credential: Nach einem Restore oder `rotate-db-key` liegt sie wieder da und
+gehört zur Datenbank. LCM meldet den Zustand dann als
+`security event=masterkey.file-overrides-credential`; `lcm credentials init`
+erneut ausführen bringt den neuen Schlüssel ins Credential und entfernt die
+Datei wieder.
+
+Dasselbe Verfahren trägt zwei weitere Geheimnisse, jeweils als
+`SetCredentialEncrypted=` in der Unit-Ergänzung: `trivy_token` (statt
+`config.json`/Umgebung) und `backup_passphrase` (statt
+`LCM_BACKUP_PASSPHRASE`). Ein Credential hat Vorrang vor Datei und Umgebung.
+
+Für die Sicherungen selbst geht es noch einen Schritt weiter: Mit
+**Empfänger-Schlüsseln** ([age](https://age-encryption.org), X25519) werden
+die Archive an öffentliche Schlüssel verschlüsselt - auf dem Server liegt
+dann für das geplante Backup **kein Geheimnis mehr**, der private Schlüssel
+bleibt offline beim Betreiber. Wer den Host übernimmt, hat die Archive, aber
+nicht den Schlüssel dazu. Einrichtung in der [Backup-Anleitung](/guides/backups/).
 
 Verschlüsselt gespeichert werden u.&nbsp;a. (vollständige Liste in `internal/storage/rotate.go`):
 
@@ -373,7 +472,11 @@ Der optionale MCP-Listener (`internal/mcp`, Default aus, Bind `127.0.0.1:9330`) 
 - **XSS:** Das Frontend rendert ausschließlich über Svelte-Templating (automatisches Escaping); `{@html}` wird nicht verwendet.
 - **Build-Gates:** `make build` bricht bei `npm audit`- oder `govulncheck`-Funden ab.
 - **Default-Bind:** `127.0.0.1` - wer nach außen exponiert, setzt bewusst `"host": "0.0.0.0"` und sollte TLS über einen Reverse-Proxy (Caddy, nginx) terminieren.
-- **IP-Allowlist:** `allowed_ips` in der config.json beschränkt den Netzwerk-Zugriff auf zugelassene Client-Adressen (Schlüsselwörter `localhost`/`private` oder IP/CIDR); nicht passende Clients erhalten früh **403** (Middleware `IPAllowlist`, vor Auth/Logging). Gefiltert wird die direkte TCP-Verbindung; hinter einem Reverse-Proxy `trust_proxy_header: true` (wertet `X-Forwarded-For` aus - nur bei vertrauenswürdigem Proxy). Der Matcher liegt im Paket `internal/netfilter`. Siehe [Sicherheit & CVE-Scans](/guides/security-cve/).
+- **IP-Allowlist:** `allowed_ips` in der config.json beschränkt den Netzwerk-Zugriff auf zugelassene Client-Adressen (Schlüsselwörter `localhost`/`private` oder IP/CIDR); nicht passende Clients erhalten früh **403** (Middleware `IPAllowlist`, vor Auth/Logging). Gefiltert wird die direkte TCP-Verbindung; hinter einem Reverse-Proxy `trust_proxy_header: true` **plus** `trusted_proxies` (nur von diesen Peers zählt `X-Forwarded-For`). Der Matcher liegt im Paket `internal/netfilter`. Siehe [Sicherheit & CVE-Scans](/guides/security-cve/) und [Reverse-Proxy](/guides/reverse-proxy/).
+- **Rumpf-Budget:** 1 MiB je Anfrage, geprüft an der Kopfzeile, bevor der Rumpf gelesen wird (`middlewares.BodyBudget`, Request-Streaming). Das große Limit von 64 MiB gilt allein dem Backup-Upload. Rümpfe ohne Längenangabe (chunked) werden außerhalb des Uploads abgewiesen.
+- **E-Mail-Adresse nur mit Passwort:** Die eigene Adresse empfängt den Passwort-Reset. Sie zu ändern verlangt das aktuelle Passwort - eine erbeutete Sitzung allein kann das Konto nicht auf eine fremde Adresse umbiegen.
+- **Konsolen-Fahrkarte im Sichtbereich:** Die Fahrkarte für die Web-Konsole gibt es nur für Server, die der Benutzer sehen darf - das Konsolen-Recht allein reicht nicht.
+- **Sicherheitsprotokoll:** Anmeldungen (`login.ok`, `login.failed`, `login.locked`, `login.2fa.*`), Passwort- und E-Mail-Änderungen, Zweitfaktor, API-Schlüssel und Konsolen-Fahrkarten landen als **eine Journal-Zeile** mit dem festen Text `security` und der Client-Adresse (`middlewares.SecurityEvent`). Erfolge sind INFO, alles andere WARN: `journalctl -u lcm -p warning | grep security`. Anders als das Audit-Log in der Datenbank lässt sich das Journal weiterleiten und ist für fail2ban greifbar (`event=login.failed ip=<HOST>`).
 
 ## Bewusste Vereinfachungen des Templates
 

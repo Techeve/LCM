@@ -80,6 +80,9 @@ func (ctrl *GroupController) Create(c fiber.Ctx) error {
 	if req.Name == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
 	}
+	if err := checkGroupRequest(req); err != nil {
+		return err
+	}
 	group, err := ctrl.groups.Create(req.Name, req.Description, req.Priority, actor(c))
 	if err != nil {
 		return mapGroupError(err)
@@ -96,6 +99,9 @@ func (ctrl *GroupController) UpdateSettings(c fiber.Ctx) error {
 	var req groupRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkGroupRequest(req); err != nil {
+		return err
 	}
 	group, err := ctrl.groups.UpdateSettings(scopeFor(c), id, req.Name, req.Description, req.Priority, actor(c))
 	if err != nil {
@@ -225,6 +231,9 @@ func (ctrl *GroupController) DefineSchedule(c fiber.Ctx) error {
 	if req.Name == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
 	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"cron_expr", req.CronExpr, maxCronLen}); err != nil {
+		return err
+	}
 	sched, err := ctrl.groups.DefineSchedule(scopeFor(c), id, req.Name, req.CronExpr, actor(c))
 	if err != nil {
 		return mapGroupError(err)
@@ -241,6 +250,9 @@ func (ctrl *GroupController) UpdateSchedule(c fiber.Ctx) error {
 	var req scheduleRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"cron_expr", req.CronExpr, maxCronLen}); err != nil {
+		return err
 	}
 	sched, err := ctrl.groups.UpdateSchedule(scopeFor(c), id, req.Name, req.CronExpr, actor(c))
 	if err != nil {
@@ -330,6 +342,9 @@ func (ctrl *GroupController) DefineRule(c fiber.Ctx) error {
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
 	}
+	if err := checkRuleRequest(req); err != nil {
+		return err
+	}
 	rule, err := ctrl.groups.DefineRule(scopeFor(c), id, req.Name, req.Type, req.Command, req.ScheduleID, req.Enforce, actor(c))
 	if err != nil {
 		return mapGroupError(err)
@@ -372,6 +387,9 @@ func (ctrl *GroupController) UpdateRule(c fiber.Ctx) error {
 	var req defineRuleRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := checkRuleRequest(req); err != nil {
+		return err
 	}
 	rule, err := ctrl.groups.UpdateRule(scopeFor(c), id, req.Name, req.Command, actor(c))
 	if err != nil {
@@ -425,4 +443,22 @@ func (ctrl *GroupController) TriggerRule(c fiber.Ctx) error {
 	}
 	ctrl.scheduler.TriggerNow(rule, actor(c))
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "triggered", "rule": rule.Name})
+}
+
+// checkGroupRequest prüft Name und Beschreibung einer Gruppe.
+func checkGroupRequest(req groupRequest) error {
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
+	}
+	return checkText("description", req.Description, maxDescriptionLen)
+}
+
+// checkRuleRequest prüft Name, Typ und Kommando einer Regel. Das Kommando
+// ist bei Skript-Regeln ein ganzes Skript - Zeilenumbrüche erlaubt, Länge
+// gedeckelt.
+func checkRuleRequest(req defineRuleRequest) error {
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}); err != nil {
+		return err
+	}
+	return checkText("command", req.Command, maxScriptLen)
 }

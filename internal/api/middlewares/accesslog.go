@@ -14,6 +14,7 @@ import (
 //
 // Die Middleware steht VOR Authenticate in der Kette; da der User erst
 // nach c.Next() feststeht, wird er nach Abschluss des Requests gelesen.
+// Sie steht aber NACH ResolveClientIP, damit die Adresse stimmt.
 func AccessLog(logger *slog.Logger) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		start := time.Now()
@@ -34,7 +35,9 @@ func AccessLog(logger *slog.Logger) fiber.Handler {
 			"path", c.Path(),
 			"status", status,
 			"duration_ms", time.Since(start).Milliseconds(),
-			"ip", c.IP(),
+			// Dieselbe Adresse wie Allowlist und Anmeldesperre (ResolveClientIP):
+			// hinter einem vertrauten Proxy der Client, nicht der Proxy.
+			"ip", ClientIP(c),
 		}
 		if user := CurrentUser(c); user != nil {
 			attrs = append(attrs, "user", user.Username)

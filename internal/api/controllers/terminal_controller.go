@@ -9,6 +9,7 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/middlewares"
 	"LCM/internal/core/services"
 	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/safego"
@@ -55,15 +56,25 @@ func (ctrl *TerminalController) SetEnabled(c fiber.Ctx) error {
 }
 
 // Ticket - POST /api/v1/servers/:id/terminal/ticket (servers:console)
+//
+// Die Sichtbarkeit wird HIER geprüft, nicht erst beim Verbinden: Connect
+// kennt den Benutzer nur noch über die Fahrkarte und öffnet mit ScopeAll.
+// Ohne die Prüfung reichte das Konsolen-Recht, um eine Fahrkarte für JEDEN
+// Server zu ziehen - auch außerhalb der eigenen Gruppen.
 func (ctrl *TerminalController) Ticket(c fiber.Ctx) error {
 	id, err := paramID(c)
 	if err != nil {
 		return err
 	}
-	token, err := ctrl.tickets.Issue(actor(c), id)
+	server, err := ctrl.servers.Get(scopeFor(c), id)
+	if err != nil {
+		return mapServerError(err)
+	}
+	token, err := ctrl.tickets.Issue(actor(c), id, middlewares.ClientIP(c))
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "fahrkarte konnte nicht erzeugt werden")
 	}
+	middlewares.SecurityEvent(c, "terminal.ticket.ok", "user", actor(c), "server", server.Name)
 	return c.JSON(fiber.Map{"ticket": token, "expires_in_seconds": 30})
 }
 
@@ -80,14 +91,16 @@ type wsMessage struct {
 //
 // Der Endpunkt läuft OHNE die übliche Anmelde-Middleware: Die Fahrkarte ist
 // hier der Nachweis, und sie ist strenger als der Token - einmalig, dreißig
-// Sekunden gültig, an genau diesen Server gebunden.
+// Sekunden gültig, an genau diesen Server und an die Client-Adresse gebunden,
+// die sie geholt hat.
 func (ctrl *TerminalController) Connect(c fiber.Ctx) error {
 	id, err := paramID(c)
 	if err != nil {
 		return err
 	}
-	who, ok := ctrl.tickets.Redeem(c.Query("ticket"), id)
+	who, ok := ctrl.tickets.Redeem(c.Query("ticket"), id, middlewares.ClientIP(c))
 	if !ok {
+		middlewares.SecurityEvent(c, "terminal.ticket.rejected")
 		return fiber.NewError(fiber.StatusUnauthorized, "ungültige oder abgelaufene fahrkarte")
 	}
 

@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -129,14 +130,21 @@ func main() {
 	}
 }
 
-// prereleaseSuffix liest das Prerelease-Suffix aus der VERSION-Datei
-// ("1.0.0-beta.1" -> "beta.1"). Fehlt die Datei oder das Suffix, ist es "".
-func prereleaseSuffix() string {
+// currentVersion liest die VERSION-Datei ("1.0.0-beta.1"). Sie trägt auf
+// jeder Linie deren zuletzt veröffentlichte Version und ist damit der Anker
+// dafür, welche Tags überhaupt zur Linie gehören (siehe latestReleaseTag).
+func currentVersion() string {
 	data, err := os.ReadFile("VERSION")
 	if err != nil {
 		return ""
 	}
-	_, suffix, found := strings.Cut(strings.TrimSpace(string(data)), "-")
+	return strings.TrimSpace(string(data))
+}
+
+// prereleaseSuffix liest das Prerelease-Suffix aus der VERSION-Datei
+// ("1.0.0-beta.1" -> "beta.1"). Fehlt die Datei oder das Suffix, ist es "".
+func prereleaseSuffix() string {
+	_, suffix, found := strings.Cut(currentVersion(), "-")
 	if found {
 		return suffix
 	}
@@ -151,17 +159,55 @@ func withPrerelease(version, suffix string) string {
 	return version + "-" + suffix
 }
 
-// latestReleaseTag liefert das höchste v*-Tag (SemVer-sortiert) oder "".
+// latestReleaseTag liefert das Tag, auf dem die eigene Linie aufsetzt, oder "".
 func latestReleaseTag() (string, error) {
 	out, err := gitOutput("tag", "--list", "v*", "--sort=-v:refname")
 	if err != nil {
 		return "", err
 	}
-	tags := strings.Fields(out)
+	return lineTag(strings.Fields(out), currentVersion()), nil
+}
+
+// lineTag wählt aus den absteigend sortierten Tags das der eigenen Linie: erst
+// das Tag zur VERSION-Datei (mit Suffix, dann ohne), sonst das höchste Tag, das
+// nicht über ihr liegt. Ohne die Ankerversion bliebe schlicht das repoweit
+// höchste Tag übrig - und die Wartungslinie bekäme die Nummer des Hauptzweigs
+// verpasst: Aus 1.30.6 plus Sicherheitsfix wurde so einmal 1.38.1. Über die
+// Erreichbarkeit (git tag --merged HEAD) geht das nicht, weil die finalen Tags
+// auf den Merge-Commits von community liegen und damit von develop aus nie
+// erreichbar sind.
+func lineTag(tags []string, version string) string {
 	if len(tags) == 0 {
-		return "", nil
+		return ""
 	}
-	return tags[0], nil
+	anchor, err := ParseCore(version)
+	if err != nil {
+		return tags[0]
+	}
+	core, _, _ := strings.Cut(version, "-")
+	for _, wanted := range []string{"v" + version, "v" + core} {
+		if slices.Contains(tags, wanted) {
+			return wanted
+		}
+	}
+	// Absteigend sortiert: das erste Tag, das die Ankerversion nicht
+	// überschreitet, ist das höchste der eigenen Linie.
+	for _, tag := range tags {
+		if nums, err := ParseCore(tag); err == nil && lessOrEqual(nums, anchor) {
+			return tag
+		}
+	}
+	return ""
+}
+
+// lessOrEqual vergleicht zwei numerische Versionen.
+func lessOrEqual(a, b [3]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return true
 }
 
 // commitsSince liest alle Nicht-Merge-Commits seit dem Tag (oder alle,

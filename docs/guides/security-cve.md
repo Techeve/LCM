@@ -257,7 +257,8 @@ Controller laufen.
 ```json
 {
   "allowed_ips": ["private"],
-  "trust_proxy_header": false
+  "trust_proxy_header": false,
+  "trusted_proxies": []
 }
 ```
 
@@ -277,9 +278,12 @@ Die Einträge lassen sich mischen, z.&nbsp;B. `["localhost", "192.168.10.0/24"]`
 Gefiltert wird die **direkte TCP-Verbindung** (fälschungssicher). Läuft LCM
 hinter einem Reverse-Proxy (z.&nbsp;B. für TLS), ist die direkte Gegenstelle
 der Proxy - dann `"trust_proxy_header": true` setzen, damit LCM die Client-IP
-aus `X-Forwarded-For` nimmt. **Nur** aktivieren, wenn der Proxy diesen Header
-selbst setzt bzw. überschreibt - sonst ließe sich der Filter mit einem
-gefälschten Header umgehen.
+aus `X-Forwarded-For` nimmt, **und** in `trusted_proxies` die Adresse(n) des
+Proxys eintragen. Nur von dort wird die Kopfzeile geglaubt; jeder andere Peer
+gilt mit seiner eigenen Adresse. Ohne die Liste zählt die Kopfzeile von jedem -
+ein Client, der den Port am Proxy vorbei erreicht, käme mit einem gefälschten
+Header in die Allowlist. Details und Proxy-Beispiele:
+[Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/).
 :::
 
 :::note[Docker-Healthcheck]

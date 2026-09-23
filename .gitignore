@@ -41,3 +41,7 @@ frontend/playwright-report/
 
 # Interne Entwicklungs-Artefakte (liegen lokal in ~/GolandProjects/lcm-dev-docs)
 dev-docs/
+
+# Versehentlich einmal eingecheckt: "go build ./tools/release" legt hier ein
+# Binary namens "release" ab.
+/release

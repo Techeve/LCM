@@ -49,6 +49,15 @@ type GlobalSettings struct {
 	// Archiv öffnen kann, kannte die Passphrase schon; wer den Host samt
 	// Master-Key kompromittiert, hat ohnehin alles.
 	BackupPassphraseEnc string `json:"-"` // AES-GCM
+	// BackupRecipients sind öffentliche age-Schlüssel (X25519, `age1…`), einer
+	// je Zeile. Sind welche hinterlegt, verschlüsselt LCM Sicherungen AN sie
+	// statt mit einer Passphrase: Für das Erstellen genügt der öffentliche
+	// Teil, der private liegt nie auf dem Server - im Passwortmanager, auf
+	// einem YubiKey, bei zwei Personen. Damit läuft das geplante Backup ohne
+	// jedes Geheimnis auf der Maschine, und ein gestohlenes Archiv bleibt auch
+	// zusammen mit einem übernommenen Host verschlossen. Die Wiederherstellung
+	// braucht dann einen Menschen mit dem privaten Schlüssel.
+	BackupRecipients string `json:"backup_recipients"`
 
 	// RestoreAutoRestart: Wird ein Backup zur Wiederherstellung vorbereitet
 	// (Staging), startet LCM sich bei true selbst neu, um es anzuwenden - sinnvoll
@@ -493,7 +502,17 @@ type Backup struct {
 	FileName  string `gorm:"not null" json:"file_name"`
 	SizeBytes int64  `json:"size_bytes"`
 	Trigger   string `json:"trigger"` // "scheduler" oder Username
+	// Encryption sagt, womit sich das Archiv öffnen lässt: mit der Passphrase
+	// (BackupEncryptionPassphrase, auch bei älteren Zeilen ohne Wert) oder mit
+	// dem privaten Schlüssel eines Empfängers (BackupEncryptionRecipients).
+	Encryption string `json:"encryption"`
 }
+
+// Verschlüsselungsarten eines Backup-Archivs.
+const (
+	BackupEncryptionPassphrase = "passphrase"
+	BackupEncryptionRecipients = "recipients"
+)
 
 // AdvisoryCacheTTL liefert die wirksame Cache-Gültigkeit der Frühwarnung in
 // Minuten. 0 bleibt 0 (Zwischenspeicher aus); alles darüber wird auf den

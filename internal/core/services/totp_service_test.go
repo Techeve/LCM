@@ -75,9 +75,17 @@ func TestTOTPSetupEnableVerify(t *testing.T) {
 		t.Error("verschlüsseltes secret stimmt nicht")
 	}
 
-	// Verify mit frischem Code.
-	code2, _ := totp.Code(setup.Secret, time.Now())
+	// Derselbe Code ein zweites Mal: abgewiesen (RFC 6238 - ein angenommener
+	// Code gilt genau einmal). Der Code der Aktivierung ist damit verbraucht.
+	if err := svc.Verify(adminID, code); !errors.Is(err, services.ErrTOTPInvalid) {
+		t.Errorf("wiederverwendeter code muss abgewiesen werden, bekam %v", err)
+	}
+	// Ein ANDERER gültiger Code (nächste Periode, liegt im ±1-Fenster) geht.
+	code2, _ := totp.Code(setup.Secret, time.Now().Add(30*time.Second))
 	if err := svc.Verify(adminID, code2); err != nil {
 		t.Errorf("verify mit gültigem code fehlgeschlagen: %v", err)
+	}
+	if err := svc.Verify(adminID, code2); !errors.Is(err, services.ErrTOTPInvalid) {
+		t.Errorf("auch der zweite code gilt nur einmal, bekam %v", err)
 	}
 }

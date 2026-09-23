@@ -706,13 +706,17 @@ type BackupSettingsInput struct {
 	AutoRestart bool
 	// Passphrase für geplante Backups (write-only; leer = unverändert).
 	Passphrase string
+	// Recipients sind die öffentlichen age-Schlüssel (einer je Zeile), an die
+	// Sicherungen verschlüsselt werden. Anders als die Passphrase wird das
+	// Feld immer übernommen: leer = keine Empfänger.
+	Recipients string
 }
 
 // ErrBackupNeedsPassphrase: automatische Backups lassen sich nicht
 // aktivieren, solange keine Passphrase hinterlegt ist - sonst liefe der
 // Zeitplan ins Leere und scheiterte still bei jedem Tick (R2-027).
 var ErrBackupNeedsPassphrase = errors.New(
-	"automatische Backups brauchen eine Passphrase - erst hinterlegen (Passphrase-Feld oder Umgebungsvariable " + EnvBackupPassphrase + "), dann aktivieren")
+	"automatische Backups brauchen Empfänger-Schlüssel oder eine Passphrase - erst hinterlegen (Empfänger-Liste, Passphrase-Feld oder Umgebungsvariable " + EnvBackupPassphrase + "), dann aktivieren")
 
 // BackupPassphraseStored meldet, ob in den Einstellungen eine
 // Backup-Passphrase hinterlegt ist (nur das Flag, nie der Wert).
@@ -765,9 +769,15 @@ func (s *SettingsService) UpdateBackupSettings(in BackupSettingsInput, actor str
 		}
 		settings.BackupPassphraseEnc = enc
 	}
-	// Aktivieren ohne irgendeine Passphrase (gespeichert oder Umgebung)
-	// wird abgelehnt - sonst wäre „eingeschaltet" eine leere Behauptung.
-	if settings.BackupEnabled && settings.BackupPassphraseEnc == "" && !BackupPassphraseSet() {
+	recipients, err := NormalizeBackupRecipients(in.Recipients)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrSettingInvalid, err)
+	}
+	settings.BackupRecipients = recipients
+	// Aktivieren ohne irgendeinen Schlüssel - keine Passphrase (gespeichert,
+	// Umgebung, Credential) und keine Empfänger - wird abgelehnt: sonst wäre
+	// „eingeschaltet" eine leere Behauptung.
+	if settings.BackupEnabled && settings.BackupPassphraseEnc == "" && !BackupPassphraseSet() && settings.BackupRecipients == "" {
 		return nil, ErrBackupNeedsPassphrase
 	}
 	if err := s.settings.Save(settings); err != nil {

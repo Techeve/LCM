@@ -60,6 +60,23 @@ systemctl daemon-reload && systemctl restart ssh.socket
 If the firewall is active, LCM opened the new port there as well - see the
 *Firewall* section.
 
+### sudo installed
+
+Debian does not ship `sudo` in its base installation, and neither do the
+Proxmox systems built on it (VE, PBS, PDM). `/etc/sudoers.d/` is present all
+the same, so an entry in it pointed at nothing. If `sudo` is missing when a
+server is added, LCM therefore installs it through the system's package
+manager before it creates the management user. If it appears in the
+onboarding log, it was not there before.
+
+It is never removed again, not even when an onboarding fails and is rolled
+back: other services and logins may rely on it by now. Undo it by hand once
+you are sure nobody else needs it:
+
+```sh
+apt-get remove sudo
+```
+
 ### Restricted mode
 
 Instead of full rights the management user gets an allowlist:

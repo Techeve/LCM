@@ -70,7 +70,7 @@
       <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
           <thead>
-            <tr><th>{t('settings.schedules.colName')}</th><th>{t('settings.schedules.colOrigin')}</th><th>{t('settings.schedules.colRules')}</th><th>{t('settings.schedules.colSchedule')}</th><th>{t('settings.schedules.colNextRun')}</th><th></th></tr>
+            <tr><th>{t('settings.schedules.colName')}</th><th>{t('settings.schedules.colOrigin')}</th><th>{t('settings.schedules.colRules')}</th><th>{t('settings.schedules.colSchedule')}</th><th>{t('settings.schedules.colNextRun')}</th><th><span class="visually-hidden">{t('common.actions')}</span></th></tr>
           </thead>
           <tbody>
             {#each schedules as s (s.kind + (s.schedule_id ?? 0))}

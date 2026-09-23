@@ -1,8 +1,11 @@
 // Package config verwaltet die Anwendungskonfiguration (config.json).
 //
 // Beim Start wird nach einer config.json im Verzeichnis des Binaries gesucht.
-// Fehlt sie, wird sie mit sicheren, randomisierten Standardwerten erzeugt
-// (inkl. kryptografisch starkem JWT-Secret).
+// Fehlt sie, wird sie mit Standardwerten erzeugt. Geheimnisse stehen nicht
+// darin: Der Signaturschlüssel der Sitzungen entsteht bei jedem Start neu im
+// Speicher, der Master-Key liegt in lcm.key oder in einem systemd-Credential.
+// Ein `jwt_secret` aus älteren Fassungen wird beim Laden ignoriert und beim
+// nächsten Schreiben der Datei entfernt.
 package config
 
 import (
@@ -38,10 +41,6 @@ type Config struct {
 
 	// DatabasePath ist der Pfad zur SQLite-Datei (relativ zum Binary oder absolut).
 	DatabasePath string `json:"database_path"`
-
-	// JWTSecret signiert die Access-Tokens (HS256). Wird bei Erstellung
-	// der Datei kryptografisch zufällig generiert. Niemals einchecken!
-	JWTSecret string `json:"jwt_secret"`
 
 	// AccessTokenTTLMinutes bestimmt die Lebensdauer eines JWT in Minuten.
 	AccessTokenTTLMinutes int `json:"access_token_ttl_minutes"`
@@ -132,6 +131,17 @@ type Config struct {
 	// Header selbst setzt bzw. überschreibt - sonst ließe sich der Filter durch
 	// einen gefälschten Header umgehen.
 	TrustProxyHeader bool `json:"trust_proxy_header"`
+
+	// TrustedProxies grenzt TrustProxyHeader auf die Gegenstellen ein, die
+	// wirklich der Reverse-Proxy sind (IP-Adressen, CIDR-Bereiche oder die
+	// Schlüsselwörter "localhost"/"private"). Nur wenn die direkte
+	// TCP-Verbindung von einer dieser Adressen kommt, gilt X-Forwarded-For.
+	// Leer = jeder Peer wird geglaubt (bisheriges Verhalten; LCM warnt beim
+	// Start) - sicher ist das nur, wenn der LCM-Port ausschließlich vom Proxy
+	// erreichbar ist. Sonst gibt sich ein Client, der den Port direkt
+	// erreicht, mit einer gefälschten Kopfzeile jede beliebige Adresse: in
+	// die IP-Allowlist hinein und aus der Anmeldesperre heraus.
+	TrustedProxies []string `json:"trusted_proxies"`
 }
 
 // AccessTokenTTL liefert die Token-Lebensdauer als time.Duration.
@@ -212,9 +222,6 @@ func LoadFrom(path string) (*Config, error) {
 }
 
 func (c *Config) validate() error {
-	if len(c.JWTSecret) < 32 {
-		return fmt.Errorf("jwt_secret ist zu kurz (min. 32 Zeichen) - bitte config.json löschen und neu generieren lassen")
-	}
 	if c.Port <= 0 || c.Port > 65535 {
 		return fmt.Errorf("ungültiger Port: %d", c.Port)
 	}
@@ -247,6 +254,9 @@ func (c *Config) validate() error {
 	if _, err := netfilter.Parse(c.AllowedIPs); err != nil {
 		return fmt.Errorf("allowed_ips: %w", err)
 	}
+	if _, err := netfilter.Parse(c.TrustedProxies); err != nil {
+		return fmt.Errorf("trusted_proxies: %w", err)
+	}
 	return nil
 }
 
@@ -255,6 +265,16 @@ func (c *Config) validate() error {
 // hier nur bei programmatisch erzeugten Configs auftreten.
 func (c *Config) IPAllowlist() (netfilter.Allowlist, error) {
 	return netfilter.Parse(c.AllowedIPs)
+}
+
+// ProxyTrust baut aus trust_proxy_header und trusted_proxies die Regel, wessen
+// X-Forwarded-For geglaubt wird.
+func (c *Config) ProxyTrust() (netfilter.ProxyTrust, error) {
+	proxies, err := netfilter.Parse(c.TrustedProxies)
+	if err != nil {
+		return netfilter.ProxyTrust{}, fmt.Errorf("trusted_proxies: %w", err)
+	}
+	return netfilter.ProxyTrust{Enabled: c.TrustProxyHeader, Proxies: proxies}, nil
 }
 
 func (c *Config) save(path string) error {
@@ -276,7 +296,6 @@ func generateDefault() *Config {
 		AgentHost:                "0.0.0.0",
 		AgentPort:                9320,
 		DatabasePath:             "app.db",
-		JWTSecret:                RandomSecret(48),
 		AccessTokenTTLMinutes:    60,
 		AdminInitialPassword:     "",
 		LogLevel:                 "info",
@@ -287,6 +306,9 @@ func generateDefault() *Config {
 		// damit das Feld in einer neu erzeugten config.json sichtbar auftaucht
 		// (Auffindbarkeit des Sicherheits-Schalters).
 		AllowedIPs: []string{},
+		// Ebenfalls sichtbar leer: Wer trust_proxy_header einschaltet, soll
+		// den Schlüssel daneben stehen sehen.
+		TrustedProxies: []string{},
 	}
 }
 

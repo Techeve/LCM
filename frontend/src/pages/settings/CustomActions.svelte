@@ -79,7 +79,7 @@
     <p class="small text-body-secondary mb-0">
       {t('settings.customActions.intro')}
     </p>
-    <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew}>{t('settings.customActions.addAction')}</button>
+    <button class="btn btn-sm btn-primary text-nowrap ms-3" onclick={openNew} data-hotkey="n">{t('settings.customActions.addAction')}</button>
   </div>
 
   <div class="table-responsive">

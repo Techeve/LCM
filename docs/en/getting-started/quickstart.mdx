@@ -68,6 +68,11 @@ import { Steps } from '@astrojs/starlight/components';
      man-in-the-middle.
    - LCM creates a dedicated **service user** on the server, installs a
      **dedicated key pair** and takes a first inventory.
+   - If `sudo` is missing on the target system, LCM installs it first. Debian
+     does not ship it, and neither do the Proxmox systems built on it (VE,
+     PBS, PDM) - `/etc/sudoers.d/` is present there all the same, so an entry
+     in it would point at nothing without the program. What was installed is
+     recorded in the onboarding log.
 
 3. **Check the status and details.**
 

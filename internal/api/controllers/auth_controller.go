@@ -6,6 +6,7 @@ package controllers
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -25,19 +26,13 @@ type AuthController struct {
 	// wirkt auch bei über viele IPs verteilten Angriffen). App-weiter
 	// Singleton, da der Controller einmal pro App gebaut wird.
 	guard *loginGuard
-	// trustProxyHeader steuert, ob X-Forwarded-For die Client-IP liefert -
-	// dieselbe Quelle wie die IP-Allowlist (siehe middlewares.ClientIP).
-	trustProxyHeader bool
 }
 
-func NewAuthController(auth *services.AuthService, totp *services.TOTPService, settings *services.SettingsService, activation *services.ActivationService, guard *loginGuard, trustProxyHeader bool) *AuthController {
+func NewAuthController(auth *services.AuthService, totp *services.TOTPService, settings *services.SettingsService, activation *services.ActivationService, guard *loginGuard) *AuthController {
 	if guard == nil {
 		guard = newLoginGuard()
 	}
-	return &AuthController{
-		auth: auth, totp: totp, settings: settings, activation: activation,
-		guard: guard, trustProxyHeader: trustProxyHeader,
-	}
+	return &AuthController{auth: auth, totp: totp, settings: settings, activation: activation, guard: guard}
 }
 
 // NewLoginGuard erzeugt den app-weiten Brute-Force-Zähler. Der Router baut ihn
@@ -45,9 +40,10 @@ func NewAuthController(auth *services.AuthService, totp *services.TOTPService, s
 // prüfen - nur so greift eine Sperre endpunktübergreifend.
 func NewLoginGuard() *loginGuard { return newLoginGuard() }
 
-// clientIP liefert die maßgebliche Client-Adresse für Brute-Force-Sperren.
+// clientIP liefert die maßgebliche Client-Adresse für Brute-Force-Sperren -
+// dieselbe wie für IP-Allowlist und Protokolle (middlewares.ResolveClientIP).
 func (ctrl *AuthController) clientIP(c fiber.Ctx) string {
-	return middlewares.ClientIP(c, ctrl.trustProxyHeader)
+	return middlewares.ClientIP(c)
 }
 
 // RequestPasswordReset - POST /api/v1/auth/password-reset (öffentlich)
@@ -73,6 +69,9 @@ func (ctrl *AuthController) RequestPasswordReset(c fiber.Ctx) error {
 	if err := ctrl.activation.RequestPasswordReset(req.Email); err != nil {
 		return err
 	}
+	// Bewusst ohne die Adresse: sie gehört einem Dritten, und ob sie
+	// existiert, verrät auch das Protokoll nicht.
+	middlewares.SecurityEvent(c, "password.reset.requested")
 	return c.JSON(fiber.Map{"status": "ok"})
 }
 
@@ -142,20 +141,17 @@ func (ctrl *AuthController) Login(c fiber.Ctx) error {
 	ipKey := "ip:" + ctrl.clientIP(c)
 	userKey := "user:" + req.Username
 	if locked, retry := ctrl.guard.beginAttempt(ipKey, maxLoginFails); locked {
-		c.Set("Retry-After", retryAfterSeconds(retry))
-		return fiber.NewError(fiber.StatusTooManyRequests,
-			"zu viele fehlgeschlagene Anmeldeversuche - bitte später erneut versuchen")
+		return ctrl.loginLocked(c, retry, req.Username)
 	}
 	if locked, retry := ctrl.guard.beginAttempt(userKey, maxAccountFails); locked {
-		c.Set("Retry-After", retryAfterSeconds(retry))
-		return fiber.NewError(fiber.StatusTooManyRequests,
-			"zu viele fehlgeschlagene Anmeldeversuche - bitte später erneut versuchen")
+		return ctrl.loginLocked(c, retry, req.Username)
 	}
 
 	user, err := ctrl.auth.VerifyPassword(req.Username, req.Password)
 	if err != nil {
 		// Der Versuch ist durch beginAttempt bereits verbucht.
 		if errors.Is(err, services.ErrInvalidCredentials) || errors.Is(err, services.ErrUserInactive) {
+			middlewares.SecurityEvent(c, "login.failed", "user", req.Username)
 			return fiber.NewError(fiber.StatusUnauthorized, "ungültige Anmeldedaten")
 		}
 		return err
@@ -168,6 +164,7 @@ func (ctrl *AuthController) Login(c fiber.Ctx) error {
 		if err != nil {
 			return err
 		}
+		middlewares.SecurityEvent(c, "login.password.ok", "user", user.Username)
 		return c.JSON(fiber.Map{"twofa_required": true, "challenge": challenge})
 	}
 
@@ -184,7 +181,16 @@ func (ctrl *AuthController) Login(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	middlewares.SecurityEvent(c, "login.ok", "user", user.Username)
 	return c.JSON(fiber.Map{"token": token, "user": toProfile(user), "must_setup_2fa": mustSetup})
+}
+
+// loginLocked beantwortet einen Anmeldeversuch in laufender Sperre.
+func (ctrl *AuthController) loginLocked(c fiber.Ctx, retry time.Duration, username string) error {
+	c.Set("Retry-After", retryAfterSeconds(retry))
+	middlewares.SecurityEvent(c, "login.locked", "user", username)
+	return fiber.NewError(fiber.StatusTooManyRequests,
+		"zu viele fehlgeschlagene Anmeldeversuche - bitte später erneut versuchen")
 }
 
 type verify2FARequest struct {
@@ -206,17 +212,24 @@ func (ctrl *AuthController) LoginTOTP(c fiber.Ctx) error {
 	}
 	if locked, retry := ctrl.guard.beginAttempt(totpGuardKey(user.ID), maxLoginFails); locked {
 		c.Set("Retry-After", retryAfterSeconds(retry))
+		middlewares.SecurityEvent(c, "login.2fa.locked", "user", user.Username)
 		return fiber.NewError(fiber.StatusTooManyRequests,
 			"zu viele fehlgeschlagene 2FA-Versuche - bitte später erneut versuchen")
 	}
 	if err := ctrl.totp.Verify(user.ID, req.Code); err != nil {
+		middlewares.SecurityEvent(c, "login.2fa.failed", "user", user.Username)
 		return fiber.NewError(fiber.StatusUnauthorized, "ungültiger 2FA-Code")
 	}
 	ctrl.guard.reset(totpGuardKey(user.ID))
+	// Die Challenge ist mit diesem Schritt verbraucht. Ohne Widerruf bliebe
+	// sie bis zu ihrem Ablauf gültig - wer sie mitgelesen hat, könnte mit dem
+	// nächsten Code eine zweite Sitzung eröffnen.
+	ctrl.auth.RevokeToken(req.Challenge)
 	token, err := ctrl.auth.CompleteLogin(user)
 	if err != nil {
 		return err
 	}
+	middlewares.SecurityEvent(c, "login.ok", "user", user.Username, "second_factor", "totp")
 	return c.JSON(loginResponse{Token: token, User: toProfile(user)})
 }
 
@@ -247,6 +260,7 @@ func (ctrl *AuthController) EnableTOTP(c fiber.Ctx) error {
 	if err := ctrl.totp.Enable(user.ID, req.Code); err != nil {
 		return map2FAError(err)
 	}
+	middlewares.SecurityEvent(c, "2fa.enabled.ok", "user", user.Username)
 	return c.JSON(fiber.Map{"status": "enabled"})
 }
 
@@ -268,9 +282,13 @@ func (ctrl *AuthController) DisableTOTP(c fiber.Ctx) error {
 			"zu viele fehlgeschlagene 2FA-Versuche - bitte später erneut versuchen")
 	}
 	if err := ctrl.totp.Disable(user.ID, req.Code); err != nil {
+		if errors.Is(err, services.ErrTOTPInvalid) {
+			middlewares.SecurityEvent(c, "2fa.disable.failed", "user", user.Username)
+		}
 		return map2FAError(err)
 	}
 	ctrl.guard.reset(totpGuardKey(user.ID))
+	middlewares.SecurityEvent(c, "2fa.disabled", "user", user.Username)
 	return c.JSON(fiber.Map{"status": "disabled"})
 }
 

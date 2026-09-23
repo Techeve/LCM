@@ -183,7 +183,8 @@ Beim ersten Start entstehen im Host-Ordner `./data` die Konfiguration, die
 SQLite-Datenbank und `version.json`. Das Runtime-Image ist minimal gehärtet
 (Alpine, non-root, `read-only`, `cap_drop: ALL`). Der Container spricht standardmäßig
 HTTPS mit selbstsigniertem Zertifikat - für öffentliche Deployments einen
-Reverse-Proxy mit echtem Zertifikat davorschalten.
+Reverse-Proxy mit echtem Zertifikat davorschalten (Beispiele und was dabei
+in LCM einzustellen ist: [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/)).
 
 Details und alle Härtungs-Flags: [Docker-Betrieb](/guides/docker/) und
 [Paketierung](/reference/packaging/).
@@ -273,11 +274,11 @@ Auf dem Agent-Port liegt **nur** die Agent-Schnittstelle, auf dem UI/REST-Port
 [MCP-Schnittstelle](/guides/mcp/).
 
 :::note[Jeder Neustart beendet alle Sitzungen]
-Das JWT-Signaturmaterial wird bei jedem Start neu an ein zufälliges,
-nur-im-RAM-lebendes Instanz-Nonce gebunden. Folge: Nach einem (Neu-)Start
-sind **alle** zuvor ausgestellten Tokens ungültig - jeder muss sich neu
-anmelden. Das gilt auch bei unverändertem `jwt_secret` und deckt u.&nbsp;a.
-Rebuild, Prozess-Neustart und ein frisches Datenbank-Seeding ab.
+Das JWT-Signaturmaterial wird bei jedem Start neu erzeugt und lebt nur im
+Arbeitsspeicher; ein gespeichertes Geheimnis gibt es dafür nicht. Folge: Nach
+einem (Neu-)Start sind **alle** zuvor ausgestellten Tokens ungültig - jeder
+muss sich neu anmelden. Das deckt u.&nbsp;a. Rebuild, Prozess-Neustart und
+ein frisches Datenbank-Seeding ab.
 :::
 
 ## Erste Anmeldung

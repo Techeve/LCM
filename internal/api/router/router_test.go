@@ -88,7 +88,7 @@ func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS) (*fiber.App
 		services.NewBackupService(db, settingsRepo, t.TempDir(), ":memory:", ""), settingsRepo, servers.Connect)
 	scheduler := services.NewScheduler(groupRepo, settingsRepo, executor)
 	app := router.New(router.Deps{
-		Auth:                     services.NewAuthService(userRepo, "test-secret-mit-mindestens-32-zeichen!!", time.Hour),
+		Auth:                     services.NewAuthService(userRepo, time.Hour),
 		APIKeys:                  services.NewAPIKeyService(repositories.NewAPIKeyRepository(db)),
 		Users:                    services.NewUserService(userRepo, roleRepo),
 		Servers:                  servers,
@@ -667,5 +667,29 @@ func TestServergruppeLoeschbar(t *testing.T) {
 	// Weg.
 	if r := doRequest(t, app, "GET", fmt.Sprintf("/api/v1/server-groups/%d", created.ID), admin, ""); r.StatusCode != 404 {
 		t.Errorf("aufgelöste Gruppe muss 404 liefern, bekam %d", r.StatusCode)
+	}
+}
+
+// TestBackupRecipientGenerate: Der Endpunkt liefert ein Schlüsselpaar - der
+// private Teil genau einmal, und nur an backups:manage.
+func TestBackupRecipientGenerate(t *testing.T) {
+	app := newTestApp(t)
+	if r := doRequest(t, app, "POST", "/api/v1/system/backups/recipients/generate", "", ""); r.StatusCode != 401 {
+		t.Errorf("ohne token: erwartet 401, bekam %d", r.StatusCode)
+	}
+	admin := loginToken(t, app, "admin", "test-admin-passwort")
+	r := doRequest(t, app, "POST", "/api/v1/system/backups/recipients/generate", admin, "")
+	if r.StatusCode != 201 {
+		t.Fatalf("erwartet 201, bekam %d", r.StatusCode)
+	}
+	var body struct {
+		PublicKey  string `json:"public_key"`
+		PrivateKey string `json:"private_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(body.PublicKey, "age1") || !strings.HasPrefix(body.PrivateKey, "AGE-SECRET-KEY-1") {
+		t.Errorf("unerwartetes schlüsselpaar: %+v", body)
 	}
 }

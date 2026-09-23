@@ -6,6 +6,9 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import './styles/theme.css';
 import { mount } from 'svelte';
 import App from './App.svelte';
+import { printConsoleWarning } from './lib/consoleWarning.js';
+
+printConsoleWarning();
 
 const app = mount(App, { target: document.getElementById('app') });
 

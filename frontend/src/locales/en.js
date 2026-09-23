@@ -5,6 +5,7 @@ export default {
     title: 'Docs',
     intro: 'Short guides for working with LCM day to day.',
     empty: 'No page available in this language yet.',
+    navLabel: 'Documentation pages',
   },
   nav: {
     docs: 'Docs',
@@ -21,6 +22,7 @@ export default {
     loggedInAs: 'Signed in as',
     accountMenu: 'Account menu: {name}',
     toggleMenu: 'Toggle menu',
+    main: 'Main navigation',
   },
   // Password policy: strings for the strength meter. The problem codes come
   // from lib/passwordPolicy.js AND from the server (internal/core/services/
@@ -90,6 +92,28 @@ export default {
     status: 'Status',
     active: 'active',
     close: 'Close',
+    actions: 'Actions',
+  },
+  a11y: {
+    skipToContent: 'Skip to content',
+  },
+  hotkeys: {
+    title: 'Keyboard shortcuts',
+    openHelp: 'Show keyboard shortcuts (?)',
+    intro:
+      'Shortcuts apply while no input field has focus. Jumps are two keys in a row: first G, then the letter of the page.',
+    groupGoto: 'Go to',
+    gotoHint: 'Press G first, then the key.',
+    groupGlobal: 'Everywhere',
+    groupPage: 'On this page',
+    noPageActions: 'This page has no shortcuts of its own.',
+    help: 'Open or close this help',
+    search: 'Jump to the search field of the page',
+    save: 'Save the form',
+    escape: 'Close dialog or menu',
+    arrows: 'Move between controls in menus and tables',
+    tab: 'Next control (Shift+Tab: back)',
+    showBadges: 'Show shortcuts as badges on buttons',
   },
   severity: {
     critical: 'Critical',
@@ -585,6 +609,8 @@ export default {
     profileSaved: 'Profile saved.',
     changePassword: 'Change password',
     currentPassword: 'Current password',
+    currentPasswordForEmail: 'Current password',
+    emailNeedsPassword: 'Your email address receives password reset links - changing it therefore requires your current password.',
     twofaCode: '2FA code',
     sixDigit: '6 digits',
     passwordChanged: 'Password changed. Please sign in again with the new password.',
@@ -1087,6 +1113,7 @@ export default {
   },
   settings: {
     title: 'Settings',
+    navLabel: 'Settings sections',
     noPages: 'No settings pages are available for your role.',
     security: {
       title: 'Security',
@@ -1235,6 +1262,7 @@ export default {
       mcp: 'MCP (AI agents)',
       general: 'General',
       security: 'Security',
+      events: 'Events',
       repositories: 'Repositories',
       apps: 'Applications',
       aptCache: 'APT cache',
@@ -1784,16 +1812,30 @@ export default {
       dirHint: 'Pre-filled with the default directory. Clearing and saving restores the default.',
       passOk: 'Passphrase set',
       passOkHint:
-        'LCM_BACKUP_PASSPHRASE is present in the environment - automatic backups are ready to run.',
-      passMissing: 'Passphrase missing',
+        'A passphrase is configured (settings, environment or credential) - automatic backups are ready to run.',
+      passMissing: 'Key missing',
       passMissingBody:
-        'Automatic backups CANNOT run: every backup is encrypted with a passphrase, and an unattended backup cannot prompt for it. Provide it below in the "Passphrase for scheduled backups" field (stored encrypted) - or alternatively as the environment variable LCM_BACKUP_PASSPHRASE for the LCM service, e.g. as a systemd drop-in:',
+        'Automatic backups CANNOT run: every backup is encrypted, and an unattended backup cannot prompt for anything. Provide recipient keys below (recommended - no secret stays on the server) or a passphrase in the "Passphrase for scheduled backups" field (stored encrypted) - or the environment variable LCM_BACKUP_PASSPHRASE for the LCM service, e.g. as a systemd drop-in:',
       passMissingOutro:
         'Then restart the service (systemctl daemon-reload && systemctl restart lcm). Manual backups keep working - the form prompts for the passphrase.',
+      recipientsOk: 'Recipient keys set',
+      recipientsOkHint:
+        'Backups are encrypted to the configured public keys - no secret is kept on the server for this.',
+      recipientsLabel: 'Recipient keys (age, one per line)',
+      recipientsHint:
+        'Public X25519 keys in age format (age1…). If any are set, LCM encrypts every scheduled backup to them instead of using the passphrase; restoring requires the private key of one recipient, which never lives on the server. Empty = passphrase.',
+      generateRecipient: 'Generate key pair',
+      generatedBold: 'Save the private key now.',
+      generatedBody:
+        ' It is shown this one time only and stored nowhere - password manager, vault, two people. Without it, no backup encrypted to it can be opened again.',
+      generatedOutro: 'The public key is already in the list above - it takes effect with "Save".',
+      colEncryption: 'Encryption',
+      encRecipients: 'Recipient keys',
+      encPassphrase: 'Passphrase',
       passLabel: 'Passphrase for scheduled backups',
       passUnchanged: '•••••• (unchanged)',
       passHint:
-        'Encrypts every automatic backup; stored AES-encrypted. Leave empty = unchanged. Without a passphrase (here or LCM_BACKUP_PASSPHRASE), automatic backups cannot be enabled.',
+        'Used only when no recipient keys are set; stored AES-encrypted. Leave empty = unchanged. Without recipient keys and without a passphrase (here or LCM_BACKUP_PASSPHRASE), automatic backups cannot be enabled.',
       autoRestartLabel: 'Automatically restart after a restore',
       autoRestartHintA:
         'Only useful under a process supervisor (systemd/Docker). If the switch is off, a restore stays prepared and is applied on the next start. ',
@@ -1812,7 +1854,7 @@ export default {
       restoreWarnBold: 'Warning:',
       restoreWarn:
         ' The restore replaces the entire database, master key and configuration with the state of this backup. The current state is lost.',
-      restorePassPlaceholder: 'Backup passphrase',
+      restorePassPlaceholder: 'Passphrase or private age key',
       confirmRestore: 'Confirm restore',
       noBackups: 'No backups yet.',
       fromFile: 'Restore from file',

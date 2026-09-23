@@ -3,6 +3,7 @@ module LCM
 go 1.27.1
 
 require (
+	filippo.io/age v1.3.2
 	github.com/alexedwards/argon2id v1.0.0
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/fasthttp/websocket v1.5.12
@@ -19,6 +20,7 @@ require (
 )
 
 require (
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/glebarez/go-sqlite v1.23.0 // indirect

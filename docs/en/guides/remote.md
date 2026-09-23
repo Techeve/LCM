@@ -237,9 +237,13 @@ things still have to be set:
 - **`public_base_url`** under *Settings → General*. Activation and reset links
   are built from it - without it they point at the internal address nobody can
   reach from outside.
-- Pass **`X-Forwarded-For`** through and enable *behind a trusted reverse
-  proxy* in LCM, otherwise the IP allowlist and the failed-login lockout only
-  ever see the proxy's address.
+- Pass **`X-Forwarded-For`** through and set `trust_proxy_header` in LCM
+  **together with** `trusted_proxies` (the proxy's address), otherwise the IP
+  allowlist and the failed-login lockout only ever see the proxy's address.
+  This applies to the agent port too: its throttle against connection floods
+  counts per client address - behind a proxy without the list all agents would
+  share one quota. Everything else about the UI behind the proxy:
+  [Reverse proxy & external hardening](/en/guides/reverse-proxy/).
 
 ### Checking that it holds
 

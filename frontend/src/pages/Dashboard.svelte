@@ -146,7 +146,7 @@
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
     <h1 class="h3 mb-0">{t('dashboard.title')}</h1>
     {#if auth.can('servers:write')}
-      <a class="btn btn-primary" href="/servers/join" use:link>{t('dashboard.addServer')}</a>
+      <a class="btn btn-primary" href="/servers/join" use:link data-hotkey="n">{t('dashboard.addServer')}</a>
     {/if}
   </div>
 
@@ -191,7 +191,7 @@
         <div class="row g-2 align-items-end">
           <div class="col-12 col-md-3">
             <label class="form-label small mb-1" for="f-name">{t('dashboard.filterName')}</label>
-            <input id="f-name" class="form-control form-control-sm" placeholder={t('dashboard.searchName')} bind:value={filters.name} oninput={applyFilters} />
+            <input id="f-name" class="form-control form-control-sm" placeholder={t('dashboard.searchName')} bind:value={filters.name} oninput={applyFilters} data-hotkey="/" />
           </div>
           <div class="col-12 col-md-2">
             <label class="form-label small mb-1" for="f-host">{t('dashboard.filterHost')}</label>
@@ -236,8 +236,11 @@
           </thead>
           <tbody>
             {#each pageItems as s (s.id)}
-              <tr style:opacity={offlineDimmed(s) ? 0.5 : null} class:table-active={offlineDimmed(s)}>
-                <td><a href={`/servers/${s.id}`} use:link class="fw-semibold text-decoration-none">{s.name}</a></td>
+              <!-- Tolerierte Ausfälle treten zurück: gedämpfter Name statt
+                   halb durchsichtiger Zeile - die bliebe für schwache Augen
+                   und Screenreader-Nutzer mit Restsehen unlesbar. -->
+              <tr class:table-active={offlineDimmed(s)}>
+                <td><a href={`/servers/${s.id}`} use:link class="fw-semibold text-decoration-none {offlineDimmed(s) ? 'link-secondary' : ''}">{s.name}</a></td>
                 <td class="text-body-secondary">
                   {#if s.transport === 'agent'}
                     <span class="badge text-bg-info" title={t('dashboard.agentTitle')}>{@html icons.link} {t('dashboard.agentBadge')}</span>

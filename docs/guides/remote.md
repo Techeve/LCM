@@ -245,9 +245,13 @@ WebSocket-Sonderbehandlung. Zwei Dinge gehören trotzdem eingestellt:
 - **`public_base_url`** unter *Einstellungen → Allgemein*. Aktivierungs- und
   Rücksetz-Links werden daraus gebaut - ohne die Angabe zeigen sie auf die
   interne Adresse, die von außen niemand erreicht.
-- **`X-Forwarded-For`** durchreichen und in LCM den Schalter *hinter
-  vertrauenswürdigem Reverse-Proxy* setzen, sonst sieht die IP-Allowlist und
-  die Sperre nach Fehlversuchen nur die Adresse des Proxys.
+- **`X-Forwarded-For`** durchreichen und in LCM `trust_proxy_header` setzen
+  **samt** `trusted_proxies` (die Adresse des Proxys), sonst sieht die
+  IP-Allowlist und die Sperre nach Fehlversuchen nur die Adresse des Proxys.
+  Das gilt auch für den Agent-Port: Seine Bremse gegen Verbindungsfluten zählt
+  je Client-Adresse - hinter einem Proxy ohne die Liste teilten sich alle
+  Agents ein Kontingent. Alles Weitere zur Oberfläche hinter dem Proxy:
+  [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/).
 
 ### Prüfen, ob es trägt
 

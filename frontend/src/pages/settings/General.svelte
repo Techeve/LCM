@@ -121,7 +121,7 @@
           </p>
           {#if settings.onboarding_pub_key}
             <div class="input-group input-group-sm">
-              <input class="form-control font-monospace" style="font-size: .8rem" readonly value={settings.onboarding_pub_key} />
+              <input class="form-control font-monospace" style="font-size: .8rem" readonly value={settings.onboarding_pub_key} aria-label={t('settings.general.onboardingKeyTitle')} />
               <button type="button" class="btn btn-outline-secondary" onclick={copyOnboardingKey}>{copied ? t('settings.general.copied') : t('common.copy')}</button>
             </div>
           {:else}
@@ -285,7 +285,7 @@
         </div>
       </div>
 
-      <button class="btn btn-primary">{t('common.save')}</button>
+      <button class="btn btn-primary" data-hotkey="mod+s">{t('common.save')}</button>
     </form>
   {/if}
 </SettingsLayout>

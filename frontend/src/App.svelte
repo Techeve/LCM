@@ -12,6 +12,10 @@
   import './stores/theme.svelte.js';
   import Navbar from './components/Navbar.svelte';
   import Toasts from './components/Toasts.svelte';
+  import HotkeyHelp from './components/HotkeyHelp.svelte';
+  // Der Tastatur-Handler (Sprünge, Seitenkürzel, Pfeiltasten) hängt sich
+  // beim Laden an das Dokument - siehe lib/hotkeys.svelte.js.
+  import { hotkeys } from './lib/hotkeys.svelte.js';
   import Login from './pages/Login.svelte';
   import LinuxActivate from './pages/LinuxActivate.svelte';
   import Docs from './pages/Docs.svelte';
@@ -100,6 +104,41 @@
   // Inhalt sanft ein; Navigation INNERHALB eines Bereichs (z.B. zwischen
   // Einstellungs-Unterseiten oder Server-Details) bleibt ohne Effekt.
   let section = $derived('/' + (router.location.split('/')[1] ?? ''));
+
+  // Weniger Bewegung, wenn das System es wünscht: dann kein Einblenden.
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const flyIn = { y: reducedMotion ? 0 : 12, duration: reducedMotion ? 0 : 220 };
+
+  // Seitenwechsel für Screenreader und Tastatur: Der Fenstertitel nennt die
+  // Seite, eine Live-Region sagt sie an, und der Fokus springt in den
+  // Inhalt - sonst bleibt er nach dem Klick im Menü stehen und die neue
+  // Seite wird nie vorgelesen. Beim allerersten Laden bleibt der Fokus, wo
+  // der Browser ihn hinsetzt.
+  let mainEl = $state(null);
+  let announced = $state('');
+  let firstRoute = true;
+  $effect(() => {
+    const loc = router.location;
+    const initial = firstRoute;
+    firstRoute = false;
+    // Die Seite rendert erst nach dem Routenwechsel - kurz warten, dann die
+    // Überschrift lesen.
+    const timer = setTimeout(() => {
+      const heading = mainEl?.querySelector('h1')?.textContent?.trim();
+      document.title = heading ? `${heading} · LCM` : 'LCM';
+      announced = heading ?? '';
+      if (!initial && mainEl) {
+        mainEl.focus({ preventScroll: true });
+        window.scrollTo({ top: 0 });
+      }
+    }, 80);
+    return () => clearTimeout(timer);
+  });
+
+  function skipToContent(e) {
+    e.preventDefault();
+    mainEl?.focus();
+  }
 
   // ===========================================================================
   // IMPRESSUM - fest eincodiert. HIER die eigenen Angaben eintragen.
@@ -311,9 +350,12 @@
   }
 </script>
 
+<a class="skip-link" href="#main" onclick={skipToContent} data-testid="skip-link">{t('a11y.skipToContent')}</a>
 <Navbar />
 <!-- Meldungs-Region: fest positioniert, daher hier einmal global gemountet. -->
 <Toasts />
+<HotkeyHelp />
+<div class="visually-hidden" aria-live="polite" data-testid="route-announcer">{announced}</div>
 {#if newBuildFound}
   <!-- Auch ohne Login: Die veraltete Oberfläche betrifft jeden, der die Seite
        gerade offen hat - der Anmeldebildschirm eingeschlossen. -->
@@ -402,7 +444,7 @@
     </div>
   </div>
 {/if}
-<main class="pb-5">
+<main class="pb-5" id="main" tabindex="-1" bind:this={mainEl}>
   {#if router.location.startsWith('/linux-aktivierung')}
     <!-- Öffentliche Self-Service-Aktivierung: auch ohne Login erreichbar. -->
     <LinuxActivate />
@@ -418,7 +460,7 @@
     <Login />
   {:else}
     {#key section}
-      <div in:fly={{ y: 12, duration: 220 }}>
+      <div in:fly={flyIn}>
         <Router {routes} />
       </div>
     {/key}
@@ -441,6 +483,15 @@
   <span data-testid="app-version">LCM v{sysInfo?.version ?? '…'} (Build {sysInfo?.build ?? '…'}{sysInfo?.commit ? `, ${sysInfo.commit}` : ''}){sysInfo ? ` - ${sysInfo.platform}` : ''}</span>
   {#if sysInfo?.dirty}
     <span class="badge text-bg-warning ms-1" title={t('footer.dirtyBuildHint')}>{t('footer.dirtyBuild')}</span>
+  {/if}
+  {#if auth.isLoggedIn}
+    <span class="mx-1">·</span>
+    <button
+      type="button"
+      class="btn btn-link btn-sm text-body-secondary text-decoration-none p-0 align-baseline"
+      data-testid="footer-hotkeys"
+      onclick={() => (hotkeys.helpOpen = true)}
+    >{t('hotkeys.title')} <kbd>?</kbd></button>
   {/if}
 
   {#if showImprint}

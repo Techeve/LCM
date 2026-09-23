@@ -3,6 +3,7 @@ package controllers
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -52,6 +53,9 @@ func (ctrl *APIKeyController) Create(c fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest,
 			"ungültiger Request-Body (erlaubte Felder: name, scope, expires_in_days): "+err.Error())
 	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"scope", req.Scope, maxNameLen}); err != nil {
+		return err
+	}
 	if req.Name == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
 	}
@@ -72,6 +76,7 @@ func (ctrl *APIKeyController) Create(c fiber.Ctx) error {
 	if err != nil {
 		return mapServiceError(err)
 	}
+	middlewares.SecurityEvent(c, "apikey.created", "by", user.Username, "prefix", key.Prefix, "scope", key.Scope)
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"key":     plaintext, // einmalige Anzeige!
 		"api_key": key,
@@ -87,5 +92,6 @@ func (ctrl *APIKeyController) Revoke(c fiber.Ctx) error {
 	if err := ctrl.apiKeys.Revoke(id, actor(c)); err != nil {
 		return mapServiceError(err)
 	}
+	middlewares.SecurityEvent(c, "apikey.revoked", "by", actor(c), "key_id", strconv.FormatUint(uint64(id), 10))
 	return c.SendStatus(fiber.StatusNoContent)
 }
