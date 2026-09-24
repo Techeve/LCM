@@ -1255,6 +1255,9 @@ export default {
       logIntroEm: 'Schedules',
       logIntroB: ').',
       retentionDays: 'Aufbewahrung (Tage)',
+      routineRetentionDays: 'Routine-Protokolle (Tage)',
+      routineRetentionHint:
+        'Health-Checks und Alarm-Auswertungen laufen alle paar Minuten. Ihre Ausgaben werden schon nach dieser Frist entfernt; dass der Lauf stattfand, wann und mit welchem Ergebnis, bleibt bis zur allgemeinen Aufbewahrung sichtbar.',
       storageTitle: 'Speicher-Verlauf',
       storageIntro:
         'Der Health-Check misst die Festplattenbelegung stündlich und speichert je Tag einen Durchschnitt. Diese Tages-Snapshots werden nach der eingestellten Frist automatisch bereinigt (zusammen mit der Log-Bereinigung).',

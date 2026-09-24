@@ -147,16 +147,23 @@
 
 <style>
   /* Fester Rahmen mit eigenem Hintergrund: xterm zeichnet auf Canvas und
-     braucht eine Fläche, die nicht mit dem Seitenthema wackelt. */
+     braucht eine Fläche, die nicht mit dem Seitenthema wackelt.
+
+     Die Höhe MUSS fest sein. Mit bloßer Mindesthöhe schaukelte sich die
+     Größe auf: Der ResizeObserver ruft fit(), xterm füllt den Rahmen mit
+     Zeilen, der Rahmen wächst mit - und die Konsole lief endlos nach unten.
+     Fest und am Bildschirm bemessen (abzüglich Dialogkopf, Hinweis und
+     Rändern) passt der Dialog in das Fenster; was darüber hinausgeht,
+     scrollt xterm in seinem Rücklauf. */
   .terminal-host {
-    min-height: 26rem;
+    height: clamp(12rem, calc(100dvh - 18rem), 40rem);
     background: #0a0b0e;
     border-radius: 4px;
     padding: 0.5rem;
     overflow: hidden;
   }
   .terminal-host.is-idle {
-    min-height: 6rem;
+    height: 6rem;
     opacity: 0.35;
   }
 </style>

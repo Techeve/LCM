@@ -593,7 +593,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		provService, backupService, settingsRepo, serverService.Connect).
 		WithRecorder(sshRecorder).WithCustomActions(customActionRepo).WithScanner(cveScanner).
 		WithRegistry(registry.New()).
-		WithAlerts(alertService).WithProfiles(profileRepo).WithApps(appService)
+		WithAlerts(alertService).WithProfiles(profileRepo).WithApps(appService).
+		WithCompactor(func() (string, error) {
+			res, err := storage.CompactDatabase(db, func() (uint64, bool) { return storage.FreeDiskBytes(dataDir) })
+			return res.String(), err
+		})
 	scheduler := services.NewScheduler(groupRepo, settingsRepo, executor)
 	// Nach Container-/Image-Updates die Docker-CVE-Bewertung sofort
 	// auffrischen: der zentrale Docker-Check läuft als eigener System-Job.

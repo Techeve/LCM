@@ -5468,6 +5468,10 @@ paths:
                   type: integer
                 log_retention_days:
                   type: integer
+                routine_log_retention_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 3650
                 storage_history_retention_days:
                   type: integer
                 backup_enabled:

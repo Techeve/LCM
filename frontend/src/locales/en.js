@@ -1251,6 +1251,9 @@ export default {
       logIntroEm: 'Schedules',
       logIntroB: ').',
       retentionDays: 'Retention (days)',
+      routineRetentionDays: 'Routine logs (days)',
+      routineRetentionHint:
+        'Health checks and alert evaluations run every few minutes. Their output is removed after this period already; the record that the run took place, when and with which result, stays visible until the general retention.',
       storageTitle: 'Storage history',
       storageIntro:
         'The health check measures disk usage hourly and stores a daily average. These daily snapshots are automatically cleaned up after the configured period (together with the log cleanup).',

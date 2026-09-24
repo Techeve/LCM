@@ -450,6 +450,8 @@ Verschlüsselt gespeichert werden u.&nbsp;a. (vollständige Liste in `internal/s
 
 Großvolumige Konsolen-Ausgaben (Job-/SSH-Output) sowie der Server-Host/-Name laufen über einen GORM-Serializer (`aesgcm`); der Servername trägt zusätzlich einen aus dem Master-Key abgeleiteten **Blindindex** für die Suche, ohne den Klartext zu speichern.
 
+Werte ab 512 Byte komprimiert der Serializer **vor** dem Verschlüsseln mit zstd - verschlüsselte Daten lassen sich hinterher nicht mehr komprimieren, und Konsolen-Ausgaben schrumpfen dabei auf etwa ein Sechstel. Der Preis: Die Länge eines Werts verrät etwas über seinen Inhalt. Ausnutzbar ist das nach dem Muster von CRIME/BREACH nur, wenn ein Angreifer eigenen Text neben ein Geheimnis in **dasselbe** Feld bringt und die Länge wiederholt beobachten kann. Konsolen-Ausgaben werden vor dem Speichern redigiert und liegen at rest; ein solcher Beobachtungskanal besteht nicht.
+
 **Rotation:** Das Unterkommando `lcm rotate-db-key` erzeugt einen neuen Master-Key und verschlüsselt alle registrierten Felder in **einer** Transaktion neu - die DB bleibt nie in einem gemischten Zustand. Der Blindindex des Servernamens wird dabei mit dem neuen Schlüssel neu berechnet. Neu eingeführte verschlüsselte Spalten müssen in `encryptedColumns` (bzw. `serializerColumns`) registriert werden, damit die Rotation sie erfasst.
 
 ## LCM Remote (Agent-Listener)

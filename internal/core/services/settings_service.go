@@ -362,6 +362,7 @@ type GlobalSettingsInput struct {
 	DefaultSSHPassword          *string // nil/leer = unverändert
 	DefaultSSHPort              *int
 	LogRetentionDays            *int
+	RoutineLogRetentionDays     *int
 	StorageHistoryRetentionDays *int
 	BackupEnabled               *bool
 	BackupIntervalHours         *int
@@ -459,6 +460,13 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		}
 		settings.LogRetentionDays = *in.LogRetentionDays
 		touch("log_retention_days")
+	}
+	if in.RoutineLogRetentionDays != nil {
+		if err := validateRange(*in.RoutineLogRetentionDays, 1, 3650, "routine_log_retention_days"); err != nil {
+			return nil, err
+		}
+		settings.RoutineLogRetentionDays = *in.RoutineLogRetentionDays
+		touch("routine_log_retention_days")
 	}
 	if in.StorageHistoryRetentionDays != nil {
 		settings.StorageHistoryRetentionDays = domain.ClampStorageHistoryRetention(*in.StorageHistoryRetentionDays)

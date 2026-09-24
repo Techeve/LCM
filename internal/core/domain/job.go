@@ -36,6 +36,18 @@ const (
 	JobStatusAborted = "aborted"
 )
 
+// RoutineJobTypes sind die Job-Typen, deren Ausgabe nur kurz aufbewahrt wird
+// (GlobalSettings.RoutineLogRetentionDays).
+var RoutineJobTypes = []string{RuleTypeHealth, RuleTypeAlertCheck}
+
+// HealthCheckPurpose ist der Zweck der SSH-Sitzungen des Health-Pings - stabil,
+// unabhängig vom frei umbenennbaren Regelnamen.
+const HealthCheckPurpose = "health-check"
+
+// RoutineOutputRemoved ersetzt die Ausgabe eines Routine-Jobs nach Ablauf
+// seiner Frist.
+const RoutineOutputRemoved = "(Ausgabe entfernt - Routine-Protokolle werden nur kurz aufbewahrt, siehe Einstellungen → Allgemein)"
+
 // Job protokolliert JEDE Ausführung - Cronjob, Rule, manuelle Aktion -
 // permanent in der Datenbank (Protokollierungspflicht). Der exakte
 // Konsolen-Output (Stdout/Stderr) der SSH-Ausführung wird in Output

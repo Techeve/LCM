@@ -153,6 +153,33 @@ Geheimnisse liegen nie im Klartext in der DB. Zwei Muster:
 
 Der Schlüssel dafür ist der **Master-Key** (`lcm.key`, außerhalb der DB). Neue verschlüsselte Spalten **müssen** in `rotate.go` registriert werden, sonst erfasst sie das Rotations-Kommando `lcm rotate-db-key` nicht. Hintergrund und vollständige Liste: [Sicherheitsmodell](/reference/security-model/).
 
+## Größe, Aufbewahrung und Verdichtung
+
+Den Großteil der Datenbank machen die Protokolle aus: Job-Ausgaben und die
+Kommandos der SSH-Sitzungen. Drei Mechanismen halten das klein:
+
+- **Kompression vor der Verschlüsselung.** Der Serializer `aesgcm` packt
+  Werte ab 512 Byte mit zstd, bevor er sie verschlüsselt
+  (`internal/storage/fieldpack.go`). Erkennbar ist ein gepackter Wert an der
+  zstd-Magic `28 B5 2F FD` am Anfang des Klartexts; Altbestand ohne sie wird
+  unverändert gelesen.
+- **Kurze Frist für Routine-Protokolle.** Health-Check und Alarm-Auswertung
+  laufen alle paar Minuten. Nach `routine_log_retention_days` (Standard 7)
+  ersetzt die Log-Bereinigung ihre Ausgabe durch einen Hinweis und löscht die
+  Kommandos der Health-Check-Sitzungen. Einträge und Sitzungen selbst bleiben
+  bis `log_retention_days` (Standard 90) stehen.
+- **Verdichtung im nächtlichen Bereinigungslauf** (`storage.CompactDatabase`).
+  Einmalig komprimiert sie den Altbestand aus der Zeit vor der Kompression
+  nach: in Schritten von 200 Zeilen, damit das WAL klein bleibt. Der
+  abgeschlossene Durchgang steht als `pack-log-fields` in
+  `update_migrations`. Danach läuft `VACUUM`, sobald mindestens ein Viertel
+  der Seiten frei ist - vorausgesetzt, das Datenverzeichnis hat Platz für das
+  Doppelte der Nutzdaten. Ohne `VACUUM` schrumpft eine SQLite-Datei nie, auch
+  wenn die Bereinigung Zeilen löscht.
+
+Während `VACUUM` ist die Datenbank gesperrt; der Lauf um 03:30 liegt deshalb
+im ruhigen Fenster. Bei einigen GB dauert das Sekunden bis wenige Minuten.
+
 ## Repository-Pattern
 
 Alle GORM-Aufrufe leben in `internal/storage/repositories/`. Ein Repository pro Aggregat:

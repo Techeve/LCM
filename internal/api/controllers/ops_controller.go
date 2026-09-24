@@ -692,6 +692,7 @@ type globalSettingsRequest struct {
 	DefaultSSHPassword          *string `json:"default_ssh_password"`
 	DefaultSSHPort              *int    `json:"default_ssh_port"`
 	LogRetentionDays            *int    `json:"log_retention_days"`
+	RoutineLogRetentionDays     *int    `json:"routine_log_retention_days"`
 	StorageHistoryRetentionDays *int    `json:"storage_history_retention_days"`
 	BackupEnabled               *bool   `json:"backup_enabled"`
 	BackupIntervalHours         *int    `json:"backup_interval_hours"`
@@ -744,6 +745,7 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		DefaultSSHPassword:          req.DefaultSSHPassword,
 		DefaultSSHPort:              req.DefaultSSHPort,
 		LogRetentionDays:            req.LogRetentionDays,
+		RoutineLogRetentionDays:     req.RoutineLogRetentionDays,
 		StorageHistoryRetentionDays: req.StorageHistoryRetentionDays,
 		BackupEnabled:               req.BackupEnabled,
 		BackupIntervalHours:         req.BackupIntervalHours,

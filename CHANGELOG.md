@@ -1,59 +1,32 @@
 # Changelog
 
-## v1.42.3-beta.1 - 2026-09-19
-
-### 🐛 Bugfixes
-
-- **ui**: abgelaufene Sitzung nicht erst zum Server schicken (fba23c86)
-
-## v1.42.2-beta.1 - 2026-09-14
-
-### 🐛 Bugfixes
-
-- **ui**: Tastenkürzel gelten nur in der angemeldeten Oberfläche (9e8ee0f9)
-
-## v1.42.1-beta.1 - 2026-09-13
-
-### 🐛 Bugfixes
-
-- **onboarding**: fehlendes sudo selbst nachinstallieren statt die Aufnahme abzubrechen (b34e78e7)
-
-## v1.42.0-beta.1 - 2026-09-11
+## v1.43.0-beta.1 - 2026-09-24
 
 ### 🚀 Features
 
-- **ui**: Barrierefreiheit und Tastaturbedienung - Kontraste, Screenreader, Tastenkürzel mit Hilfe (89e1fe4e)
+- **storage**: Protokolle komprimieren, Routine-Ausgaben kurz aufbewahren, Datenbank verdichten (c0bfb472)
 
-## v1.41.0-beta.1 - 2026-09-10
+### 🐛 Bugfixes
 
-### 🚀 Features
+- **ui**: Web-Konsole wächst nicht mehr über den Bildschirm hinaus (fe596785)
 
-- **security**: Schlüssel aus dem Datenverzeichnis holen - Credentials, kein jwt_secret, Empfänger-Backups (29cdf536)
-
-## v1.40.0-beta.1 - 2026-09-09
+## v1.42.3 - 2026-09-23
 
 ### 🚀 Features
 
 - **backup**: Reste abgebrochener Sicherungsläufe selbst wegräumen (7b86dbd6)
-
-## v1.39.1-beta.1 - 2026-09-09
-
-### 🐛 Bugfixes
-
-- **packaging**: Upgrade hebt die Einschränkung des LCM-Hosts nicht mehr auf (73d625ff)
-
-## v1.39.0-beta.1 - 2026-09-09
-
-### 🚀 Features
-
 - **security**: Empfehlungen der Sicherheitsanalyse umgesetzt - Helper statt NOPASSWD:ALL, Rechte-Wächter, Eingabegrenzen (2859da5f)
+- **security**: Schlüssel aus dem Datenverzeichnis holen - Credentials, kein jwt_secret, Empfänger-Backups (29cdf536)
+- **ui**: Barrierefreiheit und Tastaturbedienung - Kontraste, Screenreader, Tastenkürzel mit Hilfe (89e1fe4e)
 - **ui**: Warnung in der Browser-Konsole gegen Self-XSS (4ce6fca0)
 
-## v1.38.1-beta.1 - 2026-09-09
-
 ### 🐛 Bugfixes
 
+- **onboarding**: fehlendes sudo selbst nachinstallieren statt die Aufnahme abzubrechen (b34e78e7)
+- **packaging**: Upgrade hebt die Einschränkung des LCM-Hosts nicht mehr auf (73d625ff)
 - **security**: Sicherheitsanalyse Runde 1 - Sichtbereich, Proxy-Vertrauen, Re-Auth, Einmal-TOTP (abb21d57)
+- **ui**: Tastenkürzel gelten nur in der angemeldeten Oberfläche (9e8ee0f9)
+- **ui**: abgelaufene Sitzung nicht erst zum Server schicken (fba23c86)
 
 ### 🔧 Sonstiges
 

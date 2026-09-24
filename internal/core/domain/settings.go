@@ -20,6 +20,13 @@ type GlobalSettings struct {
 	// Log Retention: Job-Historien und Konsolen-Outputs werden nach
 	// dieser Frist automatisch gelöscht (0 = nie).
 	LogRetentionDays int `gorm:"default:90" json:"log_retention_days"`
+	// Routine-Protokolle (Health-Check, Alarm-Auswertung) laufen je Server
+	// alle paar Minuten und sagen nach wenigen Tagen nichts mehr. Ihre
+	// Ausgaben werden nach dieser Frist entfernt; der Eintrag selbst - dass
+	// der Lauf stattfand, wann und mit welchem Ergebnis - bleibt bis zur
+	// allgemeinen Frist stehen. Erlaubt sind 1-3650 Tage; eine 0 ersetzte der
+	// gorm-Default beim Anlegen stillschweigend durch 7.
+	RoutineLogRetentionDays int `gorm:"default:7" json:"routine_log_retention_days"`
 
 	// Speicher-Verlauf: Aufbewahrung der täglichen Festplatten-Snapshots
 	// (Tagesdurchschnitte). Über die UI einstellbar, wird auf 90-365 Tage

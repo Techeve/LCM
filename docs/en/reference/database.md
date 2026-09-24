@@ -153,6 +153,32 @@ Secrets are never stored in plaintext in the DB. Two patterns:
 
 The key for this is the **master key** (`lcm.key`, outside the DB). New encrypted columns **must** be registered in `rotate.go`, otherwise the rotation command `lcm rotate-db-key` will not cover them. Background and full list: [Security model](/en/reference/security-model/).
 
+## Size, retention and compaction
+
+Logs make up most of the database: job output and the commands of SSH
+sessions. Three mechanisms keep them small:
+
+- **Compression before encryption.** The `aesgcm` serializer compresses
+  values of 512 bytes and more with zstd before encrypting them
+  (`internal/storage/fieldpack.go`). A compressed value is recognised by the
+  zstd magic `28 B5 2F FD` at the start of the plaintext; existing values
+  without it are read unchanged.
+- **Short retention for routine logs.** Health checks and alert evaluations
+  run every few minutes. After `routine_log_retention_days` (default 7), log
+  cleanup replaces their output with a note and deletes the commands of the
+  health-check sessions. The records and sessions themselves stay until
+  `log_retention_days` (default 90).
+- **Compaction in the nightly cleanup run** (`storage.CompactDatabase`). Once,
+  it compresses the existing data from before compression was introduced, in
+  steps of 200 rows so the WAL stays small. The completed pass is recorded as
+  `pack-log-fields` in `update_migrations`. After that, `VACUUM` runs as soon
+  as at least a quarter of the pages is free - provided the data directory
+  has room for twice the payload. Without `VACUUM`, an SQLite file never
+  shrinks, even when cleanup deletes rows.
+
+The database is locked during `VACUUM`; the 03:30 run therefore sits in the
+quiet window. With a few GB this takes seconds to a few minutes.
+
 ## Repository pattern
 
 All GORM calls live in `internal/storage/repositories/`. One repository per aggregate:

@@ -434,6 +434,8 @@ Stored encrypted are, among others (full list in `internal/storage/rotate.go`):
 
 Large console output (job/SSH output) as well as the server host/name go through a GORM serializer (`aesgcm`); the server name additionally carries a **blind index** derived from the master key for searching without storing the plaintext.
 
+Values of 512 bytes and more are compressed with zstd **before** encryption - encrypted data cannot be compressed afterwards, and console output shrinks to about a sixth. The price: the length of a value reveals something about its content. Following the CRIME/BREACH pattern, this is only exploitable if an attacker can place their own text next to a secret in the **same** field and observe the length repeatedly. Console output is redacted before storage and kept at rest; no such observation channel exists.
+
 **Rotation:** the subcommand `lcm rotate-db-key` generates a new master key and re-encrypts all registered fields in **one** transaction - the DB never ends up in a mixed state. The server-name blind index is recomputed with the new key. Newly introduced encrypted columns must be registered in `encryptedColumns` (or `serializerColumns`) so that rotation picks them up.
 
 ## LCM Remote (agent listener)

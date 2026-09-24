@@ -525,6 +525,12 @@ func (s *JobService) CleanupOlderThan(days int) (int64, error) {
 	return s.jobs.DeleteOlderThan(cutoff)
 }
 
+// ReplaceRoutineOutputOlderThan entfernt die Ausgaben der Routine-Jobs
+// (Health-Check, Alarm-Auswertung) nach ihrer kurzen Frist.
+func (s *JobService) ReplaceRoutineOutputOlderThan(cutoff time.Time) (int64, error) {
+	return s.jobs.ReplaceOutputOlderThan(domain.RoutineJobTypes, cutoff, domain.RoutineOutputRemoved)
+}
+
 // RunningForServer liefert den aktuell laufenden Job eines Servers (nil,
 // wenn keiner läuft) - für die Laufender-Job-Anzeige im Server-Detail.
 func (s *JobService) RunningForServer(serverID uint) (*domain.Job, error) {

@@ -194,6 +194,20 @@ func (r *JobRepository) FindRunning() ([]domain.Job, error) {
 	return jobs, err
 }
 
+// ReplaceOutputOlderThan ersetzt die Ausgabe abgeschlossener Jobs der
+// genannten Typen, die vor cutoff angelegt wurden, durch note. Der Eintrag
+// selbst bleibt stehen.
+//
+// note wird bewusst UNVERSCHLÜSSELT geschrieben: Er ist ein fester Hinweis
+// ohne Inhalt, den der Serializer als Klartext liest - und nur so lässt sich
+// ein bereits ersetzter Eintrag im WHERE erkennen. Sonst schriebe jeder
+// nächtliche Lauf alle Routine-Jobs der letzten Wochen erneut.
+func (r *JobRepository) ReplaceOutputOlderThan(types []string, cutoff time.Time, note string) (int64, error) {
+	res := r.db.Exec("UPDATE jobs SET output = ? WHERE type IN ? AND created_at < ? AND status NOT IN ? AND output != '' AND output != ?",
+		note, types, cutoff, []string{domain.JobStatusPending, domain.JobStatusRunning}, note)
+	return res.RowsAffected, res.Error
+}
+
 // DeleteOlderThan löscht Jobs, die vor dem Stichtag abgeschlossen wurden
 // (Log Retention). Liefert die Anzahl gelöschter Einträge.
 func (r *JobRepository) DeleteOlderThan(cutoff time.Time) (int64, error) {

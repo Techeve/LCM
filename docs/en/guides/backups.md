@@ -66,7 +66,15 @@ with the private key without LCM:
 
 ```bash
 age -d -i key.txt lcm-backup-20260910-033000.lcmbak > backup.zip
+bsdtar -xf backup.zip        # Debian/Ubuntu: apt install libarchive-tools
 ```
+
+Since 1.43, the ZIP inside the archive is compressed with zstd instead of
+Deflate. The large database fields are stored encrypted as Base64; Deflate
+gains nothing from them, zstd a quarter. The classic `unzip` does not know
+this method, `bsdtar` from `libarchive-tools` does. For the same reason, an
+archive from 1.43 on cannot be restored with an older LCM version - older
+archives, however, can be read by every newer version.
 
 ## Automatic backups
 

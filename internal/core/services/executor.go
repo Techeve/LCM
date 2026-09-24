@@ -58,6 +58,7 @@ type Executor struct {
 	settings      *repositories.SettingsRepository
 	connect       func(*domain.Server) (sshx.Conn, error)
 	recorder      *SSHRecorder
+	compact       func() (string, error)
 	customActions *repositories.CustomActionRepository
 	scanner       VulnScanner
 	registry      registry.Checker
@@ -91,6 +92,13 @@ func (e *Executor) WithIPAllowlists(expand func([]uint) ([]string, error)) *Exec
 // statt still zu scheitern.
 func (e *Executor) WithDSMRefresh(fn func(*domain.Server) (string, error)) *Executor {
 	e.dsmRefresh = fn
+	return e
+}
+
+// WithCompactor verdrahtet die Verdichtung der Datenbank, die am Ende jeder
+// Log-Bereinigung läuft (siehe storage.CompactDatabase).
+func (e *Executor) WithCompactor(compact func() (string, error)) *Executor {
+	e.compact = compact
 	return e
 }
 
@@ -528,7 +536,7 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	// unabhängig vom (frei umbenennbaren) Rule-Namen.
 	purpose := "rule:" + rule.Name
 	if rule.Type == domain.RuleTypeHealth {
-		purpose = "health-check"
+		purpose = domain.HealthCheckPurpose
 	}
 	conn = e.recorder.Record(conn, SessionContext{
 		ServerID: server.ID, JobID: &job.ID, Actor: triggeredBy,
@@ -1505,6 +1513,7 @@ func (e *Executor) runCleanup() (string, error) {
 			alertsDeleted, _ = e.alerts.CleanupEventsOlderThan(cutoff)
 		}
 	}
+	routine := e.cleanupRoutineLogs(settings.RoutineLogRetentionDays)
 	// Backups über der Aufbewahrungsgrenze ebenfalls entfernen.
 	e.backups.Prune(settings.BackupRetention)
 	// Speicher-Verlauf nach der (auf 90-365 Tage begrenzten) Frist bereinigen.
@@ -1516,9 +1525,39 @@ func (e *Executor) runCleanup() (string, error) {
 	// der letzte Monate zurückliegt; wer täglich scannt, sammelt sonst
 	// unbegrenzt Befunde an.
 	reportsDeleted, _ := e.servers.CleanupDeepScanReports(deepScanReportsKept)
-	return fmt.Sprintf("%d alte job-einträge, %d ssh-protokolle, %d alarm-events, %d speicher-snapshots und %d deep-scan-berichte gelöscht (retention: %d tage logs, %d tage speicher, %d berichte je server)",
+	report := fmt.Sprintf("%d alte job-einträge, %d ssh-protokolle, %d alarm-events, %d speicher-snapshots und %d deep-scan-berichte gelöscht (retention: %d tage logs, %d tage speicher, %d berichte je server)\n%s",
 		deleted, logsDeleted, alertsDeleted, storageDeleted, reportsDeleted,
-		settings.LogRetentionDays, storageRetention, deepScanReportsKept), nil
+		settings.LogRetentionDays, storageRetention, deepScanReportsKept, routine)
+	// Verdichten erst NACH dem Löschen: Erst dann sind die Seiten frei, die
+	// ein VACUUM zurückgeben kann.
+	return e.compactDatabase(report)
+}
+
+// cleanupRoutineLogs entfernt die Ausgaben der Routine-Protokolle nach ihrer
+// kurzen Frist - die Einträge selbst bleiben bis zur allgemeinen Frist.
+func (e *Executor) cleanupRoutineLogs(days int) string {
+	if days <= 0 {
+		return "routine-protokolle: keine frist gesetzt"
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	jobs, jobErr := e.jobs.ReplaceRoutineOutputOlderThan(cutoff)
+	commands, cmdErr := e.recorder.DeleteRoutineCommandsOlderThan(cutoff)
+	if err := errors.Join(jobErr, cmdErr); err != nil {
+		return fmt.Sprintf("routine-protokolle: fehler beim kürzen: %v", err)
+	}
+	return fmt.Sprintf("routine-protokolle: %d job-ausgaben und %d health-check-kommandos entfernt (älter als %d tage)",
+		jobs, commands, days)
+}
+
+// compactDatabase hängt das Ergebnis der Datenbank-Verdichtung an den
+// Bericht. Ein Fehler dort lässt den Lauf scheitern, die Bereinigung davor
+// ist aber bereits geschehen - der Bericht nennt sie trotzdem.
+func (e *Executor) compactDatabase(report string) (string, error) {
+	if e.compact == nil {
+		return report, nil
+	}
+	summary, err := e.compact()
+	return report + "\n" + summary, err
 }
 
 // TriggerRuleManually führt eine Rule sofort asynchron aus.
