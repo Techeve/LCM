@@ -58,6 +58,11 @@ type JobService struct {
 	// Frage und dürfen nicht auseinanderlaufen.
 	queues map[uint][]*queuedJob
 
+	// onFinished erfährt vom Ende jedes Jobs (serverID nil: serverloser
+	// System-Job) - damit verwirft der ServerService die zwischengespeicherte
+	// Ampel des Servers. Optional.
+	onFinished func(serverID *uint)
+
 	// activity hält je überwachtem Job den Zeitpunkt seines letzten
 	// Lebenszeichens. Bewusst mit EIGENEM Mutex: Der Eintrag wird bei jedem
 	// Ausgabe-Block der Gegenseite fortgeschrieben, und diese Schreibvorgänge
@@ -461,6 +466,9 @@ func (s *JobService) Complete(job *domain.Job, output string, exitCode *int, run
 	// Abbruch-Fall: Dort hat abort() die Zeile schon geschlossen, die
 	// Warteschlange muss trotzdem weiterfließen.
 	defer s.releaseServer(job)
+	if s.onFinished != nil {
+		defer s.onFinished(job.ServerID)
+	}
 	if aborted {
 		return
 	}
@@ -493,6 +501,11 @@ func (s *JobService) Complete(job *domain.Job, output string, exitCode *int, run
 		job.Status = domain.JobStatusSuccess
 	}
 	_ = s.jobs.Update(job)
+}
+
+// OnFinished meldet künftig das Ende jedes Jobs an fn (siehe onFinished).
+func (s *JobService) OnFinished(fn func(serverID *uint)) {
+	s.onFinished = fn
 }
 
 // HistoryFiltered liefert die gefilterte, seitenweise Job-Historie samt

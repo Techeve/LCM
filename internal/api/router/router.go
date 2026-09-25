@@ -189,6 +189,10 @@ func New(deps Deps) *fiber.App {
 	// Agent-Schnittstelle und der Agent-Port keine UI/REST.
 
 	api := app.Group("/api/v1")
+	// Jede ändernde Anfrage kann eine Ampel verschieben (Einstellungen,
+	// Container-Relevanz, Speicherüberwachung ...) - der Cache der fertigen
+	// Bewertungen fängt danach neu an (siehe services/server_status.go).
+	api.Use(middlewares.AfterChange(func() { deps.Servers.ForgetStatus(nil) }))
 
 	// Mitgelieferte Anwender-Doku (öffentlich): Die Anleitung zum Einrichten
 	// des SSH-Schlüssels braucht man, BEVOR man einen Zugang hat - etwa aus
@@ -298,6 +302,7 @@ func New(deps Deps) *fiber.App {
 	// wird zusätzlich pro Query auf die Gruppen des Users eingeschränkt.
 	servers := api.Group("/servers")
 	servers.Get("/", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.List)
+	servers.Get("/statuses", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Statuses)
 	servers.Post("/probe", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Probe)
 	servers.Post("/join", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Join)
 	// LCM Remote: Agent-Server anlegen (Enrollment-Token) + Token erneuern.

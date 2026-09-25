@@ -59,12 +59,16 @@ type Job struct {
 	// ID ist eine UUID (seit v0.2.0). Anders als eine fortlaufende Zahl
 	// verrät sie weder die Anzahl der Jobs noch erlaubt sie das Erraten
 	// benachbarter IDs - deshalb chronologisch nach CreatedAt sortiert.
-	ID        string    `gorm:"type:text;primarykey" json:"id"`
-	CreatedAt time.Time `json:"created_at"`
+	ID string `gorm:"type:text;primarykey" json:"id"`
+	// idx_jobs_server_created trägt die Frage „letzter Job dieses Servers"
+	// der Ampel. Ohne ihn sortierte jede Status-Abfrage sämtliche Jobs des
+	// Servers - bei Health-Check im Viertelstundentakt über 90 Tage rund
+	// 8600 Zeilen, und das für jeden Server des Dashboards.
+	CreatedAt time.Time `gorm:"index:idx_jobs_server_created,priority:2" json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
 	// ServerID ist leer bei serverlosen System-Jobs (z.B. Backup).
-	ServerID *uint   `gorm:"index" json:"server_id"`
+	ServerID *uint   `gorm:"index;index:idx_jobs_server_created,priority:1" json:"server_id"`
 	Server   *Server `json:"server,omitempty"`
 	// RuleID verknüpft Rule-Ausführungen; leer bei manuellen Aktionen.
 	RuleID *uint `gorm:"index" json:"rule_id"`

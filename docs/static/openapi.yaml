@@ -6451,6 +6451,41 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/statuses:
+    get:
+      tags:
+      - Server
+      summary: Ampeln aller Server
+      operationId: serverCtrl_Statuses
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: 'Benötigte Berechtigung: `servers:read`. Ampeln aller sichtbaren Server in einer Anfrage, bis zu einer Minute zwischengespeichert; ein Job-Ende oder eine ändernde Anfrage verwirft den Zwischenstand. Ein Server, dessen Bewertung scheitert, fehlt.'
+      responses:
+        '200':
+          description: Ampel, Befunde und OS-Support je Server.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    status:
+                      type: string
+                      enum:
+                      - excellent
+                      - green
+                      - yellow
+                      - red
+                    insights:
+                      type: array
+                      items:
+                        type: object
+                    os_support:
+                      type: object
   /api/v1/servers/{id}/status:
     get:
       tags:

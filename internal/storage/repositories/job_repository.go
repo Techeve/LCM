@@ -137,7 +137,9 @@ func (r *JobRepository) FilterOptions(scope AccessScope, serverID uint) (types, 
 // Servers (für die Ampel-Bewertung); nil wenn keiner existiert.
 func (r *JobRepository) LastFinishedForServer(serverID uint) (*domain.Job, error) {
 	var job domain.Job
-	err := r.db.Where("server_id = ? AND status IN ?", serverID,
+	// Ohne Output: Die Ampel braucht Status und Name, nicht die womöglich
+	// große, zu entschlüsselnde Konsolen-Ausgabe.
+	err := r.db.Omit("output").Where("server_id = ? AND status IN ?", serverID,
 		[]string{domain.JobStatusSuccess, domain.JobStatusFailed, domain.JobStatusAborted}).
 		Order("created_at DESC, rowid DESC").First(&job).Error
 	if err != nil {

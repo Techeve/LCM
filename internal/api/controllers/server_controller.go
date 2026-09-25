@@ -389,6 +389,16 @@ func (ctrl *ServerController) List(c fiber.Ctx) error {
 	return c.JSON(servers)
 }
 
+// Statuses - GET /api/v1/servers/statuses (servers:read)
+// Ampeln aller sichtbaren Server in einer Anfrage - für das Dashboard.
+func (ctrl *ServerController) Statuses(c fiber.Ctx) error {
+	statuses, err := ctrl.servers.StatusAll(scopeFor(c))
+	if err != nil {
+		return err
+	}
+	return c.JSON(statuses)
+}
+
 // Get - GET /api/v1/servers/:id (servers:read)
 func (ctrl *ServerController) Get(c fiber.Ctx) error {
 	id, err := paramID(c)

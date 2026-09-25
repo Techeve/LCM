@@ -508,6 +508,8 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		WithKnownRepos(knownRepoRepo).WithAptCacheURL(aptCacheURL).WithCVERescanEnabled(cveScanEnabled).
 		WithCVEWeightList(cveWeightList).WithDNSTestDomains(dnsTestDomains).WithCrowdSecConfig(crowdsecConfig).
 		WithPackagePins(packagePinRepo).WithApps(appRepo)
+	// Endet ein Job, kann sich die Ampel seines Servers geändert haben.
+	jobService.OnFinished(serverService.ForgetStatus)
 
 	// LCM Remote: eingebetteter MQTT-Broker + AgentHub für Server, die sich
 	// per lcm-agent AUSGEHEND verbinden (NAT/Roaming). Kommandos laufen dort

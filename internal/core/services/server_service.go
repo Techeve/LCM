@@ -85,6 +85,7 @@ func ensureFullSudo(server *domain.Server) error {
 // das Decommissioning von Servern. Es kapselt die gesamte SSH-Logik und
 // die At-Rest-Verschlüsselung der Server-Private-Keys.
 type ServerService struct {
+	statuses *statusCache // fertig berechnete Ampeln (siehe server_status.go)
 	servers  *repositories.ServerRepository
 	jobs     *JobService
 	audit    *AuditService
@@ -245,7 +246,7 @@ func (s *ServerService) WithLinux(linux *repositories.LinuxUserRepository) *Serv
 
 func NewServerService(servers *repositories.ServerRepository, jobs *JobService, audit *AuditService, cipher *crypto.Cipher, dialer sshx.Dialer) *ServerService {
 	return &ServerService{servers: servers, jobs: jobs, audit: audit, cipher: cipher, dialer: dialer,
-		connLimit: NewConnLimiter()}
+		connLimit: NewConnLimiter(), statuses: newStatusCache(statusCacheTTL)}
 }
 
 // WithRecorder verdrahtet die SSH-Protokollierung (optional, damit schlanke
@@ -2016,80 +2017,6 @@ func (s *ServerService) ActiveJob(scope repositories.AccessScope, id uint) (*dom
 		return nil, err
 	}
 	return s.jobs.RunningForServer(id)
-}
-
-// Status liefert den Ampel-Status inkl. Insights und der OS-Support-Bewertung
-// (aktuelle LTS/EOL) zum aktuellen Zeitpunkt.
-func (s *ServerService) Status(scope repositories.AccessScope, id uint) (string, []domain.StatusInsight, domain.OSSupportInfo, error) {
-	server, err := s.servers.FindByID(scope, id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	outdated, err := s.servers.CountOutdatedPackages(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	last, err := s.jobs.jobs.LastFinishedForServer(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	// CVE-Zählung GEWICHTET: Docker-CVEs zählen nur für ausdrücklich als
-	// relevant markierte Container; Hochgewichtungs-Liste und lauschende
-	// Dienste heben eine Stufe an.
-	facts, err := s.servers.VulnerabilityFacts(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	relevantRefs := dockerRelevantRefs(s.servers, server)
-	weighted := weightedVulnSummary(facts, s.cveWeightList(), splitCSVList(server.ListeningPackages), relevantRefs)
-	outdatedImages, err := s.servers.CountOutdatedDockerImages(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	// Größe des Paketbestands: 0 heißt "nie erfasst" und macht den Server
-	// unbewertbar statt makellos (BUG-020).
-	inventoried, err := s.servers.CountPackages(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	// Speicher: die erfassten Volumes, die angeordnete Überwachung einzelner
-	// davon und der Zustand der Verbünde. Fehler hier dürfen die Bewertung
-	// nicht kippen - dann fehlt eben dieser Teil der Befunde.
-	volumes, _ := s.servers.FindDiskVolumes(id)
-	monitore, _ := s.servers.FindVolumeMonitors(id)
-	storage, _ := s.servers.FindStorageHealth(id)
-	in := domain.TrafficLightInput{
-		OutdatedPackages: int(outdated), Now: time.Now(),
-		Volumes: volumes, VolumeMonitors: monitore, StorageHealth: storage,
-		CriticalVulns: weighted[domain.SeverityCritical], HighVulns: weighted[domain.SeverityHigh],
-		RaisedVulnPackages:      raisedVulnPackages(facts, s.cveWeightList(), splitCSVList(server.ListeningPackages), relevantRefs),
-		OutdatedContainerImages: int(outdatedImages),
-		TotalVulns:              countedVulns(facts, relevantRefs),
-		// Ernste, aber unbehebbare Lücken: reiner Info-Hinweis (R2-056).
-		UnfixableVulns: unfixableCritHigh(facts, s.cveWeightList(), splitCSVList(server.ListeningPackages), relevantRefs),
-		// RouterOS hat konstruktionsbedingt keinen Paketbestand - das darf hier
-		// nicht als „nicht bewertbar" (Rot) durchschlagen; die Bewertung läuft
-		// dort über die Versions-Aktualität (siehe TrafficLight).
-		InventoryMissing: inventoried == 0 && !server.IsRouterOS(),
-		CVEScanError:     server.CVEScanError,
-		DeepScanWarnings: server.DeepScanWarnings,
-		// Stand der zentralen Schwachstellen-Datenbank - reiner Hinweis, er
-		// faerbt die Ampel nicht (siehe TrafficLightInput.CVEDB).
-		CVEDB: s.CVEDBStatus(),
-	}
-	if last != nil {
-		in.LastJobFailed = last.Status == domain.JobStatusFailed
-		in.LastJobName = last.Name
-	}
-	status, insights := server.TrafficLight(in)
-	// Die Docker-Qualifizierung hängt BEWUSST hinter der Farbentscheidung:
-	// sie beschreibt die Erreichbarkeit genauer, ist aber kein Mangel, der
-	// den Server gelb färben dürfte (siehe dockerFirewallInsight).
-	if qual := dockerFirewallInsight(dockerPortExposures(s.servers, server), server.FirewallActive); qual != nil {
-		insights = append(insights, *qual)
-	}
-	osSupport := domain.OSSupportStatus(server.OSID, server.OSVersionID, server.OSName, in.Now)
-	return status, insights, osSupport, nil
 }
 
 // DockerPortExposures liefert die von außen erreichbaren Docker-Ports eines

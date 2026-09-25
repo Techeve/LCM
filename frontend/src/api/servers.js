@@ -31,6 +31,11 @@ export class ServersApi {
     return this.#client.get(`/servers/${id}/status`);
   }
 
+  /** Ampeln aller sichtbaren Server in einer Anfrage (Dashboard). */
+  statuses() {
+    return this.#client.get('/servers/statuses');
+  }
+
   /** Server-Einstellungen ändern (z. B. { user_sync_disabled: true }). */
   updateSettings(id, data) {
     return this.#client.patch(`/servers/${id}/settings`, data);

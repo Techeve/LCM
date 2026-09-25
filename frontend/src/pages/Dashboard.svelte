@@ -94,17 +94,13 @@
     loading = true;
     error = '';
     try {
-      servers = await api.servers.list();
-      // Status je Server parallel laden.
-      await Promise.all(
-        servers.map(async (s) => {
-          try {
-            statuses[s.id] = await api.servers.status(s.id);
-          } catch {
-            statuses[s.id] = { status: 'red', insights: [] };
-          }
-        }),
-      );
+      // Zwei Anfragen statt einer je Server: Die Ampeln kommen gesammelt
+      // (und serverseitig zwischengespeichert). Ein Server ohne Bewertung
+      // fehlt in der Antwort und erscheint rot.
+      const [list, all] = await Promise.all([api.servers.list(), api.servers.statuses()]);
+      const byId = Object.fromEntries(all.map((st) => [st.id, st]));
+      for (const s of list) statuses[s.id] = byId[s.id] ?? { status: 'red', insights: [] };
+      servers = list;
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
     } finally {

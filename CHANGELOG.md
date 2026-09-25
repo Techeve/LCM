@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.43.1-beta.1 - 2026-09-25
+
+### ⚡ Performance
+
+- **dashboard**: Ampeln gesammelt laden, zwischenspeichern und den letzten Job per Index finden (e47f24f5)
+
 ## v1.43.0-beta.1 - 2026-09-24
 
 ### 🚀 Features

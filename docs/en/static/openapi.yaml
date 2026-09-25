@@ -4944,6 +4944,41 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/statuses:
+    get:
+      tags:
+      - Server
+      summary: Traffic lights of all servers
+      operationId: serverCtrl_Statuses
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: 'Required permission: `servers:read`. Traffic lights of all visible servers in one request, cached for up to one minute; a finished job or a modifying request discards the cache. A server whose evaluation fails is missing.'
+      responses:
+        '200':
+          description: Traffic light, findings and OS support per server.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    status:
+                      type: string
+                      enum:
+                      - excellent
+                      - green
+                      - yellow
+                      - red
+                    insights:
+                      type: array
+                      items:
+                        type: object
+                    os_support:
+                      type: object
   /api/v1/servers/{id}/status:
     get:
       tags:
