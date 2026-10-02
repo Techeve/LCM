@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/robfig/cron/v3"
 
@@ -17,6 +18,9 @@ var (
 	ErrProtectedRule     = errors.New("system-rules können nicht gelöscht werden")
 	ErrProtectedSchedule = errors.New("system-schedules können nicht gelöscht werden")
 	ErrInvalidCron       = errors.New("ungültiger cron-ausdruck")
+	// ErrInvalidSpread: Das Zeitfenster muss kürzer sein als der Abstand
+	// zweier Läufe, sonst überholt der nächste Lauf den vorigen.
+	ErrInvalidSpread = errors.New("das zeitfenster muss zwischen 0 minuten und dem abstand zweier läufe des zeitplans liegen")
 	// ErrEnforceOnlyRuleType: „ACL einrichten" und „Rechte-Soll" beschreiben
 	// einen Zustand, der gelten SOLL - nicht eine Aktion zu einer Uhrzeit. An
 	// einem Zeitplan gäbe es für sie keinen Ausführungspfad; die Regel liefe
@@ -286,14 +290,14 @@ func (s *GroupService) ListSchedules(scope repositories.AccessScope, groupID uin
 
 // DefineSchedule erstellt einen neuen Zeitplan für eine Gruppe. Rules
 // werden anschließend am Schedule angelegt (DefineRule mit scheduleID).
-func (s *GroupService) DefineSchedule(scope repositories.AccessScope, groupID uint, name, cronExpr, actor string) (*domain.Schedule, error) {
+func (s *GroupService) DefineSchedule(scope repositories.AccessScope, groupID uint, name, cronExpr string, spreadMinutes int, actor string) (*domain.Schedule, error) {
 	if _, err := s.groups.FindByID(scope, groupID); err != nil {
 		return nil, err
 	}
-	if _, err := cronParser.Parse(cronExpr); err != nil {
-		return nil, ErrInvalidCron
+	if err := validateSchedule(cronExpr, spreadMinutes); err != nil {
+		return nil, err
 	}
-	sched := &domain.Schedule{GroupID: groupID, Name: name, CronExpr: cronExpr, Enabled: true}
+	sched := &domain.Schedule{GroupID: groupID, Name: name, CronExpr: cronExpr, SpreadMinutes: spreadMinutes, Enabled: true}
 	if err := s.groups.CreateSchedule(sched); err != nil {
 		return nil, err
 	}
@@ -302,17 +306,21 @@ func (s *GroupService) DefineSchedule(scope repositories.AccessScope, groupID ui
 	return sched, nil
 }
 
-// UpdateSchedule ändert Name und/oder Cron-Ausdruck eines Schedules.
-func (s *GroupService) UpdateSchedule(scope repositories.AccessScope, id uint, name, cronExpr, actor string) (*domain.Schedule, error) {
+// UpdateSchedule ändert Name, Cron-Ausdruck und/oder Zeitfenster eines
+// Schedules (leer bzw. nil = unverändert).
+func (s *GroupService) UpdateSchedule(scope repositories.AccessScope, id uint, name, cronExpr string, spreadMinutes *int, actor string) (*domain.Schedule, error) {
 	sched, err := s.groups.FindSchedule(scope, id)
 	if err != nil {
 		return nil, err
 	}
 	if cronExpr != "" {
-		if _, err := cronParser.Parse(cronExpr); err != nil {
-			return nil, ErrInvalidCron
-		}
 		sched.CronExpr = cronExpr
+	}
+	if spreadMinutes != nil {
+		sched.SpreadMinutes = *spreadMinutes
+	}
+	if err := validateSchedule(sched.CronExpr, sched.SpreadMinutes); err != nil {
+		return nil, err
 	}
 	if name != "" {
 		sched.Name = name
@@ -323,6 +331,18 @@ func (s *GroupService) UpdateSchedule(scope repositories.AccessScope, id uint, n
 	s.audit.Log(actor, "schedule.update", "schedule", id, sched.Name)
 	_ = s.reload()
 	return sched, nil
+}
+
+// validateSchedule prüft Cron-Ausdruck und Zeitfenster gemeinsam: Das
+// Fenster muss enden, bevor der nächste Lauf beginnt.
+func validateSchedule(cronExpr string, spreadMinutes int) error {
+	if _, err := cronParser.Parse(cronExpr); err != nil {
+		return ErrInvalidCron
+	}
+	if spreadMinutes < 0 || time.Duration(spreadMinutes)*time.Minute >= cronInterval(cronExpr) {
+		return ErrInvalidSpread
+	}
+	return nil
 }
 
 // RemoveSchedule löscht einen Schedule samt seiner Rules (System-Schedules

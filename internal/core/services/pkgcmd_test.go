@@ -83,13 +83,13 @@ func TestScriptForRulePacmanApk(t *testing.T) {
 // dass „autoremove" als Rule-Typ über scriptForRule läuft.
 func TestAutoremoveScripts(t *testing.T) {
 	cases := []struct{ mgr, want string }{
-		{pkgApt, "apt-get -o Dpkg::Options::=--force-confold -y autoremove"},
+		{pkgApt, "lcm_apt -y autoremove"},
 		{pkgDnf, "dnf -y autoremove"},
 		{pkgYum, "yum -y autoremove"},
 		{pkgZypper, "packages --unneeded"},
 		{pkgPacman, "pacman -Qdtq"},
 		{pkgApk, "einen separaten autoremove-Befehl gibt es nicht"},
-		{"", "apt-get"}, // unbekannt → apt
+		{"", "lcm_apt -y autoremove"}, // unbekannt → apt
 	}
 	for _, c := range cases {
 		if got := pkgAutoremoveScript(c.mgr); !strings.Contains(got, c.want) {
@@ -226,10 +226,10 @@ mirrorlist=https://mirrors.rockylinux.org/mirrorlist?repo=BaseOS`
 // vor `update`, aber nicht vor `patch`.
 func TestJederUpdatePfadFrischtDieListeAuf(t *testing.T) {
 	// Erwartet wird je Familie das Kommando, das die Paketliste auffrischt.
-	// apt setzt zwischen Befehl und Unterbefehl noch Optionen - deshalb der
-	// zusammengesetzte Marker statt „apt-get update".
+	// apt frischt über lcm_apt_update auf (Sperren-Warten, Zeitgrenze); der
+	// Marker ist der Aufruf, nicht die Definition im Vorspann.
 	refresh := map[string]string{
-		pkgApt:    aptNonInteractive + " update",
+		pkgApt:    "lcm_apt_update || exit",
 		pkgDnf:    "--refresh",
 		pkgZypper: "refresh",
 		pkgApk:    "apk update",

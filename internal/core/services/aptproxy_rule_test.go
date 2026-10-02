@@ -33,7 +33,7 @@ func aptProxyTestGroup(t *testing.T, env *testEnv) (serverID uint, groupID uint)
 func TestAptProxyScheduledRule(t *testing.T) {
 	env := newTestEnv(t)
 	serverID, groupID := aptProxyTestGroup(t, env)
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), groupID, "nächtlich", "0 3 * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), groupID, "nächtlich", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestAptProxyEnforceRule(t *testing.T) {
 	}
 
 	// Health-Rule anlegen (Enforce läuft beim Health-Ping mit).
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), groupID, "ping", "*/15 * * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), groupID, "ping", "*/15 * * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}

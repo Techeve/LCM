@@ -144,3 +144,11 @@ func deref(p *string) string {
 	}
 	return *p
 }
+
+// derefInt liefert den Wert einer optionalen Zahl, 0 für nil.
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}

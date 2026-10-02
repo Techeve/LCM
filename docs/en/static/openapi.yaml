@@ -1687,6 +1687,10 @@ paths:
                   type: string
                 cron_expr:
                   type: string
+                spread_minutes:
+                  type: integer
+                  minimum: 0
+                  description: 'Time window in minutes: servers start evenly spread across this window from the start time. 0 = all at the start time. Must be shorter than the gap between two runs.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -2202,6 +2206,10 @@ paths:
                   type: string
                 cron_expr:
                   type: string
+                spread_minutes:
+                  type: integer
+                  minimum: 0
+                  description: 'Time window in minutes: servers start evenly spread across this window from the start time. 0 = all at the start time. Must be shorter than the gap between two runs.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -162,15 +163,93 @@ func NewExecutor(
 	}
 }
 
-// RunSchedule führt alle aktiven Rules eines Schedules nacheinander aus.
+// RunSchedule führt alle aktiven Rules eines Schedules nacheinander aus -
+// mit Zeitfenster (SpreadMinutes) über die Server verteilt, siehe runSpread.
 func (e *Executor) RunSchedule(schedule *domain.Schedule, triggeredBy string) {
-	for i := range schedule.Rules {
-		rule := schedule.Rules[i]
-		if !rule.Enabled {
-			continue
+	var rules []domain.Rule
+	for _, rule := range schedule.Rules {
+		if rule.Enabled {
+			rules = append(rules, rule)
 		}
-		e.RunRule(&rule, triggeredBy)
 	}
+	if schedule.SpreadMinutes > 0 && triggeredBy == ActorScheduler {
+		e.runSpread(rules, time.Duration(schedule.SpreadMinutes)*time.Minute, triggeredBy)
+		return
+	}
+	for i := range rules {
+		e.RunRule(&rules[i], triggeredBy)
+	}
+}
+
+// runSpread verteilt einen Zeitplan-Lauf über ein Zeitfenster: Jeder Server
+// beginnt zu seinem eigenen Versatz (spreadOffset) und arbeitet dort ALLE
+// Regeln des Zeitplans nacheinander ab. Ohne Fenster läuft dagegen Regel für
+// Regel über die ganze Gruppe - verteilte man jede Regel einzeln, dauerte der
+// Lauf ein Fenster je Regel, und die zweite Regel träfe wieder alle Server
+// zugleich.
+//
+// Zentrale Regeln (Docker-, Anwendungs-Check) betreffen keinen einzelnen
+// Server; sie laufen einmal, wenn alle Server durch sind.
+func (e *Executor) runSpread(rules []domain.Rule, window time.Duration, triggeredBy string) {
+	var perServer, central []domain.Rule
+	for _, rule := range rules {
+		if isCentralRule(rule.Type) {
+			central = append(central, rule)
+		} else {
+			perServer = append(perServer, rule)
+		}
+	}
+	if len(perServer) > 0 {
+		e.runSpreadServers(perServer, window, triggeredBy)
+	}
+	for i := range central {
+		e.RunRule(&central[i], triggeredBy)
+	}
+}
+
+func (e *Executor) runSpreadServers(rules []domain.Rule, window time.Duration, triggeredBy string) {
+	servers, err := e.serversForRule(&rules[0])
+	if err != nil {
+		slog.Error("spread run: group servers not loadable", "rule", rules[0].ID, "error", err)
+		return
+	}
+	// Feste Reihenfolge: Jeder Server behält seinen Platz im Fenster und
+	// wird damit jede Nacht etwa zur selben Zeit bearbeitet.
+	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
+	plans := make([]runPlan, len(rules))
+	for i := range rules {
+		plans[i] = e.planFor(&rules[i], triggeredBy)
+	}
+	slog.Debug("spread run starting", "rules", len(rules), "servers", len(servers), "window", window.String())
+
+	sem := make(chan struct{}, ruleParallelism)
+	var wg sync.WaitGroup
+	for i := range servers {
+		server := &servers[i]
+		delay := spreadOffset(i, len(servers), window)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer safego.Recover("spread-server:"+server.Name, nil)
+			time.Sleep(delay)
+			for j := range rules {
+				e.runOnServer(server, &rules[j], triggeredBy, plans[j], sem)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// spreadOffset verteilt n Server gleichmäßig über das Fenster: Der erste
+// beginnt sofort, der letzte eine Lücke vor dem Fensterende.
+func spreadOffset(i, n int, window time.Duration) time.Duration {
+	return window * time.Duration(i) / time.Duration(n)
+}
+
+// isCentralRule meldet die Regeln, die einmal je Lauf auf dem LCM-Host
+// laufen statt auf jedem Server (siehe RunRule).
+func isCentralRule(ruleType string) bool {
+	return ruleType == domain.RuleTypeDockerCheck || ruleType == domain.RuleTypeAppCheck
 }
 
 // ruleParallelism begrenzt, wie viele Server einer Rule GLEICHZEITIG
@@ -186,10 +265,8 @@ const ruleParallelism = 4
 // Health-Check und der nächtliche System-Sync -, dann gilt die Grenze je Lauf
 // und die Last addiert sich.
 //
-// Auf dem LCM-Host von Techeve endete das jede Nacht damit, dass der Prozess
-// unter Speicherdruck minutenlang nicht mehr vorankam und systemd ihn
-// abräumte. Die Schranke staut die Läufe stattdessen auf: Ein nächtlicher
-// Durchgang dauert etwas länger, dafür bleibt der Dienst ansprechbar.
+// Die Schranke staut die Läufe stattdessen auf: Ein nächtlicher Durchgang
+// dauert etwas länger, dafür bleiben LCM-Host und Netz ansprechbar.
 const GlobalServerSlots = 8
 
 // RunRule führt eine Rule aus. Serverbezogene Rules laufen auf ALLEN
@@ -216,15 +293,7 @@ func (e *Executor) RunRule(rule *domain.Rule, triggeredBy string) {
 		slog.Error("rule execution: group servers not loadable", "rule", rule.ID, "error", err)
 		return
 	}
-	// Einmal je Regel-Lauf ermittelt, nicht je Server: Takt und Vorrang
-	// hängen am Zeitplan und an der Gruppe, nicht am einzelnen Server.
-	plan := runPlan{
-		interval:   e.scheduleInterval(rule),
-		priority:   e.rulePriority(rule),
-		queueable:  triggeredBy == ActorScheduler,
-		healthSkip: 0,
-	}
-	plan.healthSkip = e.healthSkipWindow(rule, plan.interval, triggeredBy)
+	plan := e.planFor(rule, triggeredBy)
 
 	slog.Debug("rule starting", "rule", rule.Name, "type", rule.Type,
 		"servers", len(servers), "priority", plan.priority,
@@ -306,20 +375,35 @@ func (e *Executor) scheduleInterval(rule *domain.Rule) time.Duration {
 	if err != nil {
 		return 0
 	}
-	spec, err := cronParser.Parse(sched.CronExpr)
+	return cronInterval(sched.CronExpr)
+}
+
+// cronInterval liefert den kürzesten Abstand zwischen den nächsten Läufen
+// eines Cron-Ausdrucks. 0 = unlesbarer Ausdruck oder kein weiterer Lauf.
+//
+// Der kürzeste, nicht der nächste: Bei „0 3 * * 1-5" liegen zwischen Freitag
+// und Montag drei Tage, sonst einer. Wer nur den nächsten Abstand misst,
+// bekommt je nach Wochentag eine andere Antwort - und ließe freitags ein
+// Zeitfenster zu, das ab Montag in den Folgelauf reicht.
+func cronInterval(expr string) time.Duration {
+	spec, err := cronParser.Parse(expr)
 	if err != nil {
 		return 0
 	}
-	now := time.Now()
-	first := spec.Next(now)
-	if first.IsZero() {
-		return 0
+	const samples = 8
+	var shortest time.Duration
+	prev := spec.Next(time.Now())
+	for range samples {
+		next := spec.Next(prev)
+		if prev.IsZero() || next.IsZero() {
+			break
+		}
+		if gap := next.Sub(prev); shortest == 0 || gap < shortest {
+			shortest = gap
+		}
+		prev = next
 	}
-	second := spec.Next(first)
-	if second.IsZero() {
-		return 0
-	}
-	return second.Sub(first)
+	return shortest
 }
 
 // healthSkipWindow liefert die Frist, innerhalb derer ein Health-Ping
@@ -374,6 +458,19 @@ type runPlan struct {
 	queueable bool
 	// healthSkip ist die Frist, innerhalb derer ein Health-Ping entfällt.
 	healthSkip time.Duration
+}
+
+// planFor ermittelt den Plan eines Regel-Laufs - einmal je Lauf, nicht je
+// Server: Takt und Vorrang hängen am Zeitplan und an der Gruppe, nicht am
+// einzelnen Server.
+func (e *Executor) planFor(rule *domain.Rule, triggeredBy string) runPlan {
+	plan := runPlan{
+		interval:  e.scheduleInterval(rule),
+		priority:  e.rulePriority(rule),
+		queueable: triggeredBy == ActorScheduler,
+	}
+	plan.healthSkip = e.healthSkipWindow(rule, plan.interval, triggeredBy)
+	return plan
 }
 
 // rulePriority liefert den Vorrang der Gruppe, aus der eine Regel stammt.

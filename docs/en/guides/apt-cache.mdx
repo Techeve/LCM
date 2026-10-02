@@ -146,6 +146,25 @@ The *Settings → APT Cache* page bundles running the cache:
   **"apt-cacher-ng unreachable"** under *Settings → Alerts* and assign it a
   notification channel.
 
+## When apt is busy
+
+apt and dpkg lock against parallel runs. If another process holds the lock
+(apt-daily, unattended-upgrades, someone on the console), LCM **waits** up to
+10 minutes and reports in the job log every minute who holds it (PID, run
+time, command). If apt is still busy after that, the job ends with exit code
+**75** - without further attempts that would fail on the lock anyway.
+
+If the holder is a hanging `apt-get update` left over from an earlier,
+aborted LCM run, LCM terminates it itself once the wait is over. Aborting an
+update is harmless; running upgrades and foreign processes are left alone.
+`apt-get update` is also limited to 15 minutes, so a cache that does not
+answer can no longer hold a run indefinitely.
+
+Many servers updating through the cache at the same time at night put the
+most load on it. A [time window on the
+schedule](/en/guides/groups-rules/#a-time-window-instead-of-a-fixed-start-time)
+helps against that.
+
 ## Failure symptoms
 
 | Symptom | Cause / solution |

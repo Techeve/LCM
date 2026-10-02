@@ -146,6 +146,25 @@ Die Seite *Einstellungen → APT-Cache* bündelt den Betrieb des Caches:
   Regel vom Typ **„apt-cacher-ng nicht erreichbar“** unter *Einstellungen →
   Alarme* ein und weist ihr einen Benachrichtigungskanal zu.
 
+## Wenn apt belegt ist
+
+apt und dpkg sperren sich gegen parallele Läufe. Hält ein anderer Prozess die
+Sperre (apt-daily, unattended-upgrades, jemand auf der Konsole), **wartet** LCM
+bis zu 10 Minuten und meldet dabei jede Minute im Job-Protokoll, wer die
+Sperre hält (PID, Laufzeit, Kommando). Ist apt danach noch belegt, endet der
+Job mit Exit-Code **75** - ohne weitere Anläufe, die an der Sperre ohnehin
+scheitern würden.
+
+Ist der Halter ein hängendes `apt-get update` aus einem früher abgebrochenen
+LCM-Lauf, beendet LCM es nach Ablauf der Frist selbst. Ein Update abzubrechen
+ist gefahrlos; laufende Upgrades und fremde Prozesse bleiben unangetastet.
+`apt-get update` ist außerdem auf 15 Minuten begrenzt, damit ein Cache, der
+nicht antwortet, keinen Lauf mehr unbegrenzt festhält.
+
+Viele Server, die nachts gleichzeitig über den Cache aktualisieren, belasten
+ihn am stärksten. Dagegen hilft ein [Zeitfenster am
+Schedule](/guides/groups-rules/#zeitfenster-statt-fester-startzeit).
+
 ## Störungsbilder
 
 | Symptom | Ursache / Lösung |

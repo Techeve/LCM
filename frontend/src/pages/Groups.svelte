@@ -32,7 +32,7 @@
   let groupForm = $state({ id: null, name: '', description: '', priority: DEFAULT_PRIORITY });
 
   let schedOpen = $state(false);
-  let schedForm = $state({ id: null, name: '', cron_expr: '0 3 * * *' });
+  let schedForm = $state({ id: null, name: '', cron_expr: '0 3 * * *', spread_minutes: 0 });
 
   let ruleOpen = $state(false);
   let ruleForm = $state({ id: null, name: '', type: 'update', command: '', target: '' });
@@ -250,19 +250,20 @@
 
   // ---- Schedule -----------------------------------------------------------
   function openNewSchedule() {
-    schedForm = { id: null, name: '', cron_expr: '0 3 * * *' };
+    schedForm = { id: null, name: '', cron_expr: '0 3 * * *', spread_minutes: 0 };
     schedOpen = true;
   }
   function openEditSchedule(s) {
-    schedForm = { id: s.id, name: s.name, cron_expr: s.cron_expr };
+    schedForm = { id: s.id, name: s.name, cron_expr: s.cron_expr, spread_minutes: s.spread_minutes ?? 0 };
     schedOpen = true;
   }
   async function saveSchedule() {
     const f = { ...schedForm };
+    const body = { name: f.name, cron_expr: f.cron_expr, spread_minutes: Number(f.spread_minutes) || 0 };
     if (f.id) {
-      await run(() => api.groups.updateSchedule(f.id, { name: f.name, cron_expr: f.cron_expr }), t('groups.notices.schedSaved'));
+      await run(() => api.groups.updateSchedule(f.id, body), t('groups.notices.schedSaved'));
     } else {
-      await run(() => api.groups.defineSchedule(selected.id, { name: f.name, cron_expr: f.cron_expr }), t('groups.notices.schedCreated'));
+      await run(() => api.groups.defineSchedule(selected.id, body), t('groups.notices.schedCreated'));
     }
     schedOpen = false;
   }
@@ -462,7 +463,7 @@
               {#each schedules as sc (sc.id)}
                 <tr>
                   <td>{sc.name}{#if sc.is_system} <span class="badge bg-secondary">{t('groups.system')}</span>{/if}</td>
-                  <td><code class="small">{sc.cron_expr}</code></td>
+                  <td><code class="small">{sc.cron_expr}</code>{#if sc.spread_minutes > 0}<div class="small text-body-secondary">{t('groups.spreadBadge', { minutes: sc.spread_minutes })}</div>{/if}</td>
                   <td class="small text-body-secondary">{(sc.rules ?? []).length}</td>
                   <td>{sc.enabled ? '✓' : '-'}</td>
                   {#if auth.can('rules:manage')}
@@ -555,6 +556,9 @@
   <label class="form-label small mb-1" for="sf-cron">{t('groups.cronExpr')}</label>
   <input id="sf-cron" class="form-control mb-1" placeholder="0 3 * * *" bind:value={schedForm.cron_expr} />
   <p class="small text-body-secondary">{t('groups.cronHint')}</p>
+  <label class="form-label small mb-1" for="sf-spread">{t('groups.spreadMinutes')}</label>
+  <input id="sf-spread" class="form-control mb-1" type="number" min="0" max="1439" bind:value={schedForm.spread_minutes} />
+  <p class="small text-body-secondary">{t('groups.spreadHint')}</p>
   <div class="text-end">
     <button class="btn btn-secondary" onclick={() => (schedOpen = false)}>{t('groups.cancel')}</button>
     <button class="btn btn-primary" onclick={saveSchedule} disabled={!schedForm.name || !schedForm.cron_expr || busy}>{t('groups.save')}</button>

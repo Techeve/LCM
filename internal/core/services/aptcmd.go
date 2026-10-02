@@ -22,7 +22,6 @@ var (
 	// (SSH-Server, sudo, Paketverwaltung, Kernel, libc …) wurde abgelehnt, weil
 	// es den Server oder den LCM-Zugang unbrauchbar machen würde.
 	ErrProtectedPackage = errors.New("dieses paket ist geschützt und kann nicht über LCM entfernt werden (kritisch für system oder LCM-zugang)")
-	aptNonInteractive   = "DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confold"
 	// Paketnamen: apt (klein) wie auch RPM (auch "_"); alle Zeichen sind
 	// shell-sicher (kein Whitespace/Metazeichen) - Schutz vor Injection.
 	rePackageName      = regexp.MustCompile(`^[a-z0-9][a-z0-9+._-]*$`)
@@ -77,30 +76,43 @@ const aptUpgradeRounds = 3
 // (`apt-get -f install`) - die zwei Handgriffe, mit denen man ein steckenes
 // Upgrade auch von Hand weiterbringt. Der Exit-Code des letzten Anlaufs ist
 // der des Skripts, ein Fehlschlag bleibt also ein Fehlschlag.
+//
+// Eine belegte Paketverwaltung (aptLockBusyExit) beendet den Lauf sofort:
+// lcm_apt hat dann schon die ganze Frist gewartet, ein weiterer Anlauf
+// änderte nichts. `apt-get update` steht bewusst VOR der Schleife - scheitert
+// es an einer Paketquelle, hilft kein dpkg-Handgriff.
 func aptRetry(cmd string) string {
 	rounds := make([]string, 0, aptUpgradeRounds)
 	for i := 1; i <= aptUpgradeRounds; i++ {
 		rounds = append(rounds, strconv.Itoa(i))
 	}
+	busy := strconv.Itoa(aptLockBusyExit)
 	return strings.Join([]string{
 		`rc=0`,
 		`for i in ` + strings.Join(rounds, " ") + `; do`,
 		`  if [ "$i" -gt 1 ]; then`,
 		`    echo "LCM: Anlauf $i - angebrochene Installationen abschliessen"`,
+		`    lcm_apt_wait || { rc=$?; break; }`,
 		`    DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true`,
-		`    ` + aptNonInteractive + ` -f install -y || true`,
+		`    lcm_apt -f install -y || true`,
 		`  fi`,
 		`  ` + cmd + `; rc=$?`,
 		`  [ $rc -eq 0 ] && break`,
+		`  [ $rc -eq ` + busy + ` ] && break`,
 		`  echo "LCM: Anlauf $i endete mit Exit-Code $rc"`,
 		`done`,
 		`exit $rc`,
 	}, "\n")
 }
 
+// aptScript setzt den Sperren-Vorspann (aptPrelude) vor ein apt-Skript.
+func aptScript(lines ...string) string {
+	return aptPrelude + strings.Join(lines, "\n")
+}
+
 // aptUpgradeAllScript aktualisiert alle Pakete (klassisches apt upgrade).
 func aptUpgradeAllScript() string {
-	return aptRetry(aptNonInteractive + " update && " + aptNonInteractive + " -y upgrade")
+	return aptScript("lcm_apt_update || exit $?", aptRetry("lcm_apt -y upgrade"))
 }
 
 // aptRefreshScript aktualisiert nur die Paket-Metadaten (apt-get update) -
@@ -108,22 +120,21 @@ func aptUpgradeAllScript() string {
 // (dpkg-query + apt list --upgradable) hält es den Paketbestand samt
 // verfügbarer Updates aktuell.
 func aptRefreshScript() string {
-	return aptNonInteractive + " update"
+	return aptScript("lcm_apt_update")
 }
 
 // aptUpgradePackagesScript aktualisiert ausschließlich die genannten Pakete
 // auf die neueste verfügbare Version (--only-upgrade installiert keine neuen
 // Pakete, falls eines nicht installiert ist).
 func aptUpgradePackagesScript(names []string) string {
-	return aptRetry(aptNonInteractive + " update && " +
-		aptNonInteractive + " install --only-upgrade -y " + strings.Join(names, " "))
+	return aptScript("lcm_apt_update || exit $?",
+		aptRetry("lcm_apt install --only-upgrade -y "+strings.Join(names, " ")))
 }
 
 // aptInstallVersionScript installiert ein Paket auf eine exakte Version
 // (erlaubt bewusst auch Downgrades).
 func aptInstallVersionScript(name, version string) string {
-	return aptNonInteractive + " update && " +
-		aptNonInteractive + " install -y --allow-downgrades " + name + "=" + version
+	return aptScript("lcm_apt_update && lcm_apt install -y --allow-downgrades " + name + "=" + version)
 }
 
 // aptAutoremoveScript entfernt automatisch installierte Pakete, die von
@@ -131,27 +142,27 @@ func aptInstallVersionScript(name, version string) string {
 // Bewusst OHNE --purge: die Konfigurationsdateien bleiben erhalten, das
 // Entfernen ist damit weniger einschneidend und im Zweifel umkehrbar.
 func aptAutoremoveScript() string {
-	return aptNonInteractive + " -y autoremove"
+	return aptScript("lcm_apt -y autoremove")
 }
 
 // aptRemovePackagesScript deinstalliert gezielt die genannten Pakete
 // (klassisches apt remove - Konfiguration bleibt, kein Purge). Die Namen
 // sind vorvalidiert (rePackageName) und shell-sicher.
 func aptRemovePackagesScript(names []string) string {
-	return aptNonInteractive + " -y remove " + strings.Join(names, " ")
+	return aptScript("lcm_apt -y remove " + strings.Join(names, " "))
 }
 
 // aptSecurityUpgradeScript aktualisiert nur Pakete aus Security-Quellen:
 // die Kandidatenliste wird auf -security-Ursprünge gefiltert und exakt diese
 // Pakete werden aktualisiert. Ohne Security-Updates endet das Skript sauber.
 func aptSecurityUpgradeScript() string {
-	return strings.Join([]string{
-		aptNonInteractive + " update",
-		"pkgs=$(apt list --upgradable 2>/dev/null | " + reUpgradableSecure + " | cut -d/ -f1)",
+	return aptScript(
+		"lcm_apt_update || exit $?",
+		"pkgs=$(apt list --upgradable 2>/dev/null | "+reUpgradableSecure+" | cut -d/ -f1)",
 		`if [ -z "$pkgs" ]; then echo 'LCM: keine security-updates verfuegbar'; exit 0; fi`,
 		`echo "LCM: security-updates fuer: $pkgs"`,
-		aptRetry(aptNonInteractive + " install --only-upgrade -y $pkgs"),
-	}, "\n")
+		aptRetry("lcm_apt install --only-upgrade -y $pkgs"),
+	)
 }
 
 // parseMadison extrahiert die verfügbaren Versionen aus `apt-cache madison`.

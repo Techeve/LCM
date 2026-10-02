@@ -2512,6 +2512,10 @@ paths:
                   type: string
                 cron_expr:
                   type: string
+                spread_minutes:
+                  type: integer
+                  minimum: 0
+                  description: 'Zeitfenster in Minuten: Die Server beginnen gleichmäßig verteilt innerhalb dieses Fensters ab der Startzeit. 0 = alle zur Startzeit. Muss kürzer sein als der Abstand zweier Läufe.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -3171,6 +3175,10 @@ paths:
                   type: string
                 cron_expr:
                   type: string
+                spread_minutes:
+                  type: integer
+                  minimum: 0
+                  description: 'Zeitfenster in Minuten: Die Server beginnen gleichmäßig verteilt innerhalb dieses Fensters ab der Startzeit. 0 = alle zur Startzeit. Muss kürzer sein als der Abstand zweier Läufe.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []

@@ -1186,19 +1186,35 @@ func wrapSudo(loginUser string, restricted bool, cmd string) string {
 }
 
 // detachBackgroundFDs entkoppelt die Ausgabe von cmd über eine temporäre
-// Datei: cmd läuft in einer Subshell, deren stdout/stderr in die Datei geht und
-// deren stdin geschlossen ist; danach wird die Datei gesammelt ausgegeben.
+// Datei: cmd läuft als Hintergrund-Subshell, deren stdout/stderr in die Datei
+// geht und deren stdin geschlossen ist; die äußere Shell reicht den Inhalt
+// der Datei laufend weiter.
 //
-// Grund: Manche Kommandos (v.a. `apt-get update` mit Ubuntu-Hooks wie apt-news/
-// ESM) forken Hintergrundprozesse, die die stdout/stderr-Deskriptoren erben. Die
-// Go-SSH-Session (session.Run) wartet auf das Schließen dieser Kanal-fds - ein
-// solcher Hintergrundprozess hält sie offen und der Aufruf hängt, obwohl das
-// eigentliche Kommando längst fertig ist. Über die Datei erben die Kinder den
-// Datei-fd (nicht den SSH-Kanal), sodass der Kanal sauber schließt.
-// Die Subshell `( … )` fängt ein `exit` innerhalb von cmd ab (sonst würde die
-// äußere Shell vor der Ausgabe enden).
+// Grund für die Datei: Manche Kommandos (v.a. `apt-get update` mit
+// Ubuntu-Hooks wie apt-news/ESM) forken Hintergrundprozesse, die die
+// stdout/stderr-Deskriptoren erben. Die Go-SSH-Session (session.Run) wartet
+// auf das Schließen dieser Kanal-fds - ein solcher Hintergrundprozess hält sie
+// offen und der Aufruf hängt, obwohl das eigentliche Kommando längst fertig
+// ist. Über die Datei erben die Kinder den Datei-fd, nicht den SSH-Kanal.
+//
+// Grund für das laufende Weiterreichen: Der Job-Watchdog misst die STILLE
+// eines Laufs. Gab die Shell die Datei erst am Ende aus, sah LCM während
+// eines Upgrades keine einzige Zeile, hielt jedes Upgrade über fünf Minuten
+// für hängend und brach es ab - auf dem Server lief es verwaist weiter und
+// blockierte mit seiner apt-Sperre den nächsten Lauf (siehe aptlock.go).
+//
+// __out gibt aus, was seit dem letzten Aufruf in der Datei hinzukam. Die
+// Abstände wachsen von 0,05 auf 1 s: Kurze Kommandos (ein Scan besteht aus
+// Dutzenden) warten so kaum, lange melden sich jede Sekunde. Ein sleep ohne
+// Bruchteile fällt auf ganze Sekunden zurück statt leer zu kreisen. Der Exit-Code
+// kommt aus `wait`; die Subshell fängt ein `exit` innerhalb von cmd ab.
 func detachBackgroundFDs(cmd string) string {
-	return `__lf=$(mktemp); ( ` + cmd + ` ) >"$__lf" 2>&1 </dev/null; __rc=$?; cat "$__lf"; rm -f "$__lf"; exit $__rc`
+	return strings.Join([]string{
+		`__lf=$(mktemp); ( ` + cmd + ` ) >"$__lf" 2>&1 </dev/null & __p=$!; __s=0; __d=0.05`,
+		`__out() { __n=$(($(wc -c <"$__lf"))); [ "$__n" -gt "$__s" ] || return 0; tail -c +$((__s + 1)) "$__lf" | head -c $((__n - __s)); __s=$__n; }`,
+		`while kill -0 $__p 2>/dev/null; do sleep $__d 2>/dev/null || sleep 1; __out; case $__d in 0.05) __d=0.2 ;; *) __d=1 ;; esac; done`,
+		`wait $__p; __rc=$?; __out; rm -f "$__lf"; exit $__rc`,
+	}, "\n")
 }
 
 // rootEscalation beschreibt, wie der Login-Benutzer beim Onboarding root

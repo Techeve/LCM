@@ -168,6 +168,27 @@ nicht wiederkommt, steht damit als Vorfall da und nicht als erledigte Aktion.
 Solange die Überwachung läuft, bleibt der Job offen und hält die Server-Sperre
 - während eines Neustarts soll ohnehin nichts anderes auf dem Server laufen.
 
+## Zeitfenster statt fester Startzeit
+
+Ein Schedule startet standardmäßig alle Server seiner Gruppe zur Cron-Zeit
+(höchstens vier gleichzeitig je Regel). Bei vielen Servern, die über
+**denselben APT-Cache** aktualisieren, trifft das den Cache auf einen Schlag -
+er wird zum Engpass, `apt-get update` hängt.
+
+Mit einem **Zeitfenster** (Feld *Zeitfenster (Minuten)* am Schedule) wird aus
+der Startzeit ein Zeitraum: `0 2 * * *` mit 120 Minuten heißt „zwischen 02:00
+und 04:00". Die Server beginnen gleichmäßig über das Fenster verteilt, jeder
+arbeitet dort **alle Regeln des Schedules nacheinander** ab (z.&nbsp;B. erst
+Updates, dann Neustart bei Bedarf). Die Reihenfolge ist fest: Ein Server wird
+jede Nacht etwa zur selben Zeit bearbeitet.
+
+- Das Fenster muss kürzer sein als der Abstand zweier Läufe - sonst überholt
+  der nächste Lauf den vorigen.
+- Zentrale Regeln (Docker-Check, Anwendungs-Check) laufen einmal, wenn alle
+  Server durch sind.
+- **„Jetzt“** ignoriert das Fenster: Wer von Hand auslöst, will das Ergebnis
+  sofort.
+
 ## Eine Regel anlegen
 
 import { Steps } from '@astrojs/starlight/components';

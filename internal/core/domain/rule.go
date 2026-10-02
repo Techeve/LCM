@@ -110,6 +110,16 @@ type Schedule struct {
 	CronExpr string `gorm:"not null" json:"cron_expr"` // z.B. "0 3 * * *"
 	Enabled  bool   `gorm:"default:true" json:"enabled"`
 
+	// SpreadMinutes macht aus der Startzeit ein Zeitfenster: Die Server der
+	// Gruppe beginnen gleichmäßig verteilt innerhalb dieser Minuten, jeder
+	// mit allen Regeln des Zeitplans nacheinander. 0 = alle zur Startzeit.
+	//
+	// Anlass waren Gruppen, die nachts geschlossen `apt-get update` über
+	// denselben APT-Cache fuhren - der Cache wurde zum Engpass, Läufe hingen
+	// und hielten die apt-Sperre. Gilt nur für Läufe des Zeitplans; wer von
+	// Hand auslöst, will das Ergebnis jetzt.
+	SpreadMinutes int `gorm:"default:0" json:"spread_minutes"`
+
 	// System-Schedules (Health-Check, System-Sync) sind nicht löschbar.
 	IsSystem bool `gorm:"default:false" json:"is_system"`
 

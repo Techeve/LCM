@@ -150,6 +150,27 @@ reboot thus stands as an incident, not as a completed action.
 While the watch is running the job stays open and holds the server lock -
 during a reboot nothing else should be running on that server anyway.
 
+## A time window instead of a fixed start time
+
+By default a schedule starts all servers of its group at the cron time (at
+most four at once per rule). With many servers updating through the **same
+APT cache**, that hits the cache all at once - it becomes the bottleneck and
+`apt-get update` hangs.
+
+A **time window** (field *Time window (minutes)* on the schedule) turns the
+start time into a period: `0 2 * * *` with 120 minutes means "between 02:00
+and 04:00". Servers start evenly spread across the window, and each runs
+**all rules of the schedule in order** (e.g. updates first, then reboot if
+needed). The order is fixed: a server is handled at about the same time every
+night.
+
+- The window must be shorter than the gap between two runs - otherwise the
+  next run would overtake the previous one.
+- Central rules (Docker check, application check) run once after all servers
+  are done.
+- **"Now"** ignores the window: whoever triggers manually wants the result
+  right away.
+
 ## Creating a rule
 
 import { Steps } from '@astrojs/starlight/components';

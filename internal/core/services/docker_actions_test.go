@@ -308,7 +308,7 @@ func TestDockerPruneRule(t *testing.T) {
 	if err := env.Groups.AssignServer(repositories.ScopeAll(), group.ID, id, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "nächtlich", "0 3 * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "nächtlich", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}

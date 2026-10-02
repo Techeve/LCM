@@ -27,7 +27,8 @@ func mapGroupError(err error) error {
 	case errors.Is(err, services.ErrProtectedGroup), errors.Is(err, services.ErrProtectedRule),
 		errors.Is(err, services.ErrProtectedSchedule):
 		return fiber.NewError(fiber.StatusForbidden, err.Error())
-	case errors.Is(err, services.ErrInvalidCron), errors.Is(err, services.ErrInvalidRuleType),
+	case errors.Is(err, services.ErrInvalidCron), errors.Is(err, services.ErrInvalidSpread),
+		errors.Is(err, services.ErrInvalidRuleType),
 		errors.Is(err, services.ErrRuleCommandUnused),
 		errors.Is(err, services.ErrEnforceRuleType), errors.Is(err, services.ErrRuleNeedsTarget),
 		errors.Is(err, services.ErrEnforceOnlyRuleType),
@@ -214,8 +215,9 @@ func (ctrl *GroupController) ListSchedules(c fiber.Ctx) error {
 }
 
 type scheduleRequest struct {
-	Name     string `json:"name"`
-	CronExpr string `json:"cron_expr"`
+	Name          string `json:"name"`
+	CronExpr      string `json:"cron_expr"`
+	SpreadMinutes *int   `json:"spread_minutes"`
 }
 
 // DefineSchedule - POST /api/v1/server-groups/:id/schedules/define (rules:manage)
@@ -234,7 +236,7 @@ func (ctrl *GroupController) DefineSchedule(c fiber.Ctx) error {
 	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"cron_expr", req.CronExpr, maxCronLen}); err != nil {
 		return err
 	}
-	sched, err := ctrl.groups.DefineSchedule(scopeFor(c), id, req.Name, req.CronExpr, actor(c))
+	sched, err := ctrl.groups.DefineSchedule(scopeFor(c), id, req.Name, req.CronExpr, derefInt(req.SpreadMinutes), actor(c))
 	if err != nil {
 		return mapGroupError(err)
 	}
@@ -254,7 +256,7 @@ func (ctrl *GroupController) UpdateSchedule(c fiber.Ctx) error {
 	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"cron_expr", req.CronExpr, maxCronLen}); err != nil {
 		return err
 	}
-	sched, err := ctrl.groups.UpdateSchedule(scopeFor(c), id, req.Name, req.CronExpr, actor(c))
+	sched, err := ctrl.groups.UpdateSchedule(scopeFor(c), id, req.Name, req.CronExpr, req.SpreadMinutes, actor(c))
 	if err != nil {
 		return mapGroupError(err)
 	}

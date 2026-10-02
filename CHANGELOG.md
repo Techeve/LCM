@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.44.0-beta.1 - 2026-10-02
+
+### 🚀 Features
+
+- **schedules**: Zeitfenster statt fester Startzeit (51a4f78d)
+
+### 🐛 Bugfixes
+
+- **apt**: Sperren abwarten, verwaiste Updates beenden, Ausgabe live streamen (3dd2d309)
+
+### 🔧 Sonstiges
+
+- **executor**: Begründung der globalen Lauf-Schranke berichtigt (dd4b272a)
+
 ## v1.43.1-beta.1 - 2026-09-25
 
 ### ⚡ Performance
