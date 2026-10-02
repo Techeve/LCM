@@ -100,6 +100,13 @@
             <input id="cve-cron" class="form-control" bind:value={settings.cve_scan_cron} placeholder="0 4 * * *" />
             <div class="form-text">{t('settings.security.cveCronHint')}</div>
           </div>
+          <h3 class="h6 mt-4">{t('settings.security.phasedTitle')}</h3>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" id="apt-phased"
+              data-testid="apt-phased" bind:checked={settings.apt_include_phased} />
+            <label class="form-check-label" for="apt-phased">{t('settings.security.phasedEnable')}</label>
+          </div>
+          <div class="form-text mb-3">{t('settings.security.phasedHint')}</div>
           <div class="mt-3">
             <label class="form-label" for="cve-weight">{t('settings.security.cveWeightLabel')}</label>
             <textarea id="cve-weight" class="form-control font-monospace" rows="3"

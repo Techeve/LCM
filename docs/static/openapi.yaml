@@ -7283,6 +7283,9 @@ paths:
                   type: boolean
                 cve_scan_enabled:
                   type: boolean
+                apt_include_phased:
+                  type: boolean
+                  description: 'Gestaffelte Ubuntu-Updates sofort einspielen (Vorgabe aus). Gestaffelte Updates mit bekannter CVE zieht LCM unabhängig davon vor.'
                 cve_scan_cron:
                   type: string
                 cve_high_weight_packages:

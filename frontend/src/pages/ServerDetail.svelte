@@ -2785,6 +2785,9 @@
               <tr class={hasUpdate ? 'table-warning' : ''}>
                 <td>
                   {p.name}{#if p.security} <span class="badge bg-danger">security</span>{/if}
+                  {#if hasUpdate && p.held_reason}
+                    <span class="badge text-bg-secondary ms-1" data-testid="pkg-held" title={t(`serverDetail.packages.held.${p.held_reason}Title`)}>{t(`serverDetail.packages.held.${p.held_reason}`)}</span>
+                  {/if}
                   {#if pin}
                     <span class="badge text-bg-success ms-1" title={t('serverDetail.pins.pinnedBy', { name: pin.name })}>
                       {@html icons.lock} {t('serverDetail.pins.pinnedBadge')}

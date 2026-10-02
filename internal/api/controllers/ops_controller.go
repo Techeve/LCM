@@ -701,6 +701,7 @@ type globalSettingsRequest struct {
 	BackupDir                   *string `json:"backup_dir"`
 	RestoreAutoRestart          *bool   `json:"restore_auto_restart"`
 	CVEScanEnabled              *bool   `json:"cve_scan_enabled"`
+	AptIncludePhased            *bool   `json:"apt_include_phased"`
 	CVEScanCron                 *string `json:"cve_scan_cron"`
 	AdvisoryPollingEnabled      *bool   `json:"advisory_polling_enabled"`
 	AdvisoryLocalCopy           *bool   `json:"advisory_local_copy"`
@@ -754,6 +755,7 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		BackupDir:                   req.BackupDir,
 		RestoreAutoRestart:          req.RestoreAutoRestart,
 		CVEScanEnabled:              req.CVEScanEnabled,
+		AptIncludePhased:            req.AptIncludePhased,
 		CVEHighWeightPackages:       req.CVEHighWeightPackages,
 		CVEScanCron:                 req.CVEScanCron,
 		AdvisoryPollingEnabled:      req.AdvisoryPollingEnabled,

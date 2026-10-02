@@ -371,6 +371,7 @@ type GlobalSettingsInput struct {
 	BackupDir                   *string
 	RestoreAutoRestart          *bool
 	CVEScanEnabled              *bool
+	AptIncludePhased            *bool
 	CVEScanCron                 *string
 	AdvisoryPollingEnabled      *bool
 	AdvisoryLocalCopy           *bool
@@ -513,6 +514,10 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 	if in.CVEScanEnabled != nil {
 		settings.CVEScanEnabled = *in.CVEScanEnabled
 		touch("cve_scan_enabled")
+	}
+	if in.AptIncludePhased != nil {
+		settings.AptIncludePhased = *in.AptIncludePhased
+		touch("apt_include_phased")
 	}
 	if in.CVEScanCron != nil && *in.CVEScanCron != "" {
 		// Cron-Ausdruck sofort validieren - ein Tippfehler fiele sonst erst

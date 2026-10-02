@@ -1950,6 +1950,9 @@ func (s *ServerService) startPackageJob(scope repositories.AccessScope, id uint,
 		return nil, err
 	}
 	script := build(server.PackageManager)
+	if jobType == domain.RuleTypeUpdate {
+		script = aptUpgradeEnv(s.settings, s.servers, server) + script
+	}
 	job, err := s.jobs.Start(&server.ID, nil, jobType, name+" @ "+server.Name, actor)
 	if err != nil {
 		return nil, err // u.a. ErrServerBusy → der Controller mappt auf 409

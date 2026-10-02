@@ -138,6 +138,26 @@ das, was unter *Gruppe → Regeln* wählbar ist.
 jeder Verbindung geprüft und bei Abweichung sofort wiederhergestellt wird -
 unabhängig vom nächtlichen Zeitplan.
 
+## Was ein Update nicht mitnimmt (apt)
+
+„Alle Pakete aktualisieren“ entspricht `apt upgrade`: Updates, die ein **neues
+Paket** brauchen, kommen mit - allen voran neue Kernel
+(`linux-image-generic` braucht für jede Fassung ein neues
+`linux-image-<version>`-Paket). Entfernt wird nie etwas.
+
+Drei Arten von Updates bleiben trotzdem liegen. LCM nennt sie am Ende des
+Job-Protokolls und kennzeichnet sie in der Paketliste:
+
+| Kennzeichen | Bedeutung |
+|---|---|
+| **gestaffelt** | Ubuntu gibt das Update erst einem Teil der Rechner frei (Phased Updates), um Fehler früh zu erkennen. Es kommt automatisch, sobald der Server an der Reihe ist. Unter *Einstellungen → Sicherheit* lässt sich das abschalten. |
+| **gesperrt** | per `apt-mark hold` gesperrt - eine bewusste Entscheidung, LCM übergeht sie nicht. |
+| **zurückgehalten** | ließe sich nur durch Entfernen anderer Pakete einspielen - bitte von Hand prüfen (`apt full-upgrade`). |
+
+Solche Updates werten den Server in der Ampel **nicht** ab. Liegt eine
+bekannte CVE darauf, zählt sie über die CVE-Kriterien weiter - und ein
+gestaffeltes Update mit CVE zieht LCM beim nächsten Voll-Update vor.
+
 ## Ein Neustart wartet auf die Rückkehr
 
 Ein Neustart - ob per Ein-Klick-Aktion in der Server-Detailansicht oder als

@@ -570,6 +570,9 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	// erkannte Paketverwaltung (apt/dnf/zypper) und frischen danach den
 	// Paketbestand auf.
 	if script, ok := scriptForRule(server.PackageManager, rule.Type, rule.Command); ok {
+		if rule.Type == domain.RuleTypeUpdate {
+			script = aptUpgradeEnv(e.settings, e.servers, server) + script
+		}
 		e.runAptRule(job, server, rule, script, triggeredBy)
 		return
 	}

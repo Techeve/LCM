@@ -189,6 +189,12 @@ type GlobalSettings struct {
 	// bzw. die Gruppen-Regel apt-proxy greift.
 	AptCacheURL string `json:"apt_cache_url"`
 
+	// AptIncludePhased: gestaffelte Ubuntu-Updates (Phased-Update-Percentage)
+	// sofort einspielen statt zu warten, bis der Server an der Reihe ist.
+	// Aus = Ubuntus Vorgabe; die Staffelung schützt vor fehlerhaften Updates.
+	// Gestaffelte Updates mit bekannter CVE zieht LCM unabhängig davon vor.
+	AptIncludePhased bool `json:"apt_include_phased"`
+
 	// Onboarding-SSH-Key: ein beim ersten Start erzeugtes Schlüsselpaar, das
 	// als ALTERNATIVE zum Passwort für den initialen Login beim Join/Reconnect
 	// dient. Der Public Key (OnboardingPubKey) wird in der UI angezeigt und

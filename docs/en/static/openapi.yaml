@@ -5534,6 +5534,9 @@ paths:
                   type: boolean
                 cve_scan_enabled:
                   type: boolean
+                apt_include_phased:
+                  type: boolean
+                  description: 'Install phased Ubuntu updates right away (default off). Phased updates with a known CVE are pulled forward regardless.'
                 cve_scan_cron:
                   type: string
                 cve_high_weight_packages:

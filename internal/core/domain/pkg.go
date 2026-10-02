@@ -24,6 +24,22 @@ type Package struct {
 	CandidateVersion string `json:"candidate_version"`
 	// Security markiert Updates aus Security-Quellen (z.B. debian-security).
 	Security bool `gorm:"default:false" json:"security"`
+	// HeldReason: Warum apt das Update bei einem Upgrade nicht mitnimmt
+	// (HeldReason*; "" = kommt mit). Zurückgehaltene Updates zählen nicht als
+	// überfällig, siehe services/aptheld.go.
+	HeldReason string `json:"held_reason"`
+}
+
+// Gründe, aus denen apt ein Update zurückhält (Package.HeldReason).
+const (
+	HeldReasonHold   = "hold"   // per apt-mark hold gesperrt
+	HeldReasonPhased = "phased" // gestaffelte Ubuntu-Auslieferung
+	HeldReasonKept   = "kept"   // nur durch Entfernen anderer Pakete möglich
+)
+
+// ValidHeldReason meldet, ob r ein bekannter Rückhalte-Grund ist.
+func ValidHeldReason(r string) bool {
+	return r == HeldReasonHold || r == HeldReasonPhased || r == HeldReasonKept
 }
 
 // BeforeCreate vergibt eine UUID, falls noch keine gesetzt ist.

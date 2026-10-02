@@ -120,6 +120,26 @@ attempt is rejected with "ungültiger rule-typ". The list above is therefore
 complete for what is selectable under *group → rules*.
 :::
 
+## What an update leaves out (apt)
+
+"Update all packages" matches `apt upgrade`: updates that need a **new
+package** come along - above all new kernels (`linux-image-generic` needs a
+new `linux-image-<version>` package for every release). Nothing is ever
+removed.
+
+Three kinds of updates still stay behind. LCM lists them at the end of the
+job log and marks them in the package list:
+
+| Label | Meaning |
+|---|---|
+| **phased** | Ubuntu releases the update to only part of its machines first (phased updates) to catch regressions early. It arrives automatically once the server is in the rollout. This can be turned off under *Settings → Security*. |
+| **on hold** | held via `apt-mark hold` - a deliberate decision, LCM does not override it. |
+| **kept back** | could only be installed by removing other packages - please review by hand (`apt full-upgrade`). |
+
+Such updates do **not** lower the server's status. If a known CVE affects
+one, it still counts through the CVE criteria - and LCM pulls a phased update
+with a CVE forward on the next full update.
+
 ## A reboot waits for the server to come back
 
 A reboot - whether triggered from the server detail view or as a scheduled

@@ -304,6 +304,7 @@ func scanPackagesAndRepos(mgr string, run func(label, cmd string) string) ([]dom
 	default:
 		pkgs = parseDpkgList(run("packages", "dpkg-query -W -f='${Package} ${Version}\\n'"))
 		applyUpgradable(pkgs, run("upgradable", "apt list --upgradable 2>/dev/null"))
+		applyHeldBack(pkgs, run("held-back", aptHeldBackFunc+"lcm_apt_heldback"))
 	}
 	return pkgs, scanReposFor(mgr, run)
 }

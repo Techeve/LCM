@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.45.0-beta.1 - 2026-10-02
+
+### 🚀 Features
+
+- **apt**: Kernel-Updates mitnehmen, Zurückgehaltenes benennen und nicht abwerten (4e356391)
+
 ## v1.44.0-beta.1 - 2026-10-02
 
 ### 🚀 Features

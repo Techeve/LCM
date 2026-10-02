@@ -30,7 +30,7 @@ func TestParsePackageNames(t *testing.T) {
 }
 
 func TestAptScripts(t *testing.T) {
-	if !strings.Contains(aptUpgradeAllScript(), "lcm_apt -y upgrade") {
+	if !strings.Contains(aptUpgradeAllScript(), "lcm_apt -y --with-new-pkgs upgrade") {
 		t.Errorf("upgrade-all-skript unerwartet: %s", aptUpgradeAllScript())
 	}
 
@@ -52,7 +52,7 @@ func TestAptScripts(t *testing.T) {
 
 func TestScriptForRuleApt(t *testing.T) {
 	for _, tc := range []struct{ typ, cmd, want string }{
-		{"update", "", "-y upgrade"},
+		{"update", "", "--with-new-pkgs upgrade"},
 		{"security", "", "security"},
 		{"packages", "htop unzip", "--only-upgrade -y htop unzip"},
 	} {

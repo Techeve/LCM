@@ -273,12 +273,30 @@ func (r *ServerRepository) FindOutdatedPackages(serverID uint) ([]domain.Package
 	return pkgs, nil
 }
 
+// CountOutdatedPackages zählt die überfälligen Updates - ohne die, die apt
+// bei einem Upgrade bewusst zurückhält (held_reason, siehe
+// services/aptheld.go). Liegt auf einem solchen Paket eine CVE, zählt sie
+// über die CVE-Kriterien der Ampel.
 func (r *ServerRepository) CountOutdatedPackages(serverID uint) (int64, error) {
 	var n int64
 	err := r.db.Model(&domain.Package{}).
-		Where("server_ref = ? AND candidate_version != '' AND candidate_version != version", ServerRef(serverID)).
+		Where("server_ref = ? AND candidate_version != '' AND candidate_version != version AND COALESCE(held_reason, '') = ''", ServerRef(serverID)).
 		Count(&n).Error
 	return n, err
+}
+
+// PhasedPackagesWithCVE liefert die Pakete, deren Update in gestaffelter
+// Auslieferung steckt, obwohl auf ihnen eine CVE aus dem Paketbestand liegt -
+// die zieht ein Voll-Upgrade vor.
+func (r *ServerRepository) PhasedPackagesWithCVE(serverID uint) ([]string, error) {
+	ref := ServerRef(serverID)
+	var names []string
+	err := r.db.Model(&domain.Package{}).Distinct("name").
+		Where("server_ref = ? AND held_reason = ?", ref, domain.HeldReasonPhased).
+		Where("name IN (?)", r.db.Model(&domain.Vulnerability{}).Select("package_name").
+			Where("server_ref = ? AND source = ?", ref, domain.VulnSourceOS)).
+		Order("name").Pluck("name", &names).Error
+	return names, err
 }
 
 // CountPackages zählt den erfassten Paketbestand. Null bedeutet, dass die

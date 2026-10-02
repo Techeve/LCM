@@ -33,7 +33,7 @@ func TestRefreshHardwareReadsFactsWithoutUpgrade(t *testing.T) {
 		t.Errorf("hardware nicht aktualisiert: %d kerne, %d MB", srv.CPUCores, srv.MemTotalMB)
 	}
 	all := strings.Join(env.Dialer.Commands, "\n")
-	if strings.Contains(all, "upgrade") || strings.Contains(all, "install") {
+	if installs(all) {
 		t.Errorf("refresh darf nichts installieren:\n%s", all)
 	}
 }

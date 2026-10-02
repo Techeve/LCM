@@ -110,9 +110,26 @@ func aptScript(lines ...string) string {
 	return aptPrelude + strings.Join(lines, "\n")
 }
 
-// aptUpgradeAllScript aktualisiert alle Pakete (klassisches apt upgrade).
+// aptUpgradeAllScript aktualisiert alle Pakete.
+//
+// --with-new-pkgs entspricht `apt upgrade`: Updates, die ein neues Paket
+// brauchen, kommen mit. Ohne die Option hält `apt-get upgrade` sie dauerhaft
+// zurück - allen voran die Kernel (linux-image-generic braucht für jede neue
+// Fassung ein neues linux-image-<version>-Paket). Entfernt wird weiterhin
+// nichts; das bliebe `full-upgrade` vorbehalten.
+//
+// Danach werden gestaffelte Updates mit bekannter CVE vorgezogen
+// (aptForceStep) und alles benannt, was liegen bleibt (lcm_apt_report) -
+// auch nach einem Fehlschlag, nur nicht bei belegtem apt.
 func aptUpgradeAllScript() string {
-	return aptScript("lcm_apt_update || exit $?", aptRetry("lcm_apt -y upgrade"))
+	return aptScript(
+		aptHeldBackFunc+aptHeldBackReport+"lcm_apt_update || exit $?",
+		"( "+aptRetry("lcm_apt -y --with-new-pkgs upgrade")+" )",
+		"rc=$?",
+		`[ $rc -eq 0 ] && { `+aptForceStep+`; }`,
+		`[ $rc -ne `+strconv.Itoa(aptLockBusyExit)+` ] && lcm_apt_report`,
+		"exit $rc",
+	)
 }
 
 // aptRefreshScript aktualisiert nur die Paket-Metadaten (apt-get update) -

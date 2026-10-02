@@ -99,7 +99,8 @@ lcm_apt_wait() {
 }
 lcm_apt() {
   lcm_apt_wait || return
-  DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60 "$@"
+  DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60 \
+    ${LCM_APT_PHASED:+-o APT::Get::Always-Include-Phased-Updates=true} "$@"
 }
 lcm_apt_update() {
   lcm_apt_wait || return
