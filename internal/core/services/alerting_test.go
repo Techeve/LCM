@@ -390,8 +390,11 @@ func TestAlertCrowdSecLapiDownFiresWhenUnreachable(t *testing.T) {
 	env := newAlertEnv(t)
 	env.createServer(t, "web-01", nil)
 	env.createServer(t, "web-02", nil)
-	env.alerts.WithCrowdSecLapiChecker(func() (*services.CrowdSecLapiStatus, error) {
-		return &services.CrowdSecLapiStatus{Configured: true, Message: "nicht erreichbar"}, nil
+	env.alerts.WithCrowdSecLapiChecker(func() ([]services.CrowdSecLapiStatus, error) {
+		return []services.CrowdSecLapiStatus{
+			{Name: "LAPI Techeve", Configured: true, Reachable: true, Running: true},
+			{Name: "LAPI Service 2000", Configured: true, Message: "nicht erreichbar"},
+		}, nil
 	})
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{
@@ -410,12 +413,16 @@ func TestAlertCrowdSecLapiDownFiresWhenUnreachable(t *testing.T) {
 	if events[0].ServerID != nil {
 		t.Errorf("Selbstbeobachtung darf auf keinen Server zeigen, bekam %v", *events[0].ServerID)
 	}
+	// Die Meldung nennt genau die LAPI, die nicht arbeitet.
+	if d := events[0].Description; !strings.Contains(d, "LAPI Service 2000") || strings.Contains(d, "Techeve") {
+		t.Errorf("meldung nennt die falsche LAPI: %q", d)
+	}
 }
 
 func TestAlertCrowdSecLapiDownDoesNotFireWhenRunning(t *testing.T) {
 	env := newAlertEnv(t)
-	env.alerts.WithCrowdSecLapiChecker(func() (*services.CrowdSecLapiStatus, error) {
-		return &services.CrowdSecLapiStatus{Configured: true, Reachable: true, Running: true}, nil
+	env.alerts.WithCrowdSecLapiChecker(func() ([]services.CrowdSecLapiStatus, error) {
+		return []services.CrowdSecLapiStatus{{Name: "LAPI Techeve", Configured: true, Reachable: true, Running: true}}, nil
 	})
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{
@@ -434,8 +441,9 @@ func TestAlertCrowdSecLapiDownDoesNotFireWhenRunning(t *testing.T) {
 
 func TestAlertCrowdSecLapiDownSkipsWithoutConfig(t *testing.T) {
 	env := newAlertEnv(t)
-	env.alerts.WithCrowdSecLapiChecker(func() (*services.CrowdSecLapiStatus, error) {
-		return &services.CrowdSecLapiStatus{Configured: false, Message: "keine CrowdSec-LAPI konfiguriert"}, nil
+	// Ohne LAPI liefert der Check eine leere Liste.
+	env.alerts.WithCrowdSecLapiChecker(func() ([]services.CrowdSecLapiStatus, error) {
+		return nil, nil
 	})
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{

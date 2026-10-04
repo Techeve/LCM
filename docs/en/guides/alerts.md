@@ -97,7 +97,7 @@ one selected group is still evaluated only once.
 | **Reboot required** | the system itself requests a reboot after an update (e.g. a new kernel) - a plain yes/no criterion without a threshold |
 | **APT cache unreachable** | the central [apt-cacher-ng](/en/guides/apt-cache/) does not respond. Applies only to the LCM host running the service, and stays silent while no URL is configured under *Settings → APT cache* |
 | **Deep scan** | the last [deep scan](/en/guides/deep-scan/) produced warnings or critical findings (hardening/misconfiguration or a kernel reboot gap) - a plain yes/no criterion without a threshold |
-| **CrowdSec LAPI unreachable** | the central CrowdSec LAPI does not respond or rejects the stored machine login. Applies only to the LCM host and stays silent while no LAPI is configured under *Settings → CrowdSec* |
+| **CrowdSec LAPI unreachable** | one of the central CrowdSec LAPIs does not respond or rejects the stored machine login; the message names each affected one. Applies only to the LCM host and stays silent while no LAPI is stored under *Settings → CrowdSec* |
 | **CVE database outdated** | the vulnerability database of the CVE scanner is older than 48&nbsp;hours or was never downloaded. This matters because an old database reports no error but returns outdated results - from the outside that looks like “no vulnerabilities”. Applies only to the LCM host |
 | **System backup overdue** | automatic backups are enabled, but the newest backup is older than **twice the interval** - or none exists at all. Deliberately measures the outcome instead of individual failed attempts: however the backup went missing, the missing state is what gets reported. Applies only to the LCM host |
 

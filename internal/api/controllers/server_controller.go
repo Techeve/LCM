@@ -1576,6 +1576,7 @@ func (ctrl *ServerController) ConfigureSecurityTool(c fiber.Ctx) error {
 		Bouncer      *bool    `json:"bouncer"`
 		Collections  []string `json:"collections"`
 		LapiMode     string   `json:"lapi_mode"`
+		LapiID       uint     `json:"lapi_id"`
 	}
 	if err := c.Bind().Body(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
@@ -1591,7 +1592,7 @@ func (ctrl *ServerController) ConfigureSecurityTool(c fiber.Ctx) error {
 	}
 	in := services.SecurityToolInput{
 		Tool: req.Tool, AllowlistIPs: req.AllowlistIPs, AllowlistIDs: req.AllowlistIDs, Bouncer: bouncer,
-		Collections: req.Collections, LapiMode: req.LapiMode,
+		Collections: req.Collections, LapiMode: req.LapiMode, LapiID: req.LapiID,
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.ConfigureSecurityTool(scopeFor(c), id, in, actor(c))

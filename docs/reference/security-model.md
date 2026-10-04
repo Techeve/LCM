@@ -445,7 +445,7 @@ Verschlüsselt gespeichert werden u.&nbsp;a. (vollständige Liste in `internal/s
 - **RouterOS-Login-Passwort** (`servers.login_password_enc`) für Geräte mit Passwort-Authentifizierung;
 - **2FA-Secrets** der Benutzer (`users.totp_secret_enc`) und Linux-User-Passwörter;
 - **System-Mailer**-SMTP-Passwort und **Benachrichtigungskanal-Secrets** (SMTP-Passwort bzw. Webhook-URL);
-- **CrowdSec-Zugänge** auf dem LCM-Host: LAPI-Maschinen-Passwort (`crowd_sec_lapi_password_enc`) und Console-Key (`crowd_sec_console_key_enc`);
+- **CrowdSec-Zugänge** auf dem LCM-Host: LAPI-Maschinen-Passwörter (`crowdsec_lapis.password_enc`) und Console-Key (`crowd_sec_console_key_enc`);
 - das hinterlegte **TLS-Key-PEM**.
 
 Großvolumige Konsolen-Ausgaben (Job-/SSH-Output) sowie der Server-Host/-Name laufen über einen GORM-Serializer (`aesgcm`); der Servername trägt zusätzlich einen aus dem Master-Key abgeleiteten **Blindindex** für die Suche, ohne den Klartext zu speichern.

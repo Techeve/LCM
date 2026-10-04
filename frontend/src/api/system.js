@@ -152,12 +152,26 @@ export class SystemApi {
     return this.#client.get('/settings/apt-cache/overview');
   }
 
+  // ---- CrowdSec-LAPIs (Passwort write-only) ----
+  crowdsecLapis() {
+    return this.#client.get('/settings/crowdsec/lapis');
+  }
+
+  /** LAPI anlegen (ohne id) oder aktualisieren (mit id; password leer = unverändert). */
+  saveCrowdsecLapi(data) {
+    return this.#client.post('/settings/crowdsec/lapis', data);
+  }
+
+  deleteCrowdsecLapi(id) {
+    return this.#client.delete(`/settings/crowdsec/lapis/${id}`);
+  }
+
   /**
-   * Erreichbarkeits-Check der konfigurierten CrowdSec-LAPI (Login-Probe vom
-   * LCM-Host aus): {configured, reachable, running, http_status, message}.
+   * Erreichbarkeits-Check einer LAPI (Login-Probe vom LCM-Host aus):
+   * {id, name, configured, reachable, running, http_status, message}.
    */
-  crowdsecStatus() {
-    return this.#client.get('/settings/crowdsec/status');
+  crowdsecLapiStatus(id) {
+    return this.#client.get(`/settings/crowdsec/lapis/${id}/status`);
   }
 
   // ---- Enterprise-Subscription ----

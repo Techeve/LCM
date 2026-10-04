@@ -582,11 +582,10 @@ func (ctrl *OpsController) GetSettings(c fiber.Ctx) error {
 	// „konfiguriert?"-Flags mitgeben, ohne die Werte preiszugeben.
 	return c.JSON(struct {
 		*domain.GlobalSettings
-		CrowdSecLapiConfigured    bool `json:"crowdsec_lapi_configured"`
 		CrowdSecConsoleConfigured bool `json:"crowdsec_console_configured"`
 		BackupPassphraseSet       bool `json:"backup_passphrase_set"`
 		BackupRecipientsSet       bool `json:"backup_recipients_set"`
-	}{settings, settings.CrowdSecLapiConfigured(), settings.CrowdSecConsoleConfigured(),
+	}{settings, settings.CrowdSecConsoleConfigured(),
 		services.BackupPassphraseSet() || ctrl.settings.BackupPassphraseStored(),
 		strings.TrimSpace(settings.BackupRecipients) != ""})
 }
@@ -717,11 +716,9 @@ type globalSettingsRequest struct {
 	DNSTestDomains              *string `json:"dns_test_domains"`
 	NTPServerPresets            *string `json:"ntp_server_presets"`
 	DefaultTimezone             *string `json:"default_timezone"`
-	// CrowdSec-Zugang; Passwort/Key write-only (leer = unverändert).
-	CrowdSecLapiURL      *string `json:"crowdsec_lapi_url"`
-	CrowdSecLapiLogin    *string `json:"crowdsec_lapi_login"`
-	CrowdSecLapiPassword *string `json:"crowdsec_lapi_password"`
-	CrowdSecConsoleKey   *string `json:"crowdsec_console_key"`
+	// CrowdSec-Console-Key, write-only (leer = unverändert). Die LAPIs
+	// haben eigene Endpunkte (/settings/crowdsec/lapis).
+	CrowdSecConsoleKey *string `json:"crowdsec_console_key"`
 
 	// Standard-E-Mail-Versand (System-Mailer); mail_password ist write-only
 	// (leer = unverändert).
@@ -771,9 +768,6 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		DNSTestDomains:              req.DNSTestDomains,
 		NTPServerPresets:            req.NTPServerPresets,
 		DefaultTimezone:             req.DefaultTimezone,
-		CrowdSecLapiURL:             req.CrowdSecLapiURL,
-		CrowdSecLapiLogin:           req.CrowdSecLapiLogin,
-		CrowdSecLapiPassword:        req.CrowdSecLapiPassword,
 		CrowdSecConsoleKey:          req.CrowdSecConsoleKey,
 		MailEnabled:                 req.MailEnabled,
 		MailHost:                    req.MailHost,
@@ -821,15 +815,67 @@ func (ctrl *OpsController) TestSystemMail(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "sent"})
 }
 
-// CrowdSecLapiStatus - GET /api/v1/settings/crowdsec/status (settings:manage)
-// Prüft vom LCM-Host aus, ob die konfigurierte CrowdSec-LAPI erreichbar ist
-// und die hinterlegten Maschinen-Zugangsdaten akzeptiert.
-func (ctrl *OpsController) CrowdSecLapiStatus(c fiber.Ctx) error {
-	status, err := ctrl.settings.CheckCrowdSecLapi()
+// ListCrowdSecLapis - GET /api/v1/settings/crowdsec/lapis (settings:manage)
+// und GET /api/v1/crowdsec-lapis (servers:read, für die Auswahl bei der
+// Einrichtung). Passwörter werden nie ausgegeben.
+func (ctrl *OpsController) ListCrowdSecLapis(c fiber.Ctx) error {
+	lapis, err := ctrl.settings.ListCrowdSecLapis()
 	if err != nil {
 		return err
 	}
+	return c.JSON(lapis)
+}
+
+// SaveCrowdSecLapi - POST /api/v1/settings/crowdsec/lapis (settings:manage)
+// Legt eine LAPI an (ohne id) oder aktualisiert sie (mit id; Passwort leer =
+// unverändert).
+func (ctrl *OpsController) SaveCrowdSecLapi(c fiber.Ctx) error {
+	var req services.CrowdSecLapiInput
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	lapi, err := ctrl.settings.SaveCrowdSecLapi(req, actor(c))
+	if err != nil {
+		return mapLapiError(err)
+	}
+	return c.JSON(lapi)
+}
+
+// DeleteCrowdSecLapi - DELETE /api/v1/settings/crowdsec/lapis/:id (settings:manage)
+func (ctrl *OpsController) DeleteCrowdSecLapi(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	if err := ctrl.settings.DeleteCrowdSecLapi(id, actor(c)); err != nil {
+		return mapLapiError(err)
+	}
+	return c.JSON(fiber.Map{"status": "deleted"})
+}
+
+// CrowdSecLapiStatus - GET /api/v1/settings/crowdsec/lapis/:id/status (settings:manage)
+// Prüft vom LCM-Host aus, ob die LAPI erreichbar ist und die hinterlegten
+// Maschinen-Zugangsdaten akzeptiert.
+func (ctrl *OpsController) CrowdSecLapiStatus(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	status, err := ctrl.settings.CheckCrowdSecLapi(id)
+	if err != nil {
+		return mapLapiError(err)
+	}
 	return c.JSON(status)
+}
+
+func mapLapiError(err error) error {
+	switch {
+	case errors.Is(err, services.ErrCrowdSecLapiInvalid):
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	case errors.Is(err, repositories.ErrNotFound):
+		return fiber.NewError(fiber.StatusNotFound, "crowdsec-lapi nicht gefunden")
+	}
+	return err
 }
 
 // AptCacheStatus - GET /api/v1/settings/apt-cache/status (settings:manage)

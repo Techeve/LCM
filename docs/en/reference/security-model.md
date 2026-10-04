@@ -429,7 +429,7 @@ Stored encrypted are, among others (full list in `internal/storage/rotate.go`):
 - the **RouterOS login password** (`servers.login_password_enc`) for devices using password authentication;
 - users' **2FA secrets** (`users.totp_secret_enc`) and Linux-user passwords;
 - the **system mailer** SMTP password and **notification-channel secrets** (SMTP password or webhook URL);
-- **CrowdSec credentials** on the LCM host: the LAPI machine password (`crowd_sec_lapi_password_enc`) and console key (`crowd_sec_console_key_enc`);
+- **CrowdSec credentials** on the LCM host: the LAPI machine passwords (`crowdsec_lapis.password_enc`) and console key (`crowd_sec_console_key_enc`);
 - the stored **TLS key PEM**.
 
 Large console output (job/SSH output) as well as the server host/name go through a GORM serializer (`aesgcm`); the server name additionally carries a **blind index** derived from the master key for searching without storing the plaintext.

@@ -601,6 +601,7 @@ var migratedModels = []any{
 	&domain.UnknownApp{},
 	&domain.PackagePin{},
 	&domain.IPAllowlist{},
+	&domain.CrowdSecLapi{},
 	&domain.LinuxUser{},
 	&domain.LinuxUserSSHKey{},
 	&domain.LinuxUserActivation{},

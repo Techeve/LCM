@@ -609,7 +609,9 @@
   let secBouncer = $state(true);
   let secCollections = $state('crowdsecurity/sshd');
   let secLapiMode = $state('local'); // local | remote | console
-  let secSettings = $state(null); // {crowdsec_lapi_configured, crowdsec_console_configured}
+  let secLapis = $state([]); // zentrale LAPIs zur Auswahl im Remote-Modus
+  let secLapiId = $state(0);
+  let secSettings = $state(null); // {crowdsec_console_configured}
   function openSecurityTool() {
     securityTool = '';
     secAllowlist = server?.lcm_source_ip || '';
@@ -619,6 +621,13 @@
     secLapiMode = 'local';
     securityToolOpen = true;
     api.servers.ipAllowlists().then((l) => (ipAllowlists = l)).catch(() => (ipAllowlists = []));
+    api.servers
+      .crowdsecLapis()
+      .then((l) => {
+        secLapis = l;
+        secLapiId = l[0]?.id ?? 0;
+      })
+      .catch(() => (secLapis = []));
     if (auth.can('settings:manage')) {
       api.system.getSettings().then((s) => (secSettings = s)).catch(() => {});
     }
@@ -645,6 +654,7 @@
       opts.bouncer = secBouncer;
       opts.collections = secCollections.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
       opts.lapi_mode = secLapiMode;
+      if (secLapiMode === 'remote') opts.lapi_id = secLapiId;
     }
     securityToolOpen = false;
     await refreshServer(() => api.servers.configureSecurityTool(id, opts), t('serverDetail.securityTool.label'));
@@ -4625,11 +4635,21 @@
           <label class="form-label small mb-1" for="sec-lapi">{t('serverDetail.securityTool.lapiMode')}</label>
           <select id="sec-lapi" class="form-select" bind:value={secLapiMode} data-testid="sec-lapi">
             <option value="local">{t('serverDetail.securityTool.lapiLocal')}</option>
-            <option value="remote" disabled={!secSettings?.crowdsec_lapi_configured}>{t('serverDetail.securityTool.lapiRemote')}{#if !secSettings?.crowdsec_lapi_configured} - {t('serverDetail.securityTool.notConfigured')}{/if}</option>
+            <option value="remote" disabled={secLapis.length === 0}>{t('serverDetail.securityTool.lapiRemote')}{#if secLapis.length === 0} - {t('serverDetail.securityTool.notConfigured')}{/if}</option>
             <option value="console" disabled={!secSettings?.crowdsec_console_configured}>{t('serverDetail.securityTool.lapiConsole')}{#if !secSettings?.crowdsec_console_configured} - {t('serverDetail.securityTool.notConfigured')}{/if}</option>
           </select>
           <div class="form-text">{t('serverDetail.securityTool.lapiHint')}</div>
         </div>
+        {#if secLapiMode === 'remote'}
+          <div class="mb-3">
+            <label class="form-label small mb-1" for="sec-lapi-id">{t('serverDetail.securityTool.lapiChoose')}</label>
+            <select id="sec-lapi-id" class="form-select" bind:value={secLapiId} data-testid="sec-lapi-id">
+              {#each secLapis as l (l.id)}
+                <option value={l.id}>{l.name} ({l.url})</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
       {/if}
 
       <div class="d-flex justify-content-end gap-2">

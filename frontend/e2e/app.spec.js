@@ -2139,37 +2139,54 @@ test.describe('LCM', () => {
     }
   });
 
-  test('CrowdSec: LAPI-Check, Überwachungs-Empfehlung und Server-Liste', async ({ page }) => {
+  test('CrowdSec: mehrere LAPIs, Check, Überwachungs-Empfehlung und Server-Liste', async ({ page }) => {
     await loginAsAdmin(page);
-    // Regel-Löschen ist mit confirm() abgesichert - automatisch bestätigen.
+    // Löschen ist mit confirm() abgesichert - automatisch bestätigen.
     page.on('dialog', (d) => d.accept());
     await page.goto('/#/settings/crowdsec');
-    // LAPI konfigurieren (127.0.0.1:1 ist nicht belegt → Check scheitert schnell).
-    await page.getByTestId('cs-lapi-url').fill('http://127.0.0.1:1');
-    await page.locator('#cs-login').fill('lcm-managed');
-    await page.getByTestId('cs-lapi-pw').fill('e2e-lapi-passwort');
-    await page.getByTestId('cs-save').click();
-    // Nach dem Speichern erscheinen Status-Check, Überwachung und Server-Liste
-    // sofort (die Seite lädt die abgeleiteten Flags frisch nach).
-    await expect(page.getByTestId('cs-check')).toBeVisible();
-    await page.getByTestId('cs-check').click();
-    await expect(page.getByTestId('cs-status-badge')).toContainText('nicht erreichbar');
+    await expect(page.getByTestId('cs-lapi-none')).toBeVisible();
+
+    // Zwei LAPIs mit eigenem Namen anlegen (127.0.0.1:1/:2 sind nicht belegt →
+    // der Check scheitert schnell).
+    for (const [name, url] of [['LAPI Techeve', 'http://127.0.0.1:1'], ['LAPI Service 2000', 'http://127.0.0.1:2']]) {
+      await page.getByTestId('cs-lapi-add').click();
+      await page.getByTestId('cs-lapi-name').fill(name);
+      await page.getByTestId('cs-lapi-url').fill(url);
+      await page.getByTestId('cs-lapi-pw').fill('e2e-lapi-passwort');
+      await page.getByTestId('cs-lapi-save').click();
+      await expect(page.getByTestId('cs-lapi-table')).toContainText(name);
+    }
+    await expect(page.getByTestId('cs-lapi-row')).toHaveCount(2);
+
+    const techeve = page.getByTestId('cs-lapi-row').filter({ hasText: 'LAPI Techeve' });
+    await techeve.getByTestId('cs-check').click();
+    await expect(techeve.getByTestId('cs-status-badge')).toContainText('nicht erreichbar');
+
     // Überwachungs-Empfehlung: Regel per Klick anlegen → Status „nur Historie".
     await page.getByTestId('cs-create-rule').click();
     await expect(page.locator('.card', { hasText: 'Überwachung' })).toContainText('nur Historie');
-    // Angebundene Server: in der Demo meldet kein Server an diese LAPI.
+    // Angebundene Server: in der Demo meldet kein Server an diese LAPIs.
     await expect(page.getByTestId('cs-none-connected')).toBeVisible();
-    // Aufräumen (shared Demo-State): Regel löschen, LAPI-Zugang leeren.
+
+    // Bei der CrowdSec-Einrichtung eines Servers stehen beide zur Wahl.
+    await page.goto('/#/servers/1');
+    await page.getByTestId('server-actions-toggle').click();
+    await page.getByTestId('server-action-security-tools').click();
+    await page.locator('#sec-tool').selectOption('crowdsec');
+    await page.getByTestId('sec-lapi').selectOption('remote');
+    await expect(page.getByTestId('sec-lapi-id').locator('option')).toHaveText([/LAPI Service 2000/, /LAPI Techeve/]);
+
+    // Aufräumen (shared Demo-State): Regel und LAPIs löschen.
     await page.goto('/#/settings/alerts');
     const rulesTable = page.locator('table').filter({ hasText: 'Schwelle' });
     const rrow = rulesTable.locator('tr', { hasText: 'CrowdSec-LAPI nicht erreichbar' });
     await rrow.getByRole('button', { name: 'Löschen' }).click();
     await expect(rulesTable).not.toContainText('CrowdSec-LAPI nicht erreichbar');
     await page.goto('/#/settings/crowdsec');
-    await page.getByTestId('cs-lapi-url').fill('');
-    await page.locator('#cs-login').fill('');
-    await page.getByTestId('cs-save').click();
-    await expect(page.getByTestId('cs-check')).toHaveCount(0);
+    for (let i = 0; i < 2; i++) {
+      await page.getByTestId('cs-lapi-delete').first().click();
+    }
+    await expect(page.getByTestId('cs-lapi-none')).toBeVisible();
   });
 
   test('Servergruppen: Rule-Typ Custom-Aktion mit Auswahl', async ({ page }) => {

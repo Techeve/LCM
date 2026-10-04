@@ -128,9 +128,10 @@ type ServerService struct {
 	// dnsTestDomains liefert die zu prüfenden DNS-Test-Domains aus den globalen
 	// Einstellungen. Optional; nil = eingebaute Standardliste.
 	dnsTestDomains func() []string
-	// crowdsecConfig liefert den entschlüsselten CrowdSec-Zugang (LAPI/Console)
-	// aus den globalen Einstellungen - für die Aktion „Sicherheit-Tools". Optional.
-	crowdsecConfig func() (CrowdSecConfig, error)
+	// crowdsecConfig liefert den entschlüsselten CrowdSec-Zugang - die
+	// gewählte LAPI und den Console-Key - für die Aktion „Sicherheit-Tools".
+	// Optional.
+	crowdsecConfig func(lapiID uint) (CrowdSecConfig, error)
 	// pins ist der Speicher der Paket-Pins (Schutz vor Autoremove, optionale
 	// Versions-Fixierung). Optional - ohne ihn sind die Pin-Aktionen nicht
 	// verfügbar und paketbezogene Jobs laufen ohne Pin-Schutz.
@@ -385,7 +386,7 @@ func (s *ServerService) dnsTestDomainList() []string {
 }
 
 // WithCrowdSecConfig verdrahtet den entschlüsselten CrowdSec-Zugang (LAPI/Console).
-func (s *ServerService) WithCrowdSecConfig(fn func() (CrowdSecConfig, error)) *ServerService {
+func (s *ServerService) WithCrowdSecConfig(fn func(lapiID uint) (CrowdSecConfig, error)) *ServerService {
 	s.crowdsecConfig = fn
 	return s
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.46.0-beta.1 - 2026-10-04
+
+### 🚀 Features
+
+- **crowdsec**: mehrere zentrale LAPIs mit Bezeichnung (adac88a5)
+
 ## v1.45.0-beta.1 - 2026-10-02
 
 ### 🚀 Features

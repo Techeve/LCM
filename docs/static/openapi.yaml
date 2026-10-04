@@ -6137,6 +6137,12 @@ paths:
                   - remote
                   - console
                   default: local
+                lapi_id:
+                  type: integer
+                  description: >-
+                    Nur CrowdSec im Modus remote - die gewählte LAPI
+                    (Einstellungen → CrowdSec). Fehlt das Feld, gilt die einzige
+                    LAPI, wenn es genau eine gibt.
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -7069,13 +7075,100 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
-  /api/v1/settings/crowdsec/status:
+  /api/v1/settings/crowdsec/lapis:
     get:
       tags:
       - Einstellungen
-      summary: Prüft vom LCM-Host aus, ob die konfigurierte CrowdSec-LAPI erreichbar ist.
+      summary: Listet die zentralen CrowdSec-LAPIs (ohne Passwörter).
+      operationId: opsCtrl_ListCrowdSecLapis
+      description: 'Benötigte Berechtigung: `settings:manage`. Für die Auswahl bei der Einrichtung gibt es dieselbe Liste unter `GET /api/v1/crowdsec-lapis` (`servers:read`).'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich - Liste aus {id, name, url, login, created_at, updated_at}.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+    post:
+      tags:
+      - Einstellungen
+      summary: Legt eine CrowdSec-LAPI an (ohne id) oder aktualisiert sie (mit id).
+      operationId: opsCtrl_SaveCrowdSecLapi
+      description: 'Beim Bearbeiten heißt ein leeres Passwort „unverändert".
+
+
+        Benötigte Berechtigung: `settings:manage`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url, login]
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+                  example: LAPI Techeve
+                url:
+                  type: string
+                  example: http://192.168.1.10:8080
+                login:
+                  type: string
+                  example: lcm-managed
+                password:
+                  type: string
+                  description: Maschinen-Passwort, write-only. Beim Anlegen Pflicht.
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '400':
+          description: Ungültige Eingabe (Name doppelt, URL ohne http(s), Login mit unerlaubten Zeichen, Passwort fehlt).
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/settings/crowdsec/lapis/{id}:
+    delete:
+      tags:
+      - Einstellungen
+      summary: Entfernt eine CrowdSec-LAPI aus LCM; angebundene Server bleiben angebunden.
+      operationId: opsCtrl_DeleteCrowdSecLapi
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      description: 'Benötigte Berechtigung: `settings:manage`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '404':
+          description: Nicht gefunden.
+  /api/v1/settings/crowdsec/lapis/{id}/status:
+    get:
+      tags:
+      - Einstellungen
+      summary: Prüft vom LCM-Host aus, ob eine CrowdSec-LAPI erreichbar ist.
       operationId: opsCtrl_CrowdSecLapiStatus
-      description: 'Prüft vom LCM-Host aus, ob die konfigurierte CrowdSec-LAPI erreichbar ist und die hinterlegten Maschinen-Zugangsdaten akzeptiert (Login-Probe auf /v1/watchers/login).
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      description: 'Login-Probe auf /v1/watchers/login mit den hinterlegten Maschinen-Zugangsdaten.
 
 
         Benötigte Berechtigung: `settings:manage`.'
@@ -7084,11 +7177,9 @@ paths:
       - apiKeyAuth: []
       responses:
         '200':
-          description: Erfolgreich.
-        '401':
-          description: Nicht angemeldet.
-        '403':
-          description: Keine Berechtigung.
+          description: Erfolgreich - {id, name, configured, reachable, running, http_status, message}.
+        '404':
+          description: Nicht gefunden.
   /api/v1/subscription:
     get:
       tags:
@@ -7345,6 +7436,26 @@ paths:
       responses:
         '200':
           description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/crowdsec-lapis:
+    get:
+      tags:
+      - Server
+      summary: CrowdSec-LAPIs als Auswahl bei der CrowdSec-Einrichtung (Lese-Sicht, ohne Passwörter).
+      operationId: opsCtrl_CrowdSecLapiPicker
+      description: 'CrowdSec-LAPIs als Auswahl für die Aktion „Sicherheit-Tools" (Modus remote).
+
+
+        Benötigte Berechtigung: `servers:read`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich - Liste aus {id, name, url, login}.
         '401':
           description: Nicht angemeldet.
         '403':

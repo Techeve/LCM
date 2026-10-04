@@ -276,7 +276,7 @@ export class ServersApi {
 
   /**
    * Sicherheits-Tool (fail2ban/CrowdSec) installieren & einrichten - Job.
-   * opts: {tool, allowlist_ips, bouncer, collections, lapi_mode}.
+   * opts: {tool, allowlist_ips, bouncer, collections, lapi_mode, lapi_id}.
    */
   configureSecurityTool(id, opts) {
     return this.#client.post(`/servers/${id}/security-tool`, opts);
@@ -434,6 +434,11 @@ export class ServersApi {
   /** Benannte IP-Allowlists (Auswahl in Firewall-Regeln/Security-Tools). */
   ipAllowlists() {
     return this.#client.get('/ip-allowlists');
+  }
+
+  /** CrowdSec-LAPIs für die Auswahl bei der Einrichtung: [{id, name, url, login}]. */
+  crowdsecLapis() {
+    return this.#client.get('/crowdsec-lapis');
   }
 
   /** CrowdSec-LAPI-Server auf dem LCM-Host einrichten (optional mit Bouncer). */

@@ -619,7 +619,13 @@ func New(deps Deps) *fiber.App {
 	// Server-Detail: GET /servers/known-repos)
 	api.Get("/settings/apt-cache/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.AptCacheStatus)
 	// Zentrale CrowdSec-Seite: LAPI-Erreichbarkeits-Check (Login-Probe).
-	api.Get("/settings/crowdsec/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.CrowdSecLapiStatus)
+	// CrowdSec-LAPIs: Verwaltung unter settings:manage, plus eine
+	// servers:read-Leseroute für die Auswahl bei der CrowdSec-Einrichtung.
+	api.Get("/settings/crowdsec/lapis", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.ListCrowdSecLapis)
+	api.Post("/settings/crowdsec/lapis", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.SaveCrowdSecLapi)
+	api.Delete("/settings/crowdsec/lapis/:id", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.DeleteCrowdSecLapi)
+	api.Get("/settings/crowdsec/lapis/:id/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.CrowdSecLapiStatus)
+	api.Get("/crowdsec-lapis", middlewares.RequirePermission(domain.PermServersRead), opsCtrl.ListCrowdSecLapis)
 	// Zentrale APT-Cache-Seite: Übersicht (URL, Erreichbarkeit, Statistik,
 	// Verwaltbarkeit auf dem LCM-Host). Neustart/permanentes Caching laufen über
 	// die server-scoped /servers/:id/apt-cache/*-Endpunkte mit der zurückgegebenen server_id.

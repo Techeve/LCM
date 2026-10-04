@@ -121,7 +121,7 @@ three bindings:
 | Mode | What for | Prerequisite |
 | --- | --- | --- |
 | **Local** (`local`) | Each server runs its own LAPI (standalone). Ideal for single, isolated hosts. | none |
-| **Central LAPI** (`remote`) | All servers report to **one** shared LAPI - fleet-wide shared ban lists. | URL + machine login + password under *Settings → CrowdSec*; the machine must be registered there (`cscli machines add`) |
+| **Central LAPI** (`remote`) | Servers report to a shared LAPI - shared ban lists for all connected to it. With several LAPIs, one is chosen. | at least one LAPI under *Settings → CrowdSec*; the machine must be registered there (`cscli machines add`) |
 | **CrowdSec Console** (`console`) | Additionally connect to CrowdSec's cloud console (`cscli console enroll`). | enrollment key under *Settings → CrowdSec* |
 
 If you pick *remote* or *console* without stored credentials, LCM aborts the
@@ -132,10 +132,17 @@ is left behind.
 
 *Settings → CrowdSec*:
 
-- **Self-hosted LAPI** - URL + machine login + password (stored encrypted).
+- **Central LAPIs** - a list, each LAPI with a **label** (e.g. "LAPI
+  Techeve", "LAPI Service 2000"), URL, machine login and password (stored
+  encrypted; empty when editing = unchanged). This way several sites or
+  customers can each have their own LAPI.
 - **CrowdSec Console** - enrollment key (stored encrypted).
 
-Only configured options are selectable in the install form.
+For *Central LAPI*, the install form offers a choice of the stored LAPIs.
+Only configured options are selectable.
+
+Up to LCM 1.45 there was exactly one LAPI in the settings. The update moves it
+into the list as **"Standard-LAPI"**.
 
 ## CrowdSec LAPI on the LCM host
 
@@ -150,8 +157,9 @@ Step by step:
    (`/etc/crowdsec/config.yaml.local`), generates a random password and creates
    the machine account **`lcm-managed`** (idempotent - an existing account is
    replaced).
-3. LCM reads the generated password back from the job output and **stores
-   URL/login/password in the CrowdSec settings automatically**. The URL points at
+3. LCM reads the generated password back from the job output and **adds the
+   LAPI as "LCM-Host" to the list under Settings → CrowdSec** (if the address
+   already exists, that entry gets the new credentials). The URL points at
    the host's first non-loopback IP, e.g. `http://203.0.113.5:8080`, login
    `lcm-managed`.
 4. From now on, managed servers can enroll in **remote mode** with no further
@@ -171,7 +179,7 @@ LAPI keeps its CrowdSec default **8080**.
 
 ## Monitoring the LAPI & connected servers
 
-The **Settings → CrowdSec** page offers, around the central LAPI:
+The **Settings → CrowdSec** page offers, per LAPI:
 
 - **Check now** - a login probe from the LCM host (POST `/v1/watchers/login`
   with the stored machine credentials). It distinguishes three states:
@@ -179,12 +187,12 @@ The **Settings → CrowdSec** page offers, around the central LAPI:
   and *unreachable*.
 - **Monitoring** - LCM recommends an alert rule of type **"CrowdSec LAPI
   unreachable"**; it can be created here with one click. With the rule active,
-  LCM checks the LAPI **automatically every 30 minutes** (with the alert
+  LCM checks **every** LAPI **automatically every 30 minutes** (with the alert
   evaluation) and reports outages via the assigned
   [notification channel](/en/guides/alerts). Without a channel, only the alert
   history is kept.
-- **Connected servers** - all servers whose CrowdSec agent reports to the LAPI
-  configured here according to its credentials file
+- **Connected servers** - all servers whose CrowdSec agent reports to one of
+  the LAPIs stored here according to its credentials file
   (`/etc/crowdsec/local_api_credentials.yaml`, read live during scans) -
   including connection mode and service status.
 

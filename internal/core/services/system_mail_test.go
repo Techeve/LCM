@@ -139,6 +139,14 @@ func TestSystemChannelSendsViaSystemMailer(t *testing.T) {
 
 func newSettingsService(t *testing.T) (*services.SettingsService, *repositories.SettingsRepository) {
 	t.Helper()
+	svc, repo, _ := newSettingsServiceWithCipher(t)
+	return svc, repo
+}
+
+// newSettingsServiceWithCipher liefert zusätzlich den Cipher - für Tests,
+// die verschlüsselte Altbestände anlegen.
+func newSettingsServiceWithCipher(t *testing.T) (*services.SettingsService, *repositories.SettingsRepository, *crypto.Cipher) {
+	t.Helper()
 	db, err := storage.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +164,9 @@ func newSettingsService(t *testing.T) (*services.SettingsService, *repositories.
 	if err := repo.Save(&domain.GlobalSettings{}); err != nil {
 		t.Fatal(err)
 	}
-	return services.NewSettingsService(repo, cipher, audit, nil), repo
+	svc := services.NewSettingsService(repo, cipher, audit, nil).
+		WithCrowdSecLapis(repositories.NewCrowdSecLapiRepository(db))
+	return svc, repo, cipher
 }
 
 func mailInput(mut func(*services.GlobalSettingsInput)) services.GlobalSettingsInput {

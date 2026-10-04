@@ -23,6 +23,8 @@ type SettingsService struct {
 	reload       func() error
 	knownRepos   *repositories.KnownRepoRepository   // Katalog bekannter Paketquellen, optional
 	ipAllowlists *repositories.IPAllowlistRepository // benannte IP-Allowlists, optional
+	// crowdsecLapis sind die zentralen CrowdSec-LAPIs (crowdsec_lapis.go).
+	crowdsecLapis *repositories.CrowdSecLapiRepository
 	// ipAllowlistUsage liefert alle Verweise auf eine Allowlist (Server-
 	// Firewall-Regeln, Gruppen-Regeln) - Löschsperre R2-072. Optional.
 	ipAllowlistUsage func(id uint) []string
@@ -161,32 +163,6 @@ func (s *SettingsService) SetAptCacheURL(rawURL string) error {
 		return err
 	}
 	if err := s.settings.UpdateFields(map[string]any{"apt_cache_url": url}); err != nil {
-		return err
-	}
-	if s.reload != nil {
-		return s.reload()
-	}
-	return nil
-}
-
-// SetCrowdSecLapi trägt die (auf dem LCM-Host erzeugten) CrowdSec-LAPI-
-// Zugangsdaten in die globalen Einstellungen ein - URL/Login im Klartext,
-// das Passwort AES-verschlüsselt. Wird nach der LAPI-Installation auf dem
-// LCM-Host aufgerufen, damit verwaltete Server sofort im Remote-Modus
-// enrollen können.
-func (s *SettingsService) SetCrowdSecLapi(rawURL, login, password string) error {
-	enc, err := s.cipher.EncryptString(password)
-	if err != nil {
-		return err
-	}
-	settings, err := s.settings.Get()
-	if err != nil {
-		return err
-	}
-	settings.CrowdSecLapiURL = strings.TrimSpace(rawURL)
-	settings.CrowdSecLapiLogin = strings.TrimSpace(login)
-	settings.CrowdSecLapiPasswordEnc = enc
-	if err := s.settings.Save(settings); err != nil {
 		return err
 	}
 	if s.reload != nil {
@@ -399,10 +375,7 @@ type GlobalSettingsInput struct {
 	MailAdminRecipients *string
 
 	// CrowdSec-Zugang (Passwort/Key nil/leer = unverändert).
-	CrowdSecLapiURL      *string
-	CrowdSecLapiLogin    *string
-	CrowdSecLapiPassword *string
-	CrowdSecConsoleKey   *string
+	CrowdSecConsoleKey *string
 }
 
 // clampSessionTTL begrenzt die eingestellte Session-Dauer auf sinnvolle Werte:
@@ -658,23 +631,8 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		touch("mail_admin_recipients")
 	}
 
-	// CrowdSec-Zugang: URL/Login Klartext, Passwort/Key write-only verschlüsselt.
-	if in.CrowdSecLapiURL != nil {
-		settings.CrowdSecLapiURL = strings.TrimSpace(*in.CrowdSecLapiURL)
-		touch("crowdsec_lapi_url")
-	}
-	if in.CrowdSecLapiLogin != nil {
-		settings.CrowdSecLapiLogin = strings.TrimSpace(*in.CrowdSecLapiLogin)
-		touch("crowdsec_lapi_login")
-	}
-	if in.CrowdSecLapiPassword != nil && *in.CrowdSecLapiPassword != "" {
-		enc, err := s.cipher.EncryptString(*in.CrowdSecLapiPassword)
-		if err != nil {
-			return nil, err
-		}
-		settings.CrowdSecLapiPasswordEnc = enc
-		touch("crowdsec_lapi_password")
-	}
+	// CrowdSec-Console-Key: write-only verschlüsselt. Die LAPIs haben eine
+	// eigene Verwaltung (crowdsec_lapis.go).
 	if in.CrowdSecConsoleKey != nil && *in.CrowdSecConsoleKey != "" {
 		enc, err := s.cipher.EncryptString(*in.CrowdSecConsoleKey)
 		if err != nil {

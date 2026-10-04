@@ -52,7 +52,7 @@ type AlertService struct {
 	// crowdsecLapi führt den LAPI-Erreichbarkeits-Check aus (globale
 	// Einstellungen) - Grundlage des crowdsec_lapi_down-Alarms; nil oder
 	// „nicht konfiguriert" = Prüfung entfällt.
-	crowdsecLapi func() (*CrowdSecLapiStatus, error)
+	crowdsecLapi func() ([]CrowdSecLapiStatus, error)
 	// cveDBStatus liefert den Stand der Schwachstellen-Datenbank des
 	// CVE-Scanners - Grundlage des cve_db_stale-Alarms; nil = Prüfung entfällt.
 	cveDBStatus func() domain.CVEDBStatus
@@ -83,7 +83,7 @@ func (s *AlertService) WithAptCacheChecker(fn func() (string, error)) *AlertServ
 
 // WithCrowdSecLapiChecker verdrahtet den CrowdSec-LAPI-Erreichbarkeits-Check
 // (optional) - Grundlage des crowdsec_lapi_down-Alarms.
-func (s *AlertService) WithCrowdSecLapiChecker(fn func() (*CrowdSecLapiStatus, error)) *AlertService {
+func (s *AlertService) WithCrowdSecLapiChecker(fn func() ([]CrowdSecLapiStatus, error)) *AlertService {
 	s.crowdsecLapi = fn
 	return s
 }
@@ -630,25 +630,32 @@ func (s *AlertService) evalAptCacherDown() finding {
 	}
 }
 
-// evalCrowdSecLapiDown prüft die zentrale CrowdSec-LAPI über denselben
-// Login-Check wie die CrowdSec-Einstellungsseite (probeCrowdSecLapi).
-// Selbstbeobachtung: die LAPI ist ein zentraler Dienst. Ist keine LAPI
-// konfiguriert, ist das Feature nicht in Benutzung und der Alarm bleibt stumm.
+// evalCrowdSecLapiDown prüft alle zentralen CrowdSec-LAPIs über denselben
+// Login-Check wie die CrowdSec-Einstellungsseite (probeCrowdSecLapi) und
+// feuert, sobald eine nicht arbeitet - die Meldung nennt jede betroffene.
+// Ohne LAPI ist das Feature nicht in Benutzung und der Alarm bleibt stumm.
 func (s *AlertService) evalCrowdSecLapiDown() finding {
 	if s.crowdsecLapi == nil {
 		return finding{}
 	}
-	status, err := s.crowdsecLapi()
-	if err != nil || status == nil || !status.Configured {
+	statuses, err := s.crowdsecLapi()
+	if err != nil {
 		return finding{}
 	}
-	if status.Running {
+	var names, details []string
+	for _, st := range statuses {
+		if st.Configured && !st.Running {
+			names = append(names, st.Name)
+			details = append(details, st.Name+": "+st.Message)
+		}
+	}
+	if len(names) == 0 {
 		return finding{}
 	}
 	return finding{
 		fired:       true,
-		description: "CrowdSec-LAPI nicht erreichbar",
-		details:     status.Message,
+		description: "CrowdSec-LAPI nicht erreichbar: " + strings.Join(names, ", "),
+		details:     strings.Join(details, "\n"),
 	}
 }
 
