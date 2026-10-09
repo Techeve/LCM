@@ -380,13 +380,13 @@ Konfiguration: `renovate.json` im Repo-Root.
 
    Optional für Changelog-Abruf von GitHub-gehosteten Deps: dieselbe Prozedur mit `RENOVATE_GITHUB_TOKEN` (ein GitHub-PAT ohne Scopes reicht - nur zum Lesen öffentlicher Release-Notes).
 
-3. **Geplante Pipeline** anlegen, die den Bot z.B. wöchentlich auf `develop` mit `RENOVATE_BOT=true` startet:
+3. **Geplante Pipeline** anlegen, die den Bot täglich um 6 Uhr (nach der Image-Auffrischung der Runner um 3 Uhr) auf `develop` mit `RENOVATE_BOT=true` startet:
 
    ```sh
    curl -s -X POST -H "PRIVATE-TOKEN: $TOKEN" "$GITLAB/projects/<id>/pipeline_schedules" \
      --data-urlencode "description=Renovate Dependency-Bot" \
      --data-urlencode "ref=develop" \
-     --data-urlencode "cron=0 6 * * 1" \
+     --data-urlencode "cron=0 6 * * *" \
      --data-urlencode "cron_timezone=Europe/Berlin" \
      --data-urlencode "active=true"
    # ID der eben angelegten Schedule merken und die Trigger-Variable setzen:

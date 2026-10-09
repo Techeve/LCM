@@ -6,7 +6,7 @@
     ":semanticCommits"
   ],
   "timezone": "Europe/Berlin",
-  "baseBranches": ["develop"],
+  "baseBranchPatterns": ["develop"],
   "onboarding": false,
   "requireConfig": "optional",
   "enabledManagers": ["gomod", "npm", "dockerfile"],
@@ -55,6 +55,41 @@
       "matchUpdateTypes": ["patch", "pin", "digest"],
       "groupName": "Vertrauenswürdige Patch-Updates",
       "automerge": true
+    },
+    {
+      "description": "Go-Toolchain: go-Zeile in go.mod und GO_IMAGE der CI immer gemeinsam. Ohne Wartezeit, Patch-Stände sind Sicherheitskorrekturen des Go-Teams.",
+      "matchDepNames": ["go", "golang"],
+      "matchDatasources": ["golang-version", "docker"],
+      "rangeStrategy": "bump",
+      "groupName": "Go-Toolchain",
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Go-Patch selbsttätig mergen, sobald die Pipeline grün ist. Die Runner frischen ihre Images täglich um 3 Uhr auf, vor diesem Lauf.",
+      "matchDepNames": ["go", "golang"],
+      "matchDatasources": ["golang-version", "docker"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "description": "Node.js der CI (NODE_IMAGE). Ein neuer Major kommt als eigener MR mit Menschenblick.",
+      "matchDepNames": ["node"],
+      "matchDatasources": ["docker"],
+      "groupName": "Node.js"
+    },
+    {
+      "description": "Playwright-Image und @playwright/test brauchen dieselbe Version, sonst fehlen im Image die passenden Browser.",
+      "matchDepNames": ["mcr.microsoft.com/playwright", "@playwright/test"],
+      "groupName": "Playwright"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Docker-Images in den *_IMAGE-Variablen der .gitlab-ci.yml (Go, Node, Playwright).",
+      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
+      "matchStrings": ["(?:^|\\n)[ \\t]*[A-Z_]+_IMAGE:[ \\t]+(?<depName>[^\\s:]+):(?<currentValue>[^\\s#]+)"],
+      "datasourceTemplate": "docker"
     }
   ]
 }

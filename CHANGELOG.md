@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.46.0-beta.2 - 2026-10-10
+
+### 🐛 Bugfixes
+
+- **deps**: source-map-js auf 1.2.2 gegen GHSA-68fv-2mgg-jv7q (07c8adb9)
+
+### 🔧 Sonstiges
+
+- **deps**: Go 1.27.2 und golang.org/x/net v0.60.0 gegen HTTP/2-Lücken (1c51d19d)
+- **e2e**: LAPI-Aufräumen wartet, bis jede Zeile gelöscht ist (7b179fb8)
+- **openspec**: OpenSpec für spec-getriebene Entwicklung einführen (d703663a)
+- **renovate**: täglich, mit Go-Toolchain, Node und CI-Images (512e3a15)
+
 ## v1.46.0-beta.1 - 2026-10-04
 
 ### 🚀 Features

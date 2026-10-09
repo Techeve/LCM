@@ -2183,7 +2183,9 @@ test.describe('LCM', () => {
     await rrow.getByRole('button', { name: 'Löschen' }).click();
     await expect(rulesTable).not.toContainText('CrowdSec-LAPI nicht erreichbar');
     await page.goto('/#/settings/crowdsec');
-    for (let i = 0; i < 2; i++) {
+    const lapiRows = page.getByTestId('cs-lapi-row');
+    for (let n = 2; n > 0; n--) {
+      await expect(lapiRows).toHaveCount(n);
       await page.getByTestId('cs-lapi-delete').first().click();
     }
     await expect(page.getByTestId('cs-lapi-none')).toBeVisible();
