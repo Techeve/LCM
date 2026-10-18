@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,9 +23,7 @@ func aptProxyTestGroup(t *testing.T, env *testEnv) (serverID uint, groupID uint)
 	if err := env.Groups.AssignServer(repositories.ScopeAll(), group.ID, serverID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.Settings.UpdateGlobal(services.GlobalSettingsInput{AptCacheURL: sp("http://cache.local:3142")}, "admin"); err != nil {
-		t.Fatal(err)
-	}
+	addAptCache(t, env, "Standort A", "http://cache.local:3142")
 	return serverID, group.ID
 }
 
@@ -114,5 +113,31 @@ func TestAptProxyRuleValidation(t *testing.T) {
 	}
 	if _, err := env.Groups.DefineRule(repositories.ScopeAll(), groupID, "update-pflicht", domain.RuleTypeUpdate, "", nil, true, "admin"); !errors.Is(err, services.ErrEnforceRuleType) {
 		t.Errorf("update als grundsatz-regel nicht abgelehnt: %v", err)
+	}
+}
+
+// TestAptProxyRuleUsesChosenCache: Bei mehreren Caches bindet die Regel an
+// den gewählten an und merkt sich dessen Adresse am Server.
+func TestAptProxyRuleUsesChosenCache(t *testing.T) {
+	env := newTestEnv(t)
+	serverID, groupID := aptProxyTestGroup(t, env)
+	berlin := addAptCache(t, env, "Standort B", "http://cache-b.local:3142")
+	sched, _ := env.Groups.DefineSchedule(repositories.ScopeAll(), groupID, "nächtlich", "0 3 * * *", 0, "admin")
+	rule, err := env.Groups.DefineRule(repositories.ScopeAll(), groupID, "apt-cache", domain.RuleTypeAptProxy,
+		strconv.FormatUint(uint64(berlin.ID), 10), &sched.ID, false, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env.Dialer.Commands = nil
+	env.Executor.RunRule(rule, "admin")
+
+	all := strings.Join(env.Dialer.Commands, "\n")
+	if !strings.Contains(all, `Acquire::http::Proxy "http://cache-b.local:3142";`) || strings.Contains(all, "cache.local:3142") {
+		t.Errorf("nicht an den gewählten cache gebunden:\n%s", all)
+	}
+	server, _ := env.Servers.Get(repositories.ScopeAll(), serverID)
+	if server.AptProxyURL != berlin.URL {
+		t.Errorf("apt_proxy_url %q, erwartet %q", server.AptProxyURL, berlin.URL)
 	}
 }

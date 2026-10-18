@@ -40,18 +40,17 @@ var ErrTerminalDisabled = errors.New("die web-konsole ist auf dieser installatio
 // kennt nur Frage und Antwort.
 var ErrTerminalNotPossible = errors.New("auf diesem server ist keine konsole möglich")
 
-// TerminalIdleTimeout beendet eine Sitzung, in der nichts mehr geschieht.
+// TerminalIdleTimeout beendet eine Sitzung, in der nichts mehr getippt wird.
 //
-// Ohne sie hielte ein vergessener Browser-Tab den Exec-Slot des Servers auf
-// Dauer besetzt: Zeitplan-Läufe würden sich einreihen und nach ihrem halben
-// Takt verfallen - der Server fiele still aus der Verwaltung, ohne dass es
-// jemandem auffiele. Variable, damit Tests sie herunterdrehen können.
+// Ohne sie hielte ein vergessener Browser-Tab eine Shell auf dem Server und
+// einen seiner Konsolen-Plätze auf Dauer offen. Variable, damit Tests sie
+// herunterdrehen können.
 var TerminalIdleTimeout = 15 * time.Minute
 
 // OpenTerminal öffnet eine interaktive Sitzung auf einem Server.
 //
 // Der Aufrufer MUSS die Sitzung schließen - daran hängen der Mitschnitt, die
-// SSH-Verbindung und der Exec-Slot des Servers.
+// SSH-Verbindung, der Konsolen-Platz und der Eintrag in OpenConsoles.
 func (s *ServerService) OpenTerminal(scope repositories.AccessScope, id uint, actor, term string, cols, rows int) (sshx.Terminal, error) {
 	// Ohne verdrahtete Einstellungen bleibt die Konsole zu - siehe
 	// WithSettings. Lieber eine Funktion, die nicht geht, als eine, die
@@ -74,7 +73,7 @@ func (s *ServerService) OpenTerminal(scope repositories.AccessScope, id uint, ac
 		return nil, err
 	}
 
-	conn, err := s.connect(server)
+	conn, err := s.connectTerminal(server)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +97,32 @@ func (s *ServerService) OpenTerminal(scope repositories.AccessScope, id uint, ac
 
 	s.audit.Log(actor, "server.terminal.open", "server", id, server.Name)
 	slog.Info("terminal opened", "server", server.Name, "actor", actor)
-	return &serverTerminal{Terminal: t, conn: conn, server: server.Name, actor: actor, audit: s.audit, id: id}, nil
+	return &serverTerminal{Terminal: t, conn: conn, server: server.Name, actor: actor, audit: s.audit, id: id,
+		unregister: s.consoles.add(id, actor)}, nil
+}
+
+// OpenConsoles liefert die gerade offenen Web-Konsolen auf den Servern, die
+// der Aufrufer sehen darf.
+func (s *ServerService) OpenConsoles(scope repositories.AccessScope) ([]OpenConsole, error) {
+	all := s.consoles.list()
+	if scope.All || len(all) == 0 {
+		return all, nil
+	}
+	visible, err := s.servers.FindAll(scope)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[uint]bool, len(visible))
+	for _, srv := range visible {
+		allowed[srv.ID] = true
+	}
+	out := all[:0]
+	for _, c := range all {
+		if allowed[c.ServerID] {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 // SetConsoleDisabled schaltet die Web-Konsole für einen Server ab oder wieder
@@ -152,24 +176,32 @@ func terminalPossible(server *domain.Server) error {
 }
 
 // serverTerminal schließt beim Beenden auch die Verbindung - und damit den
-// Mitschnitt und den Exec-Slot des Servers.
+// Mitschnitt und den Konsolen-Platz des Servers - und trägt sich aus
+// OpenConsoles aus. Close ist idempotent: Das Ende der Sitzung kann von
+// beiden Seiten kommen (Browser weg, Shell beendet).
 type serverTerminal struct {
 	sshx.Terminal
-	conn   sshx.Conn
-	server string
-	actor  string
-	audit  *AuditService
-	id     uint
+	conn       sshx.Conn
+	server     string
+	actor      string
+	audit      *AuditService
+	id         uint
+	unregister func()
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 func (t *serverTerminal) Close() error {
-	err := t.Terminal.Close() // schreibt den Mitschnitt
-	t.conn.Close()            // gibt den Exec-Slot frei
-	if t.audit != nil {
-		t.audit.Log(t.actor, "server.terminal.close", "server", t.id, t.server)
-	}
-	slog.Info("terminal closed", "server", t.server, "actor", t.actor)
-	return err
+	t.closeOnce.Do(func() {
+		t.closeErr = t.Terminal.Close() // schreibt den Mitschnitt
+		t.conn.Close()                  // gibt den Konsolen-Platz frei
+		t.unregister()
+		if t.audit != nil {
+			t.audit.Log(t.actor, "server.terminal.close", "server", t.id, t.server)
+		}
+		slog.Info("terminal closed", "server", t.server, "actor", t.actor)
+	})
+	return t.closeErr
 }
 
 // --- Einmal-Fahrkarten für den Verbindungsaufbau ------------------------------

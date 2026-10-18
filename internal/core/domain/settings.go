@@ -479,6 +479,12 @@ func (g *GlobalSettings) DNSTestDomainList() []string {
 	if raw == "" {
 		raw = DefaultDNSTestDomains
 	}
+	return SplitDomainList(raw)
+}
+
+// SplitDomainList zerlegt eine Domainliste (getrennt durch Zeilenumbruch,
+// Komma oder Leerzeichen) in ihre Einträge.
+func SplitDomainList(raw string) []string {
 	var list []string
 	for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == '\n' || r == ' ' || r == '\t'

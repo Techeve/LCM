@@ -291,7 +291,9 @@ bei jeder Verbindung und greift **nur bei Abweichung** ein. Bei den gehärteten
 Verzeichnissen wird der Zustand wiederhergestellt, bei den Verzeichnisrechten
 prüft eine Stichprobe am Wurzelpfad, ob der ACL-Eintrag noch steht - der
 Voll-Abgleich läuft ohnehin beim Benutzer-Sync. Jeder tatsächliche Eingriff
-erscheint im Audit-Log.
+erscheint im Audit-Log. Wer die Rechte zu einer festen Zeit härten will (etwa
+direkt nach den nächtlichen Updates), hängt dieselbe Regel zusätzlich an einen
+Zeitplan.
 
 Dazu kommt **ACL einrichten** (`acl-setup`): Fehlt die ACL-Unterstützung, wird
 das Paket nachinstalliert - sonst passiert nichts. Damit rüstet eine Gruppe
@@ -466,6 +468,12 @@ Windows** - beim letzteren sowohl mit dem mitgelieferten OpenSSH als auch mit
 **PuTTY**: wie man aus einem vorhandenen `.ppk` den öffentlichen Schlüssel im
 richtigen Format herausholt, wie man ihn über Pageant als Standard einrichtet
 und wie man ihn für OpenSSH umwandelt.
+
+Für die Benutzer selbst gibt es außerdem die Seite **Linux-Benutzer einrichten**
+(`/#/doku/linux-benutzer`): wie man das Passwort über den Aktivierungslink
+festlegt, welche Angaben LCM auf den Server überträgt (voller Name, Shell,
+Schlüssel) und welche E-Mail-Adresse nur für den Aktivierungslink dient. Im
+Reiter **Benutzer** eines Servers führt ein Knopf direkt dorthin.
 
 Gepflegt wird die Doku als Markdown im Repository unter
 `internal/appdocs/pages/<sprache>/`. Die Dateien werden ins Binary eingebettet;

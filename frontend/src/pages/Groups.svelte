@@ -7,6 +7,7 @@
   import { i18n } from '../stores/i18n.svelte.js';
   import Modal from '../components/Modal.svelte';
   import FirewallRulesEditor from '../components/FirewallRulesEditor.svelte';
+  import RuleList from '../components/RuleList.svelte';
   import CronBuilder from '../components/CronBuilder.svelte';
   import { icons } from '../lib/icons.js';
   import { toasts } from '../stores/toast.svelte.js';
@@ -41,6 +42,15 @@
   let fwRules = $state([]);
   let fwEditor = $state(); // Editor-Instanz (Client-Validierung)
   let ipAllowlists = $state([]); // benannte IP-Allowlists (Auswahl in Firewall-Regeln)
+  let aptCaches = $state([]); // APT-Caches (Auswahl in der Regel „APT-Cache anbinden")
+  // Server und Verwaltungs-User sind Nebensache der Seite - standardmäßig
+  // zugeklappt, im Titel steht die Anzahl.
+  let showServers = $state(false);
+  let showManagers = $state(false);
+  // Regeln je Auslöser, in Ausführungsreihenfolge (das Backend liefert sie
+  // nach position sortiert).
+  const rulesOf = (scheduleId) => rules.filter((r) => !r.enforce && r.schedule_id === scheduleId);
+  let enforceRules = $derived(rules.filter((r) => r.enforce));
 
   // Ableitungen für das Rule-Modal.
   let ruleIsEnforce = $derived(ruleForm.target === 'enforce');
@@ -68,11 +78,15 @@
           ['health', t('groups.types.health')],
           ['docker-prune', t('groups.types.dockerPrune')],
           ['docker-update-unused', t('groups.types.dockerUpdateUnused')],
+          ['docker-compose-update', t('groups.types.dockerComposeUpdate')],
+          ['docker-container-update', t('groups.types.dockerContainerUpdate')],
           ['reboot', t('groups.types.reboot')],
           ['reboot-if-needed', t('groups.types.rebootIfNeeded')],
           ['apt-proxy', t('groups.types.aptProxy')],
           ['dns-test', t('groups.types.dnsTest')],
           ['deep-scan', t('groups.types.deepScan')],
+          ['perm-sync', t('groups.types.permSync')],
+          ['acl-setup', t('groups.types.aclSetup')],
         ],
   );
 
@@ -101,13 +115,6 @@
   function userLabel(u) {
     const name = [u.first_name, u.last_name].filter(Boolean).join(' ');
     return name ? `${u.username} (${name})` : u.username;
-  }
-
-  // Anzeige-Name des Ziels einer Rule (Schedule-Name oder „Grundsatz").
-  function ruleTarget(r) {
-    if (r.enforce) return t('groups.policy');
-    const s = schedules.find((x) => x.id === r.schedule_id);
-    return s ? s.name : '-';
   }
 
   function customActionName(id) {
@@ -146,6 +153,15 @@
     return rules.map((r) => `${r.port}/${r.proto}${r.comment ? ` (${r.comment})` : ''}`).join(', ');
   }
 
+  // Anzeigename eines Regel-Typs (Zeitplan- und Grundsatz-Bezeichnungen;
+  // unbekannte Typen wie die der System-Gruppe bleiben wörtlich).
+  function typeLabel(type) {
+    const camel = type.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    const key = `groups.types.${camel}`;
+    const label = t(key);
+    return label === key ? type : label;
+  }
+
   function ruleConfig(r) {
     if (r.type === 'firewall') return t('groups.configPorts', { ports: firewallSummary(r.command) });
     if (r.type === 'custom') return t('groups.configAction', { name: customActionName(r.command) });
@@ -153,10 +169,18 @@
     if (r.type === 'package-scan') return t('groups.configPackageScan');
     if (r.type === 'docker-prune') return 'docker image prune -af';
     if (r.type === 'docker-update-unused') return t('groups.configDockerUpdateUnused');
+    if (r.type === 'docker-compose-update' || r.type === 'docker-container-update') {
+      return r.command ? t('groups.configDockerScope', { name: r.command }) : t('groups.configDockerAll');
+    }
     if (r.type === 'reboot') return t('groups.configReboot');
     if (r.type === 'reboot-if-needed') return t('groups.configRebootIfNeeded');
-    if (r.type === 'apt-proxy') return t('groups.configAptProxy');
-    if (r.type === 'dns-test') return t('groups.configDnsTest');
+    if (r.type === 'apt-proxy') {
+      const cache = aptCaches.find((c) => String(c.id) === r.command);
+      return cache ? t('groups.configAptProxyCache', { name: cache.name }) : t('groups.configAptProxy');
+    }
+    if (r.type === 'dns-test') {
+      return r.command ? t('groups.configDnsTestOwn', { domains: r.command.split('\n').join(', ') }) : t('groups.configDnsTest');
+    }
     if (r.type === 'deep-scan') return t('groups.configDeepScan');
     return r.command || '-';
   }
@@ -169,6 +193,7 @@
       if (auth.can('users:read')) users = await api.users.getAll().catch(() => []);
       // Allowlists für die Quell-Auswahl in Firewall-Grundsatz-Regeln (best effort).
       ipAllowlists = await api.servers.ipAllowlists().catch(() => []);
+      aptCaches = await api.servers.aptCaches().catch(() => []);
     } catch (e) {
       toasts.error(e instanceof ApiError ? e.message : String(e));
     }
@@ -269,11 +294,26 @@
   }
 
   // ---- Rule ---------------------------------------------------------------
-  function openNewRule() {
-    const first = schedules[0];
-    ruleForm = { id: null, name: '', type: 'update', command: '', target: first ? `sched:${first.id}` : 'enforce' };
+  // Neue Regel an einem Auslöser: target ist `sched:<id>` oder 'enforce' -
+  // er steht durch die Karte fest, an der „+ Regel" geklickt wurde.
+  function openNewRule(target) {
+    ruleForm = { id: null, name: '', type: target === 'enforce' ? 'firewall' : 'update', command: '', target };
     fwRules = [];
     ruleOpen = true;
+  }
+
+  function reorderRules(ids) {
+    run(() => api.groups.reorderRules(selected.id, ids), t('groups.notices.ruleOrderSaved'));
+  }
+
+  function deleteRule(r) {
+    if (!confirm(t('groups.confirms.deleteRule', { name: r.name }))) return;
+    run(() => api.groups.removeRule(r.id), t('groups.notices.ruleDeleted'));
+  }
+
+  function deleteSchedule(sc) {
+    if (!confirm(t('groups.confirms.deleteSchedule', { name: sc.name }))) return;
+    run(() => api.groups.removeSchedule(sc.id), t('groups.notices.schedDeleted'));
   }
   function openEditRule(r) {
     ruleForm = {
@@ -283,11 +323,12 @@
     fwRules = parseFirewallCommand(r.type === 'firewall' ? r.command : '');
     ruleOpen = true;
   }
-  // Beim Wechsel des Ziels ggf. den Typ auf einen erlaubten Wert normalisieren.
-  function onTargetChange() {
-    const allowed = ruleTypeOptions.map((o) => o[0]);
-    if (!allowed.includes(ruleForm.type)) ruleForm.type = allowed[0];
-  }
+  // Anzeigename des Auslösers einer neuen Regel.
+  let ruleTargetLabel = $derived.by(() => {
+    if (ruleForm.target === 'enforce') return t('groups.policyRuleOption');
+    const sc = schedules.find((x) => `sched:${x.id}` === ruleForm.target);
+    return sc ? t('groups.scheduleOption', { name: sc.name, cron: sc.cron_expr }) : '';
+  });
   async function saveRule() {
     const f = { ...ruleForm };
     // Firewall-Regeln aus dem Editor als JSON in den Command serialisieren.
@@ -320,6 +361,46 @@
     if (auth.isLoggedIn) load();
   });
 </script>
+
+{#snippet trigger({ schedule, rules: list, target })}
+  <div class="card mb-3" data-testid={schedule ? 'sched-card' : 'enforce-card'} class:opacity-75={schedule && !schedule.enabled}>
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <div>
+        {#if schedule}
+          <span class="fw-semibold">{schedule.name}</span>
+          {#if schedule.is_system}<span class="badge bg-secondary ms-1">{t('groups.system')}</span>{/if}
+          {#if !schedule.enabled}<span class="badge text-bg-secondary ms-1">{t('groups.off')}</span>{/if}
+          <code class="small ms-2">{schedule.cron_expr}</code>
+          {#if schedule.spread_minutes > 0}<span class="small text-body-secondary ms-2">{t('groups.spreadBadge', { minutes: schedule.spread_minutes })}</span>{/if}
+        {:else}
+          <span class="fw-semibold">{t('groups.enforceTitle')}</span>
+          <span class="small text-body-secondary ms-2">{t('groups.enforceHint')}</span>
+        {/if}
+      </div>
+      {#if auth.can('rules:manage')}
+        <div class="d-flex flex-wrap gap-1">
+          {#if schedule}
+            <button class="btn btn-sm btn-outline-primary py-0" data-testid="sched-run-now" disabled={busy} onclick={() => run(() => api.groups.triggerSchedule(schedule.id), t('groups.notices.schedTriggered'))}>{t('groups.now')}</button>
+            <button class="btn btn-sm btn-outline-secondary py-0" disabled={busy} onclick={() => run(() => (schedule.enabled ? api.groups.disableSchedule(schedule.id) : api.groups.enableSchedule(schedule.id)), t('groups.notices.schedChanged'))}>{schedule.enabled ? t('groups.off') : t('groups.on')}</button>
+            {#if !schedule.is_system}
+              <button class="btn btn-sm btn-outline-secondary py-0" onclick={() => openEditSchedule(schedule)}>{t('groups.edit')}</button>
+              <button class="btn btn-sm btn-outline-danger py-0" aria-label={t('groups.a11y.deleteSchedule')} disabled={busy} onclick={() => deleteSchedule(schedule)}>×</button>
+            {/if}
+          {/if}
+          <button class="btn btn-sm btn-primary py-0" title={t('groups.newRule')} onclick={() => openNewRule(target)}>{t('groups.addRule')}</button>
+        </div>
+      {/if}
+    </div>
+    <div class="card-body py-2">
+      <RuleList rules={list} canManage={auth.can('rules:manage')} {busy} config={ruleConfig} {typeLabel}
+        onreorder={reorderRules}
+        onrun={(r) => run(() => api.groups.triggerRule(r.id), t('groups.notices.ruleTriggered'))}
+        ontoggle={(r) => run(() => (r.enabled ? api.groups.disableRule(r.id) : api.groups.enableRule(r.id)), t('groups.notices.ruleChanged'))}
+        onedit={openEditRule}
+        ondelete={deleteRule} />
+    </div>
+  </div>
+{/snippet}
 
 <div class="container">
   <h1 class="h3 mb-4">{t('groups.title')}</h1>
@@ -378,10 +459,14 @@
           </p>
         {/if}
 
-        <!-- Server-Tabelle -->
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h3 class="h6 mb-0">{t('groups.serversHeading')} ({selected.servers?.length ?? 0})</h3>
-          {#if auth.can('groups:write')}
+        <!-- Server der Gruppe (einklappbar, standardmäßig zu) -->
+        <div class="d-flex justify-content-between align-items-center mb-2 mt-3">
+          <button class="btn btn-link p-0 text-decoration-none text-body fw-semibold" aria-expanded={showServers}
+            data-testid="group-servers-toggle" onclick={() => (showServers = !showServers)}>
+            <span class="collapse-icon" class:open={showServers}>{@html icons.chevronRight}</span>
+            {t('groups.serversHeading')} ({selected.servers?.length ?? 0})
+          </button>
+          {#if showServers && auth.can('groups:write')}
             <div class="input-group input-group-sm" style="max-width: 340px">
               <select class="form-select" bind:value={addServerId}>
                 <option value="">{t('groups.addServerPlaceholder')}</option>
@@ -391,24 +476,26 @@
             </div>
           {/if}
         </div>
-        <div class="table-responsive mb-4">
-          <table class="table table-sm align-middle">
-            <thead><tr><th>{t('groups.colName')}</th><th>{t('groups.colHost')}</th>{#if auth.can('groups:write')}<th><span class="visually-hidden">{t('common.actions')}</span></th>{/if}</tr></thead>
-            <tbody>
-              {#each selected.servers ?? [] as s (s.id)}
-                <tr>
-                  <td>{s.name}</td>
-                  <td class="text-body-secondary small">{s.host}</td>
-                  {#if auth.can('groups:write')}
-                    <td class="text-end"><button class="btn btn-sm btn-outline-danger py-0" aria-label={t('groups.a11y.removeServer')} disabled={busy} onclick={() => run(() => api.groups.removeServer(selected.id, s.id), t('groups.notices.serverRemoved'))}>×</button></td>
-                  {/if}
-                </tr>
-              {:else}
-                <tr><td colspan="3" class="text-body-secondary small">{t('groups.noServersAssigned')}</td></tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        {#if showServers}
+          <div class="table-responsive mb-3">
+            <table class="table table-sm align-middle">
+              <thead><tr><th>{t('groups.colName')}</th><th>{t('groups.colHost')}</th>{#if auth.can('groups:write')}<th><span class="visually-hidden">{t('common.actions')}</span></th>{/if}</tr></thead>
+              <tbody>
+                {#each selected.servers ?? [] as s (s.id)}
+                  <tr>
+                    <td>{s.name}</td>
+                    <td class="text-body-secondary small">{s.host}</td>
+                    {#if auth.can('groups:write')}
+                      <td class="text-end"><button class="btn btn-sm btn-outline-danger py-0" aria-label={t('groups.a11y.removeServer')} disabled={busy} onclick={() => run(() => api.groups.removeServer(selected.id, s.id), t('groups.notices.serverRemoved'))}>×</button></td>
+                    {/if}
+                  </tr>
+                {:else}
+                  <tr><td colspan="3" class="text-body-secondary small">{t('groups.noServersAssigned')}</td></tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
 
         <!-- Verwaltungs-User (Manager) der Gruppe. Erst diese Zuordnung macht
              die Gruppe und ihre Server für einen Benutzer der Manager-Rolle
@@ -416,8 +503,12 @@
              darf nur, wer groups:write UND users:read hat (Admin). -->
         {#if auth.can('users:read')}
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <h3 class="h6 mb-0">{t('groups.managersHeading')} ({selected.managers?.length ?? 0})</h3>
-            {#if auth.can('groups:write')}
+            <button class="btn btn-link p-0 text-decoration-none text-body fw-semibold" aria-expanded={showManagers}
+              data-testid="group-managers-toggle" onclick={() => (showManagers = !showManagers)}>
+              <span class="collapse-icon" class:open={showManagers}>{@html icons.chevronRight}</span>
+              {t('groups.managersHeading')} ({selected.managers?.length ?? 0})
+            </button>
+            {#if showManagers && auth.can('groups:write')}
               <div class="input-group input-group-sm" style="max-width: 340px">
                 <select class="form-select" bind:value={addManagerId}>
                   <option value="">{t('groups.addManagerPlaceholder')}</option>
@@ -427,103 +518,46 @@
               </div>
             {/if}
           </div>
-          <p class="text-body-secondary small">{t('groups.managersHint')}</p>
-          <div class="table-responsive mb-4">
-            <table class="table table-sm align-middle" data-testid="group-managers-table">
-              <thead><tr><th>{t('groups.colUser')}</th><th>{t('groups.colEmail')}</th>{#if auth.can('groups:write')}<th><span class="visually-hidden">{t('common.actions')}</span></th>{/if}</tr></thead>
-              <tbody>
-                {#each selected.managers ?? [] as u (u.id)}
-                  <tr>
-                    <td>{userLabel(u)}</td>
-                    <td class="text-body-secondary small">{u.email}</td>
-                    {#if auth.can('groups:write')}
-                      <td class="text-end"><button class="btn btn-sm btn-outline-danger py-0" aria-label={t('groups.a11y.removeManager')} disabled={busy} onclick={() => run(() => api.groups.removeManager(selected.id, u.id), t('groups.notices.managerRemoved'))}>×</button></td>
-                    {/if}
-                  </tr>
-                {:else}
-                  <tr><td colspan="3" class="text-body-secondary small">{t('groups.noManagersAssigned')}</td></tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
+          {#if showManagers}
+            <p class="text-body-secondary small">{t('groups.managersHint')}</p>
+            <div class="table-responsive mb-3">
+              <table class="table table-sm align-middle" data-testid="group-managers-table">
+                <thead><tr><th>{t('groups.colUser')}</th><th>{t('groups.colEmail')}</th>{#if auth.can('groups:write')}<th><span class="visually-hidden">{t('common.actions')}</span></th>{/if}</tr></thead>
+                <tbody>
+                  {#each selected.managers ?? [] as u (u.id)}
+                    <tr>
+                      <td>{userLabel(u)}</td>
+                      <td class="text-body-secondary small">{u.email}</td>
+                      {#if auth.can('groups:write')}
+                        <td class="text-end"><button class="btn btn-sm btn-outline-danger py-0" aria-label={t('groups.a11y.removeManager')} disabled={busy} onclick={() => run(() => api.groups.removeManager(selected.id, u.id), t('groups.notices.managerRemoved'))}>×</button></td>
+                      {/if}
+                    </tr>
+                  {:else}
+                    <tr><td colspan="3" class="text-body-secondary small">{t('groups.noManagersAssigned')}</td></tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
         {/if}
 
-        <!-- Schedules-Tabelle -->
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h3 class="h6 mb-0">{t('groups.schedulesTitle')}</h3>
-          {#if auth.can('rules:manage')}
-            <button class="btn btn-sm btn-primary" onclick={openNewSchedule} title={t('groups.newSchedule')}>+</button>
-          {/if}
-        </div>
-        <p class="small text-body-secondary">{t('groups.schedulesIntro')}</p>
-        <div class="table-responsive mb-4">
-          <table class="table table-sm align-middle">
-            <thead><tr><th>{t('groups.colName')}</th><th>{t('groups.colSchedule')}</th><th>{t('groups.colRules')}</th><th>{t('groups.colActive')}</th>{#if auth.can('rules:manage')}<th class="text-end">{t('groups.colActions')}</th>{/if}</tr></thead>
-            <tbody>
-              {#each schedules as sc (sc.id)}
-                <tr>
-                  <td>{sc.name}{#if sc.is_system} <span class="badge bg-secondary">{t('groups.system')}</span>{/if}</td>
-                  <td><code class="small">{sc.cron_expr}</code>{#if sc.spread_minutes > 0}<div class="small text-body-secondary">{t('groups.spreadBadge', { minutes: sc.spread_minutes })}</div>{/if}</td>
-                  <td class="small text-body-secondary">{(sc.rules ?? []).length}</td>
-                  <td>{sc.enabled ? '✓' : '-'}</td>
-                  {#if auth.can('rules:manage')}
-                    <td class="text-end text-nowrap">
-                      <button class="btn btn-sm btn-outline-primary py-0" data-testid="sched-run-now" disabled={busy} onclick={() => run(() => api.groups.triggerSchedule(sc.id), t('groups.notices.schedTriggered'))}>{t('groups.now')}</button>
-                      <button class="btn btn-sm btn-outline-secondary py-0" disabled={busy} onclick={() => run(() => (sc.enabled ? api.groups.disableSchedule(sc.id) : api.groups.enableSchedule(sc.id)), t('groups.notices.schedChanged'))}>{sc.enabled ? t('groups.off') : t('groups.on')}</button>
-                      {#if !sc.is_system}
-                        <button class="btn btn-sm btn-outline-secondary py-0" onclick={() => openEditSchedule(sc)}>{t('groups.edit')}</button>
-                        <button class="btn btn-sm btn-outline-danger py-0" aria-label={t('groups.a11y.deleteSchedule')} disabled={busy} onclick={() => { if (!confirm(t('groups.confirms.deleteSchedule', { name: sc.name }))) return; run(() => api.groups.removeSchedule(sc.id), t('groups.notices.schedDeleted')); }}>×</button>
-                      {/if}
-                    </td>
-                  {/if}
-                </tr>
-              {:else}
-                <tr><td colspan="5" class="text-body-secondary small">{t('groups.noSchedules')}</td></tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Rules-Tabelle -->
-        <div class="d-flex justify-content-between align-items-center mb-2">
+        <!-- Regeln, geordnet nach ihrem Auslöser: je Zeitplan eine Karte, dazu
+             die Grundsatz-Regeln. Innerhalb einer Karte stehen die Regeln in
+             Ausführungsreihenfolge. -->
+        <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
           <h3 class="h6 mb-0">{t('groups.rulesTitle')}</h3>
           {#if auth.can('rules:manage')}
-            <button class="btn btn-sm btn-primary" onclick={openNewRule} title={t('groups.newRule')}>+</button>
+            <button class="btn btn-sm btn-primary" onclick={openNewSchedule} title={t('groups.newSchedule')}>{t('groups.addSchedule')}</button>
           {/if}
         </div>
-        <p class="small text-body-secondary">
-          {t('groups.rulesIntro')}
-        </p>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle">
-            <thead><tr><th>{t('groups.colName')}</th><th>{t('groups.colType')}</th><th>{t('groups.colTarget')}</th><th>{t('groups.colConfig')}</th><th>{t('groups.colActive')}</th>{#if auth.can('rules:manage')}<th class="text-end">{t('groups.colActions')}</th>{/if}</tr></thead>
-            <tbody>
-              {#each rules as r (r.id)}
-                <tr>
-                  <td>{r.name}{#if r.is_system} <span class="badge bg-secondary">{t('groups.system')}</span>{/if}</td>
-                  <td class="small">{r.type}</td>
-                  <td class="small">
-                    {#if r.enforce}<span class="badge text-bg-info">{t('groups.policy')}</span>{:else}<span class="text-body-secondary">{ruleTarget(r)}</span>{/if}
-                  </td>
-                  <td class="small text-body-secondary text-truncate" style="max-width: 220px">{ruleConfig(r)}</td>
-                  <td>{r.enabled ? '✓' : '-'}</td>
-                  {#if auth.can('rules:manage')}
-                    <td class="text-end text-nowrap">
-                      <button class="btn btn-sm btn-outline-primary py-0" data-testid="rule-run-now" disabled={busy} onclick={() => run(() => api.groups.triggerRule(r.id), t('groups.notices.ruleTriggered'))}>{t('groups.now')}</button>
-                      <button class="btn btn-sm btn-outline-secondary py-0" disabled={busy} onclick={() => run(() => (r.enabled ? api.groups.disableRule(r.id) : api.groups.enableRule(r.id)), t('groups.notices.ruleChanged'))}>{r.enabled ? t('groups.off') : t('groups.on')}</button>
-                      {#if !r.is_system}
-                        <button class="btn btn-sm btn-outline-secondary py-0" onclick={() => openEditRule(r)}>{t('groups.edit')}</button>
-                        <button class="btn btn-sm btn-outline-danger py-0" aria-label={t('groups.a11y.deleteRule')} disabled={busy} onclick={() => { if (!confirm(t('groups.confirms.deleteRule', { name: r.name }))) return; run(() => api.groups.removeRule(r.id), t('groups.notices.ruleDeleted')); }}>×</button>
-                      {/if}
-                    </td>
-                  {/if}
-                </tr>
-              {:else}
-                <tr><td colspan="6" class="text-body-secondary small">{t('groups.noRules')}</td></tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <p class="small text-body-secondary">{t('groups.rulesIntro')}</p>
+
+        {#each schedules as sc (sc.id)}
+          {@render trigger({ schedule: sc, rules: rulesOf(sc.id), target: `sched:${sc.id}` })}
+        {:else}
+          <p class="small text-body-secondary">{t('groups.noSchedules')}</p>
+        {/each}
+        {@render trigger({ schedule: null, rules: enforceRules, target: 'enforce' })}
           </div>
         </div>
       {:else}
@@ -566,16 +600,12 @@
 </Modal>
 
 <!-- Popup: Rule anlegen/bearbeiten -->
-<Modal title={ruleIsEdit ? t('groups.editRuleTitle') : t('groups.newRuleTitle')} bind:open={ruleOpen}>
+<Modal title={ruleIsEdit ? t('groups.editRuleTitle') : t('groups.newRuleTitle')} bind:open={ruleOpen} size={ruleForm.type === 'firewall' ? 'modal-xl' : 'modal-lg'}>
   <label class="form-label small mb-1" for="rf-name">{t('groups.name')}</label>
   <input id="rf-name" class="form-control mb-2" placeholder={t('groups.name')} bind:value={ruleForm.name} />
 
   {#if !ruleIsEdit}
-    <label class="form-label small mb-1" for="rf-target">{t('groups.colTarget')}</label>
-    <select id="rf-target" class="form-select mb-2" bind:value={ruleForm.target} onchange={onTargetChange}>
-      {#each schedules as sc (sc.id)}<option value="sched:{sc.id}">{t('groups.scheduleOption', { name: sc.name, cron: sc.cron_expr })}</option>{/each}
-      <option value="enforce">{t('groups.policyRuleOption')}</option>
-    </select>
+    <p class="small text-body-secondary mb-2" data-testid="rf-trigger">{t('groups.colTarget')}: <strong>{ruleTargetLabel}</strong></p>
 
     <label class="form-label small mb-1" for="rf-type">{t('groups.colType')}</label>
     <select id="rf-type" class="form-select mb-2" bind:value={ruleForm.type} onchange={() => { ruleForm.command = ''; fwRules = []; }}>
@@ -608,9 +638,24 @@
       <p class="small text-body-secondary">{t('groups.noCustomA')}<strong>{t('groups.noCustomBold')}</strong>{t('groups.noCustomB')}</p>
     {/if}
   {:else if ruleForm.type === 'apt-proxy'}
+    <label class="form-label small mb-1" for="rf-cache">{t('groups.aptCacheChoice')}</label>
+    <select id="rf-cache" class="form-select mb-2" bind:value={ruleForm.command} data-testid="rf-apt-cache">
+      <option value="">{t('groups.aptCacheOnly')}</option>
+      {#each aptCaches as c (c.id)}<option value={String(c.id)}>{c.name} ({c.url})</option>{/each}
+    </select>
     <p class="small text-body-secondary">
       {t('groups.aptProxyA')}<strong>{t('groups.aptProxyBold')}</strong>{t('groups.aptProxyB')}
     </p>
+  {:else if ruleForm.type === 'docker-compose-update' || ruleForm.type === 'docker-container-update'}
+    <label class="form-label small mb-1" for="rf-docker-scope">{t('groups.dockerScopeLabel')}</label>
+    <input id="rf-docker-scope" class="form-control mb-1" placeholder={t('groups.dockerScopePlaceholder')}
+      bind:value={ruleForm.command} data-testid="rf-docker-scope" />
+    <p class="small text-body-secondary">{t('groups.dockerScopeHint')}</p>
+  {:else if ruleForm.type === 'dns-test'}
+    <label class="form-label small mb-1" for="rf-dns">{t('groups.dnsTestDomains')}</label>
+    <textarea id="rf-dns" class="form-control font-monospace mb-1" rows="3" placeholder="intranet.example&#10;git.example.org"
+      bind:value={ruleForm.command} data-testid="rf-dns-domains"></textarea>
+    <p class="small text-body-secondary">{t('groups.dnsTestDomainsHint')}</p>
   {/if}
 
   <div class="text-end mt-2">
@@ -618,3 +663,12 @@
     <button class="btn btn-primary" onclick={saveRule} disabled={!ruleValid || busy}>{t('groups.save')}</button>
   </div>
 </Modal>
+
+<style>
+  .collapse-icon :global(svg) {
+    transition: transform 0.15s;
+  }
+  .collapse-icon.open :global(svg) {
+    transform: rotate(90deg);
+  }
+</style>

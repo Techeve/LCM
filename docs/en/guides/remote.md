@@ -284,6 +284,20 @@ server rejects direct calls as well. Where there is no shell it is not offered
 at all - demo servers, Synology DSM devices, agent servers (the agent
 transport carries no stream) and servers in maintenance.
 
+### Sessions
+
+- **Open consoles are visible**: server detail and dashboard show the label
+  **"Console open"** with user and start time - everyone knows someone is
+  working on the server by hand.
+- **LCM keeps working**: a console has its own connection slots (two per
+  server) and does not block schedules, updates or actions. If apt runs
+  collide, LCM waits for the package manager (see
+  [APT cache](/en/guides/apt-cache/#when-apt-is-busy)).
+- **End**: *Close*, closing the window, `exit` in the shell or **15 minutes
+  without input** end the session including the SSH connection. The console
+  then has to be reopened. Opening and closing are in the audit log, the
+  session itself in the SSH log.
+
 ## Enrollment token
 
 The token is the agent's **permanent** credential (like an API key). It encodes

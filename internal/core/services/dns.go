@@ -56,6 +56,33 @@ func validDNSServers(servers []string) ([]string, error) {
 }
 
 // sanitizeDNSDomains filtert die Test-Domains auf unbedenkliche Zeichen.
+// ErrInvalidDNSTestDomain: In der Domainliste einer DNS-Test-Regel steht ein
+// Eintrag, der kein Hostname ist.
+var ErrInvalidDNSTestDomain = errors.New("ungültige test-domain")
+
+// normalizeDNSTestDomains prüft die eigenen Domains einer DNS-Test-Regel und
+// legt sie zeilenweise ab. Leer bleibt leer - dann gelten die Domains aus
+// den Einstellungen. Ein ungültiger Eintrag wird benannt statt still
+// verworfen: Sonst prüfte die Regel weniger, als ihr Betreiber glaubt.
+func normalizeDNSTestDomains(raw string) (string, error) {
+	list := domain.SplitDomainList(raw)
+	for _, d := range list {
+		if !reDNSDomain.MatchString(d) {
+			return "", fmt.Errorf("%w: %q", ErrInvalidDNSTestDomain, d)
+		}
+	}
+	return strings.Join(list, "\n"), nil
+}
+
+// ruleTestDomains liefert die Domains, die eine DNS-Test-Regel prüft: ihre
+// eigenen, sonst die aus den Einstellungen.
+func ruleTestDomains(rule *domain.Rule, settings *domain.GlobalSettings) []string {
+	if own := domain.SplitDomainList(rule.Command); len(own) > 0 {
+		return sanitizeDNSDomains(own)
+	}
+	return sanitizeDNSDomains(settings.DNSTestDomainList())
+}
+
 func sanitizeDNSDomains(domains []string) []string {
 	var out []string
 	for _, d := range domains {

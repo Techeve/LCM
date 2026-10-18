@@ -69,7 +69,6 @@ func TestSettingsPatchNulltNichts(t *testing.T) {
 	if _, err := env.Settings.UpdateGlobal(services.GlobalSettingsInput{
 		LogRetentionDays: ip(90), BackupEnabled: bp(true), BackupRetention: ip(14),
 		CVEScanEnabled: bp(true), JobIdleTimeoutMinutes: ip(15),
-		AptCacheURL: sp("http://192.168.1.10:3142"),
 	}, "admin"); err != nil {
 		t.Fatal(err)
 	}
@@ -84,11 +83,10 @@ func TestSettingsPatchNulltNichts(t *testing.T) {
 	}
 	// Die zehn Opfer aus dem Befund - keines darf kippen.
 	if updated.LogRetentionDays != 90 || !updated.BackupEnabled || updated.BackupRetention != 14 ||
-		!updated.CVEScanEnabled || updated.JobIdleTimeoutMinutes != 15 ||
-		updated.AptCacheURL != "http://192.168.1.10:3142" {
-		t.Errorf("Ein-Feld-PATCH hat unbeteiligte Felder verändert: retention=%d backup=%v cve=%v idle=%d apt=%q",
+		!updated.CVEScanEnabled || updated.JobIdleTimeoutMinutes != 15 {
+		t.Errorf("Ein-Feld-PATCH hat unbeteiligte Felder verändert: retention=%d backup=%v cve=%v idle=%d",
 			updated.LogRetentionDays, updated.BackupEnabled, updated.CVEScanEnabled,
-			updated.JobIdleTimeoutMinutes, updated.AptCacheURL)
+			updated.JobIdleTimeoutMinutes)
 	}
 }
 

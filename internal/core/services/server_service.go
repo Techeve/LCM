@@ -107,9 +107,9 @@ type ServerService struct {
 	// apps ist der Anwendungskatalog samt der Funde je Server. Optional -
 	// ohne ihn entfällt die Erkennung (schlanke Tests).
 	apps *repositories.AppRepository
-	// aptCacheURL liefert die konfigurierte APT-Cache-URL aus den globalen
-	// Einstellungen (leer = Feature aus). Optional.
-	aptCacheURL func() (string, error)
+	// aptCacheURL liefert die Adresse eines APT-Caches aus Einstellungen →
+	// APT-Cache (0 = der einzige; ErrNoAptCacheURL, wenn keiner). Optional.
+	aptCacheURL func(cacheID uint) (string, error)
 	// cveScanEnabled meldet, ob der CVE-Scan global aktiviert ist - steuert die
 	// automatische CVE-Neubewertung nach Paket-Updates. Optional; nil = an.
 	cveScanEnabled func() bool
@@ -122,6 +122,8 @@ type ServerService struct {
 	// 1 ausführende + 1 lesende - alle Verbindungen laufen durch connect/
 	// connectRead dieses Services (auch Executor und Provisioning).
 	connLimit *ConnLimiter
+	// consoles führt die offenen Web-Konsolen (Anzeige am Server).
+	consoles *consoleRegistry
 	// weightList liefert die CVE-Hochgewichtungs-Liste aus den globalen
 	// Einstellungen. Optional; nil = eingebaute Standardliste.
 	weightList func() []string
@@ -201,9 +203,9 @@ func (s *ServerService) disableSelfRegistration() error {
 	return s.selfRegisterOff()
 }
 
-// WithAptCacheURL verdrahtet den Zugriff auf die APT-Cache-URL der globalen
-// Einstellungen (für die Aktion „APT-Cache verwenden").
-func (s *ServerService) WithAptCacheURL(fn func() (string, error)) *ServerService {
+// WithAptCacheURL verdrahtet die Auflösung der APT-Caches (für die Aktion
+// „APT-Cache verwenden" und die Übersicht).
+func (s *ServerService) WithAptCacheURL(fn func(cacheID uint) (string, error)) *ServerService {
 	s.aptCacheURL = fn
 	return s
 }
@@ -247,7 +249,7 @@ func (s *ServerService) WithLinux(linux *repositories.LinuxUserRepository) *Serv
 
 func NewServerService(servers *repositories.ServerRepository, jobs *JobService, audit *AuditService, cipher *crypto.Cipher, dialer sshx.Dialer) *ServerService {
 	return &ServerService{servers: servers, jobs: jobs, audit: audit, cipher: cipher, dialer: dialer,
-		connLimit: NewConnLimiter(), statuses: newStatusCache(statusCacheTTL)}
+		connLimit: NewConnLimiter(), statuses: newStatusCache(statusCacheTTL), consoles: newConsoleRegistry()}
 }
 
 // WithRecorder verdrahtet die SSH-Protokollierung (optional, damit schlanke
@@ -817,21 +819,31 @@ func createUserWithShellScript(username, shell string) string {
 // ausgeliefert z.B. von openSUSE -, lehnt OpenSSH die Anmeldung an solchen
 // Konten ab, AUCH mit gültigem Schlüssel. Der Join scheiterte dort am
 // Key-Login, obwohl Schlüssel und Dateirechte korrekt waren (BUG-007, und
-// für provisionierte Linux-Benutzer BUG-028).
-//
-// "*" ersetzt die Sperre durch ein unbrauchbares Passwort-Hash: eine
-// Passwort-Anmeldung bleibt unmöglich, die Sperre ist aber weg. Auf
-// BusyBox-Systemen ohne usermod setzt `chpasswd -e` denselben Wert -
-// BusyBox-adduser hinterließ dort ein LEERES Passwortfeld statt "*"/"!"
-// (R2-046): praktisch nicht ausnutzbar (BusyBox-su und sshd lehnen ab),
-// aber ein anderer Ausgangszustand als auf jeder anderen Distribution.
-// Als letzter Rückfall bleibt `passwd -u`. Schlägt alles fehl, ist das
-// kein Abbruchgrund - der anschließende Key-Login-Test entscheidet.
+// für provisionierte Linux-Benutzer BUG-028). Die Regel steht in
+// accountUnlockFragment.
 func unlockAccountScript(svcUser string) string {
+	return accountUnlockFragment(svcUser)
+}
+
+// accountUnlockFragment ist die Entsperrung als Shell-Fragment; Voll-Modus und
+// eingeschränkter Modus (Helper) nutzen dieselbe Regel. nameExpr ist der
+// Kontoname als Shell-Ausdruck.
+//
+// Den Passwort-Hash ersetzt sie nur, wenn keiner gesetzt ist (leer oder nur
+// eine Sperre "!", "!!", "*"): "*" ist dann ein unbrauchbares Hash - der
+// Schlüssel-Login geht, eine Passwort-Anmeldung bleibt unmöglich. Ein echter
+// Hash bleibt unangetastet, damit ein am Server gesetztes Passwort den nächsten
+// Abgleich übersteht. "!$hash" (vom Sperren gesetzt) wird nur entsperrt, der
+// Hash bleibt erhalten. Auf BusyBox ohne usermod setzt `chpasswd -e` denselben
+// Wert; `passwd -u` ist der letzte Rückfall. Schlägt alles fehl, ist das kein
+// Abbruchgrund - der anschließende Key-Login-Test entscheidet.
+func accountUnlockFragment(nameExpr string) string {
 	return fmt.Sprintf(
-		"if command -v usermod >/dev/null 2>&1; then usermod -p '*' %s >/dev/null 2>&1 || true; "+
-			"else printf '%%s:*\\n' %s | chpasswd -e >/dev/null 2>&1 || passwd -u %s >/dev/null 2>&1 || true; fi",
-		svcUser, svcUser, svcUser)
+		`lcm_hash=$(awk -F: -v u=%[1]s '$1==u{print $2}' /etc/shadow 2>/dev/null); `+
+			`case "$lcm_hash" in \$*) ;; !\$*) usermod -U %[1]s >/dev/null 2>&1 || passwd -u %[1]s >/dev/null 2>&1 || true ;; `+
+			`*) if command -v usermod >/dev/null 2>&1; then usermod -p '*' %[1]s >/dev/null 2>&1 || true; `+
+			`else printf '%%s:*\n' %[1]s | chpasswd -e >/dev/null 2>&1 || passwd -u %[1]s >/dev/null 2>&1 || true; fi ;; esac`,
+		nameExpr)
 }
 
 // cleanupProvisioning macht eine angefangene Provisionierung rückgängig.
@@ -1316,6 +1328,21 @@ func (s *ServerService) Connect(server *domain.Server) (sshx.Conn, error) {
 // Servers (max. 1 gleichzeitig; Freigabe über conn.Close()).
 func (s *ServerService) connect(server *domain.Server) (sshx.Conn, error) {
 	release, err := s.connLimit.AcquireExec(server.ID)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := s.dial(server)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return &limitedConn{Conn: conn, release: release}, nil
+}
+
+// connectTerminal stellt die Verbindung einer Web-Konsole her: eigener
+// Konsolen-Platz, NICHT der Exec-Slot - LCM arbeitet daneben weiter.
+func (s *ServerService) connectTerminal(server *domain.Server) (sshx.Conn, error) {
+	release, err := s.connLimit.AcquireTerminal(server.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -2171,7 +2198,7 @@ func (s *ServerService) Vulnerabilities(scope repositories.AccessScope, id uint)
 	unusedRefs := map[string]bool{}
 	if images, err := s.servers.FindDockerImages(id); err == nil {
 		for i := range images {
-			if !images[i].InUse {
+			if !images[i].InUse && !images[i].Superseded {
 				unusedRefs[images[i].Ref()] = true
 			}
 		}

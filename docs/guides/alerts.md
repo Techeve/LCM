@@ -98,7 +98,7 @@ wird trotzdem nur einmal ausgewertet.
 | **Überfällige Updates** | Zahl offener Paket-Updates übersteigt den Schwellenwert |
 | **Heartbeat** | letzter Server-Kontakt liegt länger als *n* Stunden zurück |
 | **Neustart erforderlich** | das System fordert nach einem Update selbst einen Neustart an (z.&nbsp;B. neuer Kernel) - reines Ja/Nein-Kriterium ohne Schwellenwert |
-| **APT-Cache nicht erreichbar** | der zentrale [apt-cacher-ng](/guides/apt-cache/) antwortet nicht. Greift nur auf dem LCM-Host, auf dem der Dienst läuft, und bleibt stumm, solange unter *Einstellungen → APT-Cache* keine URL hinterlegt ist |
+| **APT-Cache nicht erreichbar** | einer der [APT-Caches](/guides/apt-cache/) antwortet nicht; die Meldung nennt jeden betroffenen. Bleibt stumm, solange unter *Einstellungen → APT-Cache* kein Cache hinterlegt ist |
 | **Deep Scan** | der letzte [Deep Scan](/guides/deep-scan/) hat Warnungen oder kritische Befunde ergeben (Härtung/Fehlkonfiguration oder eine Kernel-Reboot-Lücke) - reines Ja/Nein-Kriterium ohne Schwellenwert |
 | **CrowdSec-LAPI nicht erreichbar** | eine der zentralen CrowdSec-LAPIs antwortet nicht oder lehnt den hinterlegten Maschinen-Login ab; die Meldung nennt jede betroffene. Greift nur auf dem LCM-Host und bleibt stumm, solange unter *Einstellungen → CrowdSec* keine LAPI hinterlegt ist |
 | **CVE-Datenbank veraltet** | die Schwachstellen-Datenbank des CVE-Scanners ist älter als 48&nbsp;Stunden oder wurde nie geladen. Wichtig, weil eine alte Datenbank keinen Fehler meldet, sondern veraltete Ergebnisse liefert - nach außen sieht das wie „keine Sicherheitslücken" aus. Greift nur auf dem LCM-Host |
@@ -127,9 +127,8 @@ kein Schwellenwert angegeben ist, greift der eingebaute Standard.
 - **Neustart erforderlich** - „Kernel wartet auf Reboot": kein Schwellenwert,
   Gruppe *Produktion*, Schwere *warning*. Löst aus, sobald der Server nach
   einem Update selbst einen Neustart anfordert.
-- **APT-Cache nicht erreichbar** - kein Schwellenwert; nur sinnvoll, wenn der
-  LCM-Host apt-cacher-ng betreibt und unter *Einstellungen → APT-Cache* eine
-  URL hinterlegt ist.
+- **APT-Cache nicht erreichbar** - kein Schwellenwert; nur sinnvoll, wenn
+  unter *Einstellungen → APT-Cache* mindestens ein Cache hinterlegt ist.
 - **Deep Scan** - „Härtungsbefunde melden": kein Schwellenwert, Schwere
   *warning*. Löst aus, sobald ein Deep Scan Warnungen oder kritische Befunde
   liefert.

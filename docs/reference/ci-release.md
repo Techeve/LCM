@@ -351,10 +351,11 @@ Konfiguration: `renovate.json` im Repo-Root.
 
 - **Ziel-Branch** ist `develop` (`baseBranches`), niemals ein Kanal-Branch.
 - **Gruppierung:** alle Go-minor/patch-Updates in einem MR, alle npm-minor/patch-Updates in einem MR; **Major-Updates** kommen einzeln (bessere Review-Kontrolle).
-- **Automerge:** **Patch-Updates** werden nach grüner Pipeline automatisch gemergt (`platformAutomerge` = „mergen, wenn Pipeline erfolgreich"); **minor/major** bleiben als MR zur manuellen Review offen.
+- **Automerge:** **Patch-Updates** vertrauenswürdiger Herausgeber (Stufe 4-5, siehe [Abhängigkeiten](./dependencies/)) werden nach grüner Pipeline automatisch gemergt (`platformAutomerge` = „mergen, wenn Pipeline erfolgreich"); alle übrigen Updates bleiben als MR zur manuellen Review offen.
 - **Conventional Commits:** Renovate committet als `chore(deps): …` - passt den `check:commits`-Job und löst als `chore` **kein** Release aus (die neue Version entsteht erst, wenn die Bumps später über den regulären Release-Zug fließen).
 - `go mod tidy` bzw. `npm dedupe` laufen nach jedem Update (`postUpdateOptions`), damit `go.sum`/Lockfile konsistent bleiben.
-- Sicherheits-relevante Updates (bekannte CVEs in Abhängigkeiten) werden über OSV erkannt, mit dem Label `security` markiert und **nicht** automatisch gemergt.
+- **Sicherheitsupdates** (bekannte Lücken laut OSV) kommen als eigener MR mit dem Label `security`, **ohne** Karenzzeit, und werden **automatisch gemergt, sobald die volle MR-Pipeline grün ist** - unabhängig von Herausgeber und Update-Typ. Ist die Pipeline rot, bleibt der MR offen und braucht einen Menschen.
+- Die globalen Optionen `onboarding` und `requireConfig` stehen als `RENOVATE_*`-Variablen im CI-Job, nicht in `renovate.json` (dort wären sie unzulässig).
 - Ein **Dependency-Dashboard**-Issue gibt jederzeit den Überblick über anstehende/ignorierte Updates.
 
 **Einmalige Einrichtung:**

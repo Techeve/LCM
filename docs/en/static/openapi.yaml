@@ -2160,6 +2160,47 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/server-groups/{id}/rules/order:
+    put:
+      tags:
+      - Gruppen
+      summary: Legt die Ausführungsreihenfolge der Regeln eines Auslösers fest.
+      operationId: groupCtrl_ReorderRules
+      description: 'Die Liste nennt alle Regeln genau eines Auslösers (ein Zeitplan oder die Grundsatz-Regeln der Gruppe), jede einmal; die erste läuft zuerst.
+
+
+        Benötigte Berechtigung: `rules:manage`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rule_ids]
+              properties:
+                rule_ids:
+                  type: array
+                  items:
+                    type: integer
+                  example: [3, 1, 2]
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Reihenfolge gespeichert.
+        '422':
+          description: Die Liste nennt nicht genau die Regeln eines Auslösers.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/server-groups/{id}/schedules:
     get:
       tags:
@@ -2745,6 +2786,18 @@ paths:
         required: true
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enable:
+                  type: boolean
+                  default: true
+                cache_id:
+                  type: integer
+                  description: Gewählter APT-Cache (Einstellungen → APT-Cache). Fehlt das Feld, gilt der einzige Cache, wenn es genau einen gibt.
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -4958,6 +5011,26 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/consoles:
+    get:
+      tags:
+      - Server
+      summary: Gerade offene Web-Konsolen (Server, Benutzer, seit wann).
+      operationId: serverCtrl_OpenConsoles
+      description: 'Liste aus {server_id, actor, since} - nur Server, die der Aufrufer sehen darf.
+
+
+        Benötigte Berechtigung: `servers:read`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/servers/statuses:
     get:
       tags:
@@ -5289,6 +5362,13 @@ paths:
       - Einstellungen
       summary: Datengrundlage der zentralen APT-Cache-Seite.
       operationId: serverCtrl_AptCacheOverview
+      parameters:
+      - name: cache_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: Gewählter APT-Cache (ohne - der einzige).
       description: 'Liefert die konfigurierte Cache-URL, ihre Live-Erreichbarkeit
         samt Transfer-Statistiken und - falls apt-cacher-ng auf dem LCM-Host
         läuft - dessen Verwaltbarkeit (Server-ID, permanentes Caching,
@@ -5313,26 +5393,99 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
-  /api/v1/settings/apt-cache/status:
+  /api/v1/settings/apt-caches:
     get:
       tags:
       - Einstellungen
-      summary: Prüft vom LCM-Host aus, ob der konfigurierte apt-cacher-ng erreichbar ist.
-      operationId: opsCtrl_AptCacheStatus
-      description: 'Prüft vom LCM-Host aus, ob der konfigurierte apt-cacher-ng erreichbar ist.
-
-
-        Benötigte Berechtigung: `settings:manage`.'
+      summary: Listet die zentralen APT-Caches.
+      operationId: opsCtrl_ListAptCaches
+      description: 'Benötigte Berechtigung: `settings:manage`. Für die Auswahl (Regel, Server-Aktion) gibt es dieselbe Liste unter `GET /api/v1/apt-caches` (`servers:read`).'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich - Liste aus {id, name, url, created_at, updated_at}.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+    post:
+      tags:
+      - Einstellungen
+      summary: Legt einen APT-Cache an (ohne id) oder aktualisiert ihn (mit id).
+      operationId: opsCtrl_SaveAptCache
+      description: 'Benötigte Berechtigung: `settings:manage`.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+                  example: Standort Berlin
+                url:
+                  type: string
+                  example: http://192.168.1.10:3142
       security:
       - sessionAuth: []
       - apiKeyAuth: []
       responses:
         '200':
           description: Erfolgreich.
+        '400':
+          description: Ungültige Eingabe (Name doppelt, URL ungültig oder leer).
         '401':
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/settings/apt-caches/{id}:
+    delete:
+      tags:
+      - Einstellungen
+      summary: Entfernt einen APT-Cache aus LCM; angebundene Server bleiben angebunden.
+      operationId: opsCtrl_DeleteAptCache
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      description: 'Benötigte Berechtigung: `settings:manage`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '404':
+          description: Nicht gefunden.
+  /api/v1/settings/apt-caches/{id}/status:
+    get:
+      tags:
+      - Einstellungen
+      summary: Prüft vom LCM-Host aus, ob unter der Adresse des Caches ein apt-cacher-ng antwortet.
+      operationId: opsCtrl_AptCacheStatus
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      description: 'Benötigte Berechtigung: `settings:manage`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich - {id, name, configured, reachable, running, http_status, message}.
+        '404':
+          description: Nicht gefunden.
   /api/v1/settings/crowdsec/lapis:
     get:
       tags:
@@ -5638,8 +5791,6 @@ paths:
                   type: integer
                 job_idle_timeout_slow_minutes:
                   type: integer
-                apt_cache_url:
-                  type: string
                 require_2fa_roles:
                   type: string
                 public_base_url:
@@ -5707,6 +5858,23 @@ paths:
       responses:
         '200':
           description: Erfolgreich - Liste aus {id, name, url, login}.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/apt-caches:
+    get:
+      tags:
+      - Server
+      summary: APT-Caches als Auswahl für die Regel „APT-Cache anbinden" und die Server-Aktion (Lese-Sicht).
+      operationId: opsCtrl_AptCachePicker
+      description: 'Benötigte Berechtigung: `servers:read`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich - Liste aus {id, name, url}.
         '401':
           description: Nicht angemeldet.
         '403':

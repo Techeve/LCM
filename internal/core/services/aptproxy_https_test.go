@@ -22,13 +22,10 @@ import (
 func TestAptProxyErkenntFehlendenHTTPSTunnel(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
-	if _, err := env.Settings.UpdateGlobal(services.GlobalSettingsInput{
-		AptCacheURL: sp("http://cache.local:3142")}, "admin"); err != nil {
-		t.Fatal(err)
-	}
+	addAptCache(t, env, "Standort A", "http://cache.local:3142")
 	env.Dialer.Commands = nil
 
-	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, "admin"); err != nil {
+	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, 0, "admin"); err != nil {
 		t.Fatalf("apt-proxy aktivieren: %v", err)
 	}
 	all := strings.Join(env.Dialer.Commands, "\n")
@@ -47,13 +44,10 @@ func TestAptProxyErkenntFehlendenHTTPSTunnel(t *testing.T) {
 func TestAptProxyWertetDieAusgabeAus(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
-	if _, err := env.Settings.UpdateGlobal(services.GlobalSettingsInput{
-		AptCacheURL: sp("http://cache.local:3142")}, "admin"); err != nil {
-		t.Fatal(err)
-	}
+	addAptCache(t, env, "Standort A", "http://cache.local:3142")
 	env.Dialer.Commands = nil
 
-	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, "admin"); err != nil {
+	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, 0, "admin"); err != nil {
 		t.Fatalf("apt-proxy aktivieren: %v", err)
 	}
 	all := strings.Join(env.Dialer.Commands, "\n")
@@ -74,13 +68,10 @@ func TestAptProxyWertetDieAusgabeAus(t *testing.T) {
 func TestAptProxyMeldetDenGewaehltenModus(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
-	if _, err := env.Settings.UpdateGlobal(services.GlobalSettingsInput{
-		AptCacheURL: sp("http://cache.local:3142")}, "admin"); err != nil {
-		t.Fatal(err)
-	}
+	addAptCache(t, env, "Standort A", "http://cache.local:3142")
 	env.Dialer.Commands = nil
 
-	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, "admin"); err != nil {
+	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, 0, "admin"); err != nil {
 		t.Fatalf("apt-proxy aktivieren: %v", err)
 	}
 	if !strings.Contains(strings.Join(env.Dialer.Commands, "\n"), "$LCM_MODE") {

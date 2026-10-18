@@ -148,8 +148,27 @@ export class SystemApi {
    * Transfer-Statistiken und - falls apt-cacher-ng auf dem LCM-Host läuft -
    * dessen Verwaltbarkeit (managed, server_id, permanent_cache, disk_usage).
    */
-  aptCacheOverview() {
-    return this.#client.get('/settings/apt-cache/overview');
+  aptCacheOverview(cacheId = 0) {
+    return this.#client.get(`/settings/apt-cache/overview${cacheId ? `?cache_id=${cacheId}` : ''}`);
+  }
+
+  // ---- APT-Caches ----
+  aptCaches() {
+    return this.#client.get('/settings/apt-caches');
+  }
+
+  /** Cache anlegen (ohne id) oder aktualisieren (mit id). */
+  saveAptCache(data) {
+    return this.#client.post('/settings/apt-caches', data);
+  }
+
+  deleteAptCache(id) {
+    return this.#client.delete(`/settings/apt-caches/${id}`);
+  }
+
+  /** Erreichbarkeit eines Caches: {id, name, configured, reachable, running, http_status, message}. */
+  aptCacheStatus(id) {
+    return this.#client.get(`/settings/apt-caches/${id}/status`);
   }
 
   // ---- CrowdSec-LAPIs (Passwort write-only) ----

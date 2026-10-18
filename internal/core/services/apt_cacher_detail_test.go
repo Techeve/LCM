@@ -90,7 +90,7 @@ func TestAptCacherDetailWithStats(t *testing.T) {
 		_, _ = w.Write([]byte(sampleAcngReport))
 	}))
 	defer srv.Close()
-	env.Servers.WithAptCacheURL(func() (string, error) { return srv.URL, nil })
+	env.Servers.WithAptCacheURL(func(uint) (string, error) { return srv.URL, nil })
 
 	// SSH-Antwort: NO_CRON_RUN=1 ist gesetzt (permanentes Caching aktiv).
 	// Kein Anführungszeichen im Substring-Schlüssel - das Kommando läuft

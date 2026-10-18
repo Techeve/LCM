@@ -7,8 +7,6 @@
   ],
   "timezone": "Europe/Berlin",
   "baseBranchPatterns": ["develop"],
-  "onboarding": false,
-  "requireConfig": "optional",
   "enabledManagers": ["gomod", "npm", "dockerfile"],
   "labels": ["dependencies"],
   "semanticCommitType": "chore",
@@ -21,8 +19,9 @@
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
   "vulnerabilityAlerts": {
+    "description": "Sicherheitsupdates (OSV) ohne Karenzzeit und selbsttätig gemergt, sobald die volle MR-Pipeline grün ist. Eine bekannte Lücke wiegt schwerer als das Restrisiko einer frischen Version.",
     "labels": ["security"],
-    "automerge": false,
+    "automerge": true,
     "minimumReleaseAge": null
   },
   "osvVulnerabilityAlerts": true,

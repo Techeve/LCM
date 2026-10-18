@@ -266,7 +266,8 @@ compares on every connection and intervenes **only on deviation**. For hardened
 directories the state is restored; for directory permissions a sample check at
 the root path verifies the ACL entry is still there - the full reconciliation
 runs during the user sync anyway. Every actual intervention shows up in the
-audit log.
+audit log. To harden permissions at a fixed time (e.g. right after the nightly
+updates), attach the same rule to a schedule as well.
 
 Alongside it, **set up ACL** (`acl-setup`): if ACL support is missing, the
 package is installed - otherwise nothing happens. A group thus equips new
@@ -462,3 +463,9 @@ with time, origin, terminal and duration - sessions still running are marked as
 such. The source is `wtmp` on the server (collected via `last` in the same scan
 pass). How far back the history reaches is up to the system: `wtmp` is usually
 rotated monthly, and older logins are gone by then.
+
+For the users themselves there is also the page **Set up Linux users**
+(`/#/doku/linux-benutzer`): how to set the password through the activation
+link, which details LCM pushes to the server (full name, shell, keys), and
+which email address only serves the activation link. The **Users** tab of a
+server has a button that leads there directly.

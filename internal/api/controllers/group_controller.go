@@ -29,9 +29,9 @@ func mapGroupError(err error) error {
 		return fiber.NewError(fiber.StatusForbidden, err.Error())
 	case errors.Is(err, services.ErrInvalidCron), errors.Is(err, services.ErrInvalidSpread),
 		errors.Is(err, services.ErrInvalidRuleType),
-		errors.Is(err, services.ErrRuleCommandUnused),
+		errors.Is(err, services.ErrRuleCommandUnused), errors.Is(err, services.ErrInvalidDNSTestDomain),
+		errors.Is(err, services.ErrInvalidAptCacheChoice), errors.Is(err, services.ErrInvalidDockerScope), errors.Is(err, services.ErrRuleOrderInvalid),
 		errors.Is(err, services.ErrEnforceRuleType), errors.Is(err, services.ErrRuleNeedsTarget),
-		errors.Is(err, services.ErrEnforceOnlyRuleType),
 		errors.Is(err, services.ErrEnforceFirewallSpec),
 		errors.Is(err, services.ErrInvalidGroupPriority),
 		errors.Is(err, services.ErrNoPackages), errors.Is(err, services.ErrInvalidPackage),
@@ -261,6 +261,26 @@ func (ctrl *GroupController) UpdateSchedule(c fiber.Ctx) error {
 		return mapGroupError(err)
 	}
 	return c.JSON(sched)
+}
+
+// ReorderRules - PUT /api/v1/server-groups/:id/rules/order (rules:manage)
+// Legt die Ausführungsreihenfolge der Regeln eines Auslösers fest:
+// {"rule_ids": [3, 1, 2]} - die erste läuft zuerst.
+func (ctrl *GroupController) ReorderRules(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		RuleIDs []uint `json:"rule_ids"`
+	}
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	if err := ctrl.groups.ReorderRules(scopeFor(c), id, req.RuleIDs, actor(c)); err != nil {
+		return mapGroupError(err)
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 // RemoveSchedule - DELETE /api/v1/schedules/:id/remove (rules:manage)

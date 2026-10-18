@@ -449,15 +449,6 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	appRepo := repositories.NewAppRepository(db)
 	ipAllowlistRepo := repositories.NewIPAllowlistRepository(db)
 	packagePinRepo := repositories.NewPackagePinRepository(db)
-	// APT-Cache-URL aus den globalen Einstellungen (lazy - die Aktion
-	// „APT-Cache verwenden" liest den jeweils aktuellen Wert).
-	aptCacheURL := func() (string, error) {
-		st, err := settingsRepo.Get()
-		if err != nil {
-			return "", err
-		}
-		return st.AptCacheURL, nil
-	}
 	// Steuert die automatische CVE-Neubewertung nach Paket-Updates (lazy gelesen;
 	// bei Lesefehler konservativ „an", passend zum gorm-Default).
 	cveScanEnabled := func() bool {
@@ -485,7 +476,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	serverService := services.NewServerService(serverRepo, jobService, auditService, cipher, sshx.NewClient()).
 		WithRecorder(sshRecorder).WithLinux(linuxRepo).WithGroups(groupRepo).WithScanner(cveScanner).
 		WithSettings(settingsRepo).
-		WithKnownRepos(knownRepoRepo).WithAptCacheURL(aptCacheURL).WithCVERescanEnabled(cveScanEnabled).
+		WithKnownRepos(knownRepoRepo).WithCVERescanEnabled(cveScanEnabled).
 		WithCVEWeightList(cveWeightList).WithDNSTestDomains(dnsTestDomains).
 		WithPackagePins(packagePinRepo).WithApps(appRepo)
 	// Endet ein Job, kann sich die Ampel seines Servers geändert haben.
@@ -570,7 +561,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	alertRepo := repositories.NewAlertRepository(db)
 	notificationService := services.NewNotificationService(notificationRepo, alertRepo, cipher, auditService)
 	alertService := services.NewAlertService(alertRepo, serverRepo, groupRepo, notificationService, auditService).
-		WithCVEWeightList(cveWeightList).WithAptCacheChecker(aptCacheURL)
+		WithCVEWeightList(cveWeightList)
 	executor := services.NewExecutor(serverRepo, groupRepo, jobService, auditService,
 		provService, backupService, settingsRepo, serverService.Connect).
 		WithRecorder(sshRecorder).WithCustomActions(customActionRepo).WithScanner(cveScanner).
@@ -612,6 +603,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	settingsService := services.NewSettingsService(settingsRepo, cipher, auditService, scheduler.Reload).
 		WithKnownRepos(knownRepoRepo).WithIPAllowlists(ipAllowlistRepo).
 		WithCrowdSecLapis(repositories.NewCrowdSecLapiRepository(db)).
+		WithAptCaches(repositories.NewAptCacheRepository(db)).
 		WithDefaultBackupDir(defaultBackupDir).
 		WithRoles(roleRepo).
 		WithFallbackBaseURL(fallbackBaseURL(cfg, dev))
@@ -690,6 +682,14 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Tools) - sowohl für Server-Aktionen als auch für Grundsatz-Regeln.
 	serverService.WithIPAllowlists(settingsService.ExpandIPAllowlists)
 	serverService.WithCrowdSecConfig(settingsService.CrowdSecConfig)
+	serverService.WithAptCacheURL(settingsService.AptCacheURL)
+	executor.WithAptCaches(settingsService.AptCacheURL)
+	alertService.WithAptCacheChecker(settingsService.CheckAptCaches)
+	// Bis 1.46 gab es genau eine APT-Cache-URL in den Einstellungen - sie
+	// wandert einmalig in die Liste.
+	if err := settingsService.MigrateLegacyAptCache(); err != nil {
+		slog.Warn("apt cache migration failed", "error", err)
+	}
 	// Bis 1.45 gab es genau eine LAPI in den Einstellungen - sie wandert
 	// einmalig in die Liste.
 	if err := settingsService.MigrateLegacyCrowdSecLapi(); err != nil {
@@ -708,7 +708,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// den CVE-Scan aktivieren bzw. die lokale APT-Cache-URL eintragen.
 	serverService.WithLcmHostConfig(
 		func() error { return settingsService.SetCVEScanEnabled(true) },
-		settingsService.SetAptCacheURL,
+		settingsService.AdoptHostAptCache,
 	)
 	// CrowdSec-LAPI auf dem LCM-Host: nach der Installation die erzeugten
 	// Maschinen-Zugangsdaten in die CrowdSec-Einstellungen eintragen.

@@ -204,7 +204,7 @@ func dockerRelevantRefs(servers *repositories.ServerRepository, server *domain.S
 	images, _ := servers.FindDockerImages(server.ID)
 	byImageID := map[string][]string{}
 	for i := range images {
-		if images[i].ImageID != "" {
+		if images[i].ImageID != "" && !images[i].Superseded {
 			byImageID[images[i].ImageID] = append(byImageID[images[i].ImageID], images[i].Ref())
 		}
 	}

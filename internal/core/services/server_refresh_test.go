@@ -71,6 +71,30 @@ func TestRefreshAllReadsFirewallAndSSHStatus(t *testing.T) {
 	}
 }
 
+// TestRefreshMisstSSHHaertungEffektiv: das Drop-in allein ist kein Beleg. Eine
+// lexikalisch frühere Datei (50-cloud-init.conf) kann es außer Kraft setzen;
+// die Prüfung muss deshalb den effektiven Wert aus `sshd -T` heranziehen.
+func TestRefreshMisstSSHHaertungEffektiv(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	env.Dialer.Commands = nil
+
+	if _, err := env.Servers.RefreshAll(repositories.ScopeAll(), id, "admin"); err != nil {
+		t.Fatalf("refresh-all: %v", err)
+	}
+	waitServerJob(t, env, id, services.JobTypeFullRefresh)
+
+	for _, cmd := range env.Dialer.Commands {
+		if strings.Contains(cmd, "60-lcm-hardening.conf") {
+			if !strings.Contains(cmd, "sshd -T") || !strings.Contains(cmd, "passwordauthentication no") {
+				t.Fatalf("härtungs-status prüft nur die datei, nicht die wirkung: %q", cmd)
+			}
+			return
+		}
+	}
+	t.Fatal("refresh hat den härtungs-status nicht abgefragt")
+}
+
 // TestPortlisteVerschwindetMitDerFirewall: die Portliste beschreibt, was
 // GERADE freigegeben ist. Nach `apt-get purge ufw` erkennt LCM auf Debian das
 // vorinstallierte nftables - der ufw-Zweig, der die Liste sonst neu aufbaut,

@@ -85,11 +85,12 @@ func TestRegelKommandoNurWoVerwendet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// apt-proxy mit Kommando: abgelehnt (früher 201 + totes Feld).
+	// apt-proxy trägt im Kommando nur die Cache-ID - eine URL wird
+	// abgelehnt (früher 201 + totes Feld).
 	_, err = env.Groups.DefineRule(repositories.ScopeAll(), group.ID,
 		"proxy", domain.RuleTypeAptProxy, "http://example.invalid:3142", nil, true, "admin")
-	if !errors.Is(err, services.ErrRuleCommandUnused) {
-		t.Fatalf("apt-proxy mit Kommando muss abgelehnt werden, bekam: %v", err)
+	if !errors.Is(err, services.ErrInvalidAptCacheChoice) {
+		t.Fatalf("apt-proxy mit url muss abgelehnt werden, bekam: %v", err)
 	}
 	// Ohne Kommando bleibt der Typ nutzbar.
 	if _, err := env.Groups.DefineRule(repositories.ScopeAll(), group.ID,

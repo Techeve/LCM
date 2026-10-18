@@ -31,6 +31,11 @@ export class ServersApi {
     return this.#client.get(`/servers/${id}/status`);
   }
 
+  /** Gerade offene Web-Konsolen: [{server_id, actor, since}]. */
+  consoles() {
+    return this.#client.get('/servers/consoles');
+  }
+
   /** Ampeln aller sichtbaren Server in einer Anfrage (Dashboard). */
   statuses() {
     return this.#client.get('/servers/statuses');
@@ -583,9 +588,14 @@ export class ServersApi {
     return this.#client.post(`/servers/${id}/listening-ports/scan`, {});
   }
 
-  /** APT-Anfragen des Servers über den zentralen APT-Cache leiten (oder trennen). */
-  configureAptProxy(id, enable) {
-    return this.#client.post(`/servers/${id}/apt-proxy`, { enable });
+  /** APT-Anfragen des Servers über einen APT-Cache leiten (oder trennen); cacheId 0 = der einzige. */
+  configureAptProxy(id, enable, cacheId = 0) {
+    return this.#client.post(`/servers/${id}/apt-proxy`, { enable, cache_id: cacheId });
+  }
+
+  /** APT-Caches für die Auswahl: [{id, name, url}]. */
+  aptCaches() {
+    return this.#client.get('/apt-caches');
   }
 
   rotateKey(id) {

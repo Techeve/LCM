@@ -83,6 +83,37 @@ all five images as CVE-relevant, it's enough to mark just the `nginx`
 container - its CVEs then count fully toward the traffic light, while the
 other four images stay excluded unless someone marks them too.
 
+## Superseded images and update rules
+
+When you pull an image whose tag now points to a new digest (for example
+`nginx:latest`), the old copy loses its tag. As long as a container still uses
+it, it stays on the server. The **Images** tab of a server lists it as
+**superseded**; the tag shows "+N older", the count of all superseded copies of
+that repository. They disappear with **Prune unused** or the `docker-prune`
+rule, as soon as no container runs on them.
+
+Two rules do what Watchtower does:
+
+| Rule | What happens |
+|---|---|
+| `docker-compose-update` | Projects with an available update: `docker compose pull && up -d` in the project directory, then `docker image prune -f` (untagged images only). |
+| `docker-container-update` | Running standalone containers with an available update: pull the image, recreate the container with the same configuration (ports, volumes, environment, network, restart policy, permissions), then remove the old image. |
+
+For a container update the old container is first only renamed. If creating or
+starting the new one fails, the old one runs again under its old name. It is
+removed only once the new one runs.
+
+- The selection (command) is optional: empty means all affected projects resp.
+  containers of the group; a name restricts the rule to that one.
+- Only **running** containers are updated; stopped ones are left alone.
+- The recreated container gets a new ID. The configuration comes from
+  `docker inspect` and is passed unchanged to the Docker API. Special cases such
+  as the host PID namespace or GPU access are not tested - check them on a test
+  server first.
+- The container rule needs `curl` on the server (access to the Docker socket)
+  and does not run on servers with restricted sudo.
+- Both rules respect the switch "Do not apply Docker updates".
+
 ## Server switches: watch instead of intervene
 
 Under **Server → Settings → Docker** there are two switches that take a server

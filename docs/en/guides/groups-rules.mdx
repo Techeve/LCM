@@ -32,8 +32,9 @@ The last two belong to the [privilege profiles](/en/guides/linux-users/): "set
 up ACL" installs missing ACL support so that a profile's directory permissions
 take effect on new members of the group at all; "keep permission state" restores
 hardened directories and applied directory permissions after a package upgrade
-has reset them. Conversely they cannot be attached to a schedule - they describe
-a state, not an action at a given time.
+has reset them. Both can also be attached to a **schedule** - e.g. right after
+the nightly updates. The reconciliation is the same (it only acts on
+deviation), but each run then shows up as its own job.
 
 A shell command, in turn, carries no target state at all: as a baseline rule it
 would run unconditionally on every health check. A **schedule** is the right
@@ -198,12 +199,18 @@ import { Steps } from '@astrojs/starlight/components';
 <Steps>
 
 1. Under *Groups*, select the group (or create a new one) and assign servers
-   to it.
-2. For a scheduled rule, first create a **schedule** (name +
-   cron expression, e.g. `0 2 * * *`).
-3. Via **"+ New Rule"** set the type, target (schedule *or* baseline), and
-   optionally the configuration (ports, package names, action).
-4. Using **"Now"** you can trigger a rule or an entire schedule
+   to it - the **Servers** section (like **Managers**) is collapsed and shows
+   the count; a click opens it.
+2. For a scheduled rule, first create a **schedule** (**"+ Schedule"**: name +
+   cron expression, e.g. `0 2 * * *`). Every schedule appears as its own
+   card; the baseline rules have their own card below.
+3. On the trigger's card, **"+ Rule"**: set the type and optionally the
+   configuration (ports, package names, action). The trigger is fixed by the
+   card.
+4. **Order**: within a card the rules run from top to bottom (number on the
+   left). Reorder them by **dragging** the handle or with the **arrows** -
+   e.g. "Update" first, then "Reboot if needed". New rules are appended.
+5. Using **"Now"** you can trigger a rule or an entire schedule
    immediately.
 
 </Steps>

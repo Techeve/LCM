@@ -63,7 +63,7 @@ variables:
   # @playwright/test in frontend/package.json passen -- laufen sie
   # auseinander, laedt Playwright die Browser doch wieder selbst nach und der
   # Vorteil ist weg. Renovate haelt beides zusammen (matchDepNames).
-  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.62.1-noble
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.0-noble
   # Volle Historie + Tags: die Versionsermittlung braucht beides.
   GIT_DEPTH: "0"
   # Caches im Projektverzeichnis, damit der Runner sie wiederverwenden kann.
@@ -1070,8 +1070,9 @@ docs-deploy:
 
 # Dependency-Bot: Renovate prüft Go-Module (gomod) und npm-Pakete auf neuere
 # Versionen und legt die Aktualisierungen automatisch als Merge Requests nach
-# develop an (Konfiguration: renovate.json im Repo-Root). Patch-Updates werden
-# nach grüner Pipeline automatisch gemergt; minor/major bleiben zur Review offen.
+# develop an (Konfiguration: renovate.json im Repo-Root). Sicherheitsupdates und
+# Patch-Updates vertrauenswürdiger Herausgeber werden nach grüner Pipeline
+# automatisch gemergt; alles andere bleibt zur Review offen.
 #
 # Der Job läuft NICHT bei normalen Pushes, sondern nur:
 #   - über eine geplante Pipeline (Scheduler) mit der Variable RENOVATE_BOT=true
@@ -1121,6 +1122,9 @@ renovate:
     RENOVATE_TOKEN: $RENOVATE_TOKEN
     RENOVATE_AUTODISCOVER: "false"
     RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
+    # Globale Optionen - in renovate.json verboten (Konfigurationswarnung im Dashboard).
+    RENOVATE_ONBOARDING: "false"
+    RENOVATE_REQUIRE_CONFIG: "optional"
     # Changelogs/Release-Notes von GitHub-gehosteten Deps abrufen (optional,
     # nur gesetzt wenn die Variable existiert - sonst leer, kein Fehler).
     GITHUB_COM_TOKEN: $RENOVATE_GITHUB_TOKEN

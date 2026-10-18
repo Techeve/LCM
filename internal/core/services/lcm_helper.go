@@ -39,6 +39,7 @@ var lcmHelperScript = strings.NewReplacer(
 	"@@DEEPSCAN_CURATED@@", curatedChecksScript(),
 	"@@USERS_SCAN@@", usersScanScript(),
 	"@@HOST_TRIVY@@", trivyInstallScript,
+	"@@ACCOUNT_UNLOCK@@", accountUnlockFragment(`"$name"`),
 	"@@HOST_SANDBOX@@", sandboxInstallScript,
 	"@@HOST_APTCACHER@@", aptCacherInstallScript,
 	"@@HOST_APTCACHER_RESTART@@", aptCacherRestartScript,
@@ -252,14 +253,14 @@ apt_proxy() {
     fi
     valid_url "$1" || die "ungueltige cache-url"
     printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$1" "$1" > "$dropin"
-    out=$(apt-get update 2>&1)
+    out=$(LC_ALL=C apt-get update 2>&1)
     mode='HTTP und HTTPS'
     # apt-cacher-ng tunnelt HTTPS nur mit gesetztem PassThroughPattern; sonst
     # antwortet er mit 403 und JEDE HTTPS-Paketquelle faellt aus (R2-038).
     # Dann HTTPS am Proxy vorbei - lieber ungecacht als unerreichbar.
     if printf '%s' "$out" | grep -qiE 'CONNECT denied|Invalid response from proxy'; then
         printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "DIRECT";\n' "$1" > "$dropin"
-        out=$(apt-get update 2>&1)
+        out=$(LC_ALL=C apt-get update 2>&1)
         mode='nur HTTP - der Cache erlaubt keine HTTPS-Tunnel, HTTPS-Quellen laufen ungecacht direkt'
     fi
     # apt-get update endet auch bei kaputten Quellen mit 0 - deshalb zaehlt
@@ -271,6 +272,15 @@ apt_proxy() {
         echo 'LCM: apt-update ueber den cache meldete fehlerhafte paketquellen - drop-in wieder entfernt'
         exit 1
     fi
+    # Funktionstest: mindestens eine Quelle muss ueber den Cache gekommen sein.
+    src=$(printf '%s\n' "$out" | grep -cE '^(Hit|Get):')
+    if [ "$src" -eq 0 ]; then
+        rm -f "$dropin"
+        apt-get update >/dev/null 2>&1 || true
+        echo 'LCM: funktionstest fehlgeschlagen - keine paketquelle ueber den cache geladen; drop-in wieder entfernt'
+        exit 1
+    fi
+    echo "LCM: funktionstest bestanden - $src paketquelle(n) ueber den cache geladen"
     echo "LCM: apt-anfragen laufen jetzt ueber den cache $1 ($mode)"
 }
 
@@ -530,9 +540,7 @@ user_ensure() {
         else die "weder useradd noch adduser vorhanden"
         fi
     fi
-    if command -v usermod >/dev/null 2>&1; then usermod -p '*' "$name" >/dev/null 2>&1 || true
-    elif command -v passwd >/dev/null 2>&1; then passwd -u "$name" >/dev/null 2>&1 || true
-    fi
+    @@ACCOUNT_UNLOCK@@
     usermod -s "$shell" "$name" 2>/dev/null || true
     home=$(getent passwd "$name" | cut -d: -f6)
     [ -n "$home" ] || die "kein home-verzeichnis fuer $name"

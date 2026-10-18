@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"LCM/internal/core/domain"
@@ -11,7 +12,7 @@ import (
 
 // ErrNoAptCacheURL: Anbindung angefordert, aber in den globalen Einstellungen
 // ist keine APT-Cache-URL hinterlegt.
-var ErrNoAptCacheURL = errors.New("keine APT-Cache-URL konfiguriert - bitte unter Einstellungen → APT-Cache hinterlegen")
+var ErrNoAptCacheURL = errors.New("kein APT-Cache gewählt oder hinterlegt - bitte unter Einstellungen → APT-Cache anlegen")
 
 // aptProxyDropin ist das von LCM verwaltete apt-Drop-in, das APT-Anfragen über
 // den zentralen Cache leitet.
@@ -46,15 +47,21 @@ func aptProxyDropinBody(cacheURL string, https bool) string {
 // Entscheidend ist die Auswertung der AUSGABE: `apt-get update` endet auch
 // dann mit exit 0, wenn einzelne Quellen mit „Err:" scheitern. Genau daran lag
 // es, dass LCM eine halb kaputte Anbindung als Erfolg meldete (R2-038).
+//
+// Der Funktionstest am Ende verlangt zusätzlich, dass überhaupt eine
+// Paketquelle über den Cache geladen wurde (Hit/Get) - ein Update, das nichts
+// lädt, belegt keinen funktionierenden Cache. Ausgewertet wird mit LC_ALL=C:
+// Auf einem deutschen System schreibt apt „Fehl:" und „OK:", und die Prüfung
+// liefe ins Leere.
 func aptProxyEnableScript(cacheURL string) string {
 	return strings.Join([]string{
 		fmt.Sprintf("printf '%s' > %s", aptProxyDropinBody(cacheURL, true), aptProxyDropin),
-		"LCM_OUT=$(apt-get update 2>&1)",
+		"LCM_OUT=$(LC_ALL=C apt-get update 2>&1)",
 		"LCM_MODE='HTTP und HTTPS'",
 		// Erkennt der Cache CONNECT nicht, meldet er 403 - dann HTTPS direkt.
 		`if printf '%s' "$LCM_OUT" | grep -qiE 'CONNECT denied|Invalid response from proxy'; then`,
 		fmt.Sprintf("  printf '%s' > %s", aptProxyDropinBody(cacheURL, false), aptProxyDropin),
-		"  LCM_OUT=$(apt-get update 2>&1)",
+		"  LCM_OUT=$(LC_ALL=C apt-get update 2>&1)",
 		"  LCM_MODE='nur HTTP - der Cache erlaubt keine HTTPS-Tunnel (PassThroughPattern nicht gesetzt), HTTPS-Quellen laufen daher ungecacht direkt'",
 		"fi",
 		// Jetzt zählt die Ausgabe, nicht der Exit-Code.
@@ -65,6 +72,14 @@ func aptProxyEnableScript(cacheURL string) string {
 		"  echo 'LCM: apt-update ueber den cache meldete fehlerhafte paketquellen - drop-in wieder entfernt'",
 		"  exit 1",
 		"fi",
+		`LCM_SRC=$(printf '%s\n' "$LCM_OUT" | grep -cE '^(Hit|Get):')`,
+		`if [ "$LCM_SRC" -eq 0 ]; then`,
+		fmt.Sprintf("  rm -f %s", aptProxyDropin),
+		"  apt-get update >/dev/null 2>&1 || true",
+		"  echo 'LCM: funktionstest fehlgeschlagen - keine paketquelle ueber den cache geladen; drop-in wieder entfernt'",
+		"  exit 1",
+		"fi",
+		`echo "LCM: funktionstest bestanden - $LCM_SRC paketquelle(n) ueber den cache geladen"`,
 		fmt.Sprintf(`echo "LCM: apt-anfragen laufen jetzt ueber den cache %s ($LCM_MODE)"`, cacheURL),
 	}, "\n")
 }
@@ -74,30 +89,41 @@ func aptProxyDisableScript() string {
 	return fmt.Sprintf("rm -f %s && echo 'LCM: apt-cache-anbindung entfernt'", aptProxyDropin)
 }
 
-// aptProxyStatusCommand meldet "yes"/"no", ob das Drop-in vorhanden ist.
+// aptProxyStatusCommand gibt das Drop-in aus (leer = nicht angebunden).
 func aptProxyStatusCommand() string {
-	return fmt.Sprintf("test -f %s && echo yes || echo no", aptProxyDropin)
+	return "cat " + aptProxyDropin + " 2>/dev/null || true"
+}
+
+// reAptProxyURL liest die Cache-Adresse aus dem Drop-in.
+var reAptProxyURL = regexp.MustCompile(`Acquire::http::Proxy "([^"]+)"`)
+
+// parseAptProxyDropin meldet, ob das Drop-in besteht, und auf welchen Cache
+// es zeigt.
+func parseAptProxyDropin(out string) (active bool, cacheURL string) {
+	if m := reAptProxyURL.FindStringSubmatch(out); m != nil {
+		return true, m[1]
+	}
+	return strings.TrimSpace(out) != "", ""
 }
 
 // ConfigureAptProxy bindet einen Server an den zentralen APT-Cache an
 // (enable) oder löst ihn davon (disable). Synchrone Aktion mit Output,
 // Muster ConfigureFirewall/HardenSSH.
-func (s *ServerService) ConfigureAptProxy(scope repositories.AccessScope, id uint, enable bool, actor string) (string, error) {
+//
+// cacheID wählt den Cache aus Einstellungen → APT-Cache (0 = der einzige,
+// wenn es genau einen gibt).
+func (s *ServerService) ConfigureAptProxy(scope repositories.AccessScope, id uint, enable bool, cacheID uint, actor string) (string, error) {
 	server, err := s.servers.FindByID(scope, id)
 	if err != nil {
 		return "", err
 	}
-	var script string
+	var script, cacheURL string
 	if enable {
 		if s.aptCacheURL == nil {
 			return "", ErrNoAptCacheURL
 		}
-		cacheURL, err := s.aptCacheURL()
-		if err != nil {
+		if cacheURL, err = s.aptCacheURL(cacheID); err != nil {
 			return "", err
-		}
-		if cacheURL == "" {
-			return "", ErrNoAptCacheURL
 		}
 		script = aptProxyEnableScript(cacheURL)
 		// Eingeschränkter Modus: das Drop-in schreibt der LCM-Helper
@@ -123,9 +149,9 @@ func (s *ServerService) ConfigureAptProxy(scope repositories.AccessScope, id uin
 		return output, runErr
 	}
 	if code != 0 {
-		return output, fmt.Errorf("apt-cache-anbindung fehlgeschlagen (exit %d)", code)
+		return output, fmt.Errorf("apt-cache-anbindung fehlgeschlagen (exit %d): %s", code, summarize(output))
 	}
-	_ = s.servers.UpdateFields(id, map[string]any{"apt_proxy_active": enable})
+	_ = s.servers.UpdateFields(id, map[string]any{"apt_proxy_active": enable, "apt_proxy_url": cacheURL})
 	verb := "getrennt"
 	if enable {
 		verb = "angebunden"

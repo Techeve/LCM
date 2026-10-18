@@ -127,46 +127,76 @@ func (ctrl *TerminalController) Connect(c fiber.Ctx) error {
 	return nil
 }
 
+// wsConn ist der Teil des WebSockets, den pump braucht - eigene
+// Schnittstelle, damit sich das Schließverhalten ohne Netz testen lässt.
+type wsConn interface {
+	ReadMessage() (int, []byte, error)
+	WriteMessage(messageType int, data []byte) error
+	SetReadDeadline(t time.Time) error
+	Close() error
+}
+
+// closeSocket beendet die Verbindung zum Browser, nachdem die Shell zu Ende
+// ist: erst eine ordentliche Close-Nachricht, dann die Lesefrist auf „jetzt"
+// - das weckt die Eingabe-Schleife, die sonst auf den nächsten Tastendruck
+// wartete - und zuletzt die Verbindung selbst.
+func closeSocket(ws wsConn) {
+	_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "sitzung beendet"))
+	_ = ws.SetReadDeadline(time.Now())
+	_ = ws.Close()
+}
+
 // pump führt die beiden Richtungen zusammen: Was der Server ausgibt, geht an
 // den Browser; was der Browser schickt, geht in die Shell.
 //
-// Die Ausgaberichtung läuft in einer eigenen Goroutine, die Eingaberichtung
-// hier - so beendet das Ende der einen auch die andere, egal welche Seite
-// zuerst geht.
-func pump(ws *websocket.Conn, term sshx.Terminal) {
+// Entscheidend ist das Ende, und es kann von beiden Seiten kommen:
+//   - Browser geht (Beenden, Tab zu) oder die Leerlauf-Frist läuft ab: Die
+//     Eingabe endet, die Sitzung wird SOFORT geschlossen. Erst das beendet
+//     das blockierende term.Read der Ausgabe - vorher wartete pump auf eine
+//     Ausgabe, die bei einer ruhigen Shell nie kam, und die Sitzung samt
+//     SSH-Verbindung blieb für immer offen.
+//   - Shell endet (exit): Die Ausgabe endet und schließt den WebSocket; das
+//     beendet die wartende Eingabe.
+func pump(ws wsConn, term sshx.Terminal) {
 	done := make(chan struct{})
 	safego.Go("terminal-out", func() {
 		defer close(done)
-		buf := make([]byte, 4096)
-		for {
-			n, err := term.Read(buf)
-			if n > 0 {
-				if werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
-					return
-				}
-			}
-			if err != nil {
-				return // Shell beendet oder Verbindung weg
+		copyOutput(ws, term)
+		closeSocket(ws)
+	})
+	copyInput(ws, term)
+	term.Close()
+	<-done
+}
+
+// copyOutput reicht die Ausgabe der Shell an den Browser, bis eine Seite weg ist.
+func copyOutput(ws wsConn, term sshx.Terminal) {
+	buf := make([]byte, 4096)
+	for {
+		n, err := term.Read(buf)
+		if n > 0 {
+			if werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+				return
 			}
 		}
-	})
+		if err != nil {
+			return // Shell beendet oder Verbindung weg
+		}
+	}
+}
 
+// copyInput reicht Tastatureingaben und Größenänderungen an die Shell, bis
+// der Browser geht oder die Leerlauf-Frist abläuft: Eine Sitzung, in der
+// nichts mehr getippt wird, endet von selbst - sonst hielte ein vergessener
+// Browser-Tab die Shell auf dem Server dauerhaft offen.
+func copyInput(ws wsConn, term sshx.Terminal) {
 	for {
-		// Die Leerlauf-Frist: Eine Sitzung, in der nichts mehr getippt wird,
-		// endet von selbst. Ohne sie hielte ein vergessener Browser-Tab den
-		// Exec-Slot des Servers dauerhaft besetzt - dort liefen dann keine
-		// Zeitpläne mehr, ohne dass es jemandem auffiele.
 		if err := ws.SetReadDeadline(time.Now().Add(services.TerminalIdleTimeout)); err != nil {
-			break
+			return
 		}
 		kind, data, err := ws.ReadMessage()
 		if err != nil {
-			break
-		}
-		select {
-		case <-done:
-			return // die Shell ist weg
-		default:
+			return
 		}
 		if kind == websocket.TextMessage && len(data) > 0 && data[0] == '{' {
 			var msg wsMessage
@@ -178,10 +208,9 @@ func pump(ws *websocket.Conn, term sshx.Terminal) {
 			}
 		}
 		if _, err := term.Write(data); err != nil {
-			break
+			return
 		}
 	}
-	<-done
 }
 
 // mapTerminalError übersetzt die Absagen der Konsole in HTTP-Antworten, die
@@ -193,6 +222,8 @@ func mapTerminalError(err error) error {
 	case errors.Is(err, services.ErrTerminalNotPossible),
 		errors.Is(err, services.ErrTerminalUnsupported):
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	case errors.Is(err, services.ErrTooManyConsoles):
+		return fiber.NewError(fiber.StatusConflict, err.Error())
 	case errors.Is(err, services.ErrTooManyConnections):
 		return fiber.NewError(fiber.StatusConflict,
 			"auf diesem Server läuft gerade etwas anderes - bitte kurz warten")

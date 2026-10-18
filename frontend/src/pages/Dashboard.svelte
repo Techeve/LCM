@@ -27,6 +27,7 @@
 
   let servers = $state([]);
   let statuses = $state({}); // serverId -> { status, insights }
+  let consoles = $state({}); // serverId -> offene Web-Konsolen [{actor, since}]
   let error = $state('');
   let loading = $state(true);
 
@@ -97,9 +98,15 @@
       // Zwei Anfragen statt einer je Server: Die Ampeln kommen gesammelt
       // (und serverseitig zwischengespeichert). Ein Server ohne Bewertung
       // fehlt in der Antwort und erscheint rot.
-      const [list, all] = await Promise.all([api.servers.list(), api.servers.statuses()]);
+      const [list, all, open] = await Promise.all([
+        api.servers.list(),
+        api.servers.statuses(),
+        api.servers.consoles().catch(() => []),
+      ]);
       const byId = Object.fromEntries(all.map((st) => [st.id, st]));
       for (const s of list) statuses[s.id] = byId[s.id] ?? { status: 'red', insights: [] };
+      consoles = {};
+      for (const c of open) (consoles[c.server_id] ??= []).push(c);
       servers = list;
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
@@ -236,7 +243,13 @@
                    halb durchsichtiger Zeile - die bliebe für schwache Augen
                    und Screenreader-Nutzer mit Restsehen unlesbar. -->
               <tr class:table-active={offlineDimmed(s)}>
-                <td><a href={`/servers/${s.id}`} use:link class="fw-semibold text-decoration-none {offlineDimmed(s) ? 'link-secondary' : ''}">{s.name}</a></td>
+                <td>
+                  <a href={`/servers/${s.id}`} use:link class="fw-semibold text-decoration-none {offlineDimmed(s) ? 'link-secondary' : ''}">{s.name}</a>
+                  {#if consoles[s.id]}
+                    <span class="badge text-bg-info ms-1" data-testid="console-open-badge"
+                      title={t('dashboard.consoleTitle', { who: consoles[s.id].map((c) => c.actor).join(', ') })}>{t('dashboard.consoleBadge')}</span>
+                  {/if}
+                </td>
                 <td class="text-body-secondary">
                   {#if s.transport === 'agent'}
                     <span class="badge text-bg-info" title={t('dashboard.agentTitle')}>{@html icons.link} {t('dashboard.agentBadge')}</span>

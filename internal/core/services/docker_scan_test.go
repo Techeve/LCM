@@ -51,10 +51,13 @@ func TestParseDockerPSAndComposeLabels(t *testing.T) {
 }
 
 func TestParseDockerImages(t *testing.T) {
-	images := parseDockerImages(dockerImagesOut)
-	// Das "<none>"-Repo (dangling layer) wird übersprungen.
-	if len(images) != 2 {
-		t.Fatalf("erwartete 2 images, bekam %d: %+v", len(images), images)
+	images := parseDockerImages(dockerImagesOut, nil)
+	// Das "<none>"-Image (kein Tag) ist eine überholte Fassung ohne bekannten Namen.
+	if len(images) != 3 {
+		t.Fatalf("erwartete 3 images, bekam %d: %+v", len(images), images)
+	}
+	if untagged := images[2]; !untagged.Superseded || untagged.Repository != "" || untagged.ImageID != "sha256:img-dangling" {
+		t.Errorf("image ohne tag falsch: %+v", untagged)
 	}
 	nginx := images[0]
 	if nginx.Repository != "nginx" || nginx.Tag != "1.25" || nginx.SizeText != "188MB" {
@@ -72,7 +75,7 @@ func TestParseDockerImages(t *testing.T) {
 		t.Errorf("lokales image falsch: %+v", local)
 	}
 
-	if got := parseDockerImages(""); len(got) != 0 {
+	if got := parseDockerImages("", nil); len(got) != 0 {
 		t.Errorf("leere ausgabe sollte 0 images liefern, bekam %d", len(got))
 	}
 }
@@ -80,7 +83,7 @@ func TestParseDockerImages(t *testing.T) {
 func TestMarkImagesInUse(t *testing.T) {
 	containers := parseDockerPS(dockerPSOut)
 	applyComposeLabels(containers, dockerInspectOut)
-	images := parseDockerImages(dockerImagesOut)
+	images := parseDockerImages(dockerImagesOut, nil)
 
 	markImagesInUse(images, containers)
 	if !images[0].InUse {
@@ -125,6 +128,8 @@ func TestScanDockerWithSudo(t *testing.T) {
 			return dockerPSOut
 		case strings.Contains(cmd, "docker inspect"):
 			return dockerInspectOut
+		case strings.Contains(cmd, "dangling=true"):
+			return ""
 		case strings.Contains(cmd, "docker images"):
 			return dockerImagesOut
 		}
@@ -134,7 +139,7 @@ func TestScanDockerWithSudo(t *testing.T) {
 	if !res.HasDocker || !res.HasCompose {
 		t.Fatalf("docker+compose sollten erkannt sein: %+v", res)
 	}
-	if len(res.DockerContainers) != 2 || len(res.DockerImages) != 2 {
+	if len(res.DockerContainers) != 2 || len(res.DockerImages) != 3 {
 		t.Fatalf("inventar unvollständig: %d container, %d images", len(res.DockerContainers), len(res.DockerImages))
 	}
 }

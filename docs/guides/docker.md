@@ -84,6 +84,38 @@ einen `nginx`-Container zu markieren - seine CVEs zählen dann voll in die
 Ampel, die übrigen vier Images bleiben außen vor, solange niemand sie
 ebenfalls markiert.
 
+## Überholte Images und Update-Regeln
+
+Zieht man ein Image, dessen Tag auf einen neuen Digest zeigt (etwa
+`nginx:latest`), verliert die alte Fassung ihren Tag. Solange ein Container sie
+nutzt, bleibt sie auf dem Server liegen. Der Reiter **Images** eines Servers
+führt sie als **überholt** auf; beim Tag steht „+N ältere“, die Zahl aller
+überholten Fassungen dieses Repositorys. Sie verschwinden mit **Ungenutzte
+aufräumen** oder der Regel `docker-prune`, sobald kein Container mehr auf ihnen
+läuft.
+
+Zwei Regeln erledigen, was Watchtower tut:
+
+| Regel | Was passiert |
+|---|---|
+| `docker-compose-update` | Projekte mit verfügbarem Update: `docker compose pull && up -d` am Projektort, danach `docker image prune -f` (nur ungetaggte Images). |
+| `docker-container-update` | Laufende Standalone-Container mit verfügbarem Update: Image ziehen, Container mit derselben Konfiguration neu erstellen (Ports, Volumes, Umgebung, Netz, Neustart-Regel, Rechte), danach das alte Image entfernen. |
+
+Beim Container-Update wird der alte Container zuerst nur umbenannt. Scheitern
+das Erstellen oder der Start, läuft er unter altem Namen wieder. Gelöscht wird
+er erst, wenn der neue läuft.
+
+- Die Auswahl (Command) ist optional: leer = alle betroffenen Projekte bzw.
+  Container der Gruppe, ein Name schränkt auf dieses eine ein.
+- Nur **laufende** Container werden aktualisiert; gestoppte bleiben unberührt.
+- Der neu erstellte Container bekommt eine neue ID. Die Konfiguration kommt
+  aus `docker inspect` und geht unverändert an die Docker-API. Sonderfälle wie
+  Host-PID-Namensraum oder GPU-Zugriff sind nicht getestet - dafür vorher auf
+  einem Testserver prüfen.
+- Die Container-Regel braucht `curl` auf dem Server (Zugriff auf den
+  Docker-Socket) und läuft nicht auf Servern mit eingeschränktem Sudo.
+- Beide Regeln respektieren den Schalter „Keine Docker-Updates einspielen“.
+
 ## Server-Schalter: zusehen statt eingreifen
 
 Unter **Server → Einstellungen → Docker** stehen zwei Schalter, mit denen ein

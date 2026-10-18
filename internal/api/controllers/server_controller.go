@@ -399,6 +399,16 @@ func (ctrl *ServerController) Statuses(c fiber.Ctx) error {
 	return c.JSON(statuses)
 }
 
+// OpenConsoles - GET /api/v1/servers/consoles (servers:read)
+// Die gerade offenen Web-Konsolen: auf welchem Server, wer, seit wann.
+func (ctrl *ServerController) OpenConsoles(c fiber.Ctx) error {
+	consoles, err := ctrl.servers.OpenConsoles(scopeFor(c))
+	if err != nil {
+		return err
+	}
+	return c.JSON(consoles)
+}
+
 // Get - GET /api/v1/servers/:id (servers:read)
 func (ctrl *ServerController) Get(c fiber.Ctx) error {
 	id, err := paramID(c)
@@ -746,8 +756,10 @@ func (ctrl *ServerController) AptCacherDetail(c fiber.Ctx) error {
 // Live-Erreichbarkeit + Transfer-Statistiken sowie - falls apt-cacher-ng auf dem
 // LCM-Host läuft - dessen Verwaltbarkeit (Server-ID, permanentes Caching,
 // Platten-Belegung). Nicht server-scoped: der LCM-Host wird intern aufgelöst.
+//
+// ?cache_id= wählt den Cache (ohne: der einzige).
 func (ctrl *ServerController) AptCacheOverview(c fiber.Ctx) error {
-	overview, err := ctrl.servers.AptCacheOverview(scopeFor(c))
+	overview, err := ctrl.servers.AptCacheOverview(scopeFor(c), uint(queryInt(c, "cache_id")))
 	if err != nil {
 		return mapServerError(err)
 	}
@@ -1310,13 +1322,14 @@ func (ctrl *ServerController) ConfigureAptProxy(c fiber.Ctx) error {
 		return err
 	}
 	req := struct {
-		Enable *bool `json:"enable"`
+		Enable  *bool `json:"enable"`
+		CacheID uint  `json:"cache_id"` // 0 = der einzige Cache
 	}{}
 	if err := bindOptionalBody(c, &req); err != nil {
 		return err
 	}
 	enable := req.Enable == nil || *req.Enable
-	output, err := ctrl.servers.ConfigureAptProxy(scopeFor(c), id, enable, actor(c))
+	output, err := ctrl.servers.ConfigureAptProxy(scopeFor(c), id, enable, req.CacheID, actor(c))
 	if err != nil {
 		return mapServerActionError(err)
 	}

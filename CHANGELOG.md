@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.47.0-beta.1 - 2026-10-18
+
+### 🚀 Features
+
+- **apt-cache**: mehrere APT-Caches, Auswahl in Regel und Aktion, Funktionstest (4db5b56e)
+- **gruppen**: Regeln je Auslöser als Karten, umsortierbar; Server und Verwaltungs-User einklappbar (d680d8bd)
+- **regeln**: Ausführungsreihenfolge je Auslöser festlegbar (5df6fc87)
+- **regeln**: DNS-Test-Regel mit eigenen Domains (1184db83)
+- **regeln**: Rechte-Soll und ACL einrichten auch per Zeitplan (23e6edbc)
+- Festplatten-Diagramm, Linux-Benutzer-Anleitung, Docker-Regeln wie Watchtower (8af16890)
+
+### 🐛 Bugfixes
+
+- **abgleich**: gesetztes Server-Passwort bleibt bei Synchronisation erhalten (69f378d5)
+- **crypto**: Rohschlüssel mit Leerzeichen am Rand nicht mehr verwerfen (08e66c9c)
+- **docker**: Scan für Docker 26 und 29, Container-Regel wählt veraltete Container (c00d47d5)
+- **gruppen**: Regel-Dialog für Firewall-Regeln breit genug (19d726fc)
+- **konsole**: Sitzung schließt nach exit in der Shell (83e46c85)
+- **konsole**: Sitzungen enden wirklich, blockieren LCM nicht und sind sichtbar (a3e989cd)
+- **ssh**: Härtungs-Status beim Aktualisieren effektiv messen (78b07974)
+
+### 🔧 Sonstiges
+
+- **deps**: Go- und npm-Abhängigkeiten aktualisieren (5cd7f080)
+- **deps**: update aquasec/trivy docker tag to v0.75.0 (d016a742)
+- **e2e**: Rechte-Soll ist auch am Zeitplan wählbar; Script-Prüfung greift wieder (cd615b68)
+- **plan**: Arbeitsliste der Iteration 2026-10-17 (969ebef1)
+- **plan**: Iteration 2026-10-17 abgeschlossen (d7f9a707)
+- **plan**: Nachtrag 2026-10-17 umgesetzt (a3781a17)
+- **plan**: Stand der Iteration festgehalten (8d962dfb)
+- **renovate**: Sicherheitsupdates nach grüner Pipeline automatisch mergen (b44611ed)
+
 ## v1.46.0-beta.2 - 2026-10-10
 
 ### 🐛 Bugfixes

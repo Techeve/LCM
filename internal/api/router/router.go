@@ -303,6 +303,7 @@ func New(deps Deps) *fiber.App {
 	servers := api.Group("/servers")
 	servers.Get("/", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.List)
 	servers.Get("/statuses", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Statuses)
+	servers.Get("/consoles", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.OpenConsoles)
 	servers.Post("/probe", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Probe)
 	servers.Post("/join", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Join)
 	// LCM Remote: Agent-Server anlegen (Enrollment-Token) + Token erneuern.
@@ -464,6 +465,7 @@ func New(deps Deps) *fiber.App {
 	groups.Post("/:id/schedules/define", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.DefineSchedule)
 	groups.Get("/:id/rules", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.ListRules)
 	groups.Post("/:id/rules/define", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.DefineRule)
+	groups.Put("/:id/rules/order", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.ReorderRules)
 
 	// Linux-Benutzer (Betriebssystem-Accounts der verwalteten Server).
 	linux := api.Group("/linux-users")
@@ -617,7 +619,13 @@ func New(deps Deps) *fiber.App {
 	api.Put("/settings/mail-channel", middlewares.RequirePermission(domain.PermSettingsManage), notificationCtrl.SetSystemChannel)
 	// Katalog bekannter Paketquellen (pflegbar; Lese-Sicht für das
 	// Server-Detail: GET /servers/known-repos)
-	api.Get("/settings/apt-cache/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.AptCacheStatus)
+	// APT-Caches: Verwaltung unter settings:manage, plus eine
+	// servers:read-Leseroute für die Auswahl (Regel, Server-Aktion).
+	api.Get("/settings/apt-caches", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.ListAptCaches)
+	api.Post("/settings/apt-caches", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.SaveAptCache)
+	api.Delete("/settings/apt-caches/:id", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.DeleteAptCache)
+	api.Get("/settings/apt-caches/:id/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.AptCacheStatus)
+	api.Get("/apt-caches", middlewares.RequirePermission(domain.PermServersRead), opsCtrl.ListAptCaches)
 	// Zentrale CrowdSec-Seite: LAPI-Erreichbarkeits-Check (Login-Probe).
 	// CrowdSec-LAPIs: Verwaltung unter settings:manage, plus eine
 	// servers:read-Leseroute für die Auswahl bei der CrowdSec-Einrichtung.

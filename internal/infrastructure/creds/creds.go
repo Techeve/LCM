@@ -47,6 +47,14 @@ func Path(name string) string {
 // Zeilenumbrüche - so, wie ein Betreiber es mit `systemd-creds encrypt`
 // abgelegt hat. ok=false, wenn es das Credential nicht gibt.
 func Read(name string) (string, bool) {
+	raw, ok := ReadRaw(name)
+	return strings.TrimSpace(raw), ok
+}
+
+// ReadRaw liefert den Inhalt unverändert. Ein Rohschlüssel (32 Zufallsbytes)
+// darf nicht gekürzt werden: Beginnt oder endet er mit einem Leerzeichen-Byte,
+// wäre er danach zu kurz.
+func ReadRaw(name string) (string, bool) {
 	p := Path(name)
 	if p == "" {
 		return "", false
@@ -55,5 +63,5 @@ func Read(name string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return strings.TrimSpace(string(raw)), true
+	return string(raw), true
 }

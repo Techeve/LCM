@@ -1095,13 +1095,14 @@ func (r *ServerRepository) GlobalDockerOverview(scope AccessScope) ([]DockerImag
 		LocalOnly       int
 	}
 	q := scope.scopeServers(r.db.Table("docker_images").
-		Select("docker_images.repository, docker_images.tag," +
-			" COUNT(DISTINCT docker_images.server_id) AS server_count," +
-			" SUM(CASE WHEN docker_images.in_use THEN 1 ELSE 0 END) AS in_use_count," +
-			" MAX(CASE WHEN docker_images.update_available THEN 1 ELSE 0 END) AS update_available," +
-			" MAX(CASE WHEN docker_images.check_status = 'unauthorized' THEN 1 ELSE 0 END) AS unverifiable," +
+		Select("docker_images.repository, docker_images.tag,"+
+			" COUNT(DISTINCT docker_images.server_id) AS server_count,"+
+			" SUM(CASE WHEN docker_images.in_use THEN 1 ELSE 0 END) AS in_use_count,"+
+			" MAX(CASE WHEN docker_images.update_available THEN 1 ELSE 0 END) AS update_available,"+
+			" MAX(CASE WHEN docker_images.check_status = 'unauthorized' THEN 1 ELSE 0 END) AS unverifiable,"+
 			" MIN(CASE WHEN docker_images.check_status = 'local' THEN 1 ELSE 0 END) AS local_only").
-		Joins("JOIN servers ON servers.id = docker_images.server_id")).
+		Joins("JOIN servers ON servers.id = docker_images.server_id").
+		Where("docker_images.superseded = ?", false)).
 		Group("docker_images.repository, docker_images.tag").
 		Order("docker_images.repository, docker_images.tag")
 	if err := q.Scan(&raw).Error; err != nil {

@@ -355,11 +355,7 @@ func (s *ServerService) AptCacherDetail(scope repositories.AccessScope, id uint)
 	if !detail.Installed {
 		return detail, nil
 	}
-	if s.aptCacheURL != nil {
-		if cacheURL, err := s.aptCacheURL(); err == nil && cacheURL != "" {
-			detail.Status, detail.Stats = fetchAcngReport(cacheURL)
-		}
-	}
+	detail.Status, detail.Stats = fetchAcngReport(s.hostAptCacheURL(server))
 	if conn, err := s.connectRead(server); err == nil {
 		out, code, runErr := conn.Run(privRun(server, aptCacherPermanentCacheCheckCmd))
 		if runErr == nil && code == 0 {
@@ -392,10 +388,13 @@ type AptCacheOverview struct {
 // Verwaltungs-Aktionen (Neustart, permanentes Caching) sind nur möglich, wenn
 // apt-cacher-ng auf dem LCM-Host selbst betrieben wird - nur dorthin hat LCM den
 // nötigen SSH-Zugriff; das signalisiert Managed=true samt ServerID.
-func (s *ServerService) AptCacheOverview(scope repositories.AccessScope) (*AptCacheOverview, error) {
+//
+// cacheID wählt, welcher der APT-Caches gezeigt wird (0 = der einzige). Die
+// Verwaltungs-Angaben gelten immer dem apt-cacher-ng auf dem LCM-Host.
+func (s *ServerService) AptCacheOverview(scope repositories.AccessScope, cacheID uint) (*AptCacheOverview, error) {
 	ov := &AptCacheOverview{}
 	if s.aptCacheURL != nil {
-		if url, err := s.aptCacheURL(); err == nil {
+		if url, err := s.aptCacheURL(cacheID); err == nil {
 			ov.URL = url
 		}
 	}
@@ -429,6 +428,18 @@ func (s *ServerService) AptCacheOverview(scope repositories.AccessScope) (*AptCa
 		conn.Close()
 	}
 	return ov, nil
+}
+
+// hostAptCacheURL ist die Adresse, unter der der apt-cacher-ng des LCM-Hosts
+// geprüft wird: der einzige hinterlegte Cache, wenn es genau einen gibt
+// (dort steht die Adresse so, wie die Server sie nutzen), sonst die eigene.
+func (s *ServerService) hostAptCacheURL(host *domain.Server) string {
+	if s.aptCacheURL != nil {
+		if url, err := s.aptCacheURL(0); err == nil {
+			return url
+		}
+	}
+	return lcmCacheURL(host)
 }
 
 // findLcmHost sucht den LCM-Host (localhost, apt) unter den für den Aufrufer

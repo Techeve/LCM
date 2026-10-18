@@ -69,6 +69,16 @@ export const icons = {
       '<path d="M14 11a5 5 0 0 0-7.07 0L5 12.93a5 5 0 0 0 7.07 7.07L13.5 18.5"/>',
   ),
   // User-Sync (Aktionen-Menü).
+  // Ziehgriff (Regeln umsortieren).
+  grip: line(
+    '<circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/>' +
+      '<circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/>',
+  ),
+  // Nach oben / nach unten verschieben.
+  chevronUp: line('<polyline points="18 15 12 9 6 15"/>'),
+  chevronDown: line('<polyline points="6 9 12 15 18 9"/>'),
+  // Einklappen/Aufklappen (Abschnitt).
+  chevronRight: line('<polyline points="9 18 15 12 9 6"/>'),
   users: line(
     '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>' +
       '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',

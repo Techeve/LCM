@@ -323,8 +323,9 @@ snapshot of the `community` and `beta` branches on every release:
 - **CI/CD** ([.gitlab-ci.yml](.gitlab-ci.yml)): npm audit → Go tests →
   govulncheck → Playwright E2E → cross-compile for all platforms.
 - **Dependency bot** ([renovate.json](renovate.json)): Renovate checks the Go
-  modules and npm packages for updates weekly and opens merge requests
-  automatically - at the earliest seven days after publication, and only
+  modules and npm packages for updates daily and opens merge requests
+  automatically - at the earliest seven days after publication. Security
+  updates (no grace period, after a green pipeline) and patches from
   publishers with a solid release process are auto-merged
   ([rationale](docs/reference/dependencies.md)). Runs as a CI image only - not
   a project dependency. Details: [docs/reference/ci-release.md](docs/reference/ci-release.md).
@@ -360,7 +361,8 @@ trying to avoid. Concretely:
 - **The update path is the real risk.** `go.sum` and `package-lock.json`
   prevent after-the-fact manipulation; an attack therefore always arrives as a
   *new* version. Renovate keeps a seven-day grace period and auto-merges only
-  publishers with a solid release process.
+  publishers with a solid release process; security updates skip the grace
+  period and merge after a green pipeline.
 - **No npm install scripts** in CI and build (`--ignore-scripts`) - they would
   run on the runner with access to tokens and signing keys.
 

@@ -25,6 +25,8 @@ type SettingsService struct {
 	ipAllowlists *repositories.IPAllowlistRepository // benannte IP-Allowlists, optional
 	// crowdsecLapis sind die zentralen CrowdSec-LAPIs (crowdsec_lapis.go).
 	crowdsecLapis *repositories.CrowdSecLapiRepository
+	// aptCaches sind die zentralen APT-Caches (apt_caches.go).
+	aptCaches *repositories.AptCacheRepository
 	// ipAllowlistUsage liefert alle Verweise auf eine Allowlist (Server-
 	// Firewall-Regeln, Gruppen-Regeln) - Löschsperre R2-072. Optional.
 	ipAllowlistUsage func(id uint) []string
@@ -152,23 +154,6 @@ func (s *SettingsService) SetCVEScanEnabled(enabled bool) error {
 // Join-Wizard - der Vermerk steuert nur die AUTOMATISCHE Aufnahme.
 func (s *SettingsService) DisableSelfRegistration() error {
 	return s.settings.UpdateFields(map[string]any{"self_server_disabled": true})
-}
-
-// SetAptCacheURL setzt die globale APT-Cache-URL (normalisiert/validiert) und
-// lädt den Scheduler neu. Wird u. a. genutzt, wenn LCM apt-cacher-ng auf dem
-// eigenen Host installiert und den Cache danach selbsttätig einträgt.
-func (s *SettingsService) SetAptCacheURL(rawURL string) error {
-	url, err := normalizeAptCacheURL(rawURL)
-	if err != nil {
-		return err
-	}
-	if err := s.settings.UpdateFields(map[string]any{"apt_cache_url": url}); err != nil {
-		return err
-	}
-	if s.reload != nil {
-		return s.reload()
-	}
-	return nil
 }
 
 // EnsureOnboardingKey erzeugt beim ersten Start ein Onboarding-Schlüsselpaar
@@ -355,7 +340,6 @@ type GlobalSettingsInput struct {
 	SessionTTLMinutes           *int
 	JobIdleTimeoutMinutes       *int
 	JobIdleTimeoutSlowMinutes   *int
-	AptCacheURL                 *string
 	Require2FARoles             *string
 	PublicBaseURL               *string
 	CVEHighWeightPackages       *string
@@ -562,14 +546,6 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 	if in.JobIdleTimeoutSlowMinutes != nil {
 		settings.JobIdleTimeoutSlowMinutes = domain.ClampJobIdleTimeout(*in.JobIdleTimeoutSlowMinutes)
 		touch("job_idle_timeout_slow_minutes")
-	}
-	if in.AptCacheURL != nil {
-		aptCacheURL, err := normalizeAptCacheURL(*in.AptCacheURL)
-		if err != nil {
-			return nil, err
-		}
-		settings.AptCacheURL = aptCacheURL
-		touch("apt_cache_url")
 	}
 	if in.Require2FARoles != nil {
 		// Rollennamen normalisieren: ohne das machte ein „Admin" statt

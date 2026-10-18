@@ -11,15 +11,25 @@
   import { icons } from '../../lib/icons.js';
   import { waitForJob } from '../../lib/jobs.js';
   import SettingsLayout from '../../components/SettingsLayout.svelte';
+  import Modal from '../../components/Modal.svelte';
 
   const t = (k, p) => i18n.t(k, p);
 
   let overview = $state(null); // { url, status, stats, managed, server_id, installed, permanent_cache, disk_usage }
-  let settings = $state(null); // volle globale Einstellungen (für sicheren Teil-Update der URL)
   let error = $state('');
   let notice = $state('');
   let busy = $state(false); // laufende Verwaltungs-Aktion (Neustart / permanentes Caching)
   let checking = $state(false);
+
+  // Die APT-Caches (je Name + URL), ihr letzter Check und der Cache, dessen
+  // Statistik gerade gezeigt wird.
+  let caches = $state([]);
+  let cacheStatus = $state({});
+  let checkingId = $state(null);
+  let selectedId = $state(0);
+  let cacheOpen = $state(false);
+  let cacheForm = $state({ id: 0, name: '', url: '' });
+  let cacheByUrl = $derived(new Map(caches.map((c) => [c.url, c])));
 
   // Angebundene Server: zentrale Sicht, welche Server ihre apt-Anfragen über
   // den Cache leiten - mit Trennen-Button direkt hier (sonst müsste man jeden
@@ -27,6 +37,7 @@
   let servers = $state([]);
   let disconnectOutput = $state(''); // Konsolen-Output der letzten Trennung (inkl. Enforce-Hinweis)
   let connected = $derived(servers.filter((s) => s.apt_proxy_active));
+  const connectedCount = (cache) => connected.filter((s) => s.apt_proxy_url === cache.url).length;
 
   // Überwachung: bestehende apt_cacher_down-Alarmregel + letztes Ereignis.
   let alertRules = $state([]);
@@ -39,7 +50,9 @@
   async function load() {
     error = '';
     try {
-      [overview, settings] = await Promise.all([api.system.aptCacheOverview(), api.system.getSettings()]);
+      caches = await api.system.aptCaches();
+      selectedId = caches.some((c) => c.id === selectedId) ? selectedId : (caches[0]?.id ?? 0);
+      overview = await api.system.aptCacheOverview(selectedId);
       if (auth.can('servers:read')) {
         servers = await api.servers.list();
       }
@@ -52,29 +65,55 @@
     }
   }
 
-  async function saveUrl() {
+  async function recheck() {
+    checking = true;
     error = '';
-    notice = '';
     try {
-      // Vollständiges Einstellungs-Objekt zurückschreiben (Teil-Update würde
-      // andere Felder nullen), danach Übersicht frisch laden.
-      settings = await api.system.updateSettings(settings);
-      notice = t('settings.aptCache.urlSaved');
-      overview = await api.system.aptCacheOverview();
+      overview = await api.system.aptCacheOverview(selectedId);
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : String(e);
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function checkCache(cache) {
+    checkingId = cache.id;
+    error = '';
+    try {
+      cacheStatus = { ...cacheStatus, [cache.id]: await api.system.aptCacheStatus(cache.id) };
+    } catch (e) {
+      error = e instanceof ApiError ? e.message : String(e);
+    } finally {
+      checkingId = null;
+    }
+  }
+
+  function openCache(cache) {
+    cacheForm = cache ? { id: cache.id, name: cache.name, url: cache.url } : { id: 0, name: '', url: '' };
+    cacheOpen = true;
+  }
+
+  async function saveCache() {
+    error = '';
+    try {
+      await api.system.saveAptCache(cacheForm);
+      cacheOpen = false;
+      notice = t('settings.aptCache.cacheSaved', { name: cacheForm.name });
+      await load();
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
     }
   }
 
-  async function recheck() {
-    checking = true;
+  async function deleteCache(cache) {
+    if (!confirm(t('settings.aptCache.cacheConfirmDelete', { name: cache.name }))) return;
     error = '';
     try {
-      overview = await api.system.aptCacheOverview();
+      await api.system.deleteAptCache(cache.id);
+      await load();
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
-    } finally {
-      checking = false;
     }
   }
 
@@ -87,7 +126,7 @@
       const res = await api.servers.restartAptCacher(overview.server_id);
       notice = t('settings.aptCache.jobStarted', { label: t('settings.aptCache.restart'), jobId: res.job_id });
       await waitForJob(overview.server_id, res.job_id);
-      overview = await api.system.aptCacheOverview();
+      overview = await api.system.aptCacheOverview(selectedId);
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
     } finally {
@@ -104,7 +143,7 @@
       const res = await api.servers.setAptCacherPermanentCache(overview.server_id, !overview.permanent_cache);
       notice = t('settings.aptCache.jobStarted', { label: t('settings.aptCache.permanentCache'), jobId: res.job_id });
       await waitForJob(overview.server_id, res.job_id);
-      overview = await api.system.aptCacheOverview();
+      overview = await api.system.aptCacheOverview(selectedId);
     } catch (e) {
       error = e instanceof ApiError ? e.message : String(e);
     } finally {
@@ -140,49 +179,77 @@
   {#if error}<div class="alert alert-danger">{error}</div>{/if}
   {#if notice}<div class="alert alert-success">{notice}</div>{/if}
 
-  {#if !overview || !settings}
+  {#if !overview}
     <div class="small text-body-secondary">{t('common.loading')}</div>
   {:else}
     <p class="small text-body-secondary">{t('settings.aptCache.intro')}</p>
 
-    <!-- 1. Verbindung / URL -->
+    <!-- 1. Die APT-Caches -->
     <div class="card mb-3"><div class="card-body">
       <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-        <h3 class="h6 mb-0">{t('settings.aptCache.connTitle')}</h3>
-        {#if overview.status?.configured}
-          {#if overview.status.running}
-            <span class="badge text-bg-success" data-testid="apt-cache-badge">{t('settings.aptCache.running')}</span>
-          {:else if overview.status.reachable}
-            <span class="badge text-bg-warning" data-testid="apt-cache-badge">{t('settings.aptCache.reachableNoCacher')}</span>
-          {:else}
-            <span class="badge text-bg-danger" data-testid="apt-cache-badge">{t('settings.aptCache.unreachable')}</span>
-          {/if}
-        {:else}
-          <span class="badge text-bg-secondary" data-testid="apt-cache-badge">{t('settings.aptCache.notConfigured')}</span>
-        {/if}
+        <h3 class="h6 mb-0">{t('settings.aptCache.cachesTitle')}</h3>
+        <button class="btn btn-sm btn-primary" onclick={() => openCache(null)} data-testid="apt-cache-add">{t('settings.aptCache.cacheAdd')}</button>
       </div>
-      <label class="form-label small mb-1" for="apt-cache-url">{t('settings.aptCache.urlLabel')}</label>
-      <div class="input-group">
-        <input id="apt-cache-url" class="form-control font-monospace" placeholder="http://192.168.1.10:3142"
-          bind:value={settings.apt_cache_url} data-testid="apt-cache-url" />
-        <button class="btn btn-outline-primary" onclick={saveUrl}>{t('common.save')}</button>
-        <button class="btn btn-outline-secondary" onclick={recheck} disabled={checking || !settings.apt_cache_url}
-          data-testid="apt-cache-recheck">
-          {@html icons.refresh} {checking ? t('settings.aptCache.checking') : t('settings.aptCache.checkConn')}
-        </button>
-      </div>
-      {#if overview.status}
-        <p class="small mt-2 mb-0" class:text-success={overview.status.running}
-          class:text-danger={overview.status.configured && !overview.status.running}>
-          {overview.status.message}{#if overview.status.http_status}&nbsp;(HTTP {overview.status.http_status}){/if}
-        </p>
+      <p class="small text-body-secondary">{t('settings.aptCache.cachesIntro')}</p>
+      {#if caches.length === 0}
+        <p class="small text-body-secondary mb-0" data-testid="apt-cache-none">{t('settings.aptCache.cacheNone')}</p>
+      {:else}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0" data-testid="apt-cache-table">
+            <thead><tr>
+              <th>{t('settings.aptCache.cacheName')}</th>
+              <th>{t('settings.aptCache.urlLabel')}</th>
+              <th>{t('settings.aptCache.colServers')}</th>
+              <th>{t('settings.aptCache.colStatus')}</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+              {#each caches as cache (cache.id)}
+                {@const st = cacheStatus[cache.id]}
+                <tr data-testid="apt-cache-row">
+                  <td class="fw-semibold">{cache.name}</td>
+                  <td class="font-monospace small">{cache.url}</td>
+                  <td class="small">{connectedCount(cache)}</td>
+                  <td>
+                    {#if st}
+                      {#if st.running}
+                        <span class="badge text-bg-success" data-testid="apt-cache-badge" title={st.message}>{t('settings.aptCache.running')}</span>
+                      {:else if st.reachable}
+                        <span class="badge text-bg-warning" data-testid="apt-cache-badge" title={st.message}>{t('settings.aptCache.reachableNoCacher')}</span>
+                      {:else}
+                        <span class="badge text-bg-danger" data-testid="apt-cache-badge" title={st.message}>{t('settings.aptCache.unreachable')}</span>
+                      {/if}
+                    {:else}
+                      <span class="text-body-secondary small">-</span>
+                    {/if}
+                  </td>
+                  <td>
+                    <div class="d-flex flex-wrap justify-content-end gap-1">
+                      <button class="btn btn-sm btn-outline-secondary py-0" onclick={() => checkCache(cache)} disabled={checkingId === cache.id} data-testid="apt-cache-check">
+                        {checkingId === cache.id ? t('settings.aptCache.checking') : t('settings.aptCache.checkConn')}
+                      </button>
+                      <button class="btn btn-sm btn-outline-secondary py-0" onclick={() => openCache(cache)} data-testid="apt-cache-edit">{t('common.edit')}</button>
+                      <button class="btn btn-sm btn-outline-danger py-0" onclick={() => deleteCache(cache)} aria-label={t('settings.aptCache.cacheDelete')} data-testid="apt-cache-delete">×</button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       {/if}
-      <div class="form-text">{t('settings.aptCache.urlHint')}</div>
     </div></div>
 
-    <!-- 2. Transfer-Statistiken -->
+    <!-- 2. Transfer-Statistiken des gewählten Caches -->
     <div class="card mb-3"><div class="card-body">
-      <h3 class="h6">{t('settings.aptCache.statsTitle')}</h3>
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <h3 class="h6 mb-0">{t('settings.aptCache.statsTitle')}</h3>
+        {#if caches.length > 1}
+          <select class="form-select form-select-sm w-auto" bind:value={selectedId} onchange={recheck} data-testid="apt-cache-stats-select">
+            {#each caches as cache (cache.id)}<option value={cache.id}>{cache.name}</option>{/each}
+          </select>
+        {/if}
+      </div>
       {#if overview.stats}
         <div class="row g-3">
           <div class="col-sm-6">
@@ -219,6 +286,7 @@
                 <span>
                   <a href={`/servers/${s.id}`} use:link class="fw-semibold text-decoration-none">{s.name}</a>
                   <span class="small text-body-secondary ms-2">{s.host}</span>
+                  <span class="badge text-bg-secondary ms-2">{cacheByUrl.get(s.apt_proxy_url)?.name ?? s.apt_proxy_url ?? '?'}</span>
                 </span>
                 {#if auth.can('servers:write')}
                   <button class="btn btn-sm btn-outline-danger" disabled={busy}
@@ -294,3 +362,19 @@
     </div></div>
   {/if}
 </SettingsLayout>
+
+<Modal title={cacheForm.id ? t('settings.aptCache.cacheEditTitle') : t('settings.aptCache.cacheAddTitle')} bind:open={cacheOpen}>
+  <div class="mb-2">
+    <label class="form-label small mb-1" for="ac-name">{t('settings.aptCache.cacheName')}</label>
+    <input id="ac-name" class="form-control" placeholder={t('settings.aptCache.cacheNamePlaceholder')} bind:value={cacheForm.name} data-testid="apt-cache-name" />
+  </div>
+  <div class="mb-1">
+    <label class="form-label small mb-1" for="ac-url">{t('settings.aptCache.urlLabel')}</label>
+    <input id="ac-url" class="form-control font-monospace" placeholder="http://192.168.1.10:3142" bind:value={cacheForm.url} data-testid="apt-cache-url" />
+  </div>
+  <div class="form-text mb-3">{t('settings.aptCache.urlHint')}</div>
+  <div class="text-end">
+    <button class="btn btn-secondary" onclick={() => (cacheOpen = false)}>{t('common.cancel')}</button>
+    <button class="btn btn-primary" onclick={saveCache} disabled={!cacheForm.name || !cacheForm.url} data-testid="apt-cache-save">{t('common.save')}</button>
+  </div>
+</Modal>

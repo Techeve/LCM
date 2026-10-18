@@ -264,7 +264,7 @@ erhält bei jedem Release den Schnappschuss der Branches `community` und `beta`:
 - **Gearbeitet wird auf `develop`** (Standard-Branch) bzw. auf Feature-Branches mit MR nach develop.
 - **Die Kanal-Branches `beta`, `community` und `enterprise` sind gesperrt**: kein direkter Push - Änderungen kommen ausschließlich per Merge Request, die CI-Pipeline muss grün sein. Welcher Kanal welches Publikum bedient, steht in [docs/reference/repo-channels.md](docs/reference/repo-channels.md).
 - **CI/CD** ([.gitlab-ci.yml](.gitlab-ci.yml)): npm audit → Go-Tests → govulncheck → Playwright-E2E → Cross-Compile aller Plattformen.
-- **Dependency-Bot** ([renovate.json](renovate.json)): Renovate prüft wöchentlich die Go-Module und npm-Pakete auf Updates und legt sie automatisch als Merge Requests an - frühestens sieben Tage nach Veröffentlichung, und selbsttätig gemerged wird nur bei Herausgebern mit belastbarem Release-Prozess ([Begründung](docs/reference/dependencies.md)). Läuft nur als CI-Image - keine Projekt-Abhängigkeit. Details: [docs/reference/ci-release.md](docs/reference/ci-release.md).
+- **Dependency-Bot** ([renovate.json](renovate.json)): Renovate prüft täglich die Go-Module und npm-Pakete auf Updates und legt sie automatisch als Merge Requests an - frühestens sieben Tage nach Veröffentlichung, und selbsttätig gemerged werden Sicherheitsupdates (nach grüner Pipeline, ohne Karenz) und Patches von Herausgebern mit belastbarem Release-Prozess ([Begründung](docs/reference/dependencies.md)). Läuft nur als CI-Image - keine Projekt-Abhängigkeit. Details: [docs/reference/ci-release.md](docs/reference/ci-release.md).
 - **Automatische Releases**: Commits folgen [Conventional Commits](docs/reference/ci-release.md) (`feat:`, `fix:`, `feat!:` …). Version und [CHANGELOG.md](CHANGELOG.md) werden mit `make prepare-release` auf `develop` vorbereitet - sie stehen damit in genau dem Commit, der später getaggt wird. Beim Merge in einen Kanal-Branch erzeugt die Pipeline Tag und Release samt aller Binaries; sie schreibt nichts ins Repository zurück und braucht deshalb keinen Schreib-Token. Vorschau: `make next-version`.
 
 ## Stack
@@ -288,7 +288,8 @@ vermeiden wollte. Konkret heißt das:
 - **Der Update-Pfad ist das eigentliche Risiko.** `go.sum` und
   `package-lock.json` verhindern nachträgliche Manipulation; ein Angriff kommt
   deshalb immer als *neue* Version. Renovate hält daher sieben Tage Karenzzeit
-  ein und merged nur bei Herausgebern mit belastbarem Release-Prozess selbsttätig.
+  ein und merged nur bei Herausgebern mit belastbarem Release-Prozess selbsttätig;
+  Sicherheitsupdates überspringen die Karenz und mergen nach grüner Pipeline.
 - **Keine npm-Installationsskripte** in CI und Build (`--ignore-scripts`) - sie
   laufen auf dem Runner mit Zugriff auf Tokens und Signaturschlüssel.
 

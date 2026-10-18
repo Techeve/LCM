@@ -25,7 +25,7 @@ func (r *GroupRepository) Update(group *domain.ServerGroup) error {
 
 func (r *GroupRepository) FindByID(scope AccessScope, id uint) (*domain.ServerGroup, error) {
 	var group domain.ServerGroup
-	q := scope.scopeGroups(r.db.Preload("Servers").Preload("Managers").Preload("LinuxUsers").Preload("Rules"))
+	q := scope.scopeGroups(r.db.Preload("Servers").Preload("Managers").Preload("LinuxUsers").Preload("Rules", orderRules))
 	if err := q.First(&group, id).Error; err != nil {
 		return nil, translate(err)
 	}
@@ -35,7 +35,7 @@ func (r *GroupRepository) FindByID(scope AccessScope, id uint) (*domain.ServerGr
 
 func (r *GroupRepository) FindByName(name string) (*domain.ServerGroup, error) {
 	var group domain.ServerGroup
-	if err := r.db.Preload("Servers").Preload("Rules").Where("name = ?", name).First(&group).Error; err != nil {
+	if err := r.db.Preload("Servers").Preload("Rules", orderRules).Where("name = ?", name).First(&group).Error; err != nil {
 		return nil, translate(err)
 	}
 	return &group, nil
@@ -135,6 +135,42 @@ func (r *GroupRepository) CreateRule(rule *domain.Rule) error {
 	return r.db.Create(rule).Error
 }
 
+// NextRulePosition liefert die Position hinter der letzten Regel desselben
+// Auslösers - ein Zeitplan, oder (scheduleID nil) die Grundsatz-Regeln der
+// Gruppe.
+// orderRules sortiert mitgeladene Regeln in Ausführungsreihenfolge.
+func orderRules(db *gorm.DB) *gorm.DB { return db.Order("rules.position, rules.id") }
+
+func (r *GroupRepository) NextRulePosition(groupID uint, scheduleID *uint) (int, error) {
+	q := r.db.Model(&domain.Rule{}).Where("group_id = ?", groupID)
+	if scheduleID != nil {
+		q = q.Where("schedule_id = ?", *scheduleID)
+	} else {
+		q = q.Where("schedule_id IS NULL")
+	}
+	var maxPos *int
+	if err := q.Select("MAX(position)").Scan(&maxPos).Error; err != nil {
+		return 0, err
+	}
+	if maxPos == nil {
+		return 0, nil
+	}
+	return *maxPos + 1, nil
+}
+
+// SetRulePositions legt die Reihenfolge fest: Die Regel an Index i bekommt
+// Position i.
+func (r *GroupRepository) SetRulePositions(ruleIDs []uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		for i, id := range ruleIDs {
+			if err := tx.Model(&domain.Rule{}).Where("id = ?", id).Update("position", i).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (r *GroupRepository) UpdateRule(rule *domain.Rule) error {
 	return r.db.Save(rule).Error
 }
@@ -175,7 +211,7 @@ func (r *GroupRepository) FindAllRules(scope AccessScope) ([]domain.Rule, error)
 		q = q.Where("rules.group_id IN (SELECT server_group_id FROM server_group_managers WHERE user_id = ?)",
 			scope.UserID)
 	}
-	if err := q.Order("group_id, id").Find(&rules).Error; err != nil {
+	if err := q.Order("group_id, position, id").Find(&rules).Error; err != nil {
 		return nil, err
 	}
 	return rules, nil
@@ -183,7 +219,7 @@ func (r *GroupRepository) FindAllRules(scope AccessScope) ([]domain.Rule, error)
 
 func (r *GroupRepository) FindRulesForGroup(groupID uint) ([]domain.Rule, error) {
 	var rules []domain.Rule
-	if err := r.db.Where("group_id = ?", groupID).Order("id").Find(&rules).Error; err != nil {
+	if err := r.db.Where("group_id = ?", groupID).Order("position, id").Find(&rules).Error; err != nil {
 		return nil, err
 	}
 	return rules, nil
@@ -202,7 +238,7 @@ func (r *GroupRepository) FindEnforceRulesForServer(serverID uint) ([]domain.Rul
 		group_id IN (SELECT server_group_id FROM server_group_servers WHERE server_id = ?)
 		OR group_id IN (SELECT id FROM server_groups WHERE is_system = ?))`,
 		true, true, serverID, true).
-		Order("id").Find(&rules).Error
+		Order("position, id").Find(&rules).Error
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +295,7 @@ func (r *GroupRepository) DeleteSchedule(id uint) error {
 // Gruppe geprüft (Manager sehen nur Schedules ihrer Gruppen).
 func (r *GroupRepository) FindSchedule(scope AccessScope, id uint) (*domain.Schedule, error) {
 	var sched domain.Schedule
-	q := r.db.Preload("Rules", func(db *gorm.DB) *gorm.DB { return db.Order("rules.id") })
+	q := r.db.Preload("Rules", orderRules)
 	if !scope.All {
 		q = q.Where("schedules.group_id IN (SELECT server_group_id FROM server_group_managers WHERE user_id = ?)",
 			scope.UserID)
@@ -272,7 +308,7 @@ func (r *GroupRepository) FindSchedule(scope AccessScope, id uint) (*domain.Sche
 
 func (r *GroupRepository) FindSchedulesForGroup(groupID uint) ([]domain.Schedule, error) {
 	var schedules []domain.Schedule
-	err := r.db.Preload("Rules", func(db *gorm.DB) *gorm.DB { return db.Order("rules.id") }).
+	err := r.db.Preload("Rules", orderRules).
 		Where("group_id = ?", groupID).Order("id").Find(&schedules).Error
 	if err != nil {
 		return nil, err
@@ -283,7 +319,7 @@ func (r *GroupRepository) FindSchedulesForGroup(groupID uint) ([]domain.Schedule
 // FindAllSchedules liefert alle Schedules samt Rules (Scheduler + Übersicht).
 func (r *GroupRepository) FindAllSchedules() ([]domain.Schedule, error) {
 	var schedules []domain.Schedule
-	err := r.db.Preload("Rules", func(db *gorm.DB) *gorm.DB { return db.Order("rules.id") }).
+	err := r.db.Preload("Rules", orderRules).
 		Order("id").Find(&schedules).Error
 	if err != nil {
 		return nil, err

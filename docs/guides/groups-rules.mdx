@@ -34,8 +34,9 @@ Die letzten beiden gehören zu den [Berechtigungsprofilen](/guides/linux-users/)
 Verzeichnisrechte eines Profils auf neuen Mitgliedern der Gruppe überhaupt
 wirken; „Rechte-Soll halten" stellt gehärtete Verzeichnisse und gesetzte
 Verzeichnisrechte wieder her, wenn ein Paketupdate sie zurückgesetzt hat.
-Umgekehrt lassen sie sich **nicht** an einen Zeitplan hängen - sie beschreiben
-einen Zustand, keine Aktion zu einer Uhrzeit.
+Beide lassen sich zusätzlich an einen **Zeitplan** hängen - etwa direkt nach
+den nächtlichen Updates. Der Abgleich ist derselbe (eingegriffen wird nur bei
+Abweichung), jede Ausführung erscheint dann aber als eigener Job.
 
 Ein Shell-Kommando trägt umgekehrt gar keinen Soll-Zustand: Als Grundsatz-Regel
 liefe es bedingungslos bei jedem Health-Check. Dafür ist ein **Zeitplan** der
@@ -216,12 +217,19 @@ import { Steps } from '@astrojs/starlight/components';
 <Steps>
 
 1. Unter *Gruppen* die Gruppe wählen (oder neu anlegen) und ihr Server
-   zuweisen.
-2. Für eine geplante Regel zuerst einen **Schedule** anlegen (Name +
-   Cron-Ausdruck, z.&nbsp;B. `0 2 * * *`).
-3. Über **„+ Neue Regel“** Typ, Ziel (Schedule *oder* Grundsatz) und ggf.
-   Konfiguration (Ports, Paketnamen, Aktion) setzen.
-4. Mit **„Jetzt“** lässt sich eine Regel oder ein ganzer Schedule sofort
+   zuweisen - der Abschnitt **Server** (wie auch **Verwaltungs-User**) ist
+   zugeklappt und zeigt die Anzahl; ein Klick öffnet ihn.
+2. Für eine geplante Regel zuerst einen **Zeitplan** anlegen
+   (**„+ Zeitplan“**: Name + Cron-Ausdruck, z.&nbsp;B. `0 2 * * *`). Jeder
+   Zeitplan erscheint als eigene Karte; die Grundsatz-Regeln haben ihre
+   eigene Karte darunter.
+3. An der Karte des Auslösers **„+ Regel“**: Typ und ggf. Konfiguration
+   (Ports, Paketnamen, Aktion) setzen. Der Auslöser steht damit fest.
+4. **Reihenfolge**: Innerhalb einer Karte laufen die Regeln von oben nach
+   unten (Nummer links). Umsortieren per **Ziehen** am Griff oder mit den
+   **Pfeilen** - etwa erst „Update“, dann „Neustart bei Bedarf“. Neue Regeln
+   reihen sich hinten an.
+5. Mit **„Jetzt“** lässt sich eine Regel oder ein ganzer Zeitplan sofort
    auslösen.
 
 </Steps>

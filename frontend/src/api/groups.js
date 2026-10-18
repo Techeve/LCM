@@ -106,4 +106,9 @@ export class GroupsApi {
   triggerRule(ruleId) {
     return this.#client.post(`/rules/${ruleId}/trigger-now`);
   }
+
+  /** Ausführungsreihenfolge der Regeln EINES Auslösers festlegen (erste zuerst). */
+  reorderRules(groupId, ruleIds) {
+    return this.#client.put(`/server-groups/${groupId}/rules/order`, { rule_ids: ruleIds });
+  }
 }

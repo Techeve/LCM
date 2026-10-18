@@ -72,10 +72,16 @@ type DockerImage struct {
 	ServerID   uint   `gorm:"not null;index:idx_dockeri_server_ref,unique" json:"server_id"`
 	Repository string `gorm:"not null;index:idx_dockeri_server_ref,unique" json:"repository"` // z.B. "nginx", "ghcr.io/foo/bar"
 	Tag        string `gorm:"index:idx_dockeri_server_ref,unique" json:"tag"`                 // z.B. "1.25"
-	ImageID    string `gorm:"index" json:"image_id"`                                          // sha256:… (Image-Config-ID)
-	RepoDigest string `json:"repo_digest"`                                                    // Manifest-Digest; "" = lokal gebaut
-	SizeText   string `json:"size_text"`                                                      // human-readable ("213MB")
-	InUse      bool   `gorm:"default:false" json:"in_use"`                                    // von mind. einem Container referenziert
+	// Die ID gehört in den Unique-Index: überholte Fassungen haben keinen Tag,
+	// mehrere davon desselben Repositorys wären sonst doppelt.
+	ImageID string `gorm:"index;index:idx_dockeri_server_ref,unique" json:"image_id"` // sha256:… (Image-Config-ID)
+	// Superseded markiert eine überholte Fassung ohne Tag: Ein Pull mit neuem
+	// Digest hat dem Image seinen Tag entzogen, laufende Container nutzen es
+	// noch. Repository ist dann der frühere Name (aus dem RepoDigest).
+	Superseded bool   `json:"superseded"`
+	RepoDigest string `json:"repo_digest"`                 // Manifest-Digest; "" = lokal gebaut
+	SizeText   string `json:"size_text"`                   // human-readable ("213MB")
+	InUse      bool   `gorm:"default:false" json:"in_use"` // von mind. einem Container referenziert
 
 	CandidateDigest string     `json:"candidate_digest"` // aktueller Digest des Tags in der Registry
 	UpdateAvailable bool       `gorm:"default:false;index" json:"update_available"`

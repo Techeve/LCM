@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"LCM/internal/infrastructure/creds"
@@ -133,6 +134,28 @@ func TestMasterKeyAusSystemdCredential(t *testing.T) {
 	}
 	if got, _, err := LoadOrCreateMasterKey(dataDir); err != nil || string(got) != string(key) {
 		t.Errorf("rohe 32 Bytes: err=%v", err)
+	}
+}
+
+// TestRohschluesselMitLeerzeichenAmRand: Ein Rohschlüssel, der mit einem
+// Leerzeichen-Byte beginnt und endet, muss unverändert geladen werden. Früher
+// kürzte creds.Read ihn, und er fiel durch die base64-Prüfung.
+func TestRohschluesselMitLeerzeichenAmRand(t *testing.T) {
+	credDir := t.TempDir()
+	t.Setenv(creds.DirEnv, credDir)
+	t.Setenv(EnvKeyName, "")
+	dataDir := t.TempDir()
+
+	key := append(append([]byte(" "), []byte(strings.Repeat("k", KeySize-2))...), '\n')
+	if err := os.WriteFile(filepath.Join(credDir, creds.MasterKey), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := LoadOrCreateMasterKey(dataDir)
+	if err != nil {
+		t.Fatalf("rohschlüssel mit rand-leerzeichen: %v", err)
+	}
+	if string(got) != string(key) {
+		t.Error("schlüssel wurde beim Laden verändert")
 	}
 }
 

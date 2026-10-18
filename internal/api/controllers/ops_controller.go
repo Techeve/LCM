@@ -709,7 +709,6 @@ type globalSettingsRequest struct {
 	SessionTTLMinutes           *int    `json:"session_ttl_minutes"`
 	JobIdleTimeoutMinutes       *int    `json:"job_idle_timeout_minutes"`
 	JobIdleTimeoutSlowMinutes   *int    `json:"job_idle_timeout_slow_minutes"`
-	AptCacheURL                 *string `json:"apt_cache_url"`
 	Require2FARoles             *string `json:"require_2fa_roles"`
 	PublicBaseURL               *string `json:"public_base_url"`
 	DNSServerPresets            *string `json:"dns_server_presets"`
@@ -761,7 +760,6 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		SessionTTLMinutes:           req.SessionTTLMinutes,
 		JobIdleTimeoutMinutes:       req.JobIdleTimeoutMinutes,
 		JobIdleTimeoutSlowMinutes:   req.JobIdleTimeoutSlowMinutes,
-		AptCacheURL:                 req.AptCacheURL,
 		Require2FARoles:             req.Require2FARoles,
 		PublicBaseURL:               req.PublicBaseURL,
 		DNSServerPresets:            req.DNSServerPresets,
@@ -878,12 +876,63 @@ func mapLapiError(err error) error {
 	return err
 }
 
-// AptCacheStatus - GET /api/v1/settings/apt-cache/status (settings:manage)
-// Prüft vom LCM-Host aus, ob der konfigurierte apt-cacher-ng erreichbar ist.
-func (ctrl *OpsController) AptCacheStatus(c fiber.Ctx) error {
-	status, err := ctrl.settings.CheckAptCache()
+// ListAptCaches - GET /api/v1/settings/apt-caches (settings:manage) und
+// GET /api/v1/apt-caches (servers:read, für die Auswahl).
+func (ctrl *OpsController) ListAptCaches(c fiber.Ctx) error {
+	caches, err := ctrl.settings.ListAptCaches()
 	if err != nil {
 		return err
 	}
+	return c.JSON(caches)
+}
+
+// SaveAptCache - POST /api/v1/settings/apt-caches (settings:manage)
+// Legt einen Cache an (ohne id) oder aktualisiert ihn (mit id).
+func (ctrl *OpsController) SaveAptCache(c fiber.Ctx) error {
+	var req services.AptCacheInput
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	cache, err := ctrl.settings.SaveAptCache(req, actor(c))
+	if err != nil {
+		return mapAptCacheError(err)
+	}
+	return c.JSON(cache)
+}
+
+// DeleteAptCache - DELETE /api/v1/settings/apt-caches/:id (settings:manage)
+func (ctrl *OpsController) DeleteAptCache(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	if err := ctrl.settings.DeleteAptCache(id, actor(c)); err != nil {
+		return mapAptCacheError(err)
+	}
+	return c.JSON(fiber.Map{"status": "deleted"})
+}
+
+// AptCacheStatus - GET /api/v1/settings/apt-caches/:id/status (settings:manage)
+// Prüft vom LCM-Host aus, ob unter der Adresse des Caches ein apt-cacher-ng
+// antwortet.
+func (ctrl *OpsController) AptCacheStatus(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	status, err := ctrl.settings.CheckAptCache(id)
+	if err != nil {
+		return mapAptCacheError(err)
+	}
 	return c.JSON(status)
+}
+
+func mapAptCacheError(err error) error {
+	switch {
+	case errors.Is(err, services.ErrAptCacheInvalid), errors.Is(err, services.ErrAptCacheURLInvalid):
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	case errors.Is(err, repositories.ErrNotFound):
+		return fiber.NewError(fiber.StatusNotFound, "apt-cache nicht gefunden")
+	}
+	return err
 }

@@ -276,6 +276,12 @@ password authentication as `no`:
   For a security function an unproven success message is more harmful than an
   honest failure - whoever reads "hardened" stops looking.
 
+The same measurement applies when the server is **refreshed**: the drop-in
+being present is not enough, `ssh_hardened` stays on only while `sshd -T`
+still reports `passwordauthentication no`. A lexically earlier file added
+later - on Ubuntu cloud images for instance `50-cloud-init.conf` with
+`PasswordAuthentication yes` - is caught at the next sync.
+
 The configuration file is not assumed to live under `/etc/ssh`: openSUSE Leap
 16 has a stateless `/etc` and ships it as `/usr/etc/ssh/sshd_config`.
 

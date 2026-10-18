@@ -83,29 +83,35 @@ import { Steps } from '@astrojs/starlight/components';
 
 <Steps>
 
-1. **Configure the cache URL.** *Settings → APT Cache*: enter the
-   URL (e.g. `http://192.168.1.10:3142`) and verify it with **"Check
-   connection"** - a green "running" badge = ready. The same page holds the
-   transfer statistics, the service restart, permanent caching and the
-   monitoring status.
+1. **Add caches.** *Settings → APT Cache* → **"+ Add cache"**: label (e.g.
+   "Berlin site") and URL (e.g. `http://192.168.1.10:3142`). **Several** caches
+   can exist side by side, e.g. one per site. **"Check connection"** per row -
+   a green "running" badge = ready. The same page holds the transfer statistics
+   (per selected cache), the service restart, permanent caching and the
+   monitoring status. Up to LCM 1.46 there was a single cache URL; the update
+   moves it into the list as **"Standard-Cache"**.
 
-2. **Bind an individual server.** Server detail → "Repositories" tab →
-   **"Use APT cache"**. LCM writes the drop-in
-   `/etc/apt/apt.conf.d/02lcm-apt-cache` (http and https proxy) and checks the
-   binding immediately via `apt-get update`. If the test fails, the
-   drop-in is automatically removed - the server stays operational.
-   **"Unbind APT cache"** reverts it.
+2. **Bind an individual server.** Server detail → "Repositories" tab → choose
+   the cache (if several) → **"Use APT cache"**. LCM writes the drop-in
+   `/etc/apt/apt.conf.d/02lcm-apt-cache` (http and https proxy) and runs a
+   **functional test** right away: `apt-get update` through the cache must
+   succeed without errors and actually load at least one package source. The
+   result is in the log ("funktionstest bestanden - N paketquelle(n) ueber den
+   cache geladen"). If the test fails, the drop-in is automatically removed -
+   the server stays operational. **"Unbind APT cache"** reverts it.
 
 3. **Bind an entire group.** Group rule "**Bind APT cache**" (on the
-   schedule) or "**Enforce APT cache**" (baseline rule). The
-   baseline rule checks on every connection whether the drop-in points to the current
-   cache URL, and rewrites it on deviation - so a
-   URL changed later also takes effect automatically on all servers.
+   schedule) or "**Enforce APT cache**" (baseline rule); the rule chooses the
+   cache (without a choice the only one applies, if there is exactly one). The
+   baseline rule checks on every connection whether the drop-in points to that
+   cache's URL, and rewrites it on deviation - so a URL changed later also
+   takes effect automatically on all servers.
 
 </Steps>
 
-The binding status is visible in the Repositories tab (badge "APT cache active")
-and is read live during **"Refresh everything"**.
+The binding status is visible in the Repositories tab (badge "APT cache
+active: *name*") and is read live from the drop-in during **"Refresh
+everything"** - including the address it points to.
 
 ## Undo the binding (deactivate)
 
@@ -139,7 +145,7 @@ The *Settings → APT Cache* page bundles running the cache:
   (turns off the nightly expiration job, `NO_CRON_RUN`). These actions are only
   available when apt-cacher-ng runs on the LCM host itself; statistics and
   reachability apply to any configured cache URL.
-- **Monitoring** - LCM checks the cache as part of the alert evaluation (every
+- **Monitoring** - LCM checks every cache as part of the alert evaluation (every
   30&nbsp;minutes). The check does not accept just any HTTP 200 response, only a
   genuine apt-cacher-ng report page - so a foreign service on the port or a
   silent failed start is caught too. Set up the alert as a rule of type

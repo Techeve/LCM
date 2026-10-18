@@ -169,6 +169,7 @@ func knownJobType(t string) bool {
 		domain.RuleTypeFirewall, domain.RuleTypeBackup, domain.RuleTypeCleanup,
 		domain.RuleTypeCVEScan, domain.RuleTypeDockerCheck, domain.RuleTypeAppCheck, domain.RuleTypeDockerUpdate,
 		domain.RuleTypeDockerPrune, domain.RuleTypeDockerUpdateUnused,
+		domain.RuleTypeDockerComposeUpdate, domain.RuleTypeDockerContainerUpdate,
 		domain.RuleTypeAptProxy, domain.RuleTypeAlertCheck,
 		domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
 		domain.RuleTypeDNSTest, domain.RuleTypeDeepScan,

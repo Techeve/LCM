@@ -283,6 +283,12 @@ Passwort-Anmeldung nachweislich als `no` meldet:
   schädlicher als ein ehrlicher Fehlschlag - wer „gehärtet" liest, schaut
   nicht mehr hin.
 
+Dieselbe Messung gilt beim **Aktualisieren** des Servers: Das vorhandene
+Drop-in allein reicht nicht, `ssh_hardened` bleibt nur an, solange `sshd -T`
+weiterhin `passwordauthentication no` meldet. Eine nachträglich angelegte,
+lexikalisch frühere Datei - auf Ubuntu-Cloud-Images etwa `50-cloud-init.conf`
+mit `PasswordAuthentication yes` - fällt so beim nächsten Abgleich auf.
+
 Die Konfigurationsdatei wird dabei nicht unter `/etc/ssh` vorausgesetzt:
 openSUSE Leap 16 hat ein stateless `/etc` und liefert sie unter
 `/usr/etc/ssh/sshd_config` aus.

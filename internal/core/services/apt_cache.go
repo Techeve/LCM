@@ -35,6 +35,8 @@ func normalizeAptCacheURL(raw string) (string, error) {
 
 // AptCacheStatus ist das Ergebnis des Erreichbarkeits-Checks.
 type AptCacheStatus struct {
+	ID         uint   `json:"id,omitempty"`
+	Name       string `json:"name,omitempty"`
 	Configured bool   `json:"configured"`
 	Reachable  bool   `json:"reachable"`
 	Running    bool   `json:"running"` // Report-Seite antwortet mit 200
@@ -131,18 +133,4 @@ func fetchAcngReport(baseURL string) (*AptCacheStatus, *AptCacheStats) {
 // sicher aussortiert (case-insensitive, deckt „Apt-Cacher NG" wie „apt-cacher-ng" ab).
 func isAcngReport(html string) bool {
 	return strings.Contains(strings.ToLower(html), "apt-cacher")
-}
-
-// CheckAptCache prüft vom LCM-Host aus, ob unter der konfigurierten URL ein
-// apt-cacher-ng läuft: GET auf dessen Report-Seite (/acng-report.html).
-func (s *SettingsService) CheckAptCache() (*AptCacheStatus, error) {
-	settings, err := s.settings.Get()
-	if err != nil {
-		return nil, err
-	}
-	if settings.AptCacheURL == "" {
-		return &AptCacheStatus{Message: "kein APT-Cache konfiguriert"}, nil
-	}
-	status, _ := fetchAcngReport(settings.AptCacheURL)
-	return status, nil
 }

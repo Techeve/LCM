@@ -95,7 +95,7 @@ one selected group is still evaluated only once.
 | **Overdue updates** | number of open package updates exceeds the threshold |
 | **Heartbeat** | last server contact is more than *n* hours ago |
 | **Reboot required** | the system itself requests a reboot after an update (e.g. a new kernel) - a plain yes/no criterion without a threshold |
-| **APT cache unreachable** | the central [apt-cacher-ng](/en/guides/apt-cache/) does not respond. Applies only to the LCM host running the service, and stays silent while no URL is configured under *Settings → APT cache* |
+| **APT cache unreachable** | one of the [APT caches](/en/guides/apt-cache/) does not respond; the message names each affected one. Stays silent while no cache is configured under *Settings → APT cache* |
 | **Deep scan** | the last [deep scan](/en/guides/deep-scan/) produced warnings or critical findings (hardening/misconfiguration or a kernel reboot gap) - a plain yes/no criterion without a threshold |
 | **CrowdSec LAPI unreachable** | one of the central CrowdSec LAPIs does not respond or rejects the stored machine login; the message names each affected one. Applies only to the LCM host and stays silent while no LAPI is stored under *Settings → CrowdSec* |
 | **CVE database outdated** | the vulnerability database of the CVE scanner is older than 48&nbsp;hours or was never downloaded. This matters because an old database reports no error but returns outdated results - from the outside that looks like “no vulnerabilities”. Applies only to the LCM host |
@@ -124,8 +124,8 @@ threshold is given, the built-in default applies.
 - **Reboot required** - "Kernel waiting for reboot": no threshold, group
   *Production*, severity *warning*. Fires as soon as a server itself requests a
   reboot after an update.
-- **APT cache unreachable** - no threshold; only meaningful if the LCM host
-  runs apt-cacher-ng and a URL is configured under *Settings → APT cache*.
+- **APT cache unreachable** - no threshold; only meaningful if at least one
+  cache is configured under *Settings → APT cache*.
 - **Deep scan** - "Report hardening findings": no threshold, severity
   *warning*. Fires as soon as a deep scan yields warnings or critical findings.
 

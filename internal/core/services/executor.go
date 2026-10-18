@@ -49,6 +49,9 @@ const healthProbeCmd = "echo lcm-health-ok"
 // der Concurrency-Lock des JobService verhindert überlappende Jobs pro
 // Server.
 type Executor struct {
+	// aptCaches löst die APT-Cache-Auswahl einer Regel auf (siehe
+	// ruleAptCacheURL).
+	aptCaches     func(cacheID uint) (string, error)
 	servers       *repositories.ServerRepository
 	groups        *repositories.GroupRepository
 	profiles      *repositories.PrivilegeProfileRepository
@@ -594,6 +597,14 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 		e.runDockerUpdateUnusedRule(job, server, rule, triggeredBy)
 		return
 	}
+	if rule.Type == domain.RuleTypeDockerComposeUpdate {
+		e.runDockerComposeUpdateRule(job, server, rule, triggeredBy)
+		return
+	}
+	if rule.Type == domain.RuleTypeDockerContainerUpdate {
+		e.runDockerContainerUpdateRule(job, server, rule, triggeredBy)
+		return
+	}
 
 	// APT-Proxy bindet den Server an den zentralen APT-Cache an.
 	if rule.Type == domain.RuleTypeAptProxy {
@@ -616,6 +627,13 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	// Deep Scan (Kernel-Reboot-Lücke, Kernel-CVEs, Härtungs-Audit; rein lesend).
 	if rule.Type == domain.RuleTypeDeepScan {
 		e.runDeepScanRule(job, server, rule, triggeredBy)
+		return
+	}
+
+	// Rechte-Soll / ACL am Zeitplan: derselbe Abgleich wie als
+	// Grundsatz-Regel, nur zur Uhrzeit des Zeitplans und als eigener Job.
+	if rule.Type == domain.RuleTypePermSync || rule.Type == domain.RuleTypeACLSetup {
+		e.runStateRule(job, server, rule, triggeredBy)
 		return
 	}
 
@@ -888,14 +906,14 @@ func (e *Executor) enforceRule(conn sshx.Conn, server *domain.Server, rule *doma
 		return e.enforceACLSetup(conn, server, rule)
 
 	case domain.RuleTypeAptProxy:
-		cacheURL, err := e.aptCacheURLFromSettings()
+		cacheURL, err := e.ruleAptCacheURL(rule)
 		if err != nil {
 			return fmt.Sprintf("  [%s] übersprungen: %v", rule.Name, err), nil
 		}
 		// Drift-Check: Drop-in vorhanden UND zeigt auf die aktuelle Cache-URL?
 		current, _, err := conn.Run(privRun(server, "cat "+aptProxyDropin+" 2>/dev/null || true"))
 		if err == nil && strings.Contains(current, `"`+cacheURL+`"`) {
-			_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true})
+			_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true, "apt_proxy_url": cacheURL})
 			return fmt.Sprintf("  [%s] apt-cache ok - regel umgesetzt (%s)", rule.Name, cacheURL), nil
 		}
 		out, code, err := conn.Run(privRun(server, aptProxyEnableScript(cacheURL)))
@@ -905,31 +923,36 @@ func (e *Executor) enforceRule(conn sshx.Conn, server *domain.Server, rule *doma
 		if err != nil {
 			return fmt.Sprintf("  [%s] ABWEICHUNG - durchsetzung fehlgeschlagen: %v", rule.Name, err), err
 		}
-		_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true})
+		_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true, "apt_proxy_url": cacheURL})
 		e.recordEnforcement(server, rule, "APT-Cache neu angebunden: "+cacheURL)
 		return fmt.Sprintf("  [%s] abweichung erkannt - apt-cache neu angebunden (%s)", rule.Name, cacheURL), nil
 	}
 	return fmt.Sprintf("  [%s] typ %q wird als grundsatz-regel nicht unterstützt", rule.Name, rule.Type), nil
 }
 
-// aptCacheURLFromSettings liefert die konfigurierte APT-Cache-URL oder einen
-// Fehler, wenn keine hinterlegt ist.
-func (e *Executor) aptCacheURLFromSettings() (string, error) {
-	settings, err := e.settings.Get()
-	if err != nil {
-		return "", err
-	}
-	if settings.AptCacheURL == "" {
+// ruleAptCacheURL liefert die Adresse des Caches, den eine apt-proxy-Regel
+// gewählt hat (Command = Cache-ID; leer = der einzige, wenn es genau einen
+// gibt).
+func (e *Executor) ruleAptCacheURL(rule *domain.Rule) (string, error) {
+	if e.aptCaches == nil {
 		return "", ErrNoAptCacheURL
 	}
-	return settings.AptCacheURL, nil
+	id, _ := strconv.ParseUint(strings.TrimSpace(rule.Command), 10, 64)
+	return e.aptCaches(uint(id))
+}
+
+// WithAptCaches verdrahtet die Auflösung der APT-Caches für die Regel
+// „APT-Cache anbinden".
+func (e *Executor) WithAptCaches(fn func(cacheID uint) (string, error)) *Executor {
+	e.aptCaches = fn
+	return e
 }
 
 // runAptProxyRule bindet einen Server per Gruppen-Regel an den zentralen
 // APT-Cache an - gleiche Skriptlogik wie die Server-Aktion (Drop-in schreiben,
 // per apt-Update prüfen, bei Fehlschlag zurückrollen).
 func (e *Executor) runAptProxyRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
-	cacheURL, err := e.aptCacheURLFromSettings()
+	cacheURL, err := e.ruleAptCacheURL(rule)
 	if err != nil {
 		e.jobs.Complete(job, "", nil, err)
 		return
@@ -950,7 +973,11 @@ func (e *Executor) runAptProxyRule(job *domain.Job, server *domain.Server, rule 
 	if runErr == nil && code != 0 {
 		runErr = fmt.Errorf("apt-cache-anbindung endete mit exit-code %d", code)
 	}
-	_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": runErr == nil})
+	fields := map[string]any{"apt_proxy_active": runErr == nil}
+	if runErr == nil {
+		fields["apt_proxy_url"] = cacheURL
+	}
+	_ = e.servers.UpdateFields(server.ID, fields)
 	e.finishWithHealth(job, server, output, runErr)
 }
 
@@ -958,6 +985,31 @@ func (e *Executor) runAptProxyRule(job *domain.Job, server *domain.Server, rule 
 // DNS-Test-Domains aufgelöst werden können, und speichert das dreistufige
 // Ergebnis (full/partial/none) am Server. Rein lesend - gleiche Skriptlogik wie
 // die Server-Aktion DNSTest.
+// runStateRule führt eine Soll-Zustands-Regel (Rechte-Soll, ACL) am Zeitplan
+// aus. Der Abgleich ist derselbe wie bei der Grundsatz-Regel: Er greift nur
+// bei Abweichung ein und meldet, was er vorfand.
+func (e *Executor) runStateRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
+	conn, err := e.connect(server)
+	if err != nil {
+		e.markUnreachable(server, err)
+		e.jobs.Complete(job, "", nil, fmt.Errorf("verbindung: %w", err))
+		return
+	}
+	conn = e.recorder.Record(conn, SessionContext{
+		ServerID: server.ID, JobID: &job.ID, Actor: triggeredBy,
+		Purpose: "rule:" + rule.Name, Host: server.Host, User: server.ServiceUser,
+	})
+	defer conn.Close()
+
+	var output string
+	if rule.Type == domain.RuleTypePermSync {
+		output, err = e.enforcePermSync(conn, server, rule)
+	} else {
+		output, err = e.enforceACLSetup(conn, server, rule)
+	}
+	e.finishWithHealth(job, server, output, err)
+}
+
 func (e *Executor) runDNSTestRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
 	// RouterOS hat keine POSIX-Shell - getent/nslookup würden in der
 	// RouterOS-CLI nur Syntaxfehler produzieren.
@@ -970,7 +1022,7 @@ func (e *Executor) runDNSTestRule(job *domain.Job, server *domain.Server, rule *
 		e.jobs.Complete(job, "", nil, err)
 		return
 	}
-	domains := sanitizeDNSDomains(settings.DNSTestDomainList())
+	domains := ruleTestDomains(rule, settings)
 	if len(domains) == 0 {
 		e.jobs.Complete(job, "keine DNS-Test-Domains gepflegt (Einstellungen → DNS)", ptrInt(0), nil)
 		return
