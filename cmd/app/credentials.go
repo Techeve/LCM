@@ -50,12 +50,18 @@ func credentialsInit(configPath, dataDir string, args []string) error {
 			return fmt.Errorf("%s nicht gefunden - systemd-Credentials brauchen systemd 250 oder neuer", tool)
 		}
 	}
+	configPath, dataDir = credentialPaths(configPath, dataDir)
 	dataDir, err := resolveDataDir(dataDir)
 	if err != nil {
 		return err
 	}
 	if configPath == "" {
 		configPath = filepath.Join(dataDir, config.DefaultFileName)
+	}
+	// Nicht LoadFrom: das erzeugte bei fehlender Datei eine neue Konfiguration
+	// mit Geheimnissen - hier am falschen Ort.
+	if _, err := os.Stat(configPath); err != nil {
+		return fmt.Errorf("konfiguration %s nicht lesbar: %w - mit -config angeben", configPath, err)
 	}
 	if _, err := config.LoadFrom(configPath); err != nil {
 		return err
@@ -158,4 +164,24 @@ func credentialHint(credstore string) {
 	fmt.Println(i18n.T(
 		"NOTE: this installation uses a systemd credential for the master key. Run `lcm credentials init` again to move the new key there and remove lcm.key.",
 		"HINWEIS: Diese Installation nutzt ein systemd-Credential für den Master-Key. `lcm credentials init` erneut ausführen, damit der neue Schlüssel dorthin wandert und lcm.key verschwindet."))
+}
+
+// Pfade der Paket-Installation: Ohne -config und -data gilt sie, nicht das
+// Verzeichnis der Programmdatei (/usr/bin), das sonst die Konfiguration dorthin
+// schreiben ließe.
+const (
+	packagedConfigPath = "/etc/lcm/config.json"
+	packagedDataDir    = "/var/lib/lcm"
+)
+
+// credentialPaths setzt die Standardpfade für credentials init. Mit LCM_DATA
+// oder -data bleibt alles beim Alten.
+func credentialPaths(configPath, dataDir string) (string, string) {
+	if dataDir != "" || os.Getenv("LCM_DATA") != "" {
+		return configPath, dataDir
+	}
+	if configPath == "" {
+		configPath = packagedConfigPath
+	}
+	return configPath, packagedDataDir
 }

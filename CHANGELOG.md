@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.48.0-beta.1 - 2026-10-31
+
+### 🚀 Features
+
+- **paket**: apt purge entfernt alles, was LCM angelegt hat (bcaa6c68)
+
+### 🐛 Bugfixes
+
+- **cli**: credentials init nimmt die Paketpfade, nicht das Binary-Verzeichnis (548a80a8)
+- **mail**: Klartext-Anmeldung ohne STARTTLS, STARTTLS-Haken wirkt (7c1df3d0)
+
+### 🔧 Sonstiges
+
+- **deps**: update dependency @playwright/test to v1.64.1 (3926e7df)
+- **e2e**: ⓘ-Popover nur öffnen, wenn es zu ist (b52dce3d)
+- Go-Cache vom Runner statt über MinIO (2424b569)
+- LCM läuft auf Runner-Paar A (73e63b10)
+
 ## v1.47.0-beta.1 - 2026-10-18
 
 ### 🚀 Features

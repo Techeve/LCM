@@ -138,7 +138,7 @@ func TestEmailSendRaw(t *testing.T) {
 	p := NewEmailProvider(EmailConfig{
 		Host: "smtp.example.com", Port: 587, From: "lcm@example.com",
 		Recipients: []string{"admin@example.com"},
-	}, "geheim").withSender(func(_ string, _ smtp.Auth, _ string, to []string, msg []byte) error {
+	}, "geheim").withSender(func(_ string, _ bool, _ smtp.Auth, _ string, to []string, msg []byte) error {
 		gotTo = to
 		gotMsg = string(msg)
 		return nil

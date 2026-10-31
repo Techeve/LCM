@@ -392,3 +392,22 @@ func TestRequestPasswordReset(t *testing.T) {
 		t.Fatalf("mailer-fehler darf nicht durchschlagen: %v", err)
 	}
 }
+
+// Abgewählte Verschlüsselung (Port 25 ohne STARTTLS) bleibt nach dem Speichern
+// abgewählt - sonst greift der GORM-Default true und der Versand scheitert.
+func TestUpdateGlobalMailUseTLSAbgewaehltBleibtAus(t *testing.T) {
+	svc, repo := newSettingsService(t)
+	if _, err := svc.UpdateGlobal(mailInput(func(in *services.GlobalSettingsInput) {
+		in.MailPort = ip(25)
+		in.MailUseTLS = bp(false)
+	}), "admin"); err != nil {
+		t.Fatalf("UpdateGlobal: %v", err)
+	}
+	settings, err := repo.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.MailUseTLS {
+		t.Error("abgewählte Verschlüsselung wurde als true gespeichert")
+	}
+}

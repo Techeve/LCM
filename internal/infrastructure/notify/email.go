@@ -32,7 +32,8 @@ type EmailConfig struct {
 
 // parseEmailConfig liest die JSON-Konfiguration eines E-Mail-Kanals.
 func parseEmailConfig(raw string) (EmailConfig, error) {
-	var cfg EmailConfig
+	// Fehlt der Schlüssel, bleibt die Verschlüsselung an (nie stiller Klartext).
+	cfg := EmailConfig{UseTLS: true}
 	if strings.TrimSpace(raw) == "" {
 		return cfg, nil
 	}
@@ -43,7 +44,7 @@ func parseEmailConfig(raw string) (EmailConfig, error) {
 }
 
 // sendMailFunc ist die Versand-Funktion (in Tests austauschbar).
-type sendMailFunc func(addr string, auth smtp.Auth, from string, to []string, msg []byte) error
+type sendMailFunc func(addr string, useTLS bool, auth smtp.Auth, from string, to []string, msg []byte) error
 
 // EmailProvider ist die konkrete E-Mail-Implementierung der Kanal-
 // Schnittstelle: SMTP-Konfiguration, Authentifizierung und Templating der
@@ -65,12 +66,16 @@ func NewEmailProvider(cfg EmailConfig, password string) *EmailProvider {
 // (R2-033; der Versand selbst läuft zusätzlich asynchron).
 const smtpTimeout = 15 * time.Second
 
+// errKeinSTARTTLS: Die Anmeldung ist mit aktivem STARTTLS verlangt, der Server
+// bietet aber kein STARTTLS an.
+var errKeinSTARTTLS = errors.New("server bietet kein STARTTLS an, die Anmeldung ist aber nur verschlüsselt erlaubt - STARTTLS am Server aktivieren oder den Haken „STARTTLS verwenden“ abwählen")
+
 // sendMail ist der eigene Versandkern anstelle von smtp.SendMail: dessen
 // EHLO meldete sich wortwörtlich als „localhost" - Spam-Filter werten das
 // als Verdachtsmoment, und im Server-Log der Gegenstelle ist der Absender
 // nicht zuzuordnen (R2-031). Hier: EHLO mit dem tatsächlichen Hostnamen,
-// STARTTLS wenn angeboten, Deadline über die gesamte Sitzung.
-func sendMail(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+// STARTTLS nur wenn useTLS gesetzt ist, Deadline über die gesamte Sitzung.
+func sendMail(addr string, useTLS bool, auth smtp.Auth, from string, to []string, msg []byte) error {
 	conn, err := net.DialTimeout("tcp", addr, smtpTimeout)
 	if err != nil {
 		return err
@@ -86,13 +91,20 @@ func sendMail(addr string, auth smtp.Auth, from string, to []string, msg []byte)
 	if err := c.Hello(heloName()); err != nil {
 		return err
 	}
-	if ok, _ := c.Extension("STARTTLS"); ok {
-		if err := c.StartTLS(&tls.Config{ServerName: host}); err != nil {
-			return err
+	secured := false
+	if useTLS {
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return err
+			}
+			secured = true
 		}
 	}
 	if auth != nil {
 		if ok, _ := c.Extension("AUTH"); ok {
+			if useTLS && !secured {
+				return errKeinSTARTTLS
+			}
 			if err := c.Auth(auth); err != nil {
 				return err
 			}
@@ -131,6 +143,36 @@ func heloName() string {
 func (p *EmailProvider) withSender(fn sendMailFunc) *EmailProvider {
 	p.send = fn
 	return p
+}
+
+// auth liefert die Anmeldung am Server, nil ohne Benutzer. Mit TLS schützt
+// STARTTLS das Passwort. Ohne TLS hat der Nutzer die Verschlüsselung
+// ausdrücklich abgewählt, dann geht das Passwort im Klartext.
+func (p *EmailProvider) auth() smtp.Auth {
+	if p.cfg.Username == "" {
+		return nil
+	}
+	if p.cfg.UseTLS {
+		return smtp.PlainAuth("", p.cfg.Username, p.password, p.cfg.Host)
+	}
+	return plainAuthKlartext{username: p.cfg.Username, password: p.password}
+}
+
+// plainAuthKlartext ist PLAIN ohne die TLS-Sperre von smtp.PlainAuth. Nur
+// für Server ohne Verschlüsselung, die der Nutzer selbst gewählt hat.
+type plainAuthKlartext struct {
+	username, password string
+}
+
+func (a plainAuthKlartext) Start(*smtp.ServerInfo) (string, []byte, error) {
+	return "PLAIN", []byte("\x00" + a.username + "\x00" + a.password), nil
+}
+
+func (a plainAuthKlartext) Next(_ []byte, more bool) ([]byte, error) {
+	if more {
+		return nil, errors.New("unerwartete Anfrage des Servers bei der Anmeldung")
+	}
+	return nil, nil
 }
 
 // Type liefert den Kanal-Typ.
@@ -177,12 +219,8 @@ func (p *EmailProvider) Send(event domain.NotificationEvent) error {
 	recipients := p.recipients()
 	msg := buildMessage(p.cfg.From, recipients, subject, body)
 
-	var auth smtp.Auth
-	if p.cfg.Username != "" {
-		auth = smtp.PlainAuth("", p.cfg.Username, p.password, p.cfg.Host)
-	}
 	addr := fmt.Sprintf("%s:%d", p.cfg.Host, p.cfg.Port)
-	if err := p.send(addr, auth, p.cfg.From, recipients, msg); err != nil {
+	if err := p.send(addr, p.cfg.UseTLS, p.auth(), p.cfg.From, recipients, msg); err != nil {
 		return fmt.Errorf("smtp-versand: %w", err)
 	}
 	return nil
@@ -203,12 +241,8 @@ func (p *EmailProvider) SendRaw(subject, body string, to []string) error {
 		return errors.New("mindestens ein empfänger ist erforderlich")
 	}
 	msg := buildMessage(p.cfg.From, recipients, subject, body)
-	var auth smtp.Auth
-	if p.cfg.Username != "" {
-		auth = smtp.PlainAuth("", p.cfg.Username, p.password, p.cfg.Host)
-	}
 	addr := fmt.Sprintf("%s:%d", p.cfg.Host, p.cfg.Port)
-	if err := p.send(addr, auth, p.cfg.From, recipients, msg); err != nil {
+	if err := p.send(addr, p.cfg.UseTLS, p.auth(), p.cfg.From, recipients, msg); err != nil {
 		return fmt.Errorf("smtp-versand: %w", err)
 	}
 	return nil

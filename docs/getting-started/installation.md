@@ -64,6 +64,35 @@ sudo apt install ./lcm_<version>_amd64.deb
 Beide Wege richten LCM als unprivilegierten `systemd`-Dienst ein (Autostart,
 HTTPS).
 
+### Neu installieren mit neuem Datenbestand
+
+Wer LCM komplett neu aufsetzen will - ohne Datenbank, ohne Schlüssel, ohne
+Sicherungen von früher -, entfernt die alte Installation mit **`purge`**:
+
+```sh
+sudo apt purge lcm      # entfernt alles, was LCM angelegt hat
+sudo apt install lcm    # frische Installation
+```
+
+`purge` löscht die Datenbank, den Master-Key (auch ein verschlüsseltes
+systemd-Credential), die Sicherungen unter `/var/lib/lcm` und `/etc/lcm`, das
+Verwaltungskonto `lcm-svc` auf diesem Rechner und die Host-Einstellungen, die
+LCM dort gesetzt hat (sshd-Include und Drop-ins, apt-Cache, nftables-Tabelle).
+Die Original-`sshd_config` wird zurückgespielt.
+
+:::caution
+Mit `purge` sind Datenbank, Schlüssel und Sicherungen **unwiderruflich** weg.
+Ohne den Master-Key sind die Zugangsdaten der verwalteten Server nicht mehr
+lesbar. Vorher `/var/lib/lcm` sichern, wenn die Daten noch gebraucht werden.
+:::
+
+Ein einfaches `apt remove lcm` behält dagegen alles. Nach einer erneuten
+Installation macht LCM dort weiter, wo es aufgehört hat.
+
+Nicht entfernt werden: Linux-Benutzer, die LCM auf andere Server verteilt hat
+(samt Home-Verzeichnissen), ufw-Regeln und Programme wie Trivy, bubblewrap und
+apt-cacher-ng.
+
 ### Update per Klick
 
 Liegt im eingestellten Paketkanal eine neuere Version, erscheint oben ein

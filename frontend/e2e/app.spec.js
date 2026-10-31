@@ -65,6 +65,18 @@ async function setzeSchalter(schalter, an) {
   }
 }
 
+// Öffnet das ⓘ-Popover eines StatusBadge und liefert seinen Text. Der Knopf
+// schaltet um: Ein zweiter Klick in einer toPass-Schleife schloss das eben
+// geöffnete Popover wieder, und innerText() wartete ohne eigene Frist die
+// ganzen 15 s auf einen Dialog, der nicht mehr kam. Deshalb nur klicken,
+// wenn es zu ist, und kurz lesen - die Schleife darum wiederholt.
+async function popoverLesen(page, knopf) {
+  if ((await knopf.getAttribute('aria-expanded')) !== 'true') {
+    await knopf.click();
+  }
+  return page.getByRole('dialog').innerText({ timeout: 2000 });
+}
+
 test.describe('LCM', () => {
   // Der Anmeldeweg selbst - diese Tests starten bewusst OHNE vorbereitete
   // Sitzung, sonst pruefen sie nichts mehr.
@@ -645,8 +657,7 @@ test.describe('LCM', () => {
     // Die Verbindung ist heute sicher, behebbar ist es nur auf dem Server.
     const knopf = page.locator('button[aria-label]', { hasText: 'ⓘ' }).first();
     await expect(async () => {
-      await knopf.click();
-      const inhalt = await page.getByRole('dialog').innerText();
+      const inhalt = await popoverLesen(page, knopf);
       expect(inhalt).toContain('Post-Quanten');
       expect(inhalt).not.toContain('insights.');
     }).toPass({ timeout: 15000 });
@@ -823,8 +834,7 @@ test.describe('LCM', () => {
     // wiederholen, statt sich darauf zu verlassen, dass es offen bleibt.
     const knopf = page.locator('button[aria-label]', { hasText: 'ⓘ' }).first();
     await expect(async () => {
-      await knopf.click();
-      const inhalt = await page.getByRole('dialog').innerText();
+      const inhalt = await popoverLesen(page, knopf);
       expect(inhalt).toContain('ZFS-Pool tank');
       // Der Befund muss als übersetzter Satz erscheinen, nicht als roher
       // i18n-Schlüssel - fehlte die Übersetzung, stünde hier "insights.…".

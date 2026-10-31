@@ -102,12 +102,34 @@ Datenbank-Migrationen laufen beim Start automatisch.
 
 ```sh
 sudo apt remove lcm     # Dienst + Programm entfernen, Daten behalten
-sudo apt purge  lcm     # zusätzlich /etc/lcm, /var/lib/lcm und den User lcm löschen
+sudo apt purge  lcm     # alles, was LCM angelegt hat, entfernen
 ```
+
+`purge` löscht:
+
+- `/var/lib/lcm` (Datenbank, Master-Key `lcm.key`, TLS-Zertifikat, Sicherungen,
+  Logs, Trivy-Cache) und `/etc/lcm`
+- das verschlüsselte Credential `/etc/credstore.encrypted/lcm.key` und das
+  Unit-Drop-in `/etc/systemd/system/lcm.service.d/`
+- den Helper `/usr/local/sbin/lcm-helper` und die Sudo-Regel `lcm-svc`
+- das Verwaltungskonto `lcm-svc` (nur wenn sein Schlüssel den LCM-Kommentar
+  trägt)
+- die Host-Einstellungen: apt-Cache-Drop-in, die SSH-Drop-ins
+  `10-lcm-ssh`, `55-lcm-2fa`, `60-lcm-hardening`, die nftables-Tabelle `lcm`
+  samt `/etc/nftables.d/lcm.nft`
+- den Include in der `sshd_config`: die Originaldatei wird aus
+  `sshd_config.lcm-backup` zurückgespielt, der sshd danach neu gestartet
+- die Benutzer `lcm` und Gruppe `lcm`
+
+Nicht entfernt werden: Linux-Benutzer, die LCM auf andere Server verteilt hat
+(samt Home-Verzeichnissen), ufw-Regeln und die Programme Trivy, bubblewrap und
+apt-cacher-ng.
 
 :::caution
 `purge` löscht die verschlüsselte Datenbank **und** den Master-Key
-unwiderruflich. Vorher ggf. `/var/lib/lcm` sichern.
+unwiderruflich, dazu die Sicherungen. Vorher ggf. `/var/lib/lcm` sichern. `apt
+remove` lässt beim Entfernen einen Hinweis dazu erscheinen, wenn Sicherungen
+vorhanden sind.
 :::
 
 ### Selbst bauen
