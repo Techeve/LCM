@@ -18,7 +18,7 @@
 # Version bewusst gepinnt: Trivys Ausgabeformat ist der Vertrag zu LCMs
 # Auswertung. Renovate hält den Pin aktuell (renovate.json, Manager
 # "dockerfile") - ohne das veraltet der Scanner still.
-FROM aquasec/trivy:0.75.0
+FROM aquasec/trivy:0.76.1
 
 ARG TARGETARCH
 COPY bin/lcm-trivyd-linux-${TARGETARCH} /usr/local/bin/trivyd

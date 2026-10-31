@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.48.1 - 2026-10-31
+
+### 🐛 Bugfixes
+
+- **deps**: update go-abhängigkeiten (minor/patch) (68a27ff7)
+
+### 🔧 Sonstiges
+
+- **deps**: update aquasec/trivy docker tag to v0.76.1 (d34ffb8e)
+- **deps**: update dependency @axe-core/playwright to v4.14.0 (cc6436de)
+- **deps**: update dependency vite to v8.3.5 (91e83701)
+- **deps**: update module golang.org/x/net to v0.62.0 [security] (4bb0da29)
+
 ## v1.48.0 - 2026-10-31
 
 ### 🚀 Features
