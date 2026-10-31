@@ -276,6 +276,12 @@ password authentication as `no`:
   For a security function an unproven success message is more harmful than an
   honest failure - whoever reads "hardened" stops looking.
 
+The same measurement applies when the server is **refreshed**: the drop-in
+being present is not enough, `ssh_hardened` stays on only while `sshd -T`
+still reports `passwordauthentication no`. A lexically earlier file added
+later - on Ubuntu cloud images for instance `50-cloud-init.conf` with
+`PasswordAuthentication yes` - is caught at the next sync.
+
 The configuration file is not assumed to live under `/etc/ssh`: openSUSE Leap
 16 has a stateless `/etc` and ships it as `/usr/etc/ssh/sshd_config`.
 
@@ -429,10 +435,12 @@ Stored encrypted are, among others (full list in `internal/storage/rotate.go`):
 - the **RouterOS login password** (`servers.login_password_enc`) for devices using password authentication;
 - users' **2FA secrets** (`users.totp_secret_enc`) and Linux-user passwords;
 - the **system mailer** SMTP password and **notification-channel secrets** (SMTP password or webhook URL);
-- **CrowdSec credentials** on the LCM host: the LAPI machine password (`crowd_sec_lapi_password_enc`) and console key (`crowd_sec_console_key_enc`);
+- **CrowdSec credentials** on the LCM host: the LAPI machine passwords (`crowdsec_lapis.password_enc`) and console key (`crowd_sec_console_key_enc`);
 - the stored **TLS key PEM**.
 
 Large console output (job/SSH output) as well as the server host/name go through a GORM serializer (`aesgcm`); the server name additionally carries a **blind index** derived from the master key for searching without storing the plaintext.
+
+Values of 512 bytes and more are compressed with zstd **before** encryption - encrypted data cannot be compressed afterwards, and console output shrinks to about a sixth. The price: the length of a value reveals something about its content. Following the CRIME/BREACH pattern, this is only exploitable if an attacker can place their own text next to a secret in the **same** field and observe the length repeatedly. Console output is redacted before storage and kept at rest; no such observation channel exists.
 
 **Rotation:** the subcommand `lcm rotate-db-key` generates a new master key and re-encrypts all registered fields in **one** transaction - the DB never ends up in a mixed state. The server-name blind index is recomputed with the new key. Newly introduced encrypted columns must be registered in `encryptedColumns` (or `serializerColumns`) so that rotation picks them up.
 

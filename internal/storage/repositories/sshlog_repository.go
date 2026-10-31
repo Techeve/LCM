@@ -122,6 +122,15 @@ func (r *SSHLogRepository) SessionWithCommands(id string) (*domain.SSHSession, e
 	return &s, nil
 }
 
+// DeleteCommandsOlderThan entfernt die Kommandos der Sitzungen eines Zwecks,
+// die vor cutoff geöffnet wurden. Die Sitzungen bleiben mit ihrer
+// Kommando-Zahl als Nachweis stehen.
+func (r *SSHLogRepository) DeleteCommandsOlderThan(purpose string, cutoff time.Time) (int64, error) {
+	res := r.db.Where("ssh_session_id IN (SELECT id FROM ssh_sessions WHERE purpose = ? AND created_at < ?)", purpose, cutoff).
+		Delete(&domain.SSHCommand{})
+	return res.RowsAffected, res.Error
+}
+
 // DeleteOlderThan entfernt Sessions (und per Cascade deren Kommandos), die
 // vor dem Stichtag geöffnet wurden - Teil der Log-Retention.
 func (r *SSHLogRepository) DeleteOlderThan(cutoff time.Time) (int64, error) {

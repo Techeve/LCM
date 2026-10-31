@@ -195,6 +195,19 @@
     return Math.max(0, Math.floor((nowTick - new Date(activeJob.started_at).getTime()) / 60000));
   });
 
+  // Offene Web-Konsolen auf diesem Server (auch die anderer Benutzer).
+  let openConsoles = $state([]);
+  async function pollConsoles() {
+    try {
+      const now = (await api.servers.consoles()).filter((c) => c.server_id === id);
+      // Nur bei Änderung schreiben: ein neues Array alle 5 s ließe die Seite
+      // grundlos neu zeichnen.
+      if (JSON.stringify(now) !== JSON.stringify(openConsoles)) openConsoles = now;
+    } catch {
+      // still ignorieren wie beim Job-Polling
+    }
+  }
+
   async function pollActiveJob() {
     try {
       const res = await api.servers.activeJob(id);
@@ -609,7 +622,9 @@
   let secBouncer = $state(true);
   let secCollections = $state('crowdsecurity/sshd');
   let secLapiMode = $state('local'); // local | remote | console
-  let secSettings = $state(null); // {crowdsec_lapi_configured, crowdsec_console_configured}
+  let secLapis = $state([]); // zentrale LAPIs zur Auswahl im Remote-Modus
+  let secLapiId = $state(0);
+  let secSettings = $state(null); // {crowdsec_console_configured}
   function openSecurityTool() {
     securityTool = '';
     secAllowlist = server?.lcm_source_ip || '';
@@ -619,6 +634,13 @@
     secLapiMode = 'local';
     securityToolOpen = true;
     api.servers.ipAllowlists().then((l) => (ipAllowlists = l)).catch(() => (ipAllowlists = []));
+    api.servers
+      .crowdsecLapis()
+      .then((l) => {
+        secLapis = l;
+        secLapiId = l[0]?.id ?? 0;
+      })
+      .catch(() => (secLapis = []));
     if (auth.can('settings:manage')) {
       api.system.getSettings().then((s) => (secSettings = s)).catch(() => {});
     }
@@ -645,6 +667,7 @@
       opts.bouncer = secBouncer;
       opts.collections = secCollections.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
       opts.lapi_mode = secLapiMode;
+      if (secLapiMode === 'remote') opts.lapi_id = secLapiId;
     }
     securityToolOpen = false;
     await refreshServer(() => api.servers.configureSecurityTool(id, opts), t('serverDetail.securityTool.label'));
@@ -1109,14 +1132,18 @@
 
   // Chart-Hover: der am nächsten liegende Datenpunkt unter der Maus. Beim
   // Überfahren des Diagramms erscheint dort ein Punkt + ein Tooltip mit
-  // Prozentwert und Tag. Berechnung in SVG-viewBox-Koordinaten (unabhängig
-  // von der gerenderten Pixelbreite).
+  // Prozentwert und Tag. Die Maus wird über die Bildschirm-Matrix des SVG in
+  // viewBox-Koordinaten umgerechnet; so stimmt es auch, wenn das Diagramm
+  // seitlich Rand hat (preserveAspectRatio).
   let hoverPt = $state(null);
   function chartHover(e) {
     const chart = storageChart;
     if (!chart) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    const vx = ((e.clientX - r.left) / r.width) * CHART.w;
+    const svg = e.currentTarget;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const vx = pt.matrixTransform(svg.getScreenCTM().inverse()).x;
     let nearest = chart.pts[0];
     for (const p of chart.pts) {
       if (Math.abs(p.x - vx) < Math.abs(nearest.x - vx)) nearest = p;
@@ -1425,6 +1452,10 @@
         if (knownRepos.length === 0 && auth.can('servers:write')) {
           knownRepos = await api.servers.knownRepos();
         }
+        if (aptCaches.length === 0) {
+          aptCaches = await api.servers.aptCaches().catch(() => []);
+          aptCacheChoice = aptCaches[0]?.id ?? 0;
+        }
       } else if (name === 'security') {
         if (!vulnReport) vulnReport = await api.servers.vulnerabilities(id);
         prepareSecurityManagement();
@@ -1527,9 +1558,14 @@
   // APT-Cache-Anbindung umschalten; danach den Server-Status neu laden
   // (apt_proxy_active hat sich geändert). Der Reload läuft mit im
   // Fehler-Handling - sonst gäbe es eine stumme unbehandelte Rejection.
+  // Die APT-Caches zur Auswahl beim Anbinden (Einstellungen → APT-Cache).
+  let aptCaches = $state([]);
+  let aptCacheChoice = $state(0);
+  let aptCacheName = $derived(aptCaches.find((c) => c.url === server?.apt_proxy_url)?.name ?? server?.apt_proxy_url);
+
   async function toggleAptProxy(enable) {
     await repoAction(async () => {
-      const res = await api.servers.configureAptProxy(id, enable);
+      const res = await api.servers.configureAptProxy(id, enable, enable ? aptCacheChoice : 0);
       server = await api.servers.get(id);
       return res;
     }, enable ? t('serverDetail.actions.aptProxyConnect') : t('serverDetail.actions.aptProxyDisconnect'));
@@ -1942,11 +1978,13 @@
     secBans = {};
     secBansError = {};
     load();
-    // Job-Sperre live halten: sofort und dann alle 5 s prüfen.
+    // Job-Sperre und offene Konsolen live halten: sofort und dann alle 5 s.
     pollActiveJob();
+    pollConsoles();
     const iv = setInterval(() => {
       nowTick = Date.now();
       pollActiveJob();
+      pollConsoles();
     }, 5000);
     return () => clearInterval(iv);
   });
@@ -1968,6 +2006,12 @@
               <span class="badge text-bg-secondary align-middle ms-1" data-testid="offline-badge"
                 title={t('serverDetail.offline.title', { count: server.failed_checks })}>
                 {t('serverDetail.offline.badge')}
+              </span>
+            {/if}
+            {#if openConsoles.length > 0}
+              <span class="badge text-bg-info align-middle ms-1" data-testid="console-open-badge"
+                title={t('serverDetail.consoleOpen.title', { who: openConsoles.map((c) => t('serverDetail.consoleOpen.since', { actor: c.actor, time: new Date(c.since).toLocaleTimeString() })).join(', ') })}>
+                {t('serverDetail.consoleOpen.badge')}
               </span>
             {/if}
             {#if inMaintenance}
@@ -2785,6 +2829,9 @@
               <tr class={hasUpdate ? 'table-warning' : ''}>
                 <td>
                   {p.name}{#if p.security} <span class="badge bg-danger">security</span>{/if}
+                  {#if hasUpdate && p.held_reason}
+                    <span class="badge text-bg-secondary ms-1" data-testid="pkg-held" title={t(`serverDetail.packages.held.${p.held_reason}Title`)}>{t(`serverDetail.packages.held.${p.held_reason}`)}</span>
+                  {/if}
                   {#if pin}
                     <span class="badge text-bg-success ms-1" title={t('serverDetail.pins.pinnedBy', { name: pin.name })}>
                       {@html icons.lock} {t('serverDetail.pins.pinnedBadge')}
@@ -3031,7 +3078,9 @@
               {@const check = CHECK_LABELS[img.check_status]}
               <tr class={img.update_available && img.in_use ? 'table-warning' : ''}>
                 <td>
-                  <code class="small">{ref}</code>
+                  <code class="small">{ref || t('serverDetail.docker.unnamed')}</code>
+                  {#if img.superseded}<span class="badge text-bg-light border ms-1" title={t('serverDetail.docker.supersededTitle')}>{t('serverDetail.docker.superseded')}</span>{/if}
+                  {#if img.older_copies > 0}<span class="badge text-bg-light border ms-1" title={t('serverDetail.docker.olderCopiesTitle')}>{t('serverDetail.docker.olderCopies', { count: img.older_copies })}</span>{/if}
                   {#if !img.in_use}<span class="badge border text-body-secondary ms-1" title={t('serverDetail.docker.unusedTitle')}>{t('serverDetail.docker.unused')}</span>{/if}
                 </td>
                 <td class="small text-body-secondary">{shortDigest(img.repo_digest)}</td>
@@ -3039,6 +3088,8 @@
                 <td>
                   {#if img.update_available}
                     <span class="badge bg-warning text-dark">{t('serverDetail.docker.updateAvailable')}</span>
+                  {:else if img.superseded}
+                    <span class="small text-body-secondary">-</span>
                   {:else if check}
                     <span class="badge {check.cls}">{check.text}</span>
                   {:else if img.check_status === 'ok'}
@@ -3058,7 +3109,7 @@
                       <button class="btn btn-sm btn-outline-primary py-0" disabled={dockerBusy || jobLocked}
                         onclick={() => dockerPull(ref)} title={t('serverDetail.docker.pullTitle')}>Pull</button>
                     {/if}
-                    {#if !img.in_use}
+                    {#if !img.in_use && !img.superseded}
                       <button class="btn btn-sm btn-outline-danger py-0" disabled={dockerBusy || jobLocked}
                         onclick={() => dockerRemoveImage(ref)} title={t('serverDetail.docker.removeTitle')}>{t('common.delete')}</button>
                     {/if}
@@ -3082,8 +3133,11 @@
     {:else if tab === 'users'}
       <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
         <h2 class="h6 mb-0 me-2">{t('serverDetail.users.title')}</h2>
-        {#if auth.can('servers:write')}
-          <div class="ms-auto d-flex gap-2">
+        <div class="ms-auto d-flex gap-2">
+          <a class="btn btn-sm btn-outline-secondary" data-testid="users-guide" href="#/doku/linux-benutzer">
+            {@html icons.question} {t('serverDetail.users.guide')}
+          </a>
+          {#if auth.can('servers:write')}
             <button class="btn btn-sm btn-outline-secondary" data-testid="users-sync"
               disabled={serverUsersBusy || jobLocked || isProxmox || userSyncDisabled}
               title={isProxmox || userSyncDisabled ? t('serverDetail.users.syncLocked') : undefined}
@@ -3094,8 +3148,8 @@
               disabled={serverUsersBusy || jobLocked} onclick={refreshServerUsersNow}>
               {#if serverUsersBusy}{t('common.loading')}{:else}{@html icons.refresh} {t('serverDetail.users.refresh')}{/if}
             </button>
-          </div>
-        {/if}
+          {/if}
+        </div>
       </div>
       <p class="small text-body-secondary">
         {t('serverDetail.users.intro')}
@@ -3960,7 +4014,7 @@
       </p>
       {#if storageChart}
         <div class="card"><div class="card-body">
-          <svg viewBox="0 0 {CHART.w} {CHART.h}" class="w-100" style="max-height: 300px" role="img"
+          <svg viewBox="0 0 {CHART.w} {CHART.h}" class="w-100 d-block" role="img"
             aria-label={t('serverDetail.storage.chartAria')}
             onmousemove={chartHover} onmouseleave={() => (hoverPt = null)}>
             <!-- Gitternetz + Y-Achsen-Beschriftung (0/25/50/75/100 %) -->
@@ -4163,11 +4217,16 @@
           <!-- APT-Cache (apt-cacher-ng) ist apt-spezifisch → nur auf apt-Systemen. -->
           {#if isApt}
             {#if server.apt_proxy_active}
-              <span class="badge text-bg-info">{t('serverDetail.repos.aptCacheActive')}</span>
+              <span class="badge text-bg-info" data-testid="apt-cache-active">{t('serverDetail.repos.aptCacheActive')}{#if aptCacheName}: {aptCacheName}{/if}</span>
               <button class="btn btn-sm btn-outline-danger" disabled={busy || jobLocked}
                 title={t('serverDetail.repos.aptDisconnectTitle')}
                 onclick={() => toggleAptProxy(false)}>{t('serverDetail.repos.aptDisconnect')}</button>
             {:else}
+              {#if aptCaches.length > 1}
+                <select class="form-select form-select-sm w-auto" bind:value={aptCacheChoice} aria-label={t('serverDetail.repos.aptCacheChoose')} data-testid="apt-cache-choice">
+                  {#each aptCaches as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+                </select>
+              {/if}
               <button class="btn btn-sm btn-outline-primary" disabled={busy || jobLocked}
                 title={t('serverDetail.repos.aptConnectTitle')}
                 onclick={() => toggleAptProxy(true)}>{@html icons.box} {t('serverDetail.repos.aptConnect')}</button>
@@ -4622,11 +4681,21 @@
           <label class="form-label small mb-1" for="sec-lapi">{t('serverDetail.securityTool.lapiMode')}</label>
           <select id="sec-lapi" class="form-select" bind:value={secLapiMode} data-testid="sec-lapi">
             <option value="local">{t('serverDetail.securityTool.lapiLocal')}</option>
-            <option value="remote" disabled={!secSettings?.crowdsec_lapi_configured}>{t('serverDetail.securityTool.lapiRemote')}{#if !secSettings?.crowdsec_lapi_configured} - {t('serverDetail.securityTool.notConfigured')}{/if}</option>
+            <option value="remote" disabled={secLapis.length === 0}>{t('serverDetail.securityTool.lapiRemote')}{#if secLapis.length === 0} - {t('serverDetail.securityTool.notConfigured')}{/if}</option>
             <option value="console" disabled={!secSettings?.crowdsec_console_configured}>{t('serverDetail.securityTool.lapiConsole')}{#if !secSettings?.crowdsec_console_configured} - {t('serverDetail.securityTool.notConfigured')}{/if}</option>
           </select>
           <div class="form-text">{t('serverDetail.securityTool.lapiHint')}</div>
         </div>
+        {#if secLapiMode === 'remote'}
+          <div class="mb-3">
+            <label class="form-label small mb-1" for="sec-lapi-id">{t('serverDetail.securityTool.lapiChoose')}</label>
+            <select id="sec-lapi-id" class="form-select" bind:value={secLapiId} data-testid="sec-lapi-id">
+              {#each secLapis as l (l.id)}
+                <option value={l.id}>{l.name} ({l.url})</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
       {/if}
 
       <div class="d-flex justify-content-end gap-2">

@@ -50,7 +50,7 @@ func TestCustomActionDeleteBlockedWhileUsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	group, _ := env.Groups.Create("Ops", "", nil, "admin")
-	sched, _ := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nacht", "0 3 * * *", "admin")
+	sched, _ := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nacht", "0 3 * * *", 0, "admin")
 	// Custom-Rule verweist per Command auf die Action-ID.
 	if _, err := env.Groups.DefineRule(repositories.ScopeAll(), group.ID, "cleanup", domain.RuleTypeCustom,
 		strconv.FormatUint(uint64(act.ID), 10), &sched.ID, false, "admin"); err != nil {
@@ -82,7 +82,7 @@ func TestCustomRuleRunsCommandsSequentially(t *testing.T) {
 	if err := env.Groups.AssignServer(repositories.ScopeAll(), group.ID, id, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	sched, _ := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nacht", "0 3 * * *", "admin")
+	sched, _ := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nacht", "0 3 * * *", 0, "admin")
 	rule, err := env.Groups.DefineRule(repositories.ScopeAll(), group.ID, "wartung", domain.RuleTypeCustom,
 		strconv.FormatUint(uint64(act.ID), 10), &sched.ID, false, "admin")
 	if err != nil {

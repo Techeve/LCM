@@ -197,15 +197,3 @@ func dedupedEnforceType(ruleType string) bool {
 	}
 	return false
 }
-
-// enforceOnlyRuleType meldet Typen, die AUSSCHLIESSLICH als Grundsatz-Regel
-// taugen. Sie beschreiben einen Zustand, der gelten soll - nicht eine Aktion
-// zu einer Uhrzeit. An einem Zeitplan hätten sie keinen Ausführungspfad und
-// meldeten nur „kein Kommando für rule-typ".
-func enforceOnlyRuleType(ruleType string) bool {
-	switch ruleType {
-	case domain.RuleTypeACLSetup, domain.RuleTypePermSync:
-		return true
-	}
-	return false
-}

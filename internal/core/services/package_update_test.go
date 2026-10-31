@@ -112,7 +112,7 @@ func TestPackageRuleRespectsCVEScanSetting(t *testing.T) {
 	if err := env.Groups.AssignServer(repositories.ScopeAll(), group.ID, id, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nacht", "0 3 * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nacht", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestRefreshPackages(t *testing.T) {
 	if !strings.Contains(all, "apt-get") || !strings.Contains(all, "update") {
 		t.Errorf("apt-get update nicht ausgeführt:\n%s", all)
 	}
-	if strings.Contains(all, "upgrade") || strings.Contains(all, "install") {
+	if installs(all) {
 		t.Errorf("package-scan darf nichts installieren:\n%s", all)
 	}
 	// Rescan (dpkg-query) muss laufen, damit der Bestand aktualisiert wird.
@@ -307,7 +307,7 @@ func TestPackagesRuleAppliesToGroupServers(t *testing.T) {
 	if err := env.Groups.AssignServer(repositories.ScopeAll(), group.ID, id, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nacht", "0 3 * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nacht", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,4 +341,19 @@ func TestServerBusyRejectsSecondPackageJob(t *testing.T) {
 	if !errors.Is(err, services.ErrServerBusy) {
 		t.Errorf("zweiter paket-job sollte ErrServerBusy liefern, bekam %v", err)
 	}
+}
+
+// installs meldet, ob unter den Kommandos ein echter install/upgrade-Lauf
+// ist. Probeläufe (apt-get -s, für die Einordnung zurückgehaltener Updates)
+// installieren nichts und zählen nicht.
+func installs(commands string) bool {
+	for _, line := range strings.Split(commands, "\n") {
+		if strings.Contains(line, "apt-get -s ") {
+			continue
+		}
+		if strings.Contains(line, "upgrade") || strings.Contains(line, "install") {
+			return true
+		}
+	}
+	return false
 }

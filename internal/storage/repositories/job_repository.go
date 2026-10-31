@@ -137,7 +137,9 @@ func (r *JobRepository) FilterOptions(scope AccessScope, serverID uint) (types, 
 // Servers (für die Ampel-Bewertung); nil wenn keiner existiert.
 func (r *JobRepository) LastFinishedForServer(serverID uint) (*domain.Job, error) {
 	var job domain.Job
-	err := r.db.Where("server_id = ? AND status IN ?", serverID,
+	// Ohne Output: Die Ampel braucht Status und Name, nicht die womöglich
+	// große, zu entschlüsselnde Konsolen-Ausgabe.
+	err := r.db.Omit("output").Where("server_id = ? AND status IN ?", serverID,
 		[]string{domain.JobStatusSuccess, domain.JobStatusFailed, domain.JobStatusAborted}).
 		Order("created_at DESC, rowid DESC").First(&job).Error
 	if err != nil {
@@ -192,6 +194,20 @@ func (r *JobRepository) FindRunning() ([]domain.Job, error) {
 	var jobs []domain.Job
 	err := r.db.Where("status = ?", domain.JobStatusRunning).Find(&jobs).Error
 	return jobs, err
+}
+
+// ReplaceOutputOlderThan ersetzt die Ausgabe abgeschlossener Jobs der
+// genannten Typen, die vor cutoff angelegt wurden, durch note. Der Eintrag
+// selbst bleibt stehen.
+//
+// note wird bewusst UNVERSCHLÜSSELT geschrieben: Er ist ein fester Hinweis
+// ohne Inhalt, den der Serializer als Klartext liest - und nur so lässt sich
+// ein bereits ersetzter Eintrag im WHERE erkennen. Sonst schriebe jeder
+// nächtliche Lauf alle Routine-Jobs der letzten Wochen erneut.
+func (r *JobRepository) ReplaceOutputOlderThan(types []string, cutoff time.Time, note string) (int64, error) {
+	res := r.db.Exec("UPDATE jobs SET output = ? WHERE type IN ? AND created_at < ? AND status NOT IN ? AND output != '' AND output != ?",
+		note, types, cutoff, []string{domain.JobStatusPending, domain.JobStatusRunning}, note)
+	return res.RowsAffected, res.Error
 }
 
 // DeleteOlderThan löscht Jobs, die vor dem Stichtag abgeschlossen wurden

@@ -34,8 +34,9 @@ Die letzten beiden gehören zu den [Berechtigungsprofilen](/guides/linux-users/)
 Verzeichnisrechte eines Profils auf neuen Mitgliedern der Gruppe überhaupt
 wirken; „Rechte-Soll halten" stellt gehärtete Verzeichnisse und gesetzte
 Verzeichnisrechte wieder her, wenn ein Paketupdate sie zurückgesetzt hat.
-Umgekehrt lassen sie sich **nicht** an einen Zeitplan hängen - sie beschreiben
-einen Zustand, keine Aktion zu einer Uhrzeit.
+Beide lassen sich zusätzlich an einen **Zeitplan** hängen - etwa direkt nach
+den nächtlichen Updates. Der Abgleich ist derselbe (eingegriffen wird nur bei
+Abweichung), jede Ausführung erscheint dann aber als eigener Job.
 
 Ein Shell-Kommando trägt umgekehrt gar keinen Soll-Zustand: Als Grundsatz-Regel
 liefe es bedingungslos bei jedem Health-Check. Dafür ist ein **Zeitplan** der
@@ -138,6 +139,26 @@ das, was unter *Gruppe → Regeln* wählbar ist.
 jeder Verbindung geprüft und bei Abweichung sofort wiederhergestellt wird -
 unabhängig vom nächtlichen Zeitplan.
 
+## Was ein Update nicht mitnimmt (apt)
+
+„Alle Pakete aktualisieren“ entspricht `apt upgrade`: Updates, die ein **neues
+Paket** brauchen, kommen mit - allen voran neue Kernel
+(`linux-image-generic` braucht für jede Fassung ein neues
+`linux-image-<version>`-Paket). Entfernt wird nie etwas.
+
+Drei Arten von Updates bleiben trotzdem liegen. LCM nennt sie am Ende des
+Job-Protokolls und kennzeichnet sie in der Paketliste:
+
+| Kennzeichen | Bedeutung |
+|---|---|
+| **gestaffelt** | Ubuntu gibt das Update erst einem Teil der Rechner frei (Phased Updates), um Fehler früh zu erkennen. Es kommt automatisch, sobald der Server an der Reihe ist. Unter *Einstellungen → Sicherheit* lässt sich das abschalten. |
+| **gesperrt** | per `apt-mark hold` gesperrt - eine bewusste Entscheidung, LCM übergeht sie nicht. |
+| **zurückgehalten** | ließe sich nur durch Entfernen anderer Pakete einspielen - bitte von Hand prüfen (`apt full-upgrade`). |
+
+Solche Updates werten den Server in der Ampel **nicht** ab. Liegt eine
+bekannte CVE darauf, zählt sie über die CVE-Kriterien weiter - und ein
+gestaffeltes Update mit CVE zieht LCM beim nächsten Voll-Update vor.
+
 ## Ein Neustart wartet auf die Rückkehr
 
 Ein Neustart - ob per Ein-Klick-Aktion in der Server-Detailansicht oder als
@@ -168,6 +189,27 @@ nicht wiederkommt, steht damit als Vorfall da und nicht als erledigte Aktion.
 Solange die Überwachung läuft, bleibt der Job offen und hält die Server-Sperre
 - während eines Neustarts soll ohnehin nichts anderes auf dem Server laufen.
 
+## Zeitfenster statt fester Startzeit
+
+Ein Schedule startet standardmäßig alle Server seiner Gruppe zur Cron-Zeit
+(höchstens vier gleichzeitig je Regel). Bei vielen Servern, die über
+**denselben APT-Cache** aktualisieren, trifft das den Cache auf einen Schlag -
+er wird zum Engpass, `apt-get update` hängt.
+
+Mit einem **Zeitfenster** (Feld *Zeitfenster (Minuten)* am Schedule) wird aus
+der Startzeit ein Zeitraum: `0 2 * * *` mit 120 Minuten heißt „zwischen 02:00
+und 04:00". Die Server beginnen gleichmäßig über das Fenster verteilt, jeder
+arbeitet dort **alle Regeln des Schedules nacheinander** ab (z.&nbsp;B. erst
+Updates, dann Neustart bei Bedarf). Die Reihenfolge ist fest: Ein Server wird
+jede Nacht etwa zur selben Zeit bearbeitet.
+
+- Das Fenster muss kürzer sein als der Abstand zweier Läufe - sonst überholt
+  der nächste Lauf den vorigen.
+- Zentrale Regeln (Docker-Check, Anwendungs-Check) laufen einmal, wenn alle
+  Server durch sind.
+- **„Jetzt“** ignoriert das Fenster: Wer von Hand auslöst, will das Ergebnis
+  sofort.
+
 ## Eine Regel anlegen
 
 import { Steps } from '@astrojs/starlight/components';
@@ -175,12 +217,19 @@ import { Steps } from '@astrojs/starlight/components';
 <Steps>
 
 1. Unter *Gruppen* die Gruppe wählen (oder neu anlegen) und ihr Server
-   zuweisen.
-2. Für eine geplante Regel zuerst einen **Schedule** anlegen (Name +
-   Cron-Ausdruck, z.&nbsp;B. `0 2 * * *`).
-3. Über **„+ Neue Regel“** Typ, Ziel (Schedule *oder* Grundsatz) und ggf.
-   Konfiguration (Ports, Paketnamen, Aktion) setzen.
-4. Mit **„Jetzt“** lässt sich eine Regel oder ein ganzer Schedule sofort
+   zuweisen - der Abschnitt **Server** (wie auch **Verwaltungs-User**) ist
+   zugeklappt und zeigt die Anzahl; ein Klick öffnet ihn.
+2. Für eine geplante Regel zuerst einen **Zeitplan** anlegen
+   (**„+ Zeitplan“**: Name + Cron-Ausdruck, z.&nbsp;B. `0 2 * * *`). Jeder
+   Zeitplan erscheint als eigene Karte; die Grundsatz-Regeln haben ihre
+   eigene Karte darunter.
+3. An der Karte des Auslösers **„+ Regel“**: Typ und ggf. Konfiguration
+   (Ports, Paketnamen, Aktion) setzen. Der Auslöser steht damit fest.
+4. **Reihenfolge**: Innerhalb einer Karte laufen die Regeln von oben nach
+   unten (Nummer links). Umsortieren per **Ziehen** am Griff oder mit den
+   **Pfeilen** - etwa erst „Update“, dann „Neustart bei Bedarf“. Neue Regeln
+   reihen sich hinten an.
+5. Mit **„Jetzt“** lässt sich eine Regel oder ein ganzer Zeitplan sofort
    auslösen.
 
 </Steps>

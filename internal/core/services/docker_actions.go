@@ -15,6 +15,9 @@ type DockerImageView struct {
 	domain.DockerImage
 	CriticalVulns int `json:"critical_vulns"`
 	HighVulns     int `json:"high_vulns"`
+	// OlderCopies zählt die überholten Fassungen des Repositorys dieses Images
+	// (nach einem Pull mit neuem Digest liegen sie noch auf dem Server).
+	OlderCopies int `json:"older_copies"`
 }
 
 // DockerReport ist das Read-Modell des Docker-Tabs eines Servers.
@@ -56,6 +59,12 @@ func (s *ServerService) Docker(scope repositories.AccessScope, id uint) (*Docker
 			high[v.ImageRef]++
 		}
 	}
+	older := map[string]int{}
+	for _, img := range images {
+		if img.Superseded {
+			older[img.Repository]++
+		}
+	}
 	report := &DockerReport{
 		HasDocker:  server.HasDocker,
 		HasCompose: server.HasCompose,
@@ -63,11 +72,13 @@ func (s *ServerService) Docker(scope repositories.AccessScope, id uint) (*Docker
 		Images:     make([]DockerImageView, 0, len(images)),
 	}
 	for _, img := range images {
-		report.Images = append(report.Images, DockerImageView{
-			DockerImage:   img,
-			CriticalVulns: crit[img.Ref()],
-			HighVulns:     high[img.Ref()],
-		})
+		view := DockerImageView{DockerImage: img}
+		if !img.Superseded {
+			view.CriticalVulns = crit[img.Ref()]
+			view.HighVulns = high[img.Ref()]
+			view.OlderCopies = older[img.Repository]
+		}
+		report.Images = append(report.Images, view)
 	}
 	return report, nil
 }
@@ -140,7 +151,7 @@ func (s *ServerService) PullDockerImage(scope repositories.AccessScope, id uint,
 	}
 	known := false
 	for i := range images {
-		if images[i].Ref() == image {
+		if !images[i].Superseded && images[i].Ref() == image {
 			known = true
 			break
 		}
@@ -250,7 +261,7 @@ func (s *ServerService) DeleteDockerImage(scope repositories.AccessScope, id uin
 	}
 	var match *domain.DockerImage
 	for i := range images {
-		if images[i].Ref() == image {
+		if !images[i].Superseded && images[i].Ref() == image {
 			match = &images[i]
 			break
 		}

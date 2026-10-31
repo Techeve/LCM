@@ -32,6 +32,8 @@ func SetFieldCipher(c *crypto.Cipher) {
 // beim Schreiben und entschlüsselt sie beim Lesen - für großvolumige,
 // sensible Klartext-Felder (SSH-/Job-Konsolen-Output) at rest.
 //
+// Große Werte werden vor dem Verschlüsseln komprimiert (siehe fieldpack.go).
+//
 // Robustheit: Schlägt das Entschlüsseln fehl (Legacy-Klartext aus der Zeit
 // vor Aktivierung der Verschlüsselung oder ein Fremdformat), wird der Wert
 // UNVERÄNDERT zurückgegeben, statt den Lesevorgang zu brechen. Neue Schreib-
@@ -50,7 +52,11 @@ func (aesgcmSerializer) Scan(ctx context.Context, field *schema.Field, dst refle
 	}
 	if s != "" && fieldCipher != nil {
 		if plain, err := fieldCipher.DecryptString(s); err == nil {
-			s = plain
+			unpacked, err := unpackField(plain)
+			if err != nil {
+				return fmt.Errorf("%s: %w", field.DBName, err)
+			}
+			s = unpacked
 		}
 		// Fehler: s bleibt der Rohwert (Legacy-Klartext) - bewusst tolerant.
 	}
@@ -63,7 +69,7 @@ func (aesgcmSerializer) Value(ctx context.Context, field *schema.Field, dst refl
 	if s == "" || fieldCipher == nil {
 		return s, nil
 	}
-	return fieldCipher.EncryptString(s)
+	return fieldCipher.EncryptString(packField(s))
 }
 
 func init() {

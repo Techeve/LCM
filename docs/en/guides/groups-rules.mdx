@@ -32,8 +32,9 @@ The last two belong to the [privilege profiles](/en/guides/linux-users/): "set
 up ACL" installs missing ACL support so that a profile's directory permissions
 take effect on new members of the group at all; "keep permission state" restores
 hardened directories and applied directory permissions after a package upgrade
-has reset them. Conversely they cannot be attached to a schedule - they describe
-a state, not an action at a given time.
+has reset them. Both can also be attached to a **schedule** - e.g. right after
+the nightly updates. The reconciliation is the same (it only acts on
+deviation), but each run then shows up as its own job.
 
 A shell command, in turn, carries no target state at all: as a baseline rule it
 would run unconditionally on every health check. A **schedule** is the right
@@ -120,6 +121,26 @@ attempt is rejected with "ungültiger rule-typ". The list above is therefore
 complete for what is selectable under *group → rules*.
 :::
 
+## What an update leaves out (apt)
+
+"Update all packages" matches `apt upgrade`: updates that need a **new
+package** come along - above all new kernels (`linux-image-generic` needs a
+new `linux-image-<version>` package for every release). Nothing is ever
+removed.
+
+Three kinds of updates still stay behind. LCM lists them at the end of the
+job log and marks them in the package list:
+
+| Label | Meaning |
+|---|---|
+| **phased** | Ubuntu releases the update to only part of its machines first (phased updates) to catch regressions early. It arrives automatically once the server is in the rollout. This can be turned off under *Settings → Security*. |
+| **on hold** | held via `apt-mark hold` - a deliberate decision, LCM does not override it. |
+| **kept back** | could only be installed by removing other packages - please review by hand (`apt full-upgrade`). |
+
+Such updates do **not** lower the server's status. If a known CVE affects
+one, it still counts through the CVE criteria - and LCM pulls a phased update
+with a CVE forward on the next full update.
+
 ## A reboot waits for the server to come back
 
 A reboot - whether triggered from the server detail view or as a scheduled
@@ -150,6 +171,27 @@ reboot thus stands as an incident, not as a completed action.
 While the watch is running the job stays open and holds the server lock -
 during a reboot nothing else should be running on that server anyway.
 
+## A time window instead of a fixed start time
+
+By default a schedule starts all servers of its group at the cron time (at
+most four at once per rule). With many servers updating through the **same
+APT cache**, that hits the cache all at once - it becomes the bottleneck and
+`apt-get update` hangs.
+
+A **time window** (field *Time window (minutes)* on the schedule) turns the
+start time into a period: `0 2 * * *` with 120 minutes means "between 02:00
+and 04:00". Servers start evenly spread across the window, and each runs
+**all rules of the schedule in order** (e.g. updates first, then reboot if
+needed). The order is fixed: a server is handled at about the same time every
+night.
+
+- The window must be shorter than the gap between two runs - otherwise the
+  next run would overtake the previous one.
+- Central rules (Docker check, application check) run once after all servers
+  are done.
+- **"Now"** ignores the window: whoever triggers manually wants the result
+  right away.
+
 ## Creating a rule
 
 import { Steps } from '@astrojs/starlight/components';
@@ -157,12 +199,18 @@ import { Steps } from '@astrojs/starlight/components';
 <Steps>
 
 1. Under *Groups*, select the group (or create a new one) and assign servers
-   to it.
-2. For a scheduled rule, first create a **schedule** (name +
-   cron expression, e.g. `0 2 * * *`).
-3. Via **"+ New Rule"** set the type, target (schedule *or* baseline), and
-   optionally the configuration (ports, package names, action).
-4. Using **"Now"** you can trigger a rule or an entire schedule
+   to it - the **Servers** section (like **Managers**) is collapsed and shows
+   the count; a click opens it.
+2. For a scheduled rule, first create a **schedule** (**"+ Schedule"**: name +
+   cron expression, e.g. `0 2 * * *`). Every schedule appears as its own
+   card; the baseline rules have their own card below.
+3. On the trigger's card, **"+ Rule"**: set the type and optionally the
+   configuration (ports, package names, action). The trigger is fixed by the
+   card.
+4. **Order**: within a card the rules run from top to bottom (number on the
+   left). Reorder them by **dragging** the handle or with the **arrows** -
+   e.g. "Update" first, then "Reboot if needed". New rules are appended.
+5. Using **"Now"** you can trigger a rule or an entire schedule
    immediately.
 
 </Steps>

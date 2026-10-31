@@ -70,7 +70,7 @@ func TestEmailSendUsesConfig(t *testing.T) {
 	provider := NewEmailProvider(EmailConfig{
 		Host: "smtp.example.com", Port: 587, Username: "user", From: "lcm@example.com",
 		Recipients: []string{"ops@example.com", " ", "team@example.com"},
-	}, "geheim").withSender(func(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	}, "geheim").withSender(func(addr string, _ bool, auth smtp.Auth, from string, to []string, msg []byte) error {
 		gotAddr, gotAuth, gotFrom, gotTo, gotMsg = addr, auth, from, to, msg
 		return nil
 	})
@@ -131,5 +131,24 @@ func TestNachrichtTraegtDateUndMessageID(t *testing.T) {
 	// EHLO-Name: nie "localhost".
 	if heloName() == "localhost" {
 		t.Error("heloName darf nicht localhost sein")
+	}
+}
+
+// Fehlt der Schlüssel use_tls in der Kanal-Konfiguration, bleibt TLS an.
+func TestParseEmailConfigStartTLSStandard(t *testing.T) {
+	cfg, err := parseEmailConfig(`{"host":"smtp.example.com","port":25}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UseTLS {
+		t.Error("fehlender use_tls muss TLS einschalten")
+	}
+
+	cfg, err = parseEmailConfig(`{"host":"smtp.example.com","port":25,"use_tls":false}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UseTLS {
+		t.Error("ausdrückliches use_tls=false muss TLS abschalten")
 	}
 }

@@ -10,4 +10,13 @@ if [ -d /run/systemd/system ]; then
 	fi
 fi
 
+# dpkg calls this script with "remove" for "apt purge" too, so the message has
+# to fit both: "remove" keeps the data, "purge" (run after this) deletes it.
+if [ "$1" = "remove" ] && ls /var/lib/lcm/backups/*.lcmbak >/dev/null 2>&1; then
+	echo "LCM: remove keeps /var/lib/lcm. 'apt purge lcm' also deletes the database," >&2
+	echo "LCM: the keys and the backups there - copy them first." >&2
+	echo "LCM: remove behaelt /var/lib/lcm. 'apt purge lcm' loescht Datenbank, Schluessel" >&2
+	echo "LCM: und Sicherungen - vorher sichern." >&2
+fi
+
 exit 0

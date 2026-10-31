@@ -102,20 +102,15 @@ func newTestEnv(t *testing.T) *testEnv {
 	knownRepoRepo := repositories.NewKnownRepoRepository(db)
 	ipAllowlistRepo := repositories.NewIPAllowlistRepository(db)
 	settingsSvc := services.NewSettingsService(settingsRepo, cipher, audit, func() error { return nil }).
-		WithKnownRepos(knownRepoRepo).WithIPAllowlists(ipAllowlistRepo).WithRoles(roleRepo)
+		WithKnownRepos(knownRepoRepo).WithIPAllowlists(ipAllowlistRepo).WithRoles(roleRepo).
+		WithAptCaches(repositories.NewAptCacheRepository(db))
 	// Löschsperre für referenzierte Allowlists (R2-072) - wie in main.go.
 	settingsSvc.WithIPAllowlistUsage(func(id uint) []string {
 		return services.IPAllowlistUsage(serverRepo, groupRepo, id)
 	})
 	servers := services.NewServerService(serverRepo, jobs, audit, cipher, dialer).WithRecorder(recorder).WithLinux(linuxRepo).WithGroups(groupRepo).WithScanner(scanner).WithSettings(settingsRepo).
 		WithOnboardingKey(settingsSvc.OnboardingPrivateKey).WithKnownRepos(knownRepoRepo).WithIPAllowlists(settingsSvc.ExpandIPAllowlists).
-		WithAptCacheURL(func() (string, error) {
-			st, err := settingsRepo.Get()
-			if err != nil {
-				return "", err
-			}
-			return st.AptCacheURL, nil
-		})
+		WithAptCacheURL(settingsSvc.AptCacheURL)
 
 	// Betriebsart festnageln: Die Tests prüfen die LCM-Host-Aktionen, die es
 	// nur auf einem Host gibt. Ohne diese Zeile entschiede der Ausführungsort
@@ -136,7 +131,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	advisoryService := services.NewAdvisoryService(serverRepo,
 		repositories.NewAdvisoryRepository(db), repositories.NewAdvisoryCacheRepository(db),
 		settingsRepo, advSource).WithLocalSource(advLocal).WithScanCacheStats(scanner.CacheStats)
-	executor := services.NewExecutor(serverRepo, groupRepo, jobs, audit, prov, backups, settingsRepo, servers.Connect).WithRecorder(recorder).WithCustomActions(customActionRepo).WithScanner(scanner).WithRegistry(reg).WithIPAllowlists(settingsSvc.ExpandIPAllowlists).WithAdvisories(advisoryService).WithProfiles(profileRepo)
+	executor := services.NewExecutor(serverRepo, groupRepo, jobs, audit, prov, backups, settingsRepo, servers.Connect).WithRecorder(recorder).WithCustomActions(customActionRepo).WithScanner(scanner).WithRegistry(reg).WithIPAllowlists(settingsSvc.ExpandIPAllowlists).WithAdvisories(advisoryService).WithProfiles(profileRepo).
+		WithAptCaches(settingsSvc.AptCacheURL)
 	scheduler := services.NewScheduler(groupRepo, settingsRepo, executor)
 	groups := services.NewGroupService(groupRepo, serverRepo, audit, scheduler.Reload).
 		WithCustomActions(customActionRepo).WithUsers(userRepo).WithProvisioning(prov)

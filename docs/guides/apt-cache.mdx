@@ -83,29 +83,37 @@ import { Steps } from '@astrojs/starlight/components';
 
 <Steps>
 
-1. **Cache-URL hinterlegen.** *Einstellungen → APT-Cache*: die
-   URL eintragen (z.&nbsp;B. `http://192.168.1.10:3142`) und mit **„Verbindung
-   prüfen“** verifizieren - grünes Badge „läuft“ = bereit. Auf derselben Seite
-   liegen die Transfer-Statistiken, der Dienst-Neustart, das permanente Caching
-   und der Status der Überwachung.
+1. **Caches hinterlegen.** *Einstellungen → APT-Cache* → **„+ Cache
+   hinzufügen“**: Bezeichnung (z.&nbsp;B. „Standort Berlin“) und URL (z.&nbsp;B.
+   `http://192.168.1.10:3142`). Es können **mehrere** Caches nebeneinander
+   stehen, etwa einer je Standort. **„Verbindung prüfen“** je Zeile - grünes
+   Badge „läuft“ = bereit. Auf derselben Seite liegen die Transfer-Statistiken
+   (je gewähltem Cache), der Dienst-Neustart, das permanente Caching und der
+   Status der Überwachung. Bis LCM 1.46 gab es nur eine Cache-URL; sie wird
+   beim Update als **„Standard-Cache“** übernommen.
 
-2. **Einzelnen Server anbinden.** Server-Detail → Tab „Repositories“ →
-   **„APT-Cache verwenden“**. LCM schreibt das Drop-in
-   `/etc/apt/apt.conf.d/02lcm-apt-cache` (http- und https-Proxy) und prüft die
-   Anbindung sofort per `apt-get update`. Schlägt der Test fehl, wird das
-   Drop-in automatisch entfernt - der Server bleibt arbeitsfähig.
-   **„APT-Cache trennen“** macht es rückgängig.
+2. **Einzelnen Server anbinden.** Server-Detail → Tab „Repositories“ → Cache
+   wählen (bei mehreren) → **„APT-Cache verwenden“**. LCM schreibt das Drop-in
+   `/etc/apt/apt.conf.d/02lcm-apt-cache` (http- und https-Proxy) und macht
+   sofort einen **Funktionstest**: `apt-get update` über den Cache muss ohne
+   Fehler durchlaufen und mindestens eine Paketquelle tatsächlich laden. Das
+   Ergebnis steht im Protokoll („funktionstest bestanden - N paketquelle(n)
+   ueber den cache geladen“). Schlägt der Test fehl, wird das Drop-in
+   automatisch entfernt - der Server bleibt arbeitsfähig. **„APT-Cache
+   trennen“** macht es rückgängig.
 
 3. **Ganze Gruppe anbinden.** Gruppen-Regel „**APT-Cache anbinden**“ (am
-   Schedule) oder „**APT-Cache erzwingen**“ (Grundsatz-Regel). Die
-   Grundsatz-Regel prüft bei jeder Verbindung, ob das Drop-in auf die aktuelle
-   Cache-URL zeigt, und schreibt es bei Abweichung neu - so wirkt auch eine
-   später geänderte URL automatisch auf alle Server.
+   Schedule) oder „**APT-Cache erzwingen**“ (Grundsatz-Regel); in der Regel
+   wird der Cache gewählt (ohne Wahl gilt der einzige, wenn es genau einen
+   gibt). Die Grundsatz-Regel prüft bei jeder Verbindung, ob das Drop-in auf
+   die URL dieses Caches zeigt, und schreibt es bei Abweichung neu - so wirkt
+   auch eine später geänderte URL automatisch auf alle Server.
 
 </Steps>
 
-Der Anbindungs-Status ist im Repositories-Tab sichtbar (Badge „APT-Cache aktiv“)
-und wird bei **„Alles aktualisieren“** live ausgelesen.
+Der Anbindungs-Status ist im Repositories-Tab sichtbar (Badge „APT-Cache
+aktiv: *Name*“) und wird bei **„Alles aktualisieren“** live aus dem Drop-in
+ausgelesen - samt der Adresse, auf die es zeigt.
 
 ## Anbindung wieder lösen (deaktivieren)
 
@@ -139,12 +147,31 @@ Die Seite *Einstellungen → APT-Cache* bündelt den Betrieb des Caches:
   Caching** (schaltet den nächtlichen Ablauf-Job ab, `NO_CRON_RUN`). Diese
   Aktionen stehen nur zur Verfügung, wenn apt-cacher-ng auf dem LCM-Host selbst
   läuft; Statistik und Erreichbarkeit gelten für jede konfigurierte Cache-URL.
-- **Überwachung** - LCM prüft den Cache im Rahmen der Alarm-Auswertung (alle
+- **Überwachung** - LCM prüft jeden Cache im Rahmen der Alarm-Auswertung (alle
   30&nbsp;Minuten). Die Prüfung akzeptiert nicht schon jede HTTP-200-Antwort,
   sondern nur eine echte apt-cacher-ng-Report-Seite - so fällt auch ein fremder
   Dienst auf dem Port oder ein stiller Fehlstart auf. Den Alarm richtest du als
   Regel vom Typ **„apt-cacher-ng nicht erreichbar“** unter *Einstellungen →
   Alarme* ein und weist ihr einen Benachrichtigungskanal zu.
+
+## Wenn apt belegt ist
+
+apt und dpkg sperren sich gegen parallele Läufe. Hält ein anderer Prozess die
+Sperre (apt-daily, unattended-upgrades, jemand auf der Konsole), **wartet** LCM
+bis zu 10 Minuten und meldet dabei jede Minute im Job-Protokoll, wer die
+Sperre hält (PID, Laufzeit, Kommando). Ist apt danach noch belegt, endet der
+Job mit Exit-Code **75** - ohne weitere Anläufe, die an der Sperre ohnehin
+scheitern würden.
+
+Ist der Halter ein hängendes `apt-get update` aus einem früher abgebrochenen
+LCM-Lauf, beendet LCM es nach Ablauf der Frist selbst. Ein Update abzubrechen
+ist gefahrlos; laufende Upgrades und fremde Prozesse bleiben unangetastet.
+`apt-get update` ist außerdem auf 15 Minuten begrenzt, damit ein Cache, der
+nicht antwortet, keinen Lauf mehr unbegrenzt festhält.
+
+Viele Server, die nachts gleichzeitig über den Cache aktualisieren, belasten
+ihn am stärksten. Dagegen hilft ein [Zeitfenster am
+Schedule](/guides/groups-rules/#zeitfenster-statt-fester-startzeit).
 
 ## Störungsbilder
 

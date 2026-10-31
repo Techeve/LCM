@@ -16,6 +16,8 @@ import (
 
 // CrowdSecLapiStatus ist das Ergebnis des LAPI-Erreichbarkeits-Checks.
 type CrowdSecLapiStatus struct {
+	ID         uint   `json:"id"`
+	Name       string `json:"name"`
 	Configured bool   `json:"configured"`
 	Reachable  bool   `json:"reachable"`
 	Running    bool   `json:"running"` // Login akzeptiert → LAPI voll funktionsfähig
@@ -63,21 +65,4 @@ func probeCrowdSecLapi(baseURL, login, password string) *CrowdSecLapiStatus {
 		status.Message = fmt.Sprintf("erreichbar, aber unerwartete Antwort (HTTP %d) - läuft dort die CrowdSec-LAPI?", resp.StatusCode)
 	}
 	return status
-}
-
-// CheckCrowdSecLapi prüft vom LCM-Host aus, ob die konfigurierte CrowdSec-LAPI
-// erreichbar ist und die hinterlegten Maschinen-Zugangsdaten akzeptiert.
-func (s *SettingsService) CheckCrowdSecLapi() (*CrowdSecLapiStatus, error) {
-	settings, err := s.settings.Get()
-	if err != nil {
-		return nil, err
-	}
-	if !settings.CrowdSecLapiConfigured() {
-		return &CrowdSecLapiStatus{Message: "keine CrowdSec-LAPI konfiguriert"}, nil
-	}
-	password, err := s.cipher.DecryptString(settings.CrowdSecLapiPasswordEnc)
-	if err != nil {
-		return nil, err
-	}
-	return probeCrowdSecLapi(settings.CrowdSecLapiURL, settings.CrowdSecLapiLogin, password), nil
 }

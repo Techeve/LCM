@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"filippo.io/age"
+	"github.com/klauspost/compress/zstd"
 	"golang.org/x/crypto/scrypt"
 )
 
@@ -159,12 +160,37 @@ func writeEncryptedArchive(dst io.Writer, sources []archiveSource, passphrase st
 	return cw.Close()
 }
 
+// Das ZIP im Archiv komprimiert mit zstd (ZIP-Methode 93) statt Deflate.
+// Die großen Felder der Datenbank liegen verschlüsselt als Base64 vor - acht
+// Bit je Zeichen für sechs Bit Inhalt. Deflate holt davon nichts zurück
+// (gemessen: 99,7 %), zstd mit Entropie-Kodierung der Literale das volle
+// Viertel. Ohne LCM entpackt das Archiv bsdtar (Paket libarchive-tools);
+// das klassische unzip kennt Methode 93 nicht.
+var (
+	zipZstdCompressor = func(w io.Writer) (io.WriteCloser, error) {
+		return zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
+	}
+	zipZstdDecompressor = func(r io.Reader) io.ReadCloser {
+		d, err := zstd.NewReader(r)
+		if err != nil {
+			return io.NopCloser(errReader{err})
+		}
+		return d.IOReadCloser()
+	}
+)
+
+// errReader meldet beim Lesen einen Fehler, der schon beim Öffnen feststand.
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
 // packSources schreibt die Quellen als ZIP in w - der gemeinsame Kern beider
 // Archivformate. Dateien werden streamend gelesen, nie am Stück geladen.
 func packSources(w io.Writer, sources []archiveSource) error {
 	zw := zip.NewWriter(w)
+	zw.RegisterCompressor(zstd.ZipMethodWinZip, zipZstdCompressor)
 	for _, src := range sources {
-		zf, err := zw.Create(src.Name)
+		zf, err := zw.CreateHeader(&zip.FileHeader{Name: src.Name, Method: zstd.ZipMethodWinZip})
 		if err != nil {
 			return err
 		}
@@ -436,6 +462,7 @@ func extractEncryptedArchive(src io.Reader, key archiveKey, tmpDir string, fn fu
 	if err != nil {
 		return ErrBackupPassphrase
 	}
+	zr.RegisterDecompressor(zstd.ZipMethodWinZip, zipZstdDecompressor)
 	for _, zf := range zr.File {
 		rc, err := zf.Open()
 		if err != nil {

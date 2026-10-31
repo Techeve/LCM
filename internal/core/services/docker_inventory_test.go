@@ -14,11 +14,12 @@ import (
 // (ein Compose-Container, ein genutztes Registry-Image, ein lokales Image).
 func dockerResponses() map[string]sshx.FakeResponse {
 	return map[string]sshx.FakeResponse{
-		"command -v docker":       {Output: "/usr/bin/docker\n"},
-		"compose version":         {Output: "2.27.0\n"},
-		"docker ps -a --no-trunc": {Output: `{"ID":"aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee5","Names":"webshop-web-1","Image":"nginx:1.25","State":"running","Status":"Up 3 days","Ports":"80/tcp"}` + "\n"},
-		"docker inspect":          {Output: "aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee5\twebshop\tweb\t/opt/webshop\t/opt/webshop/compose.yaml\tsha256:img-nginx\n"},
-		"docker images":           {Output: `{"Repository":"nginx","Tag":"1.25","ID":"sha256:img-nginx","Digest":"sha256:feedface","Size":"188MB"}` + "\n" + `{"Repository":"meinapp","Tag":"dev","ID":"sha256:img-local","Digest":"<none>","Size":"92MB"}` + "\n"},
+		"command -v docker":               {Output: "/usr/bin/docker\n"},
+		"compose version":                 {Output: "2.27.0\n"},
+		"docker ps -a --no-trunc":         {Output: `{"ID":"aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee5","Names":"webshop-web-1","Image":"nginx:1.25","State":"running","Status":"Up 3 days","Ports":"80/tcp"}` + "\n"},
+		"docker inspect":                  {Output: "aaa111bbb222ccc333ddd444eee555fff666aaa111bbb222ccc333ddd444eee5\twebshop\tweb\t/opt/webshop\t/opt/webshop/compose.yaml\tsha256:img-nginx\n"},
+		"docker images -qf dangling=true": {Output: ""}, // Herkunft untagged Images: keine in diesem Fall
+		"docker images":                   {Output: `{"Repository":"nginx","Tag":"1.25","ID":"sha256:img-nginx","Digest":"sha256:feedface","Size":"188MB"}` + "\n" + `{"Repository":"meinapp","Tag":"dev","ID":"sha256:img-local","Digest":"<none>","Size":"92MB"}` + "\n"},
 	}
 }
 

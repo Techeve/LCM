@@ -84,6 +84,9 @@ func Migrate(db *gorm.DB) error {
 	if err := addServerRefColumns(db); err != nil {
 		return err
 	}
+	if err := migrateDockerImageIndex(db); err != nil {
+		return err
+	}
 	if err := autoMigrateSchema(db); err != nil {
 		return err
 	}
@@ -455,6 +458,23 @@ func tokenizeChildTable(db *gorm.DB, table, oldIndex, createIndexSQL string) err
 	})
 }
 
+// migrateDockerImageIndex nimmt die Image-ID in den Eindeutigkeits-Index der
+// Docker-Images auf (siehe domain.DockerImage). Der Index trägt denselben
+// Namen wie vorher; AutoMigrate ließe ihn deshalb unverändert. Er wird daher
+// verworfen, solange die ID darin fehlt, und AutoMigrate legt ihn neu an.
+// Idempotent: Enthält der Index die ID schon, passiert nichts.
+func migrateDockerImageIndex(db *gorm.DB) error {
+	var n int
+	if err := db.Raw("SELECT COUNT(*) FROM pragma_index_info('idx_dockeri_server_ref') WHERE name = 'image_id'").
+		Scan(&n).Error; err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	return db.Exec("DROP INDEX IF EXISTS idx_dockeri_server_ref").Error
+}
+
 // columnExists meldet, ob eine Spalte in einer Tabelle existiert (SQLite).
 func columnExists(db *gorm.DB, table, col string) bool {
 	var n int
@@ -601,6 +621,8 @@ var migratedModels = []any{
 	&domain.UnknownApp{},
 	&domain.PackagePin{},
 	&domain.IPAllowlist{},
+	&domain.CrowdSecLapi{},
+	&domain.AptCache{},
 	&domain.LinuxUser{},
 	&domain.LinuxUserSSHKey{},
 	&domain.LinuxUserActivation{},

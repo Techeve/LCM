@@ -264,10 +264,24 @@
           <p class="small text-body-secondary">
             {t('settings.general.logIntroA')}<em>{t('settings.general.logIntroEm')}</em>{t('settings.general.logIntroB')}
           </p>
-          <div style="max-width: 220px">
-            <label class="form-label" for="lrd">{t('settings.general.retentionDays')}</label>
-            <input id="lrd" type="number" min="0" class="form-control" bind:value={settings.log_retention_days} />
+          <div class="d-flex flex-wrap gap-3">
+            <div style="max-width: 220px">
+              <label class="form-label" for="lrd">{t('settings.general.retentionDays')}</label>
+              <input id="lrd" type="number" min="0" class="form-control" bind:value={settings.log_retention_days} />
+            </div>
+            <div style="max-width: 220px">
+              <label class="form-label" for="rlrd">{t('settings.general.routineRetentionDays')}</label>
+              <input
+                id="rlrd"
+                type="number"
+                min="1"
+                class="form-control"
+                aria-describedby="rlrd-hint"
+                bind:value={settings.routine_log_retention_days}
+              />
+            </div>
           </div>
+          <p id="rlrd-hint" class="form-text mb-0">{t('settings.general.routineRetentionHint')}</p>
         </div>
       </div>
 

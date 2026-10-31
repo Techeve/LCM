@@ -118,6 +118,15 @@ func (r *SSHRecorder) CleanupOlderThan(cutoff time.Time) (int64, error) {
 	return r.logs.DeleteOlderThan(cutoff)
 }
 
+// DeleteRoutineCommandsOlderThan entfernt die Kommandos der Health-Check-
+// Sitzungen nach der kurzen Frist für Routine-Protokolle.
+func (r *SSHRecorder) DeleteRoutineCommandsOlderThan(cutoff time.Time) (int64, error) {
+	if r == nil || r.logs == nil {
+		return 0, nil
+	}
+	return r.logs.DeleteCommandsOlderThan(domain.HealthCheckPurpose, cutoff)
+}
+
 // trivialCommands sind Kommandos, deren Protokollzeile nichts trägt.
 //
 // Bisher hinterließ jeder Health-Ping je Server und Viertelstunde eine Zeile

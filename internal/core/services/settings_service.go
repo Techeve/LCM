@@ -23,6 +23,10 @@ type SettingsService struct {
 	reload       func() error
 	knownRepos   *repositories.KnownRepoRepository   // Katalog bekannter Paketquellen, optional
 	ipAllowlists *repositories.IPAllowlistRepository // benannte IP-Allowlists, optional
+	// crowdsecLapis sind die zentralen CrowdSec-LAPIs (crowdsec_lapis.go).
+	crowdsecLapis *repositories.CrowdSecLapiRepository
+	// aptCaches sind die zentralen APT-Caches (apt_caches.go).
+	aptCaches *repositories.AptCacheRepository
 	// ipAllowlistUsage liefert alle Verweise auf eine Allowlist (Server-
 	// Firewall-Regeln, Gruppen-Regeln) - Löschsperre R2-072. Optional.
 	ipAllowlistUsage func(id uint) []string
@@ -150,49 +154,6 @@ func (s *SettingsService) SetCVEScanEnabled(enabled bool) error {
 // Join-Wizard - der Vermerk steuert nur die AUTOMATISCHE Aufnahme.
 func (s *SettingsService) DisableSelfRegistration() error {
 	return s.settings.UpdateFields(map[string]any{"self_server_disabled": true})
-}
-
-// SetAptCacheURL setzt die globale APT-Cache-URL (normalisiert/validiert) und
-// lädt den Scheduler neu. Wird u. a. genutzt, wenn LCM apt-cacher-ng auf dem
-// eigenen Host installiert und den Cache danach selbsttätig einträgt.
-func (s *SettingsService) SetAptCacheURL(rawURL string) error {
-	url, err := normalizeAptCacheURL(rawURL)
-	if err != nil {
-		return err
-	}
-	if err := s.settings.UpdateFields(map[string]any{"apt_cache_url": url}); err != nil {
-		return err
-	}
-	if s.reload != nil {
-		return s.reload()
-	}
-	return nil
-}
-
-// SetCrowdSecLapi trägt die (auf dem LCM-Host erzeugten) CrowdSec-LAPI-
-// Zugangsdaten in die globalen Einstellungen ein - URL/Login im Klartext,
-// das Passwort AES-verschlüsselt. Wird nach der LAPI-Installation auf dem
-// LCM-Host aufgerufen, damit verwaltete Server sofort im Remote-Modus
-// enrollen können.
-func (s *SettingsService) SetCrowdSecLapi(rawURL, login, password string) error {
-	enc, err := s.cipher.EncryptString(password)
-	if err != nil {
-		return err
-	}
-	settings, err := s.settings.Get()
-	if err != nil {
-		return err
-	}
-	settings.CrowdSecLapiURL = strings.TrimSpace(rawURL)
-	settings.CrowdSecLapiLogin = strings.TrimSpace(login)
-	settings.CrowdSecLapiPasswordEnc = enc
-	if err := s.settings.Save(settings); err != nil {
-		return err
-	}
-	if s.reload != nil {
-		return s.reload()
-	}
-	return nil
 }
 
 // EnsureOnboardingKey erzeugt beim ersten Start ein Onboarding-Schlüsselpaar
@@ -362,6 +323,7 @@ type GlobalSettingsInput struct {
 	DefaultSSHPassword          *string // nil/leer = unverändert
 	DefaultSSHPort              *int
 	LogRetentionDays            *int
+	RoutineLogRetentionDays     *int
 	StorageHistoryRetentionDays *int
 	BackupEnabled               *bool
 	BackupIntervalHours         *int
@@ -370,6 +332,7 @@ type GlobalSettingsInput struct {
 	BackupDir                   *string
 	RestoreAutoRestart          *bool
 	CVEScanEnabled              *bool
+	AptIncludePhased            *bool
 	CVEScanCron                 *string
 	AdvisoryPollingEnabled      *bool
 	AdvisoryLocalCopy           *bool
@@ -377,7 +340,6 @@ type GlobalSettingsInput struct {
 	SessionTTLMinutes           *int
 	JobIdleTimeoutMinutes       *int
 	JobIdleTimeoutSlowMinutes   *int
-	AptCacheURL                 *string
 	Require2FARoles             *string
 	PublicBaseURL               *string
 	CVEHighWeightPackages       *string
@@ -397,10 +359,7 @@ type GlobalSettingsInput struct {
 	MailAdminRecipients *string
 
 	// CrowdSec-Zugang (Passwort/Key nil/leer = unverändert).
-	CrowdSecLapiURL      *string
-	CrowdSecLapiLogin    *string
-	CrowdSecLapiPassword *string
-	CrowdSecConsoleKey   *string
+	CrowdSecConsoleKey *string
 }
 
 // clampSessionTTL begrenzt die eingestellte Session-Dauer auf sinnvolle Werte:
@@ -460,6 +419,13 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		settings.LogRetentionDays = *in.LogRetentionDays
 		touch("log_retention_days")
 	}
+	if in.RoutineLogRetentionDays != nil {
+		if err := validateRange(*in.RoutineLogRetentionDays, 1, 3650, "routine_log_retention_days"); err != nil {
+			return nil, err
+		}
+		settings.RoutineLogRetentionDays = *in.RoutineLogRetentionDays
+		touch("routine_log_retention_days")
+	}
 	if in.StorageHistoryRetentionDays != nil {
 		settings.StorageHistoryRetentionDays = domain.ClampStorageHistoryRetention(*in.StorageHistoryRetentionDays)
 		touch("storage_history_retention_days")
@@ -505,6 +471,10 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 	if in.CVEScanEnabled != nil {
 		settings.CVEScanEnabled = *in.CVEScanEnabled
 		touch("cve_scan_enabled")
+	}
+	if in.AptIncludePhased != nil {
+		settings.AptIncludePhased = *in.AptIncludePhased
+		touch("apt_include_phased")
 	}
 	if in.CVEScanCron != nil && *in.CVEScanCron != "" {
 		// Cron-Ausdruck sofort validieren - ein Tippfehler fiele sonst erst
@@ -577,14 +547,6 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		settings.JobIdleTimeoutSlowMinutes = domain.ClampJobIdleTimeout(*in.JobIdleTimeoutSlowMinutes)
 		touch("job_idle_timeout_slow_minutes")
 	}
-	if in.AptCacheURL != nil {
-		aptCacheURL, err := normalizeAptCacheURL(*in.AptCacheURL)
-		if err != nil {
-			return nil, err
-		}
-		settings.AptCacheURL = aptCacheURL
-		touch("apt_cache_url")
-	}
 	if in.Require2FARoles != nil {
 		// Rollennamen normalisieren: ohne das machte ein „Admin" statt
 		// „admin" die 2FA-Pflicht LAUTLOS wirkungslos.
@@ -645,23 +607,8 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		touch("mail_admin_recipients")
 	}
 
-	// CrowdSec-Zugang: URL/Login Klartext, Passwort/Key write-only verschlüsselt.
-	if in.CrowdSecLapiURL != nil {
-		settings.CrowdSecLapiURL = strings.TrimSpace(*in.CrowdSecLapiURL)
-		touch("crowdsec_lapi_url")
-	}
-	if in.CrowdSecLapiLogin != nil {
-		settings.CrowdSecLapiLogin = strings.TrimSpace(*in.CrowdSecLapiLogin)
-		touch("crowdsec_lapi_login")
-	}
-	if in.CrowdSecLapiPassword != nil && *in.CrowdSecLapiPassword != "" {
-		enc, err := s.cipher.EncryptString(*in.CrowdSecLapiPassword)
-		if err != nil {
-			return nil, err
-		}
-		settings.CrowdSecLapiPasswordEnc = enc
-		touch("crowdsec_lapi_password")
-	}
+	// CrowdSec-Console-Key: write-only verschlüsselt. Die LAPIs haben eine
+	// eigene Verwaltung (crowdsec_lapis.go).
 	if in.CrowdSecConsoleKey != nil && *in.CrowdSecConsoleKey != "" {
 		enc, err := s.cipher.EncryptString(*in.CrowdSecConsoleKey)
 		if err != nil {

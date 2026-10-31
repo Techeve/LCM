@@ -81,11 +81,11 @@ func TestDefineScheduleAndRuleValidation(t *testing.T) {
 	}
 
 	// Ungültiger Cron-Ausdruck am Schedule.
-	_, err = env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Bad", "kein-cron", "admin")
+	_, err = env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Bad", "kein-cron", 0, "admin")
 	if !errors.Is(err, services.ErrInvalidCron) {
 		t.Errorf("erwartet ErrInvalidCron, bekam %v", err)
 	}
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nachtlauf", "0 3 * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "Nachtlauf", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatalf("gültiger schedule abgelehnt: %v", err)
 	}

@@ -124,7 +124,9 @@ Trigger:
   :::
 - **Server action** - server detail → *Actions → DNS test*.
 - **Group rule** - add a rule of type **"DNS test"** to a group (scheduled or
-  manually triggerable); it uses the centrally maintained test domains.
+  manually triggerable). Without input it uses the centrally maintained test
+  domains; the rule dialog can instead take **own domains** per rule (one per
+  line) - e.g. internal names only this group has to resolve.
 
 The result appears on the server detail page under **System & Security** next to
 the firewall - along with the server’s **currently active DNS** (for

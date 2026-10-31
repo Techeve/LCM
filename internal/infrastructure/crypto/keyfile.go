@@ -64,7 +64,7 @@ func LoadOrCreateMasterKey(dataDir string) (key []byte, source KeySource, err er
 		return nil, "", fmt.Errorf("%s lesen: %w", path, err)
 	}
 
-	if raw, ok := creds.Read(creds.MasterKey); ok {
+	if raw, ok := creds.ReadRaw(creds.MasterKey); ok {
 		key, err := decodeKey(raw)
 		if err != nil {
 			return nil, "", fmt.Errorf("systemd-credential %s: %w", creds.MasterKey, err)

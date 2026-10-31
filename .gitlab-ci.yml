@@ -48,7 +48,9 @@ stages: [check, test, build, release, deploy, maintenance]
 
 # Alle Jobs laufen auf dem Docker-Executor-Runner (Tag "docker").
 default:
-  tags: [docker]
+  # Paar A (Runner-01 und -02, je ein Host): Der lokale Go-Cache bleibt
+  # auf zwei Runnern warm, und LCM kommt ZPO (Paar B) nicht in die Quere.
+  tags: [paar-a]
 
 variables:
   # Feste Major/Minor statt gleitender Tags. golang:1-alpine wanderte
@@ -63,12 +65,13 @@ variables:
   # @playwright/test in frontend/package.json passen -- laufen sie
   # auseinander, laedt Playwright die Browser doch wieder selbst nach und der
   # Vorteil ist weg. Renovate haelt beides zusammen (matchDepNames).
-  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.62.1-noble
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.0-noble
   # Volle Historie + Tags: die Versionsermittlung braucht beides.
   GIT_DEPTH: "0"
-  # Caches im Projektverzeichnis, damit der Runner sie wiederverwenden kann.
-  GOMODCACHE: $CI_PROJECT_DIR/.cache/go-mod
-  GOCACHE: $CI_PROJECT_DIR/.cache/go-build
+  # Der npm-Cache im Projektverzeichnis, damit der Runner ihn über MinIO
+  # weiterreichen kann. GOCACHE und GOMODCACHE setzt der Runner: Sie zeigen
+  # auf seinen lokalen Go-Cache (techeve/gitlab-runner-setup), der nicht
+  # mehr kopiert wird.
   npm_config_cache: $CI_PROJECT_DIR/.cache/npm
   # Dokumentation (docs/*.md → Astro-Starlight über das zentrale Builder-Image).
   # DOCS_URL: volle Adresse, unter der die Doku erreichbar sein soll - daraus
@@ -146,38 +149,18 @@ workflow:
       when: never
     - when: on_success
 
-# Der Cache wird pro Job EIN- UND AUSGEPACKT - bei ~75.000 Dateien und 2 GB
-# kostet allein das Einpacken 130-185s. Deshalb tragen nur die Jobs, die den
-# Cache tatsaechlich fuellen, "pull-push"; alle uebrigen lesen ihn nur
-# (policy: pull) und sparen sich das Zurueckschreiben eines Standes, an dem sie
-# nichts geaendert haben.
-.go-cache: &go-cache
-  key: go-$CI_DEFAULT_BRANCH
-  paths: [.cache/go-mod, .cache/go-build]
-
-# Nur-lesende Variante fuer Jobs, die den Cache nicht erweitern.
-.go-cache-ro: &go-cache-ro
-  key: go-$CI_DEFAULT_BRANCH
-  paths: [.cache/go-mod, .cache/go-build]
-  policy: pull
-
-# Eigener Schluessel fuer den Cross-Build. Jede Zielplattform legt eigene
-# Artefakte an; der Build-Cache waechst dadurch von ~330 MB auf ~1,6 GB.
-# Im gemeinsamen Schluessel schleppten backend, e2e und govulncheck diese
-# Windows- und macOS-Artefakte bei jedem Lauf mit, obwohl sie ausschliesslich
-# linux/amd64 brauchen. Getrennt bleibt der gemeinsame Cache klein -- und kein
-# Schluessel wird mehr von zwei Jobs geschrieben, was Wettlaeufe ausschliesst,
-# sobald ein Runner mehrere Jobs gleichzeitig annimmt.
-.go-cache-cross: &go-cache-cross
-  key: go-cross-$CI_DEFAULT_BRANCH
-  paths: [.cache/go-mod, .cache/go-build]
-
+# Neuer Schluessel, sobald sich die Abhaengigkeiten aendern: Der alte Cache
+# verwaist dann und faellt der Ablaufregel des Buckets (30 Tage) zum Opfer.
 .npm-cache: &npm-cache
-  key: npm-$CI_DEFAULT_BRANCH
+  key:
+    files: [frontend/package-lock.json]
+    prefix: npm
   paths: [.cache/npm]
 
 .npm-cache-ro: &npm-cache-ro
-  key: npm-$CI_DEFAULT_BRANCH
+  key:
+    files: [frontend/package-lock.json]
+    prefix: npm
   paths: [.cache/npm]
   policy: pull
 
@@ -332,13 +315,12 @@ backend:
   stage: test
   extends: .nicht-auf-release-branch
   image: $GO_IMAGE
-  cache: *go-cache
   script:
     # Formatierung zuerst: gofmt-Abweichungen sind billig zu beheben, aber sie
     # verrauschen jeden späteren Diff. `go vet` prüft das nicht mit.
-    # Nur eigene Quellen prüfen: GOMODCACHE liegt unter .cache/ im
-    # Projektverzeichnis, und Abhängigkeiten enthalten absichtlich nicht
-    # übersetzbare Testdaten, an denen gofmt scheitern würde.
+    # Nur eigene Quellen prüfen: Unter .cache/ liegen Caches, und
+    # Abhängigkeiten enthalten absichtlich nicht übersetzbare Testdaten, an
+    # denen gofmt scheitern würde.
     - |
       UNFORMATTED=$(find . -name '*.go' -not -path './.cache/*' -exec gofmt -l {} +)
       if [ -n "$UNFORMATTED" ]; then
@@ -355,7 +337,6 @@ govulncheck:
   stage: test
   extends: .nicht-auf-release-branch
   image: $GO_IMAGE
-  cache: *go-cache-ro
   script:
     - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
@@ -372,11 +353,9 @@ e2e:
   # Playwright-Läufe gegenseitig aus - der Login riss dann selbst großzügige
   # Timeouts. resource_group serialisiert den Job projektweit.
   resource_group: e2e
-  # Sowohl npm- als auch Go-Build-Cache: run-server.sh kompiliert das
-  # echte Binary, der Go-Cache verkürzt den Erst-Build in Folgeläufen.
-  cache:
-    - <<: *npm-cache-ro
-    - <<: *go-cache-ro
+  # run-server.sh kompiliert das echte Binary; der lokale Go-Cache des
+  # Runners verkürzt den Build.
+  cache: *npm-cache-ro
   needs: [frontend]
   rules:
     - if: $RENOVATE_BOT == "true"
@@ -481,7 +460,6 @@ binaries:
   stage: build
   extends: .skip-on-bot-pipelines
   image: $GO_IMAGE
-  cache: *go-cache-cross
   needs:
     - frontend
     # optional: Auf community und beta laufen diese beiden nicht (siehe
@@ -532,7 +510,6 @@ packages:deb:
   stage: build
   extends: .skip-on-bot-pipelines
   image: $GO_IMAGE
-  cache: *go-cache-ro
   needs:
     - binaries
     - job: version
@@ -727,8 +704,6 @@ images:
 upgrade-test:
   stage: test
   image: $GO_IMAGE
-  cache:
-    - <<: *go-cache-ro
   needs: []
   variables:
     # Startpunkt der Kette. Als Variable, damit ein Wegfall alter Release-
@@ -1070,8 +1045,9 @@ docs-deploy:
 
 # Dependency-Bot: Renovate prüft Go-Module (gomod) und npm-Pakete auf neuere
 # Versionen und legt die Aktualisierungen automatisch als Merge Requests nach
-# develop an (Konfiguration: renovate.json im Repo-Root). Patch-Updates werden
-# nach grüner Pipeline automatisch gemergt; minor/major bleiben zur Review offen.
+# develop an (Konfiguration: renovate.json im Repo-Root). Sicherheitsupdates und
+# Patch-Updates vertrauenswürdiger Herausgeber werden nach grüner Pipeline
+# automatisch gemergt; alles andere bleibt zur Review offen.
 #
 # Der Job läuft NICHT bei normalen Pushes, sondern nur:
 #   - über eine geplante Pipeline (Scheduler) mit der Variable RENOVATE_BOT=true
@@ -1121,6 +1097,9 @@ renovate:
     RENOVATE_TOKEN: $RENOVATE_TOKEN
     RENOVATE_AUTODISCOVER: "false"
     RENOVATE_REPOSITORIES: $CI_PROJECT_PATH
+    # Globale Optionen - in renovate.json verboten (Konfigurationswarnung im Dashboard).
+    RENOVATE_ONBOARDING: "false"
+    RENOVATE_REQUIRE_CONFIG: "optional"
     # Changelogs/Release-Notes von GitHub-gehosteten Deps abrufen (optional,
     # nur gesetzt wenn die Variable existiert - sonst leer, kein Fehler).
     GITHUB_COM_TOKEN: $RENOVATE_GITHUB_TOKEN

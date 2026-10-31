@@ -2,6 +2,9 @@ package services
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"LCM/internal/core/domain"
@@ -25,6 +28,14 @@ const (
 	// dockerImagesCmd listet Images mit Manifest-Digest - die
 	// Vergleichsbasis für den zentralen Registry-Update-Check.
 	dockerImagesCmd = `docker images --no-trunc --digests --format '{{json .}}' 2>/dev/null`
+	// dockerUntaggedCmd liefert je Image ohne Tag ID, Größe und früheren
+	// RepoDigest - daraus ergibt sich das Repository ("nginx@sha256:…" →
+	// "nginx"). Ein Pull mit neuem Digest entzieht dem alten Image seinen Tag.
+	// Je nach Docker steht es dann als "<none>" oder unter dem Repo-Namen ohne
+	// Tag in `docker images` - oder fehlt dort ganz (Docker 29 mit containerd-
+	// Image-Speicher); der Dangling-Filter kennt es immer. `range` statt `join`:
+	// Docker liefert dort []interface{}.
+	dockerUntaggedCmd = `docker images -qf dangling=true --no-trunc | xargs -r docker image inspect --format '{{.Id}}{{"\t"}}{{.Size}}{{"\t"}}{{range .RepoDigests}}{{.}} {{end}}' 2>/dev/null`
 )
 
 // scanDocker erfasst das Docker-Inventar (Container + Images) über eine
@@ -43,7 +54,8 @@ func scanDocker(res *scanResult, loginUser string, restricted bool, run func(lab
 	res.HasCompose = strings.TrimSpace(run("compose", sudo("docker compose version --short 2>/dev/null || true"))) != ""
 	res.DockerContainers = parseDockerPS(run("docker-ps", sudo(dockerPSCmd)))
 	applyComposeLabels(res.DockerContainers, run("docker-inspect", sudo(dockerInspectCmd)))
-	res.DockerImages = parseDockerImages(run("docker-images", sudo(dockerImagesCmd)))
+	untagged := parseUntaggedImages(run("docker-untagged", sudo(dockerUntaggedCmd)))
+	res.DockerImages = parseDockerImages(run("docker-images", sudo(dockerImagesCmd)), untagged)
 	markImagesInUse(res.DockerImages, res.DockerContainers)
 }
 
@@ -118,11 +130,15 @@ func cleanTemplateValue(s string) string {
 }
 
 // parseDockerImages parst die JSON-Zeilen von `docker images --digests`.
-// Namenlose Zwischenschichten ("<none>"-Repo) werden übersprungen; Images
-// ohne Registry-Digest (lokal gebaut oder ohne Tag) sind nicht gegen die
-// Registry prüfbar → CheckStatus "local".
-func parseDockerImages(out string) []domain.DockerImage {
+// Images ohne Tag sind überholte Fassungen (Superseded): Ein Pull mit neuem
+// Digest hat ihnen den Tag entzogen. Ihr Repository steht in der Liste
+// (mit Digest) oder fehlt ("<none>"); dann liefert untagged den früheren Namen,
+// sonst bleibt es leer. Untagged Images, die die Liste gar nicht führt, kommen
+// aus untagged dazu. Images ohne Registry-Digest (lokal gebaut oder ohne Tag)
+// sind nicht gegen die Registry prüfbar → CheckStatus "local".
+func parseDockerImages(out string, untagged map[string]untaggedImage) []domain.DockerImage {
 	var images []domain.DockerImage
+	seen := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "{") {
@@ -135,16 +151,17 @@ func parseDockerImages(out string) []domain.DockerImage {
 			Digest     string `json:"Digest"`
 			Size       string `json:"Size"`
 		}
-		if err := json.Unmarshal([]byte(line), &row); err != nil || row.Repository == "" || row.Repository == "<none>" {
+		if err := json.Unmarshal([]byte(line), &row); err != nil || row.Repository == "" {
 			continue
 		}
-		img := domain.DockerImage{
-			Repository: row.Repository,
-			ImageID:    row.ID,
-			SizeText:   row.Size,
+		img := domain.DockerImage{Repository: row.Repository, ImageID: row.ID, SizeText: row.Size}
+		if row.Repository == "<none>" {
+			img.Repository = untagged[row.ID].Repository
 		}
 		if row.Tag != "" && row.Tag != "<none>" {
 			img.Tag = row.Tag
+		} else {
+			img.Superseded = true
 		}
 		if row.Digest != "" && row.Digest != "<none>" {
 			img.RepoDigest = row.Digest
@@ -152,14 +169,82 @@ func parseDockerImages(out string) []domain.DockerImage {
 		if img.RepoDigest == "" || img.Tag == "" {
 			img.CheckStatus = domain.DockerCheckLocal
 		}
-		images = append(images, img)
+		// Ein Image mit mehreren RepoDigests steht mehrfach in der Liste.
+		if key := img.Repository + "|" + img.Tag + "|" + img.ImageID; !seen[key] {
+			seen[key] = true
+			images = append(images, img)
+		}
+	}
+	return append(images, unlistedUntagged(images, untagged)...)
+}
+
+// unlistedUntagged liefert die untagged Images, die `docker images` nicht
+// führt (Docker 29 mit containerd-Image-Speicher), in stabiler Reihenfolge.
+func unlistedUntagged(listed []domain.DockerImage, untagged map[string]untaggedImage) []domain.DockerImage {
+	known := map[string]bool{}
+	for i := range listed {
+		known[listed[i].ImageID] = true
+	}
+	var ids []string
+	for id := range untagged {
+		if !known[id] {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	out := make([]domain.DockerImage, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, domain.DockerImage{
+			Repository: untagged[id].Repository, ImageID: id, SizeText: dockerSize(untagged[id].Bytes),
+			Superseded: true, CheckStatus: domain.DockerCheckLocal,
+		})
+	}
+	return out
+}
+
+// untaggedImage ist, was `dockerUntaggedCmd` über ein Image ohne Tag weiß.
+type untaggedImage struct {
+	Repository string
+	Bytes      int64
+}
+
+// parseUntaggedImages liest "<image-id>\t<bytes>\t<repodigest> …" je Zeile.
+// Das Repository stammt aus dem ersten RepoDigest und bleibt ohne ihn leer.
+func parseUntaggedImages(out string) map[string]untaggedImage {
+	images := map[string]untaggedImage{}
+	for _, line := range strings.Split(out, "\n") {
+		cols := strings.SplitN(line, "\t", 3)
+		if len(cols) < 3 || strings.TrimSpace(cols[0]) == "" {
+			continue
+		}
+		img := untaggedImage{}
+		img.Bytes, _ = strconv.ParseInt(strings.TrimSpace(cols[1]), 10, 64)
+		if digests := strings.Fields(cols[2]); len(digests) > 0 {
+			img.Repository, _, _ = strings.Cut(digests[0], "@")
+		}
+		images[strings.TrimSpace(cols[0])] = img
 	}
 	return images
 }
 
+// dockerSize formatiert Bytes wie `docker images` (dezimal: "41.1MB").
+func dockerSize(b int64) string {
+	switch {
+	case b >= 1_000_000_000:
+		return fmt.Sprintf("%.3gGB", float64(b)/1e9)
+	case b >= 1_000_000:
+		return fmt.Sprintf("%.3gMB", float64(b)/1e6)
+	case b >= 1_000:
+		return fmt.Sprintf("%.3gkB", float64(b)/1e3)
+	}
+	return fmt.Sprintf("%dB", b)
+}
+
 // markImagesInUse markiert Images, die von mindestens einem Container
 // referenziert werden (Zuordnung primär über die Image-ID aus inspect,
-// zur Sicherheit auch über die Ref, falls inspect nichts lieferte).
+// zur Sicherheit auch über die Ref, falls inspect nichts lieferte). Eine
+// überholte Fassung hat keinen Tag; ihre Ref wäre nur der Repo-Name und
+// würde das aktuelle latest treffen - sie zählt daher nur über die ID.
 func markImagesInUse(images []domain.DockerImage, containers []domain.DockerContainer) {
 	usedID := make(map[string]bool, len(containers))
 	usedRef := make(map[string]bool, len(containers))
@@ -172,7 +257,7 @@ func markImagesInUse(images []domain.DockerImage, containers []domain.DockerCont
 		}
 	}
 	for i := range images {
-		images[i].InUse = usedID[images[i].ImageID] || usedRef[images[i].Ref()]
+		images[i].InUse = usedID[images[i].ImageID] || (!images[i].Superseded && usedRef[images[i].Ref()])
 	}
 }
 
@@ -200,7 +285,7 @@ func rescanDockerInto(servers *repositories.ServerRepository, conn sshx.Conn, se
 	// nächsten täglichen Docker-Check. Nur genutzte Images tragen CVEs.
 	var inUse []string
 	for i := range res.DockerImages {
-		if img := &res.DockerImages[i]; img.InUse {
+		if img := &res.DockerImages[i]; img.InUse && !img.Superseded {
 			inUse = append(inUse, img.Ref())
 		}
 	}

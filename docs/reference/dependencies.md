@@ -31,12 +31,11 @@ Veröffentlichungsprozess zu bekommen?
 |:-:|---|---|
 | 5 | Go-Team/Google oder vergleichbar: mehrstufiges Review, öffentliche Historie, Security-Team | `golang.org/x/*`, `google/uuid`, `svelte`, `vite`, `@playwright/test` |
 | 4 | Organisation mit mehreren aktiven Maintainern und Release-Prozess | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `bootstrap` |
-| 3 | Kleine Organisation oder renommierte Einzelperson, nachweislich aktiv | `mochi-mqtt/server`, `fasthttp/websocket`, `svelte-spa-router`, `filippo.io/age` |
-| 2 | Einzelperson, sporadische Releases, Bus-Faktor 1 | `glebarez/sqlite` |
-| 1 | Einzelperson, seit Jahren inaktiv, kein Release-Prozess, ungetaggte Versionen | - (bewusst leer, siehe unten) |
+| 3 | Kleine Organisation oder renommierte Einzelperson, nachweislich aktiv | `mochi-mqtt/server`, `fasthttp/websocket`, `svelte-spa-router`, `filippo.io/age`, `go-landlock`, `klauspost/compress`, `modernc.org/sqlite` |
+| 2 | Einzelperson, sporadische Releases, Bus-Faktor 1 | `glebarez/sqlite`, `alexedwards/argon2id`; transitiv `molecule-man/go-brrr` (über fasthttp) |
+| 1 | Einzelperson, seit Jahren inaktiv, kein Release-Prozess, ungetaggte Versionen | `robfig/cron` (letzter Tag 2020) - wird abgelöst, siehe unten |
 
-Stufe 1 ist im Bestand bewusst leer: Solche Abhängigkeiten werden nicht
-aufgenommen und bestehende werden abgelöst.
+Stufe 1 wird nicht aufgenommen, und bestehende Einträge werden abgelöst.
 
 ### Achse 2 - Nutzfläche und Ablösbarkeit
 
@@ -94,8 +93,12 @@ Version.** Daraus folgen drei Regeln, die im Repo verankert sind:
   kompromittierte Pakete üblicherweise entdeckt und zurückgezogen werden.
 - **Automerge nur für Stufe 4 und 5.** Patch-Updates mergen selbsttätig nur bei
   Herausgebern mit belastbarem Release-Prozess. Alles andere braucht einen
-  Menschenblick - auch Patches. Sicherheits-Updates (`vulnerabilityAlerts`)
-  mergen grundsätzlich nie automatisch.
+  Menschenblick - auch Patches.
+- **Sicherheitsupdates mergen selbsttätig.** Für Updates, die eine bekannte
+  Lücke schließen (`vulnerabilityAlerts`), entfällt die Karenzzeit, und sie
+  mergen automatisch, sobald die volle MR-Pipeline grün ist. Die offene,
+  öffentlich bekannte Lücke ist das größere Risiko als eine frische Version;
+  die Pipeline (Tests, E2E, `govulncheck`, Build) bleibt die Hürde.
 - **Keine Installationsskripte.** CI und `make` installieren npm-Pakete mit
   `--ignore-scripts`. `postinstall`-Skripte sind der meistgenutzte Angriffsweg in
   npm, und sie laufen auf dem Runner mit Zugriff auf CI-Variablen und
@@ -132,6 +135,23 @@ Der Wechsel betrifft nur `internal/storage/database.go`; die Repository-Schicht
 bleibt unberührt. Vor einem Wechsel Migrationen und Backup/Restore gegen eine
 bestehende Datenbank testen - die Treiber unterscheiden sich in Details der
 Typkonvertierung.
+
+**`robfig/cron` ist auf Stufe 1 gerutscht:** letzter Tag v3.0.1 von 2020,
+über 170 offene Issues. Genutzt werden nur der Ausdrucks-Parser (fünf Felder
+plus Deskriptoren) und der Scheduler in `internal/core/services/scheduler.go`
+und `group_service.go`. Die Aufgabe fällt in die Eigenbau-Kategorie: keine
+Kryptographie, die Ausdrücke kommen vom Administrator, ein Fehler fällt im
+Zeitplan sofort auf. Ablösung per Eigenbau mit Differenztest gegen `robfig/cron`
+(Aufwand wenige Tage); Notlösung ist der gepflegte Fork `netresearch/go-cron`.
+
+**`mochi-mqtt/server` beobachten:** Der Broker ist für die Agent-Anbindung
+unverzichtbar und Protokoll-Parsing, also kein Eigenbau. Letztes Release
+03/2025, viele offene Issues - Tendenz Richtung Stufe 2. Ausweg wäre ein
+Agent-Kanal über WebSocket (`fasthttp/websocket` ist ohnehin im Bestand).
+
+**`molecule-man/go-brrr` beobachten:** kommt seit fasthttp 1.75 transitiv
+(ersetzt `andybalholm/brotli`). Reines Go, fuzz-getestet, vom
+fasthttp-Maintainer mitgepflegt, aber jung und mit Bus-Faktor 1.
 
 ## Abhängigkeit entfernen
 

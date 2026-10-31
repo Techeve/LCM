@@ -273,12 +273,30 @@ func (r *ServerRepository) FindOutdatedPackages(serverID uint) ([]domain.Package
 	return pkgs, nil
 }
 
+// CountOutdatedPackages zählt die überfälligen Updates - ohne die, die apt
+// bei einem Upgrade bewusst zurückhält (held_reason, siehe
+// services/aptheld.go). Liegt auf einem solchen Paket eine CVE, zählt sie
+// über die CVE-Kriterien der Ampel.
 func (r *ServerRepository) CountOutdatedPackages(serverID uint) (int64, error) {
 	var n int64
 	err := r.db.Model(&domain.Package{}).
-		Where("server_ref = ? AND candidate_version != '' AND candidate_version != version", ServerRef(serverID)).
+		Where("server_ref = ? AND candidate_version != '' AND candidate_version != version AND COALESCE(held_reason, '') = ''", ServerRef(serverID)).
 		Count(&n).Error
 	return n, err
+}
+
+// PhasedPackagesWithCVE liefert die Pakete, deren Update in gestaffelter
+// Auslieferung steckt, obwohl auf ihnen eine CVE aus dem Paketbestand liegt -
+// die zieht ein Voll-Upgrade vor.
+func (r *ServerRepository) PhasedPackagesWithCVE(serverID uint) ([]string, error) {
+	ref := ServerRef(serverID)
+	var names []string
+	err := r.db.Model(&domain.Package{}).Distinct("name").
+		Where("server_ref = ? AND held_reason = ?", ref, domain.HeldReasonPhased).
+		Where("name IN (?)", r.db.Model(&domain.Vulnerability{}).Select("package_name").
+			Where("server_ref = ? AND source = ?", ref, domain.VulnSourceOS)).
+		Order("name").Pluck("name", &names).Error
+	return names, err
 }
 
 // CountPackages zählt den erfassten Paketbestand. Null bedeutet, dass die
@@ -1077,13 +1095,14 @@ func (r *ServerRepository) GlobalDockerOverview(scope AccessScope) ([]DockerImag
 		LocalOnly       int
 	}
 	q := scope.scopeServers(r.db.Table("docker_images").
-		Select("docker_images.repository, docker_images.tag," +
-			" COUNT(DISTINCT docker_images.server_id) AS server_count," +
-			" SUM(CASE WHEN docker_images.in_use THEN 1 ELSE 0 END) AS in_use_count," +
-			" MAX(CASE WHEN docker_images.update_available THEN 1 ELSE 0 END) AS update_available," +
-			" MAX(CASE WHEN docker_images.check_status = 'unauthorized' THEN 1 ELSE 0 END) AS unverifiable," +
+		Select("docker_images.repository, docker_images.tag,"+
+			" COUNT(DISTINCT docker_images.server_id) AS server_count,"+
+			" SUM(CASE WHEN docker_images.in_use THEN 1 ELSE 0 END) AS in_use_count,"+
+			" MAX(CASE WHEN docker_images.update_available THEN 1 ELSE 0 END) AS update_available,"+
+			" MAX(CASE WHEN docker_images.check_status = 'unauthorized' THEN 1 ELSE 0 END) AS unverifiable,"+
 			" MIN(CASE WHEN docker_images.check_status = 'local' THEN 1 ELSE 0 END) AS local_only").
-		Joins("JOIN servers ON servers.id = docker_images.server_id")).
+		Joins("JOIN servers ON servers.id = docker_images.server_id").
+		Where("docker_images.superseded = ?", false)).
 		Group("docker_images.repository, docker_images.tag").
 		Order("docker_images.repository, docker_images.tag")
 	if err := q.Scan(&raw).Error; err != nil {

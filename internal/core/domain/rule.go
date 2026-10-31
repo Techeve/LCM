@@ -38,6 +38,16 @@ const (
 	// bleiben unberührt (deren Update erfolgt bewusst über Compose/Pull).
 	RuleTypeDockerUpdateUnused = "docker-update-unused"
 
+	// RuleTypeDockerComposeUpdate zieht die neuen Images betroffener
+	// Compose-Projekte und erstellt deren Container neu (Watchtower-Art), danach
+	// räumt sie überholte Images weg. Command = optional ein Projektname.
+	RuleTypeDockerComposeUpdate = "docker-compose-update"
+
+	// RuleTypeDockerContainerUpdate aktualisiert laufende Standalone-Container:
+	// neues Image ziehen, Container mit gleicher Konfiguration neu erstellen,
+	// altes Image entfernen. Command = optional ein Containername.
+	RuleTypeDockerContainerUpdate = "docker-container-update"
+
 	// RuleTypeAptProxy bindet die Server der Gruppe an den zentralen
 	// APT-Cache an (Drop-in mit Acquire::http/https::Proxy) - als geplante
 	// Regel oder als Grundsatz-Regel (Drift-Check bei jeder Verbindung).
@@ -110,6 +120,16 @@ type Schedule struct {
 	CronExpr string `gorm:"not null" json:"cron_expr"` // z.B. "0 3 * * *"
 	Enabled  bool   `gorm:"default:true" json:"enabled"`
 
+	// SpreadMinutes macht aus der Startzeit ein Zeitfenster: Die Server der
+	// Gruppe beginnen gleichmäßig verteilt innerhalb dieser Minuten, jeder
+	// mit allen Regeln des Zeitplans nacheinander. 0 = alle zur Startzeit.
+	//
+	// Anlass waren Gruppen, die nachts geschlossen `apt-get update` über
+	// denselben APT-Cache fuhren - der Cache wurde zum Engpass, Läufe hingen
+	// und hielten die apt-Sperre. Gilt nur für Läufe des Zeitplans; wer von
+	// Hand auslöst, will das Ergebnis jetzt.
+	SpreadMinutes int `gorm:"default:0" json:"spread_minutes"`
+
 	// System-Schedules (Health-Check, System-Sync) sind nicht löschbar.
 	IsSystem bool `gorm:"default:false" json:"is_system"`
 
@@ -136,6 +156,11 @@ type Rule struct {
 	// (grundsätzlich, bei jeder Verbindung).
 	ScheduleID *uint `gorm:"index" json:"schedule_id"`
 	Enforce    bool  `gorm:"default:false" json:"enforce"`
+
+	// Position bestimmt die Reihenfolge der Regeln eines Auslösers (Zeitplan
+	// bzw. Grundsatz-Regeln der Gruppe): kleinere zuerst, bei Gleichstand die
+	// ältere. In der Oberfläche per Ziehen oder Pfeil verschiebbar.
+	Position int `gorm:"default:0" json:"position"`
 
 	Name    string `gorm:"not null" json:"name"`
 	Type    string `gorm:"not null" json:"type"` // RuleType*

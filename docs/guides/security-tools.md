@@ -125,7 +125,7 @@ sie um. LCM bietet drei Anbindungen:
 | Modus | Wofür | Voraussetzung |
 | --- | --- | --- |
 | **Lokal** (`local`) | Jeder Server betreibt seine eigene LAPI (Standalone). Ideal für einzelne, isolierte Hosts. | keine |
-| **Zentrale LAPI** (`remote`) | Alle Server melden an **eine** gemeinsame LAPI - geteilte Sperrlisten flottenweit. | URL + Maschinen-Login + Passwort unter *Einstellungen → CrowdSec*; die Maschine muss dort registriert sein (`cscli machines add`) |
+| **Zentrale LAPI** (`remote`) | Die Server melden an eine gemeinsame LAPI - geteilte Sperrlisten für alle, die dort angebunden sind. Bei mehreren LAPIs wird eine gewählt. | mindestens eine LAPI unter *Einstellungen → CrowdSec*; die Maschine muss dort registriert sein (`cscli machines add`) |
 | **CrowdSec Console** (`console`) | Zusätzlich an die Cloud-Console von CrowdSec anschließen (`cscli console enroll`). | Enrollment-Key unter *Einstellungen → CrowdSec* |
 
 Wählst du *remote* oder *console* ohne hinterlegte Zugangsdaten, bricht LCM die
@@ -136,10 +136,17 @@ konfigurierter Server hinterlassen.
 
 *Einstellungen → CrowdSec*:
 
-- **Self-hosted LAPI** - URL + Maschinen-Login + Passwort (verschlüsselt gespeichert).
+- **Zentrale LAPIs** - eine Liste, je LAPI eine **Bezeichnung** (z. B. „LAPI
+  Techeve", „LAPI Service 2000"), URL, Maschinen-Login und Passwort
+  (verschlüsselt gespeichert, beim Bearbeiten leer = unverändert). So lassen
+  sich mehrere Standorte oder Kunden mit je eigener LAPI betreuen.
 - **CrowdSec Console** - Enrollment-Key (verschlüsselt gespeichert).
 
-Nur hinterlegte Optionen sind im Installationsformular auswählbar.
+Im Installationsformular erscheint bei *Zentrale LAPI* eine Auswahl der
+hinterlegten LAPIs. Nur hinterlegte Optionen sind wählbar.
+
+Bis LCM 1.45 gab es genau eine LAPI in den Einstellungen. Sie wird beim Update
+als **„Standard-LAPI"** in die Liste übernommen.
 
 ## CrowdSec-LAPI auf dem LCM-Host
 
@@ -154,8 +161,9 @@ verdrahten. Schritt für Schritt:
    (`/etc/crowdsec/config.yaml.local`), erzeugt ein zufälliges Passwort und legt
    das Maschinen-Konto **`lcm-managed`** an (idempotent - ein bestehendes Konto
    wird ersetzt).
-3. LCM liest das erzeugte Passwort aus dem Job-Output zurück und **trägt
-   URL/Login/Passwort automatisch in die CrowdSec-Einstellungen ein**. Die URL
+3. LCM liest das erzeugte Passwort aus dem Job-Output zurück und **trägt die
+   LAPI als „LCM-Host" in die Liste unter Einstellungen → CrowdSec ein** (gibt
+   es die Adresse schon, bekommt der Eintrag die neuen Zugangsdaten). Die URL
    zeigt auf die erste Nicht-Loopback-IP des Hosts, z. B.
    `http://203.0.113.5:8080`, Login `lcm-managed`.
 4. Ab jetzt können verwaltete Server ohne weitere Eingaben im **Remote-Modus**
@@ -177,7 +185,7 @@ standardmäßig auf **9310** (UI/API), die LAPI behält ihren CrowdSec-Standard
 
 ## LAPI überwachen & angebundene Server
 
-Die Seite **Einstellungen → CrowdSec** bietet rund um die zentrale LAPI:
+Die Seite **Einstellungen → CrowdSec** bietet je LAPI:
 
 - **Jetzt prüfen** - eine Login-Probe vom LCM-Host aus (POST
   `/v1/watchers/login` mit den hinterlegten Maschinen-Zugangsdaten). Sie
@@ -185,14 +193,14 @@ Die Seite **Einstellungen → CrowdSec** bietet rund um die zentrale LAPI:
   abgelehnt* (Zugangsdaten veraltet) und *nicht erreichbar*.
 - **Überwachung** - LCM empfiehlt eine Alarm-Regel vom Typ **„CrowdSec-LAPI
   nicht erreichbar"**; sie lässt sich hier per Klick anlegen. Mit aktiver Regel
-  prüft LCM die LAPI **automatisch alle 30 Minuten** (mit der
+  prüft LCM **jede** LAPI **automatisch alle 30 Minuten** (mit der
   Alarm-Auswertung) und meldet Ausfälle über den zugewiesenen
   [Benachrichtigungs-Kanal](/guides/alerts). Ohne Kanal wird nur die
   Alarm-Historie geführt.
 - **Angebundene Server** - alle Server, deren CrowdSec-Agent laut seiner
   Credentials-Datei (`/etc/crowdsec/local_api_credentials.yaml`, beim Scan
-  live gelesen) an die hier konfigurierte LAPI meldet - samt Anbindungs-Modus
-  und Dienst-Status.
+  live gelesen) an eine der hier hinterlegten LAPIs meldet - samt LAPI,
+  Anbindungs-Modus und Dienst-Status.
 
 ## Verwalten (Dienst, Allowlist, Sperren)
 

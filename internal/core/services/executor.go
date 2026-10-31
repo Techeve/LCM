@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,9 @@ const healthProbeCmd = "echo lcm-health-ok"
 // der Concurrency-Lock des JobService verhindert überlappende Jobs pro
 // Server.
 type Executor struct {
+	// aptCaches löst die APT-Cache-Auswahl einer Regel auf (siehe
+	// ruleAptCacheURL).
+	aptCaches     func(cacheID uint) (string, error)
 	servers       *repositories.ServerRepository
 	groups        *repositories.GroupRepository
 	profiles      *repositories.PrivilegeProfileRepository
@@ -58,6 +62,7 @@ type Executor struct {
 	settings      *repositories.SettingsRepository
 	connect       func(*domain.Server) (sshx.Conn, error)
 	recorder      *SSHRecorder
+	compact       func() (string, error)
 	customActions *repositories.CustomActionRepository
 	scanner       VulnScanner
 	registry      registry.Checker
@@ -91,6 +96,13 @@ func (e *Executor) WithIPAllowlists(expand func([]uint) ([]string, error)) *Exec
 // statt still zu scheitern.
 func (e *Executor) WithDSMRefresh(fn func(*domain.Server) (string, error)) *Executor {
 	e.dsmRefresh = fn
+	return e
+}
+
+// WithCompactor verdrahtet die Verdichtung der Datenbank, die am Ende jeder
+// Log-Bereinigung läuft (siehe storage.CompactDatabase).
+func (e *Executor) WithCompactor(compact func() (string, error)) *Executor {
+	e.compact = compact
 	return e
 }
 
@@ -154,15 +166,93 @@ func NewExecutor(
 	}
 }
 
-// RunSchedule führt alle aktiven Rules eines Schedules nacheinander aus.
+// RunSchedule führt alle aktiven Rules eines Schedules nacheinander aus -
+// mit Zeitfenster (SpreadMinutes) über die Server verteilt, siehe runSpread.
 func (e *Executor) RunSchedule(schedule *domain.Schedule, triggeredBy string) {
-	for i := range schedule.Rules {
-		rule := schedule.Rules[i]
-		if !rule.Enabled {
-			continue
+	var rules []domain.Rule
+	for _, rule := range schedule.Rules {
+		if rule.Enabled {
+			rules = append(rules, rule)
 		}
-		e.RunRule(&rule, triggeredBy)
 	}
+	if schedule.SpreadMinutes > 0 && triggeredBy == ActorScheduler {
+		e.runSpread(rules, time.Duration(schedule.SpreadMinutes)*time.Minute, triggeredBy)
+		return
+	}
+	for i := range rules {
+		e.RunRule(&rules[i], triggeredBy)
+	}
+}
+
+// runSpread verteilt einen Zeitplan-Lauf über ein Zeitfenster: Jeder Server
+// beginnt zu seinem eigenen Versatz (spreadOffset) und arbeitet dort ALLE
+// Regeln des Zeitplans nacheinander ab. Ohne Fenster läuft dagegen Regel für
+// Regel über die ganze Gruppe - verteilte man jede Regel einzeln, dauerte der
+// Lauf ein Fenster je Regel, und die zweite Regel träfe wieder alle Server
+// zugleich.
+//
+// Zentrale Regeln (Docker-, Anwendungs-Check) betreffen keinen einzelnen
+// Server; sie laufen einmal, wenn alle Server durch sind.
+func (e *Executor) runSpread(rules []domain.Rule, window time.Duration, triggeredBy string) {
+	var perServer, central []domain.Rule
+	for _, rule := range rules {
+		if isCentralRule(rule.Type) {
+			central = append(central, rule)
+		} else {
+			perServer = append(perServer, rule)
+		}
+	}
+	if len(perServer) > 0 {
+		e.runSpreadServers(perServer, window, triggeredBy)
+	}
+	for i := range central {
+		e.RunRule(&central[i], triggeredBy)
+	}
+}
+
+func (e *Executor) runSpreadServers(rules []domain.Rule, window time.Duration, triggeredBy string) {
+	servers, err := e.serversForRule(&rules[0])
+	if err != nil {
+		slog.Error("spread run: group servers not loadable", "rule", rules[0].ID, "error", err)
+		return
+	}
+	// Feste Reihenfolge: Jeder Server behält seinen Platz im Fenster und
+	// wird damit jede Nacht etwa zur selben Zeit bearbeitet.
+	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
+	plans := make([]runPlan, len(rules))
+	for i := range rules {
+		plans[i] = e.planFor(&rules[i], triggeredBy)
+	}
+	slog.Debug("spread run starting", "rules", len(rules), "servers", len(servers), "window", window.String())
+
+	sem := make(chan struct{}, ruleParallelism)
+	var wg sync.WaitGroup
+	for i := range servers {
+		server := &servers[i]
+		delay := spreadOffset(i, len(servers), window)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer safego.Recover("spread-server:"+server.Name, nil)
+			time.Sleep(delay)
+			for j := range rules {
+				e.runOnServer(server, &rules[j], triggeredBy, plans[j], sem)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// spreadOffset verteilt n Server gleichmäßig über das Fenster: Der erste
+// beginnt sofort, der letzte eine Lücke vor dem Fensterende.
+func spreadOffset(i, n int, window time.Duration) time.Duration {
+	return window * time.Duration(i) / time.Duration(n)
+}
+
+// isCentralRule meldet die Regeln, die einmal je Lauf auf dem LCM-Host
+// laufen statt auf jedem Server (siehe RunRule).
+func isCentralRule(ruleType string) bool {
+	return ruleType == domain.RuleTypeDockerCheck || ruleType == domain.RuleTypeAppCheck
 }
 
 // ruleParallelism begrenzt, wie viele Server einer Rule GLEICHZEITIG
@@ -178,10 +268,8 @@ const ruleParallelism = 4
 // Health-Check und der nächtliche System-Sync -, dann gilt die Grenze je Lauf
 // und die Last addiert sich.
 //
-// Auf dem LCM-Host von Techeve endete das jede Nacht damit, dass der Prozess
-// unter Speicherdruck minutenlang nicht mehr vorankam und systemd ihn
-// abräumte. Die Schranke staut die Läufe stattdessen auf: Ein nächtlicher
-// Durchgang dauert etwas länger, dafür bleibt der Dienst ansprechbar.
+// Die Schranke staut die Läufe stattdessen auf: Ein nächtlicher Durchgang
+// dauert etwas länger, dafür bleiben LCM-Host und Netz ansprechbar.
 const GlobalServerSlots = 8
 
 // RunRule führt eine Rule aus. Serverbezogene Rules laufen auf ALLEN
@@ -208,15 +296,7 @@ func (e *Executor) RunRule(rule *domain.Rule, triggeredBy string) {
 		slog.Error("rule execution: group servers not loadable", "rule", rule.ID, "error", err)
 		return
 	}
-	// Einmal je Regel-Lauf ermittelt, nicht je Server: Takt und Vorrang
-	// hängen am Zeitplan und an der Gruppe, nicht am einzelnen Server.
-	plan := runPlan{
-		interval:   e.scheduleInterval(rule),
-		priority:   e.rulePriority(rule),
-		queueable:  triggeredBy == ActorScheduler,
-		healthSkip: 0,
-	}
-	plan.healthSkip = e.healthSkipWindow(rule, plan.interval, triggeredBy)
+	plan := e.planFor(rule, triggeredBy)
 
 	slog.Debug("rule starting", "rule", rule.Name, "type", rule.Type,
 		"servers", len(servers), "priority", plan.priority,
@@ -298,20 +378,35 @@ func (e *Executor) scheduleInterval(rule *domain.Rule) time.Duration {
 	if err != nil {
 		return 0
 	}
-	spec, err := cronParser.Parse(sched.CronExpr)
+	return cronInterval(sched.CronExpr)
+}
+
+// cronInterval liefert den kürzesten Abstand zwischen den nächsten Läufen
+// eines Cron-Ausdrucks. 0 = unlesbarer Ausdruck oder kein weiterer Lauf.
+//
+// Der kürzeste, nicht der nächste: Bei „0 3 * * 1-5" liegen zwischen Freitag
+// und Montag drei Tage, sonst einer. Wer nur den nächsten Abstand misst,
+// bekommt je nach Wochentag eine andere Antwort - und ließe freitags ein
+// Zeitfenster zu, das ab Montag in den Folgelauf reicht.
+func cronInterval(expr string) time.Duration {
+	spec, err := cronParser.Parse(expr)
 	if err != nil {
 		return 0
 	}
-	now := time.Now()
-	first := spec.Next(now)
-	if first.IsZero() {
-		return 0
+	const samples = 8
+	var shortest time.Duration
+	prev := spec.Next(time.Now())
+	for range samples {
+		next := spec.Next(prev)
+		if prev.IsZero() || next.IsZero() {
+			break
+		}
+		if gap := next.Sub(prev); shortest == 0 || gap < shortest {
+			shortest = gap
+		}
+		prev = next
 	}
-	second := spec.Next(first)
-	if second.IsZero() {
-		return 0
-	}
-	return second.Sub(first)
+	return shortest
 }
 
 // healthSkipWindow liefert die Frist, innerhalb derer ein Health-Ping
@@ -366,6 +461,19 @@ type runPlan struct {
 	queueable bool
 	// healthSkip ist die Frist, innerhalb derer ein Health-Ping entfällt.
 	healthSkip time.Duration
+}
+
+// planFor ermittelt den Plan eines Regel-Laufs - einmal je Lauf, nicht je
+// Server: Takt und Vorrang hängen am Zeitplan und an der Gruppe, nicht am
+// einzelnen Server.
+func (e *Executor) planFor(rule *domain.Rule, triggeredBy string) runPlan {
+	plan := runPlan{
+		interval:  e.scheduleInterval(rule),
+		priority:  e.rulePriority(rule),
+		queueable: triggeredBy == ActorScheduler,
+	}
+	plan.healthSkip = e.healthSkipWindow(rule, plan.interval, triggeredBy)
+	return plan
 }
 
 // rulePriority liefert den Vorrang der Gruppe, aus der eine Regel stammt.
@@ -465,6 +573,9 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	// erkannte Paketverwaltung (apt/dnf/zypper) und frischen danach den
 	// Paketbestand auf.
 	if script, ok := scriptForRule(server.PackageManager, rule.Type, rule.Command); ok {
+		if rule.Type == domain.RuleTypeUpdate {
+			script = aptUpgradeEnv(e.settings, e.servers, server) + script
+		}
 		e.runAptRule(job, server, rule, script, triggeredBy)
 		return
 	}
@@ -484,6 +595,14 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	// Docker-Update-Unused zieht neue Versionen ungenutzter Images.
 	if rule.Type == domain.RuleTypeDockerUpdateUnused {
 		e.runDockerUpdateUnusedRule(job, server, rule, triggeredBy)
+		return
+	}
+	if rule.Type == domain.RuleTypeDockerComposeUpdate {
+		e.runDockerComposeUpdateRule(job, server, rule, triggeredBy)
+		return
+	}
+	if rule.Type == domain.RuleTypeDockerContainerUpdate {
+		e.runDockerContainerUpdateRule(job, server, rule, triggeredBy)
 		return
 	}
 
@@ -511,6 +630,13 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 		return
 	}
 
+	// Rechte-Soll / ACL am Zeitplan: derselbe Abgleich wie als
+	// Grundsatz-Regel, nur zur Uhrzeit des Zeitplans und als eigener Job.
+	if rule.Type == domain.RuleTypePermSync || rule.Type == domain.RuleTypeACLSetup {
+		e.runStateRule(job, server, rule, triggeredBy)
+		return
+	}
+
 	cmd := commandForRule(rule)
 	if cmd == "" {
 		e.jobs.Complete(job, "kein kommando für rule-typ "+rule.Type, ptrInt(0), nil)
@@ -528,7 +654,7 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	// unabhängig vom (frei umbenennbaren) Rule-Namen.
 	purpose := "rule:" + rule.Name
 	if rule.Type == domain.RuleTypeHealth {
-		purpose = "health-check"
+		purpose = domain.HealthCheckPurpose
 	}
 	conn = e.recorder.Record(conn, SessionContext{
 		ServerID: server.ID, JobID: &job.ID, Actor: triggeredBy,
@@ -780,14 +906,14 @@ func (e *Executor) enforceRule(conn sshx.Conn, server *domain.Server, rule *doma
 		return e.enforceACLSetup(conn, server, rule)
 
 	case domain.RuleTypeAptProxy:
-		cacheURL, err := e.aptCacheURLFromSettings()
+		cacheURL, err := e.ruleAptCacheURL(rule)
 		if err != nil {
 			return fmt.Sprintf("  [%s] übersprungen: %v", rule.Name, err), nil
 		}
 		// Drift-Check: Drop-in vorhanden UND zeigt auf die aktuelle Cache-URL?
 		current, _, err := conn.Run(privRun(server, "cat "+aptProxyDropin+" 2>/dev/null || true"))
 		if err == nil && strings.Contains(current, `"`+cacheURL+`"`) {
-			_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true})
+			_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true, "apt_proxy_url": cacheURL})
 			return fmt.Sprintf("  [%s] apt-cache ok - regel umgesetzt (%s)", rule.Name, cacheURL), nil
 		}
 		out, code, err := conn.Run(privRun(server, aptProxyEnableScript(cacheURL)))
@@ -797,31 +923,36 @@ func (e *Executor) enforceRule(conn sshx.Conn, server *domain.Server, rule *doma
 		if err != nil {
 			return fmt.Sprintf("  [%s] ABWEICHUNG - durchsetzung fehlgeschlagen: %v", rule.Name, err), err
 		}
-		_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true})
+		_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true, "apt_proxy_url": cacheURL})
 		e.recordEnforcement(server, rule, "APT-Cache neu angebunden: "+cacheURL)
 		return fmt.Sprintf("  [%s] abweichung erkannt - apt-cache neu angebunden (%s)", rule.Name, cacheURL), nil
 	}
 	return fmt.Sprintf("  [%s] typ %q wird als grundsatz-regel nicht unterstützt", rule.Name, rule.Type), nil
 }
 
-// aptCacheURLFromSettings liefert die konfigurierte APT-Cache-URL oder einen
-// Fehler, wenn keine hinterlegt ist.
-func (e *Executor) aptCacheURLFromSettings() (string, error) {
-	settings, err := e.settings.Get()
-	if err != nil {
-		return "", err
-	}
-	if settings.AptCacheURL == "" {
+// ruleAptCacheURL liefert die Adresse des Caches, den eine apt-proxy-Regel
+// gewählt hat (Command = Cache-ID; leer = der einzige, wenn es genau einen
+// gibt).
+func (e *Executor) ruleAptCacheURL(rule *domain.Rule) (string, error) {
+	if e.aptCaches == nil {
 		return "", ErrNoAptCacheURL
 	}
-	return settings.AptCacheURL, nil
+	id, _ := strconv.ParseUint(strings.TrimSpace(rule.Command), 10, 64)
+	return e.aptCaches(uint(id))
+}
+
+// WithAptCaches verdrahtet die Auflösung der APT-Caches für die Regel
+// „APT-Cache anbinden".
+func (e *Executor) WithAptCaches(fn func(cacheID uint) (string, error)) *Executor {
+	e.aptCaches = fn
+	return e
 }
 
 // runAptProxyRule bindet einen Server per Gruppen-Regel an den zentralen
 // APT-Cache an - gleiche Skriptlogik wie die Server-Aktion (Drop-in schreiben,
 // per apt-Update prüfen, bei Fehlschlag zurückrollen).
 func (e *Executor) runAptProxyRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
-	cacheURL, err := e.aptCacheURLFromSettings()
+	cacheURL, err := e.ruleAptCacheURL(rule)
 	if err != nil {
 		e.jobs.Complete(job, "", nil, err)
 		return
@@ -842,7 +973,11 @@ func (e *Executor) runAptProxyRule(job *domain.Job, server *domain.Server, rule 
 	if runErr == nil && code != 0 {
 		runErr = fmt.Errorf("apt-cache-anbindung endete mit exit-code %d", code)
 	}
-	_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": runErr == nil})
+	fields := map[string]any{"apt_proxy_active": runErr == nil}
+	if runErr == nil {
+		fields["apt_proxy_url"] = cacheURL
+	}
+	_ = e.servers.UpdateFields(server.ID, fields)
 	e.finishWithHealth(job, server, output, runErr)
 }
 
@@ -850,6 +985,31 @@ func (e *Executor) runAptProxyRule(job *domain.Job, server *domain.Server, rule 
 // DNS-Test-Domains aufgelöst werden können, und speichert das dreistufige
 // Ergebnis (full/partial/none) am Server. Rein lesend - gleiche Skriptlogik wie
 // die Server-Aktion DNSTest.
+// runStateRule führt eine Soll-Zustands-Regel (Rechte-Soll, ACL) am Zeitplan
+// aus. Der Abgleich ist derselbe wie bei der Grundsatz-Regel: Er greift nur
+// bei Abweichung ein und meldet, was er vorfand.
+func (e *Executor) runStateRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
+	conn, err := e.connect(server)
+	if err != nil {
+		e.markUnreachable(server, err)
+		e.jobs.Complete(job, "", nil, fmt.Errorf("verbindung: %w", err))
+		return
+	}
+	conn = e.recorder.Record(conn, SessionContext{
+		ServerID: server.ID, JobID: &job.ID, Actor: triggeredBy,
+		Purpose: "rule:" + rule.Name, Host: server.Host, User: server.ServiceUser,
+	})
+	defer conn.Close()
+
+	var output string
+	if rule.Type == domain.RuleTypePermSync {
+		output, err = e.enforcePermSync(conn, server, rule)
+	} else {
+		output, err = e.enforceACLSetup(conn, server, rule)
+	}
+	e.finishWithHealth(job, server, output, err)
+}
+
 func (e *Executor) runDNSTestRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
 	// RouterOS hat keine POSIX-Shell - getent/nslookup würden in der
 	// RouterOS-CLI nur Syntaxfehler produzieren.
@@ -862,7 +1022,7 @@ func (e *Executor) runDNSTestRule(job *domain.Job, server *domain.Server, rule *
 		e.jobs.Complete(job, "", nil, err)
 		return
 	}
-	domains := sanitizeDNSDomains(settings.DNSTestDomainList())
+	domains := ruleTestDomains(rule, settings)
 	if len(domains) == 0 {
 		e.jobs.Complete(job, "keine DNS-Test-Domains gepflegt (Einstellungen → DNS)", ptrInt(0), nil)
 		return
@@ -1505,6 +1665,7 @@ func (e *Executor) runCleanup() (string, error) {
 			alertsDeleted, _ = e.alerts.CleanupEventsOlderThan(cutoff)
 		}
 	}
+	routine := e.cleanupRoutineLogs(settings.RoutineLogRetentionDays)
 	// Backups über der Aufbewahrungsgrenze ebenfalls entfernen.
 	e.backups.Prune(settings.BackupRetention)
 	// Speicher-Verlauf nach der (auf 90-365 Tage begrenzten) Frist bereinigen.
@@ -1516,9 +1677,39 @@ func (e *Executor) runCleanup() (string, error) {
 	// der letzte Monate zurückliegt; wer täglich scannt, sammelt sonst
 	// unbegrenzt Befunde an.
 	reportsDeleted, _ := e.servers.CleanupDeepScanReports(deepScanReportsKept)
-	return fmt.Sprintf("%d alte job-einträge, %d ssh-protokolle, %d alarm-events, %d speicher-snapshots und %d deep-scan-berichte gelöscht (retention: %d tage logs, %d tage speicher, %d berichte je server)",
+	report := fmt.Sprintf("%d alte job-einträge, %d ssh-protokolle, %d alarm-events, %d speicher-snapshots und %d deep-scan-berichte gelöscht (retention: %d tage logs, %d tage speicher, %d berichte je server)\n%s",
 		deleted, logsDeleted, alertsDeleted, storageDeleted, reportsDeleted,
-		settings.LogRetentionDays, storageRetention, deepScanReportsKept), nil
+		settings.LogRetentionDays, storageRetention, deepScanReportsKept, routine)
+	// Verdichten erst NACH dem Löschen: Erst dann sind die Seiten frei, die
+	// ein VACUUM zurückgeben kann.
+	return e.compactDatabase(report)
+}
+
+// cleanupRoutineLogs entfernt die Ausgaben der Routine-Protokolle nach ihrer
+// kurzen Frist - die Einträge selbst bleiben bis zur allgemeinen Frist.
+func (e *Executor) cleanupRoutineLogs(days int) string {
+	if days <= 0 {
+		return "routine-protokolle: keine frist gesetzt"
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	jobs, jobErr := e.jobs.ReplaceRoutineOutputOlderThan(cutoff)
+	commands, cmdErr := e.recorder.DeleteRoutineCommandsOlderThan(cutoff)
+	if err := errors.Join(jobErr, cmdErr); err != nil {
+		return fmt.Sprintf("routine-protokolle: fehler beim kürzen: %v", err)
+	}
+	return fmt.Sprintf("routine-protokolle: %d job-ausgaben und %d health-check-kommandos entfernt (älter als %d tage)",
+		jobs, commands, days)
+}
+
+// compactDatabase hängt das Ergebnis der Datenbank-Verdichtung an den
+// Bericht. Ein Fehler dort lässt den Lauf scheitern, die Bereinigung davor
+// ist aber bereits geschehen - der Bericht nennt sie trotzdem.
+func (e *Executor) compactDatabase(report string) (string, error) {
+	if e.compact == nil {
+		return report, nil
+	}
+	summary, err := e.compact()
+	return report + "\n" + summary, err
 }
 
 // TriggerRuleManually führt eine Rule sofort asynchron aus.

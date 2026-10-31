@@ -15,6 +15,13 @@ import (
 // (Compose-Projekt "webshop" mit working_dir, nginx:1.25 + lokales Image).
 func joinDockerServer(t *testing.T, env *testEnv, name string) uint {
 	t.Helper()
+	return joinDockerServerWith(t, env, name, nil)
+}
+
+// joinDockerServerWith wie joinDockerServer, legt aber zusätzliche Antworten
+// über das Standard-Inventar (gleicher Schlüssel überschreibt).
+func joinDockerServerWith(t *testing.T, env *testEnv, name string, extra map[string]sshx.FakeResponse) uint {
+	t.Helper()
 	env.Dialer.Responses = map[string]sshx.FakeResponse{
 		"apt-get dnf zypper": {Output: "apt-get\n"}, // Debian → apt (Join prüft das)
 		"sudo -n id -u":      {Output: "0\n"},       // Service-User erreicht root
@@ -22,6 +29,9 @@ func joinDockerServer(t *testing.T, env *testEnv, name string) uint {
 		"dpkg-query":         {Output: "nginx 1.22.1\n"},
 	}
 	for k, v := range dockerResponses() {
+		env.Dialer.Responses[k] = v
+	}
+	for k, v := range extra {
 		env.Dialer.Responses[k] = v
 	}
 	// Eindeutiger Host je Name (Duplikat-Host-Prüfung im Join).
@@ -308,7 +318,7 @@ func TestDockerPruneRule(t *testing.T) {
 	if err := env.Groups.AssignServer(repositories.ScopeAll(), group.ID, id, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "nächtlich", "0 3 * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "nächtlich", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}

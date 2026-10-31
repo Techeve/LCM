@@ -30,7 +30,7 @@ func TestParsePackageNames(t *testing.T) {
 }
 
 func TestAptScripts(t *testing.T) {
-	if !strings.Contains(aptUpgradeAllScript(), "apt-get -o Dpkg::Options::=--force-confold -y upgrade") {
+	if !strings.Contains(aptUpgradeAllScript(), "lcm_apt -y --with-new-pkgs upgrade") {
 		t.Errorf("upgrade-all-skript unerwartet: %s", aptUpgradeAllScript())
 	}
 
@@ -52,7 +52,7 @@ func TestAptScripts(t *testing.T) {
 
 func TestScriptForRuleApt(t *testing.T) {
 	for _, tc := range []struct{ typ, cmd, want string }{
-		{"update", "", "-y upgrade"},
+		{"update", "", "--with-new-pkgs upgrade"},
 		{"security", "", "security"},
 		{"packages", "htop unzip", "--only-upgrade -y htop unzip"},
 	} {
@@ -85,11 +85,12 @@ func TestParseMadison(t *testing.T) {
 func TestAptRetry(t *testing.T) {
 	script := aptUpgradeAllScript()
 	for _, want := range []string{
-		"for i in 1 2 3;",        // drei Anläufe
-		"dpkg --configure -a",    // angebrochene Installationen abschließen
-		"-f install -y",          // fehlende Abhängigkeiten nachziehen
-		"[ $rc -eq 0 ] && break", // Erfolg beendet den Lauf sofort
-		"exit $rc",               // Fehlschlag bleibt ein Fehlschlag
+		"for i in 1 2 3;",         // drei Anläufe
+		"dpkg --configure -a",     // angebrochene Installationen abschließen
+		"-f install -y",           // fehlende Abhängigkeiten nachziehen
+		"[ $rc -eq 0 ] && break",  // Erfolg beendet den Lauf sofort
+		"[ $rc -eq 75 ] && break", // belegtes apt: weitere Anläufe helfen nicht
+		"exit $rc",                // Fehlschlag bleibt ein Fehlschlag
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("wiederholungslauf ohne %q:\n%s", want, script)

@@ -582,11 +582,10 @@ func (ctrl *OpsController) GetSettings(c fiber.Ctx) error {
 	// „konfiguriert?"-Flags mitgeben, ohne die Werte preiszugeben.
 	return c.JSON(struct {
 		*domain.GlobalSettings
-		CrowdSecLapiConfigured    bool `json:"crowdsec_lapi_configured"`
 		CrowdSecConsoleConfigured bool `json:"crowdsec_console_configured"`
 		BackupPassphraseSet       bool `json:"backup_passphrase_set"`
 		BackupRecipientsSet       bool `json:"backup_recipients_set"`
-	}{settings, settings.CrowdSecLapiConfigured(), settings.CrowdSecConsoleConfigured(),
+	}{settings, settings.CrowdSecConsoleConfigured(),
 		services.BackupPassphraseSet() || ctrl.settings.BackupPassphraseStored(),
 		strings.TrimSpace(settings.BackupRecipients) != ""})
 }
@@ -692,6 +691,7 @@ type globalSettingsRequest struct {
 	DefaultSSHPassword          *string `json:"default_ssh_password"`
 	DefaultSSHPort              *int    `json:"default_ssh_port"`
 	LogRetentionDays            *int    `json:"log_retention_days"`
+	RoutineLogRetentionDays     *int    `json:"routine_log_retention_days"`
 	StorageHistoryRetentionDays *int    `json:"storage_history_retention_days"`
 	BackupEnabled               *bool   `json:"backup_enabled"`
 	BackupIntervalHours         *int    `json:"backup_interval_hours"`
@@ -700,6 +700,7 @@ type globalSettingsRequest struct {
 	BackupDir                   *string `json:"backup_dir"`
 	RestoreAutoRestart          *bool   `json:"restore_auto_restart"`
 	CVEScanEnabled              *bool   `json:"cve_scan_enabled"`
+	AptIncludePhased            *bool   `json:"apt_include_phased"`
 	CVEScanCron                 *string `json:"cve_scan_cron"`
 	AdvisoryPollingEnabled      *bool   `json:"advisory_polling_enabled"`
 	AdvisoryLocalCopy           *bool   `json:"advisory_local_copy"`
@@ -708,18 +709,15 @@ type globalSettingsRequest struct {
 	SessionTTLMinutes           *int    `json:"session_ttl_minutes"`
 	JobIdleTimeoutMinutes       *int    `json:"job_idle_timeout_minutes"`
 	JobIdleTimeoutSlowMinutes   *int    `json:"job_idle_timeout_slow_minutes"`
-	AptCacheURL                 *string `json:"apt_cache_url"`
 	Require2FARoles             *string `json:"require_2fa_roles"`
 	PublicBaseURL               *string `json:"public_base_url"`
 	DNSServerPresets            *string `json:"dns_server_presets"`
 	DNSTestDomains              *string `json:"dns_test_domains"`
 	NTPServerPresets            *string `json:"ntp_server_presets"`
 	DefaultTimezone             *string `json:"default_timezone"`
-	// CrowdSec-Zugang; Passwort/Key write-only (leer = unverändert).
-	CrowdSecLapiURL      *string `json:"crowdsec_lapi_url"`
-	CrowdSecLapiLogin    *string `json:"crowdsec_lapi_login"`
-	CrowdSecLapiPassword *string `json:"crowdsec_lapi_password"`
-	CrowdSecConsoleKey   *string `json:"crowdsec_console_key"`
+	// CrowdSec-Console-Key, write-only (leer = unverändert). Die LAPIs
+	// haben eigene Endpunkte (/settings/crowdsec/lapis).
+	CrowdSecConsoleKey *string `json:"crowdsec_console_key"`
 
 	// Standard-E-Mail-Versand (System-Mailer); mail_password ist write-only
 	// (leer = unverändert).
@@ -744,6 +742,7 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		DefaultSSHPassword:          req.DefaultSSHPassword,
 		DefaultSSHPort:              req.DefaultSSHPort,
 		LogRetentionDays:            req.LogRetentionDays,
+		RoutineLogRetentionDays:     req.RoutineLogRetentionDays,
 		StorageHistoryRetentionDays: req.StorageHistoryRetentionDays,
 		BackupEnabled:               req.BackupEnabled,
 		BackupIntervalHours:         req.BackupIntervalHours,
@@ -752,6 +751,7 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		BackupDir:                   req.BackupDir,
 		RestoreAutoRestart:          req.RestoreAutoRestart,
 		CVEScanEnabled:              req.CVEScanEnabled,
+		AptIncludePhased:            req.AptIncludePhased,
 		CVEHighWeightPackages:       req.CVEHighWeightPackages,
 		CVEScanCron:                 req.CVEScanCron,
 		AdvisoryPollingEnabled:      req.AdvisoryPollingEnabled,
@@ -760,16 +760,12 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		SessionTTLMinutes:           req.SessionTTLMinutes,
 		JobIdleTimeoutMinutes:       req.JobIdleTimeoutMinutes,
 		JobIdleTimeoutSlowMinutes:   req.JobIdleTimeoutSlowMinutes,
-		AptCacheURL:                 req.AptCacheURL,
 		Require2FARoles:             req.Require2FARoles,
 		PublicBaseURL:               req.PublicBaseURL,
 		DNSServerPresets:            req.DNSServerPresets,
 		DNSTestDomains:              req.DNSTestDomains,
 		NTPServerPresets:            req.NTPServerPresets,
 		DefaultTimezone:             req.DefaultTimezone,
-		CrowdSecLapiURL:             req.CrowdSecLapiURL,
-		CrowdSecLapiLogin:           req.CrowdSecLapiLogin,
-		CrowdSecLapiPassword:        req.CrowdSecLapiPassword,
 		CrowdSecConsoleKey:          req.CrowdSecConsoleKey,
 		MailEnabled:                 req.MailEnabled,
 		MailHost:                    req.MailHost,
@@ -817,23 +813,126 @@ func (ctrl *OpsController) TestSystemMail(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "sent"})
 }
 
-// CrowdSecLapiStatus - GET /api/v1/settings/crowdsec/status (settings:manage)
-// Prüft vom LCM-Host aus, ob die konfigurierte CrowdSec-LAPI erreichbar ist
-// und die hinterlegten Maschinen-Zugangsdaten akzeptiert.
-func (ctrl *OpsController) CrowdSecLapiStatus(c fiber.Ctx) error {
-	status, err := ctrl.settings.CheckCrowdSecLapi()
+// ListCrowdSecLapis - GET /api/v1/settings/crowdsec/lapis (settings:manage)
+// und GET /api/v1/crowdsec-lapis (servers:read, für die Auswahl bei der
+// Einrichtung). Passwörter werden nie ausgegeben.
+func (ctrl *OpsController) ListCrowdSecLapis(c fiber.Ctx) error {
+	lapis, err := ctrl.settings.ListCrowdSecLapis()
 	if err != nil {
 		return err
+	}
+	return c.JSON(lapis)
+}
+
+// SaveCrowdSecLapi - POST /api/v1/settings/crowdsec/lapis (settings:manage)
+// Legt eine LAPI an (ohne id) oder aktualisiert sie (mit id; Passwort leer =
+// unverändert).
+func (ctrl *OpsController) SaveCrowdSecLapi(c fiber.Ctx) error {
+	var req services.CrowdSecLapiInput
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	lapi, err := ctrl.settings.SaveCrowdSecLapi(req, actor(c))
+	if err != nil {
+		return mapLapiError(err)
+	}
+	return c.JSON(lapi)
+}
+
+// DeleteCrowdSecLapi - DELETE /api/v1/settings/crowdsec/lapis/:id (settings:manage)
+func (ctrl *OpsController) DeleteCrowdSecLapi(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	if err := ctrl.settings.DeleteCrowdSecLapi(id, actor(c)); err != nil {
+		return mapLapiError(err)
+	}
+	return c.JSON(fiber.Map{"status": "deleted"})
+}
+
+// CrowdSecLapiStatus - GET /api/v1/settings/crowdsec/lapis/:id/status (settings:manage)
+// Prüft vom LCM-Host aus, ob die LAPI erreichbar ist und die hinterlegten
+// Maschinen-Zugangsdaten akzeptiert.
+func (ctrl *OpsController) CrowdSecLapiStatus(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	status, err := ctrl.settings.CheckCrowdSecLapi(id)
+	if err != nil {
+		return mapLapiError(err)
 	}
 	return c.JSON(status)
 }
 
-// AptCacheStatus - GET /api/v1/settings/apt-cache/status (settings:manage)
-// Prüft vom LCM-Host aus, ob der konfigurierte apt-cacher-ng erreichbar ist.
-func (ctrl *OpsController) AptCacheStatus(c fiber.Ctx) error {
-	status, err := ctrl.settings.CheckAptCache()
+func mapLapiError(err error) error {
+	switch {
+	case errors.Is(err, services.ErrCrowdSecLapiInvalid):
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	case errors.Is(err, repositories.ErrNotFound):
+		return fiber.NewError(fiber.StatusNotFound, "crowdsec-lapi nicht gefunden")
+	}
+	return err
+}
+
+// ListAptCaches - GET /api/v1/settings/apt-caches (settings:manage) und
+// GET /api/v1/apt-caches (servers:read, für die Auswahl).
+func (ctrl *OpsController) ListAptCaches(c fiber.Ctx) error {
+	caches, err := ctrl.settings.ListAptCaches()
 	if err != nil {
 		return err
 	}
+	return c.JSON(caches)
+}
+
+// SaveAptCache - POST /api/v1/settings/apt-caches (settings:manage)
+// Legt einen Cache an (ohne id) oder aktualisiert ihn (mit id).
+func (ctrl *OpsController) SaveAptCache(c fiber.Ctx) error {
+	var req services.AptCacheInput
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	}
+	cache, err := ctrl.settings.SaveAptCache(req, actor(c))
+	if err != nil {
+		return mapAptCacheError(err)
+	}
+	return c.JSON(cache)
+}
+
+// DeleteAptCache - DELETE /api/v1/settings/apt-caches/:id (settings:manage)
+func (ctrl *OpsController) DeleteAptCache(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	if err := ctrl.settings.DeleteAptCache(id, actor(c)); err != nil {
+		return mapAptCacheError(err)
+	}
+	return c.JSON(fiber.Map{"status": "deleted"})
+}
+
+// AptCacheStatus - GET /api/v1/settings/apt-caches/:id/status (settings:manage)
+// Prüft vom LCM-Host aus, ob unter der Adresse des Caches ein apt-cacher-ng
+// antwortet.
+func (ctrl *OpsController) AptCacheStatus(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	status, err := ctrl.settings.CheckAptCache(id)
+	if err != nil {
+		return mapAptCacheError(err)
+	}
 	return c.JSON(status)
+}
+
+func mapAptCacheError(err error) error {
+	switch {
+	case errors.Is(err, services.ErrAptCacheInvalid), errors.Is(err, services.ErrAptCacheURLInvalid):
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	case errors.Is(err, repositories.ErrNotFound):
+		return fiber.NewError(fiber.StatusNotFound, "apt-cache nicht gefunden")
+	}
+	return err
 }

@@ -283,6 +283,12 @@ Passwort-Anmeldung nachweislich als `no` meldet:
   schädlicher als ein ehrlicher Fehlschlag - wer „gehärtet" liest, schaut
   nicht mehr hin.
 
+Dieselbe Messung gilt beim **Aktualisieren** des Servers: Das vorhandene
+Drop-in allein reicht nicht, `ssh_hardened` bleibt nur an, solange `sshd -T`
+weiterhin `passwordauthentication no` meldet. Eine nachträglich angelegte,
+lexikalisch frühere Datei - auf Ubuntu-Cloud-Images etwa `50-cloud-init.conf`
+mit `PasswordAuthentication yes` - fällt so beim nächsten Abgleich auf.
+
 Die Konfigurationsdatei wird dabei nicht unter `/etc/ssh` vorausgesetzt:
 openSUSE Leap 16 hat ein stateless `/etc` und liefert sie unter
 `/usr/etc/ssh/sshd_config` aus.
@@ -445,10 +451,12 @@ Verschlüsselt gespeichert werden u.&nbsp;a. (vollständige Liste in `internal/s
 - **RouterOS-Login-Passwort** (`servers.login_password_enc`) für Geräte mit Passwort-Authentifizierung;
 - **2FA-Secrets** der Benutzer (`users.totp_secret_enc`) und Linux-User-Passwörter;
 - **System-Mailer**-SMTP-Passwort und **Benachrichtigungskanal-Secrets** (SMTP-Passwort bzw. Webhook-URL);
-- **CrowdSec-Zugänge** auf dem LCM-Host: LAPI-Maschinen-Passwort (`crowd_sec_lapi_password_enc`) und Console-Key (`crowd_sec_console_key_enc`);
+- **CrowdSec-Zugänge** auf dem LCM-Host: LAPI-Maschinen-Passwörter (`crowdsec_lapis.password_enc`) und Console-Key (`crowd_sec_console_key_enc`);
 - das hinterlegte **TLS-Key-PEM**.
 
 Großvolumige Konsolen-Ausgaben (Job-/SSH-Output) sowie der Server-Host/-Name laufen über einen GORM-Serializer (`aesgcm`); der Servername trägt zusätzlich einen aus dem Master-Key abgeleiteten **Blindindex** für die Suche, ohne den Klartext zu speichern.
+
+Werte ab 512 Byte komprimiert der Serializer **vor** dem Verschlüsseln mit zstd - verschlüsselte Daten lassen sich hinterher nicht mehr komprimieren, und Konsolen-Ausgaben schrumpfen dabei auf etwa ein Sechstel. Der Preis: Die Länge eines Werts verrät etwas über seinen Inhalt. Ausnutzbar ist das nach dem Muster von CRIME/BREACH nur, wenn ein Angreifer eigenen Text neben ein Geheimnis in **dasselbe** Feld bringt und die Länge wiederholt beobachten kann. Konsolen-Ausgaben werden vor dem Speichern redigiert und liegen at rest; ein solcher Beobachtungskanal besteht nicht.
 
 **Rotation:** Das Unterkommando `lcm rotate-db-key` erzeugt einen neuen Master-Key und verschlüsselt alle registrierten Felder in **einer** Transaktion neu - die DB bleibt nie in einem gemischten Zustand. Der Blindindex des Servernamens wird dabei mit dem neuen Schlüssel neu berechnet. Neu eingeführte verschlüsselte Spalten müssen in `encryptedColumns` (bzw. `serializerColumns`) registriert werden, damit die Rotation sie erfasst.
 

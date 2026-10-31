@@ -449,15 +449,6 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	appRepo := repositories.NewAppRepository(db)
 	ipAllowlistRepo := repositories.NewIPAllowlistRepository(db)
 	packagePinRepo := repositories.NewPackagePinRepository(db)
-	// APT-Cache-URL aus den globalen Einstellungen (lazy - die Aktion
-	// „APT-Cache verwenden" liest den jeweils aktuellen Wert).
-	aptCacheURL := func() (string, error) {
-		st, err := settingsRepo.Get()
-		if err != nil {
-			return "", err
-		}
-		return st.AptCacheURL, nil
-	}
 	// Steuert die automatische CVE-Neubewertung nach Paket-Updates (lazy gelesen;
 	// bei Lesefehler konservativ „an", passend zum gorm-Default).
 	cveScanEnabled := func() bool {
@@ -482,32 +473,14 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		}
 		return st.DNSTestDomainList()
 	}
-	// CrowdSec-Zugang (LAPI/Console) entschlüsselt aus den globalen Einstellungen
-	// - für die Aktion „Sicherheit-Tools".
-	crowdsecConfig := func() (services.CrowdSecConfig, error) {
-		st, err := settingsRepo.Get()
-		if err != nil {
-			return services.CrowdSecConfig{}, err
-		}
-		cfg := services.CrowdSecConfig{LapiURL: st.CrowdSecLapiURL, LapiLogin: st.CrowdSecLapiLogin}
-		if st.CrowdSecLapiPasswordEnc != "" {
-			if pw, err := cipher.DecryptString(st.CrowdSecLapiPasswordEnc); err == nil {
-				cfg.LapiPassword = pw
-			}
-		}
-		if st.CrowdSecConsoleKeyEnc != "" {
-			if key, err := cipher.DecryptString(st.CrowdSecConsoleKeyEnc); err == nil {
-				cfg.ConsoleKey = key
-			}
-		}
-		return cfg, nil
-	}
 	serverService := services.NewServerService(serverRepo, jobService, auditService, cipher, sshx.NewClient()).
 		WithRecorder(sshRecorder).WithLinux(linuxRepo).WithGroups(groupRepo).WithScanner(cveScanner).
 		WithSettings(settingsRepo).
-		WithKnownRepos(knownRepoRepo).WithAptCacheURL(aptCacheURL).WithCVERescanEnabled(cveScanEnabled).
-		WithCVEWeightList(cveWeightList).WithDNSTestDomains(dnsTestDomains).WithCrowdSecConfig(crowdsecConfig).
+		WithKnownRepos(knownRepoRepo).WithCVERescanEnabled(cveScanEnabled).
+		WithCVEWeightList(cveWeightList).WithDNSTestDomains(dnsTestDomains).
 		WithPackagePins(packagePinRepo).WithApps(appRepo)
+	// Endet ein Job, kann sich die Ampel seines Servers geändert haben.
+	jobService.OnFinished(serverService.ForgetStatus)
 
 	// LCM Remote: eingebetteter MQTT-Broker + AgentHub für Server, die sich
 	// per lcm-agent AUSGEHEND verbinden (NAT/Roaming). Kommandos laufen dort
@@ -588,12 +561,16 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	alertRepo := repositories.NewAlertRepository(db)
 	notificationService := services.NewNotificationService(notificationRepo, alertRepo, cipher, auditService)
 	alertService := services.NewAlertService(alertRepo, serverRepo, groupRepo, notificationService, auditService).
-		WithCVEWeightList(cveWeightList).WithAptCacheChecker(aptCacheURL)
+		WithCVEWeightList(cveWeightList)
 	executor := services.NewExecutor(serverRepo, groupRepo, jobService, auditService,
 		provService, backupService, settingsRepo, serverService.Connect).
 		WithRecorder(sshRecorder).WithCustomActions(customActionRepo).WithScanner(cveScanner).
 		WithRegistry(registry.New()).
-		WithAlerts(alertService).WithProfiles(profileRepo).WithApps(appService)
+		WithAlerts(alertService).WithProfiles(profileRepo).WithApps(appService).
+		WithCompactor(func() (string, error) {
+			res, err := storage.CompactDatabase(db, func() (uint64, bool) { return storage.FreeDiskBytes(dataDir) })
+			return res.String(), err
+		})
 	scheduler := services.NewScheduler(groupRepo, settingsRepo, executor)
 	// Nach Container-/Image-Updates die Docker-CVE-Bewertung sofort
 	// auffrischen: der zentrale Docker-Check läuft als eigener System-Job.
@@ -625,6 +602,8 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	}
 	settingsService := services.NewSettingsService(settingsRepo, cipher, auditService, scheduler.Reload).
 		WithKnownRepos(knownRepoRepo).WithIPAllowlists(ipAllowlistRepo).
+		WithCrowdSecLapis(repositories.NewCrowdSecLapiRepository(db)).
+		WithAptCaches(repositories.NewAptCacheRepository(db)).
 		WithDefaultBackupDir(defaultBackupDir).
 		WithRoles(roleRepo).
 		WithFallbackBaseURL(fallbackBaseURL(cfg, dev))
@@ -638,7 +617,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// CrowdSec-LAPI-Überwachung: der crowdsec_lapi_down-Alarm nutzt denselben
 	// Login-Check wie die CrowdSec-Einstellungsseite. (Nachträglich verdrahtet,
 	// weil der SettingsService erst nach dem AlertService entsteht.)
-	alertService.WithCrowdSecLapiChecker(settingsService.CheckCrowdSecLapi)
+	alertService.WithCrowdSecLapiChecker(settingsService.CheckCrowdSecLapis)
 	// Stand der CVE-Datenbank fuer den cve_db_stale-Alarm (derselbe Wert, den
 	// auch Ampel und Sicherheitsseite zeigen).
 	alertService.WithCVEDBChecker(serverService.CVEDBStatus)
@@ -702,6 +681,20 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Benannte IP-Allowlists auflösen (Firewall-Quell-Einschränkung + Security-
 	// Tools) - sowohl für Server-Aktionen als auch für Grundsatz-Regeln.
 	serverService.WithIPAllowlists(settingsService.ExpandIPAllowlists)
+	serverService.WithCrowdSecConfig(settingsService.CrowdSecConfig)
+	serverService.WithAptCacheURL(settingsService.AptCacheURL)
+	executor.WithAptCaches(settingsService.AptCacheURL)
+	alertService.WithAptCacheChecker(settingsService.CheckAptCaches)
+	// Bis 1.46 gab es genau eine APT-Cache-URL in den Einstellungen - sie
+	// wandert einmalig in die Liste.
+	if err := settingsService.MigrateLegacyAptCache(); err != nil {
+		slog.Warn("apt cache migration failed", "error", err)
+	}
+	// Bis 1.45 gab es genau eine LAPI in den Einstellungen - sie wandert
+	// einmalig in die Liste.
+	if err := settingsService.MigrateLegacyCrowdSecLapi(); err != nil {
+		slog.Warn("crowdsec lapi migration failed", "error", err)
+	}
 	executor.WithIPAllowlists(settingsService.ExpandIPAllowlists)
 	// Synology DSM: Health-Check und System-Sync erheben den Zustand ueber die
 	// DSM-Web-API - der Executor kennt den ServerService nicht, daher als
@@ -715,11 +708,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// den CVE-Scan aktivieren bzw. die lokale APT-Cache-URL eintragen.
 	serverService.WithLcmHostConfig(
 		func() error { return settingsService.SetCVEScanEnabled(true) },
-		settingsService.SetAptCacheURL,
+		settingsService.AdoptHostAptCache,
 	)
 	// CrowdSec-LAPI auf dem LCM-Host: nach der Installation die erzeugten
 	// Maschinen-Zugangsdaten in die CrowdSec-Einstellungen eintragen.
-	serverService.WithCrowdSecLapiSetter(settingsService.SetCrowdSecLapi)
+	serverService.WithCrowdSecLapiSetter(settingsService.AdoptHostCrowdSecLapi)
 
 	// MCP-Schnittstelle: separater HTTP-Listener, über den KI-Agenten read-only
 	// Server-Eigenschaften abrufen. Authentifizierung per Bearer-API-Key mit

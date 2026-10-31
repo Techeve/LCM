@@ -46,13 +46,13 @@ type AlertService struct {
 	// nil = eingebaute Standardliste. Die CVE-Alarme werten wie die Ampel die
 	// GEWICHTETE Schwere (Docker runter, exponierte Pakete rauf).
 	weightList func() []string
-	// aptCacheURL liefert die konfigurierte APT-Cache-URL (globale
-	// Einstellung) für den apt_cacher_down-Alarm; nil/leer = Prüfung entfällt.
-	aptCacheURL func() (string, error)
+	// aptCaches prüft alle APT-Caches für den apt_cacher_down-Alarm;
+	// nil = Prüfung entfällt.
+	aptCaches func() ([]AptCacheStatus, error)
 	// crowdsecLapi führt den LAPI-Erreichbarkeits-Check aus (globale
 	// Einstellungen) - Grundlage des crowdsec_lapi_down-Alarms; nil oder
 	// „nicht konfiguriert" = Prüfung entfällt.
-	crowdsecLapi func() (*CrowdSecLapiStatus, error)
+	crowdsecLapi func() ([]CrowdSecLapiStatus, error)
 	// cveDBStatus liefert den Stand der Schwachstellen-Datenbank des
 	// CVE-Scanners - Grundlage des cve_db_stale-Alarms; nil = Prüfung entfällt.
 	cveDBStatus func() domain.CVEDBStatus
@@ -74,16 +74,16 @@ func (s *AlertService) WithCVEWeightList(fn func() []string) *AlertService {
 	return s
 }
 
-// WithAptCacheChecker verdrahtet den Zugriff auf die konfigurierte
-// APT-Cache-URL (optional) - Grundlage des apt_cacher_down-Alarms.
-func (s *AlertService) WithAptCacheChecker(fn func() (string, error)) *AlertService {
-	s.aptCacheURL = fn
+// WithAptCacheChecker verdrahtet die Prüfung aller APT-Caches (optional) -
+// Grundlage des apt_cacher_down-Alarms.
+func (s *AlertService) WithAptCacheChecker(fn func() ([]AptCacheStatus, error)) *AlertService {
+	s.aptCaches = fn
 	return s
 }
 
 // WithCrowdSecLapiChecker verdrahtet den CrowdSec-LAPI-Erreichbarkeits-Check
 // (optional) - Grundlage des crowdsec_lapi_down-Alarms.
-func (s *AlertService) WithCrowdSecLapiChecker(fn func() (*CrowdSecLapiStatus, error)) *AlertService {
+func (s *AlertService) WithCrowdSecLapiChecker(fn func() ([]CrowdSecLapiStatus, error)) *AlertService {
 	s.crowdsecLapi = fn
 	return s
 }
@@ -607,48 +607,61 @@ func (s *AlertService) evalCVEDBStale() finding {
 	}
 }
 
-// evalAptCacherDown prüft den zentralen apt-cacher-ng-Dienst über dieselbe
-// Report-Seite wie die APT-Cache-Detailseite (fetchAcngReport).
-// Selbstbeobachtung: den Dienst gibt es einmal. Ist keine APT-Cache-URL
-// konfiguriert, ist das Feature nicht in Benutzung und der Alarm bleibt stumm.
+// evalAptCacherDown prüft jeden APT-Cache über dieselbe Report-Seite wie die
+// APT-Cache-Seite (fetchAcngReport) und feuert, sobald einer nicht antwortet
+// - die Meldung nennt jeden betroffenen. Ohne Cache ist das Feature nicht in
+// Benutzung und der Alarm bleibt stumm.
 func (s *AlertService) evalAptCacherDown() finding {
-	if s.aptCacheURL == nil {
+	if s.aptCaches == nil {
 		return finding{}
 	}
-	url, err := s.aptCacheURL()
-	if err != nil || url == "" {
+	statuses, err := s.aptCaches()
+	if err != nil {
 		return finding{}
 	}
-	status, _ := fetchAcngReport(url)
-	if status.Running {
+	var names, details []string
+	for _, st := range statuses {
+		if !st.Running {
+			names = append(names, st.Name)
+			details = append(details, st.Name+": "+st.Message)
+		}
+	}
+	if len(names) == 0 {
 		return finding{}
 	}
 	return finding{
 		fired:       true,
-		description: "apt-cacher-ng nicht erreichbar",
-		details:     status.Message,
+		description: "apt-cacher-ng nicht erreichbar: " + strings.Join(names, ", "),
+		details:     strings.Join(details, "\n"),
 	}
 }
 
-// evalCrowdSecLapiDown prüft die zentrale CrowdSec-LAPI über denselben
-// Login-Check wie die CrowdSec-Einstellungsseite (probeCrowdSecLapi).
-// Selbstbeobachtung: die LAPI ist ein zentraler Dienst. Ist keine LAPI
-// konfiguriert, ist das Feature nicht in Benutzung und der Alarm bleibt stumm.
+// evalCrowdSecLapiDown prüft alle zentralen CrowdSec-LAPIs über denselben
+// Login-Check wie die CrowdSec-Einstellungsseite (probeCrowdSecLapi) und
+// feuert, sobald eine nicht arbeitet - die Meldung nennt jede betroffene.
+// Ohne LAPI ist das Feature nicht in Benutzung und der Alarm bleibt stumm.
 func (s *AlertService) evalCrowdSecLapiDown() finding {
 	if s.crowdsecLapi == nil {
 		return finding{}
 	}
-	status, err := s.crowdsecLapi()
-	if err != nil || status == nil || !status.Configured {
+	statuses, err := s.crowdsecLapi()
+	if err != nil {
 		return finding{}
 	}
-	if status.Running {
+	var names, details []string
+	for _, st := range statuses {
+		if st.Configured && !st.Running {
+			names = append(names, st.Name)
+			details = append(details, st.Name+": "+st.Message)
+		}
+	}
+	if len(names) == 0 {
 		return finding{}
 	}
 	return finding{
 		fired:       true,
-		description: "CrowdSec-LAPI nicht erreichbar",
-		details:     status.Message,
+		description: "CrowdSec-LAPI nicht erreichbar: " + strings.Join(names, ", "),
+		details:     strings.Join(details, "\n"),
 	}
 }
 

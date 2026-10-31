@@ -19,6 +19,14 @@ const (
 	JobTypeFullRefresh     = "full-refresh"
 )
 
+// sshHardenedProbe meldet „yes" nur, wenn LCMs Härtungs-Drop-in liegt und die
+// effektive sshd-Konfiguration die Passwort-Anmeldung abschaltet.
+// `mkdir -p /run/sshd` wie in verifyPasswordAuthDisabled: ohne das Verzeichnis
+// bricht `sshd -T` auf socket-aktiviertem sshd ab.
+const sshHardenedProbe = "if test -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf && " +
+	"{ mkdir -p /run/sshd 2>/dev/null; sshd -T 2>/dev/null | grep -qi '^passwordauthentication no'; }; " +
+	"then echo yes; else echo no; fi"
+
 // RefreshHardware liest Hardware-/OS-Fakten eines Servers neu ein (CPU, RAM,
 // Festplatte, Kernel, Virtualisierung, IPs, Paketverwaltung, Docker-Flags) -
 // OHNE Paket-/Docker-Bestände zu ersetzen und ohne etwas zu installieren.
@@ -240,11 +248,13 @@ func readServerLiveStatus(conn sshx.Conn, server *domain.Server) map[string]any 
 		}
 	}
 
-	// SSH-Härtung: LCM setzt sie über das Drop-in
-	// /etc/ssh/sshd_config.d/60-lcm-hardening.conf - dessen Vorhandensein ist
-	// das maßgebliche Signal.
-	if out, _, err := conn.Run(privRun(server,
-		"test -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf && echo yes || echo no")); err == nil {
+	// SSH-Härtung: gehärtet ist ein Server nur, wenn LCMs Drop-in liegt UND
+	// sshd die Passwort-Anmeldung effektiv als „no" meldet. Das Drop-in allein
+	// belegt nichts: Bei sshd gewinnt der erste Treffer, und eine lexikalisch
+	// frühere Datei - auf Ubuntu-Cloud-Images 50-cloud-init.conf mit
+	// „PasswordAuthentication yes" - setzt es außer Kraft. LCM zeigte dann
+	// „gehärtet", während die Passwort-Anmeldung offen war.
+	if out, _, err := conn.Run(privRun(server, sshHardenedProbe)); err == nil {
 		fields["ssh_hardened"] = strings.Contains(firstLine(out), "yes")
 	}
 
@@ -271,7 +281,7 @@ func readServerLiveStatus(conn sshx.Conn, server *domain.Server) map[string]any 
 
 	// APT-Cache-Anbindung: analog über das LCM-Drop-in unter /etc/apt.
 	if out, _, err := conn.Run(privRun(server, aptProxyStatusCommand())); err == nil {
-		fields["apt_proxy_active"] = strings.Contains(firstLine(out), "yes")
+		fields["apt_proxy_active"], fields["apt_proxy_url"] = parseAptProxyDropin(out)
 	}
 
 	// Sicherheits-Tools aktiv? (nur wenn im Scan als vorhanden erkannt.)

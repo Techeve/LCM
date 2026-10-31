@@ -85,6 +85,7 @@ func ensureFullSudo(server *domain.Server) error {
 // das Decommissioning von Servern. Es kapselt die gesamte SSH-Logik und
 // die At-Rest-Verschlüsselung der Server-Private-Keys.
 type ServerService struct {
+	statuses *statusCache // fertig berechnete Ampeln (siehe server_status.go)
 	servers  *repositories.ServerRepository
 	jobs     *JobService
 	audit    *AuditService
@@ -106,9 +107,9 @@ type ServerService struct {
 	// apps ist der Anwendungskatalog samt der Funde je Server. Optional -
 	// ohne ihn entfällt die Erkennung (schlanke Tests).
 	apps *repositories.AppRepository
-	// aptCacheURL liefert die konfigurierte APT-Cache-URL aus den globalen
-	// Einstellungen (leer = Feature aus). Optional.
-	aptCacheURL func() (string, error)
+	// aptCacheURL liefert die Adresse eines APT-Caches aus Einstellungen →
+	// APT-Cache (0 = der einzige; ErrNoAptCacheURL, wenn keiner). Optional.
+	aptCacheURL func(cacheID uint) (string, error)
 	// cveScanEnabled meldet, ob der CVE-Scan global aktiviert ist - steuert die
 	// automatische CVE-Neubewertung nach Paket-Updates. Optional; nil = an.
 	cveScanEnabled func() bool
@@ -121,15 +122,18 @@ type ServerService struct {
 	// 1 ausführende + 1 lesende - alle Verbindungen laufen durch connect/
 	// connectRead dieses Services (auch Executor und Provisioning).
 	connLimit *ConnLimiter
+	// consoles führt die offenen Web-Konsolen (Anzeige am Server).
+	consoles *consoleRegistry
 	// weightList liefert die CVE-Hochgewichtungs-Liste aus den globalen
 	// Einstellungen. Optional; nil = eingebaute Standardliste.
 	weightList func() []string
 	// dnsTestDomains liefert die zu prüfenden DNS-Test-Domains aus den globalen
 	// Einstellungen. Optional; nil = eingebaute Standardliste.
 	dnsTestDomains func() []string
-	// crowdsecConfig liefert den entschlüsselten CrowdSec-Zugang (LAPI/Console)
-	// aus den globalen Einstellungen - für die Aktion „Sicherheit-Tools". Optional.
-	crowdsecConfig func() (CrowdSecConfig, error)
+	// crowdsecConfig liefert den entschlüsselten CrowdSec-Zugang - die
+	// gewählte LAPI und den Console-Key - für die Aktion „Sicherheit-Tools".
+	// Optional.
+	crowdsecConfig func(lapiID uint) (CrowdSecConfig, error)
 	// pins ist der Speicher der Paket-Pins (Schutz vor Autoremove, optionale
 	// Versions-Fixierung). Optional - ohne ihn sind die Pin-Aktionen nicht
 	// verfügbar und paketbezogene Jobs laufen ohne Pin-Schutz.
@@ -199,9 +203,9 @@ func (s *ServerService) disableSelfRegistration() error {
 	return s.selfRegisterOff()
 }
 
-// WithAptCacheURL verdrahtet den Zugriff auf die APT-Cache-URL der globalen
-// Einstellungen (für die Aktion „APT-Cache verwenden").
-func (s *ServerService) WithAptCacheURL(fn func() (string, error)) *ServerService {
+// WithAptCacheURL verdrahtet die Auflösung der APT-Caches (für die Aktion
+// „APT-Cache verwenden" und die Übersicht).
+func (s *ServerService) WithAptCacheURL(fn func(cacheID uint) (string, error)) *ServerService {
 	s.aptCacheURL = fn
 	return s
 }
@@ -245,7 +249,7 @@ func (s *ServerService) WithLinux(linux *repositories.LinuxUserRepository) *Serv
 
 func NewServerService(servers *repositories.ServerRepository, jobs *JobService, audit *AuditService, cipher *crypto.Cipher, dialer sshx.Dialer) *ServerService {
 	return &ServerService{servers: servers, jobs: jobs, audit: audit, cipher: cipher, dialer: dialer,
-		connLimit: NewConnLimiter()}
+		connLimit: NewConnLimiter(), statuses: newStatusCache(statusCacheTTL), consoles: newConsoleRegistry()}
 }
 
 // WithRecorder verdrahtet die SSH-Protokollierung (optional, damit schlanke
@@ -384,7 +388,7 @@ func (s *ServerService) dnsTestDomainList() []string {
 }
 
 // WithCrowdSecConfig verdrahtet den entschlüsselten CrowdSec-Zugang (LAPI/Console).
-func (s *ServerService) WithCrowdSecConfig(fn func() (CrowdSecConfig, error)) *ServerService {
+func (s *ServerService) WithCrowdSecConfig(fn func(lapiID uint) (CrowdSecConfig, error)) *ServerService {
 	s.crowdsecConfig = fn
 	return s
 }
@@ -815,21 +819,31 @@ func createUserWithShellScript(username, shell string) string {
 // ausgeliefert z.B. von openSUSE -, lehnt OpenSSH die Anmeldung an solchen
 // Konten ab, AUCH mit gültigem Schlüssel. Der Join scheiterte dort am
 // Key-Login, obwohl Schlüssel und Dateirechte korrekt waren (BUG-007, und
-// für provisionierte Linux-Benutzer BUG-028).
-//
-// "*" ersetzt die Sperre durch ein unbrauchbares Passwort-Hash: eine
-// Passwort-Anmeldung bleibt unmöglich, die Sperre ist aber weg. Auf
-// BusyBox-Systemen ohne usermod setzt `chpasswd -e` denselben Wert -
-// BusyBox-adduser hinterließ dort ein LEERES Passwortfeld statt "*"/"!"
-// (R2-046): praktisch nicht ausnutzbar (BusyBox-su und sshd lehnen ab),
-// aber ein anderer Ausgangszustand als auf jeder anderen Distribution.
-// Als letzter Rückfall bleibt `passwd -u`. Schlägt alles fehl, ist das
-// kein Abbruchgrund - der anschließende Key-Login-Test entscheidet.
+// für provisionierte Linux-Benutzer BUG-028). Die Regel steht in
+// accountUnlockFragment.
 func unlockAccountScript(svcUser string) string {
+	return accountUnlockFragment(svcUser)
+}
+
+// accountUnlockFragment ist die Entsperrung als Shell-Fragment; Voll-Modus und
+// eingeschränkter Modus (Helper) nutzen dieselbe Regel. nameExpr ist der
+// Kontoname als Shell-Ausdruck.
+//
+// Den Passwort-Hash ersetzt sie nur, wenn keiner gesetzt ist (leer oder nur
+// eine Sperre "!", "!!", "*"): "*" ist dann ein unbrauchbares Hash - der
+// Schlüssel-Login geht, eine Passwort-Anmeldung bleibt unmöglich. Ein echter
+// Hash bleibt unangetastet, damit ein am Server gesetztes Passwort den nächsten
+// Abgleich übersteht. "!$hash" (vom Sperren gesetzt) wird nur entsperrt, der
+// Hash bleibt erhalten. Auf BusyBox ohne usermod setzt `chpasswd -e` denselben
+// Wert; `passwd -u` ist der letzte Rückfall. Schlägt alles fehl, ist das kein
+// Abbruchgrund - der anschließende Key-Login-Test entscheidet.
+func accountUnlockFragment(nameExpr string) string {
 	return fmt.Sprintf(
-		"if command -v usermod >/dev/null 2>&1; then usermod -p '*' %s >/dev/null 2>&1 || true; "+
-			"else printf '%%s:*\\n' %s | chpasswd -e >/dev/null 2>&1 || passwd -u %s >/dev/null 2>&1 || true; fi",
-		svcUser, svcUser, svcUser)
+		`lcm_hash=$(awk -F: -v u=%[1]s '$1==u{print $2}' /etc/shadow 2>/dev/null); `+
+			`case "$lcm_hash" in \$*) ;; !\$*) usermod -U %[1]s >/dev/null 2>&1 || passwd -u %[1]s >/dev/null 2>&1 || true ;; `+
+			`*) if command -v usermod >/dev/null 2>&1; then usermod -p '*' %[1]s >/dev/null 2>&1 || true; `+
+			`else printf '%%s:*\n' %[1]s | chpasswd -e >/dev/null 2>&1 || passwd -u %[1]s >/dev/null 2>&1 || true; fi ;; esac`,
+		nameExpr)
 }
 
 // cleanupProvisioning macht eine angefangene Provisionierung rückgängig.
@@ -1185,19 +1199,35 @@ func wrapSudo(loginUser string, restricted bool, cmd string) string {
 }
 
 // detachBackgroundFDs entkoppelt die Ausgabe von cmd über eine temporäre
-// Datei: cmd läuft in einer Subshell, deren stdout/stderr in die Datei geht und
-// deren stdin geschlossen ist; danach wird die Datei gesammelt ausgegeben.
+// Datei: cmd läuft als Hintergrund-Subshell, deren stdout/stderr in die Datei
+// geht und deren stdin geschlossen ist; die äußere Shell reicht den Inhalt
+// der Datei laufend weiter.
 //
-// Grund: Manche Kommandos (v.a. `apt-get update` mit Ubuntu-Hooks wie apt-news/
-// ESM) forken Hintergrundprozesse, die die stdout/stderr-Deskriptoren erben. Die
-// Go-SSH-Session (session.Run) wartet auf das Schließen dieser Kanal-fds - ein
-// solcher Hintergrundprozess hält sie offen und der Aufruf hängt, obwohl das
-// eigentliche Kommando längst fertig ist. Über die Datei erben die Kinder den
-// Datei-fd (nicht den SSH-Kanal), sodass der Kanal sauber schließt.
-// Die Subshell `( … )` fängt ein `exit` innerhalb von cmd ab (sonst würde die
-// äußere Shell vor der Ausgabe enden).
+// Grund für die Datei: Manche Kommandos (v.a. `apt-get update` mit
+// Ubuntu-Hooks wie apt-news/ESM) forken Hintergrundprozesse, die die
+// stdout/stderr-Deskriptoren erben. Die Go-SSH-Session (session.Run) wartet
+// auf das Schließen dieser Kanal-fds - ein solcher Hintergrundprozess hält sie
+// offen und der Aufruf hängt, obwohl das eigentliche Kommando längst fertig
+// ist. Über die Datei erben die Kinder den Datei-fd, nicht den SSH-Kanal.
+//
+// Grund für das laufende Weiterreichen: Der Job-Watchdog misst die STILLE
+// eines Laufs. Gab die Shell die Datei erst am Ende aus, sah LCM während
+// eines Upgrades keine einzige Zeile, hielt jedes Upgrade über fünf Minuten
+// für hängend und brach es ab - auf dem Server lief es verwaist weiter und
+// blockierte mit seiner apt-Sperre den nächsten Lauf (siehe aptlock.go).
+//
+// __out gibt aus, was seit dem letzten Aufruf in der Datei hinzukam. Die
+// Abstände wachsen von 0,05 auf 1 s: Kurze Kommandos (ein Scan besteht aus
+// Dutzenden) warten so kaum, lange melden sich jede Sekunde. Ein sleep ohne
+// Bruchteile fällt auf ganze Sekunden zurück statt leer zu kreisen. Der Exit-Code
+// kommt aus `wait`; die Subshell fängt ein `exit` innerhalb von cmd ab.
 func detachBackgroundFDs(cmd string) string {
-	return `__lf=$(mktemp); ( ` + cmd + ` ) >"$__lf" 2>&1 </dev/null; __rc=$?; cat "$__lf"; rm -f "$__lf"; exit $__rc`
+	return strings.Join([]string{
+		`__lf=$(mktemp); ( ` + cmd + ` ) >"$__lf" 2>&1 </dev/null & __p=$!; __s=0; __d=0.05`,
+		`__out() { __n=$(($(wc -c <"$__lf"))); [ "$__n" -gt "$__s" ] || return 0; tail -c +$((__s + 1)) "$__lf" | head -c $((__n - __s)); __s=$__n; }`,
+		`while kill -0 $__p 2>/dev/null; do sleep $__d 2>/dev/null || sleep 1; __out; case $__d in 0.05) __d=0.2 ;; *) __d=1 ;; esac; done`,
+		`wait $__p; __rc=$?; __out; rm -f "$__lf"; exit $__rc`,
+	}, "\n")
 }
 
 // rootEscalation beschreibt, wie der Login-Benutzer beim Onboarding root
@@ -1298,6 +1328,21 @@ func (s *ServerService) Connect(server *domain.Server) (sshx.Conn, error) {
 // Servers (max. 1 gleichzeitig; Freigabe über conn.Close()).
 func (s *ServerService) connect(server *domain.Server) (sshx.Conn, error) {
 	release, err := s.connLimit.AcquireExec(server.ID)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := s.dial(server)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return &limitedConn{Conn: conn, release: release}, nil
+}
+
+// connectTerminal stellt die Verbindung einer Web-Konsole her: eigener
+// Konsolen-Platz, NICHT der Exec-Slot - LCM arbeitet daneben weiter.
+func (s *ServerService) connectTerminal(server *domain.Server) (sshx.Conn, error) {
+	release, err := s.connLimit.AcquireTerminal(server.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1933,6 +1978,9 @@ func (s *ServerService) startPackageJob(scope repositories.AccessScope, id uint,
 		return nil, err
 	}
 	script := build(server.PackageManager)
+	if jobType == domain.RuleTypeUpdate {
+		script = aptUpgradeEnv(s.settings, s.servers, server) + script
+	}
 	job, err := s.jobs.Start(&server.ID, nil, jobType, name+" @ "+server.Name, actor)
 	if err != nil {
 		return nil, err // u.a. ErrServerBusy → der Controller mappt auf 409
@@ -2016,80 +2064,6 @@ func (s *ServerService) ActiveJob(scope repositories.AccessScope, id uint) (*dom
 		return nil, err
 	}
 	return s.jobs.RunningForServer(id)
-}
-
-// Status liefert den Ampel-Status inkl. Insights und der OS-Support-Bewertung
-// (aktuelle LTS/EOL) zum aktuellen Zeitpunkt.
-func (s *ServerService) Status(scope repositories.AccessScope, id uint) (string, []domain.StatusInsight, domain.OSSupportInfo, error) {
-	server, err := s.servers.FindByID(scope, id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	outdated, err := s.servers.CountOutdatedPackages(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	last, err := s.jobs.jobs.LastFinishedForServer(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	// CVE-Zählung GEWICHTET: Docker-CVEs zählen nur für ausdrücklich als
-	// relevant markierte Container; Hochgewichtungs-Liste und lauschende
-	// Dienste heben eine Stufe an.
-	facts, err := s.servers.VulnerabilityFacts(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	relevantRefs := dockerRelevantRefs(s.servers, server)
-	weighted := weightedVulnSummary(facts, s.cveWeightList(), splitCSVList(server.ListeningPackages), relevantRefs)
-	outdatedImages, err := s.servers.CountOutdatedDockerImages(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	// Größe des Paketbestands: 0 heißt "nie erfasst" und macht den Server
-	// unbewertbar statt makellos (BUG-020).
-	inventoried, err := s.servers.CountPackages(id)
-	if err != nil {
-		return "", nil, domain.OSSupportInfo{}, err
-	}
-	// Speicher: die erfassten Volumes, die angeordnete Überwachung einzelner
-	// davon und der Zustand der Verbünde. Fehler hier dürfen die Bewertung
-	// nicht kippen - dann fehlt eben dieser Teil der Befunde.
-	volumes, _ := s.servers.FindDiskVolumes(id)
-	monitore, _ := s.servers.FindVolumeMonitors(id)
-	storage, _ := s.servers.FindStorageHealth(id)
-	in := domain.TrafficLightInput{
-		OutdatedPackages: int(outdated), Now: time.Now(),
-		Volumes: volumes, VolumeMonitors: monitore, StorageHealth: storage,
-		CriticalVulns: weighted[domain.SeverityCritical], HighVulns: weighted[domain.SeverityHigh],
-		RaisedVulnPackages:      raisedVulnPackages(facts, s.cveWeightList(), splitCSVList(server.ListeningPackages), relevantRefs),
-		OutdatedContainerImages: int(outdatedImages),
-		TotalVulns:              countedVulns(facts, relevantRefs),
-		// Ernste, aber unbehebbare Lücken: reiner Info-Hinweis (R2-056).
-		UnfixableVulns: unfixableCritHigh(facts, s.cveWeightList(), splitCSVList(server.ListeningPackages), relevantRefs),
-		// RouterOS hat konstruktionsbedingt keinen Paketbestand - das darf hier
-		// nicht als „nicht bewertbar" (Rot) durchschlagen; die Bewertung läuft
-		// dort über die Versions-Aktualität (siehe TrafficLight).
-		InventoryMissing: inventoried == 0 && !server.IsRouterOS(),
-		CVEScanError:     server.CVEScanError,
-		DeepScanWarnings: server.DeepScanWarnings,
-		// Stand der zentralen Schwachstellen-Datenbank - reiner Hinweis, er
-		// faerbt die Ampel nicht (siehe TrafficLightInput.CVEDB).
-		CVEDB: s.CVEDBStatus(),
-	}
-	if last != nil {
-		in.LastJobFailed = last.Status == domain.JobStatusFailed
-		in.LastJobName = last.Name
-	}
-	status, insights := server.TrafficLight(in)
-	// Die Docker-Qualifizierung hängt BEWUSST hinter der Farbentscheidung:
-	// sie beschreibt die Erreichbarkeit genauer, ist aber kein Mangel, der
-	// den Server gelb färben dürfte (siehe dockerFirewallInsight).
-	if qual := dockerFirewallInsight(dockerPortExposures(s.servers, server), server.FirewallActive); qual != nil {
-		insights = append(insights, *qual)
-	}
-	osSupport := domain.OSSupportStatus(server.OSID, server.OSVersionID, server.OSName, in.Now)
-	return status, insights, osSupport, nil
 }
 
 // DockerPortExposures liefert die von außen erreichbaren Docker-Ports eines
@@ -2224,7 +2198,7 @@ func (s *ServerService) Vulnerabilities(scope repositories.AccessScope, id uint)
 	unusedRefs := map[string]bool{}
 	if images, err := s.servers.FindDockerImages(id); err == nil {
 		for i := range images {
-			if !images[i].InUse {
+			if !images[i].InUse && !images[i].Superseded {
 				unusedRefs[images[i].Ref()] = true
 			}
 		}

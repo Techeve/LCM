@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/robfig/cron/v3"
 
@@ -17,16 +18,14 @@ var (
 	ErrProtectedRule     = errors.New("system-rules können nicht gelöscht werden")
 	ErrProtectedSchedule = errors.New("system-schedules können nicht gelöscht werden")
 	ErrInvalidCron       = errors.New("ungültiger cron-ausdruck")
-	// ErrEnforceOnlyRuleType: „ACL einrichten" und „Rechte-Soll" beschreiben
-	// einen Zustand, der gelten SOLL - nicht eine Aktion zu einer Uhrzeit. An
-	// einem Zeitplan gäbe es für sie keinen Ausführungspfad; die Regel liefe
-	// ins Leere und meldete „kein Kommando für rule-typ".
-	ErrEnforceOnlyRuleType = errors.New("dieser typ ist nur als grundsatz-regel möglich - er beschreibt einen Soll-Zustand, der bei jeder Verbindung geprüft wird, keine Aktion zu einer Uhrzeit")
+	// ErrInvalidSpread: Das Zeitfenster muss kürzer sein als der Abstand
+	// zweier Läufe, sonst überholt der nächste Lauf den vorigen.
+	ErrInvalidSpread = errors.New("das zeitfenster muss zwischen 0 minuten und dem abstand zweier läufe des zeitplans liegen")
 	// ErrInvalidGroupPriority: Der Vorrang entscheidet, welche Gruppe sich
 	// durchsetzt, wenn mehrere dasselbe regeln - kleinere Zahl gewinnt.
 	ErrInvalidGroupPriority = fmt.Errorf("ungültiger vorrang - erlaubt ist 1 bis %d (kleinere Zahl = stärkerer Vorrang; Standard %d, System-Gruppe %d)",
 		domain.MaxGroupPriority, domain.DefaultGroupPriority, domain.SystemGroupPriority)
-	ErrInvalidRuleType = errors.New("ungültiger rule-typ für eine Gruppen-Regel - erlaubt: update, packages, security, package-scan, autoremove, script, custom, sync, health, firewall, docker-prune, docker-update-unused, apt-proxy, reboot, dns-test, deep-scan; flottenweite Läufe (cve-scan, docker-check, alert-check) laufen als System-Zeitplan, nicht pro Gruppe")
+	ErrInvalidRuleType = errors.New("ungültiger rule-typ für eine Gruppen-Regel - erlaubt: update, packages, security, package-scan, autoremove, script, custom, sync, health, firewall, docker-prune, docker-update-unused, apt-proxy, reboot, dns-test, deep-scan, acl-setup, perm-sync; flottenweite Läufe (cve-scan, docker-check, alert-check) laufen als System-Zeitplan, nicht pro Gruppe")
 	ErrEnforceRuleType = errors.New("grundsatz-regeln sind nur für die typen firewall, apt-proxy, acl-setup und perm-sync möglich - sie tragen einen Soll-Zustand, gegen den geprüft werden kann. Ein Shell-Kommando hat keinen; dafür einen Zeitplan mit einer script-Regel anlegen (dann erscheint jede Ausführung als eigener Job)")
 	// ErrEnforceFirewallSpec: eine Firewall-Grundsatz-Regel OHNE erkennbaren
 	// Soll-Zustand setzte still „alles außer SSH schließen" durch - auf allen
@@ -286,14 +285,14 @@ func (s *GroupService) ListSchedules(scope repositories.AccessScope, groupID uin
 
 // DefineSchedule erstellt einen neuen Zeitplan für eine Gruppe. Rules
 // werden anschließend am Schedule angelegt (DefineRule mit scheduleID).
-func (s *GroupService) DefineSchedule(scope repositories.AccessScope, groupID uint, name, cronExpr, actor string) (*domain.Schedule, error) {
+func (s *GroupService) DefineSchedule(scope repositories.AccessScope, groupID uint, name, cronExpr string, spreadMinutes int, actor string) (*domain.Schedule, error) {
 	if _, err := s.groups.FindByID(scope, groupID); err != nil {
 		return nil, err
 	}
-	if _, err := cronParser.Parse(cronExpr); err != nil {
-		return nil, ErrInvalidCron
+	if err := validateSchedule(cronExpr, spreadMinutes); err != nil {
+		return nil, err
 	}
-	sched := &domain.Schedule{GroupID: groupID, Name: name, CronExpr: cronExpr, Enabled: true}
+	sched := &domain.Schedule{GroupID: groupID, Name: name, CronExpr: cronExpr, SpreadMinutes: spreadMinutes, Enabled: true}
 	if err := s.groups.CreateSchedule(sched); err != nil {
 		return nil, err
 	}
@@ -302,17 +301,21 @@ func (s *GroupService) DefineSchedule(scope repositories.AccessScope, groupID ui
 	return sched, nil
 }
 
-// UpdateSchedule ändert Name und/oder Cron-Ausdruck eines Schedules.
-func (s *GroupService) UpdateSchedule(scope repositories.AccessScope, id uint, name, cronExpr, actor string) (*domain.Schedule, error) {
+// UpdateSchedule ändert Name, Cron-Ausdruck und/oder Zeitfenster eines
+// Schedules (leer bzw. nil = unverändert).
+func (s *GroupService) UpdateSchedule(scope repositories.AccessScope, id uint, name, cronExpr string, spreadMinutes *int, actor string) (*domain.Schedule, error) {
 	sched, err := s.groups.FindSchedule(scope, id)
 	if err != nil {
 		return nil, err
 	}
 	if cronExpr != "" {
-		if _, err := cronParser.Parse(cronExpr); err != nil {
-			return nil, ErrInvalidCron
-		}
 		sched.CronExpr = cronExpr
+	}
+	if spreadMinutes != nil {
+		sched.SpreadMinutes = *spreadMinutes
+	}
+	if err := validateSchedule(sched.CronExpr, sched.SpreadMinutes); err != nil {
+		return nil, err
 	}
 	if name != "" {
 		sched.Name = name
@@ -323,6 +326,18 @@ func (s *GroupService) UpdateSchedule(scope repositories.AccessScope, id uint, n
 	s.audit.Log(actor, "schedule.update", "schedule", id, sched.Name)
 	_ = s.reload()
 	return sched, nil
+}
+
+// validateSchedule prüft Cron-Ausdruck und Zeitfenster gemeinsam: Das
+// Fenster muss enden, bevor der nächste Lauf beginnt.
+func validateSchedule(cronExpr string, spreadMinutes int) error {
+	if _, err := cronParser.Parse(cronExpr); err != nil {
+		return ErrInvalidCron
+	}
+	if spreadMinutes < 0 || time.Duration(spreadMinutes)*time.Minute >= cronInterval(cronExpr) {
+		return ErrInvalidSpread
+	}
+	return nil
 }
 
 // RemoveSchedule löscht einen Schedule samt seiner Rules (System-Schedules
@@ -393,9 +408,6 @@ func (s *GroupService) DefineRule(scope repositories.AccessScope, groupID uint, 
 	if enforce && !enforceableRuleType(ruleType) {
 		return nil, ErrEnforceRuleType
 	}
-	if !enforce && enforceOnlyRuleType(ruleType) {
-		return nil, ErrEnforceOnlyRuleType
-	}
 	if err := validateEnforceFirewallSpec(ruleType, enforce, command); err != nil {
 		return nil, err
 	}
@@ -403,6 +415,25 @@ func (s *GroupService) DefineRule(scope repositories.AccessScope, groupID uint, 
 	// statt gespeichert-und-ignoriert (R2-088).
 	if !ruleTypeUsesCommand(ruleType) && strings.TrimSpace(command) != "" {
 		return nil, fmt.Errorf("%w (typ %q)", ErrRuleCommandUnused, ruleType)
+	}
+	// APT-Cache: optional die ID des gewählten Caches (leer = der einzige).
+	if ruleType == domain.RuleTypeAptProxy && !validAptCacheChoice(command) {
+		return nil, ErrInvalidAptCacheChoice
+	}
+	// Docker-Update: optional ein Projekt- bzw. Containername (leer = alle).
+	if isDockerUpdateRule(ruleType) {
+		if !validDockerScope(command) {
+			return nil, ErrInvalidDockerScope
+		}
+		command = strings.TrimSpace(command)
+	}
+	// DNS-Test: optionale eigene Domains statt derer aus den Einstellungen.
+	if ruleType == domain.RuleTypeDNSTest {
+		normalized, err := normalizeDNSTestDomains(command)
+		if err != nil {
+			return nil, err
+		}
+		command = normalized
 	}
 	// Benannte Paket-Updates brauchen eine gültige Paketliste im Command.
 	if ruleType == domain.RuleTypePackages {
@@ -432,8 +463,13 @@ func (s *GroupService) DefineRule(scope repositories.AccessScope, groupID uint, 
 			return nil, repositories.ErrNotFound
 		}
 	}
+	// Neue Regeln reihen sich hinten an ihren Auslöser an.
+	position, err := s.groups.NextRulePosition(groupID, scheduleID)
+	if err != nil {
+		return nil, err
+	}
 	rule := &domain.Rule{
-		GroupID: groupID, ScheduleID: scheduleID, Enforce: enforce,
+		GroupID: groupID, ScheduleID: scheduleID, Enforce: enforce, Position: position,
 		Name: name, Type: ruleType, Command: command, Enabled: true,
 	}
 	if err := s.groups.CreateRule(rule); err != nil {
@@ -463,6 +499,20 @@ func (s *GroupService) UpdateRule(scope repositories.AccessScope, id uint, name,
 		// (R2-082, TS-18-08: command="echo x" → 200, danach nur noch 22/tcp).
 		if err := validateEnforceFirewallSpec(rule.Type, rule.Enforce, command); err != nil {
 			return nil, err
+		}
+		if rule.Type == domain.RuleTypeAptProxy && !validAptCacheChoice(command) {
+			return nil, ErrInvalidAptCacheChoice
+		}
+		if isDockerUpdateRule(rule.Type) {
+			if !validDockerScope(command) {
+				return nil, ErrInvalidDockerScope
+			}
+			command = strings.TrimSpace(command)
+		}
+		if rule.Type == domain.RuleTypeDNSTest {
+			if command, err = normalizeDNSTestDomains(command); err != nil {
+				return nil, err
+			}
 		}
 		rule.Command = command
 	}
@@ -552,9 +602,28 @@ func (s *GroupService) ListAllRules(scope repositories.AccessScope) ([]domain.Ru
 
 // ruleTypeUsesCommand: nur diese Typen werten das Command-Feld aus
 // (Paketliste, Skript, Custom-Aktions-ID, Firewall-Regel-JSON).
+// ErrInvalidAptCacheChoice: Die Cache-Auswahl einer apt-proxy-Regel ist
+// keine Cache-ID.
+var ErrInvalidAptCacheChoice = errors.New("ungültige apt-cache-auswahl - erwartet wird die id eines apt-caches oder leer")
+
+// validAptCacheChoice prüft die Cache-Auswahl einer apt-proxy-Regel: leer
+// (der einzige Cache) oder eine Cache-ID. Ob es den Cache gibt, zeigt erst
+// der Lauf - er kann bis dahin gelöscht sein.
+func validAptCacheChoice(command string) bool {
+	c := strings.TrimSpace(command)
+	if c == "" {
+		return true
+	}
+	_, err := strconv.ParseUint(c, 10, 64)
+	return err == nil
+}
+
 func ruleTypeUsesCommand(t string) bool {
 	switch t {
-	case domain.RuleTypePackages, domain.RuleTypeScript, domain.RuleTypeCustom, domain.RuleTypeFirewall:
+	case domain.RuleTypePackages, domain.RuleTypeScript, domain.RuleTypeCustom, domain.RuleTypeFirewall,
+		domain.RuleTypeDNSTest, domain.RuleTypeAptProxy:
+		return true
+	case domain.RuleTypeDockerComposeUpdate, domain.RuleTypeDockerContainerUpdate:
 		return true
 	}
 	return false
@@ -567,10 +636,77 @@ func validRuleType(t string) bool {
 		domain.RuleTypeSync, domain.RuleTypeHealth, domain.RuleTypeFirewall,
 		domain.RuleTypeBackup, domain.RuleTypeCleanup, domain.RuleTypeDockerPrune,
 		domain.RuleTypeDockerUpdateUnused, domain.RuleTypeAptProxy,
+		domain.RuleTypeDockerComposeUpdate, domain.RuleTypeDockerContainerUpdate,
 		domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
 		domain.RuleTypeDNSTest, domain.RuleTypeDeepScan,
 		domain.RuleTypeACLSetup, domain.RuleTypePermSync:
 		return true
 	}
 	return false
+}
+
+// ErrRuleOrderInvalid: Die neue Reihenfolge nennt nicht genau die Regeln
+// eines Auslösers dieser Gruppe.
+var ErrRuleOrderInvalid = errors.New("ungültige reihenfolge - erwartet werden alle regeln genau eines auslösers (zeitplan oder grundsatz-regeln) dieser gruppe, jede einmal")
+
+// ReorderRules legt die Ausführungsreihenfolge der Regeln EINES Auslösers
+// fest: die erste Regel der Liste läuft zuerst. Die Liste muss vollständig
+// sein - eine Teilliste ließe offen, wo die übrigen stehen.
+func (s *GroupService) ReorderRules(scope repositories.AccessScope, groupID uint, ruleIDs []uint, actor string) error {
+	group, err := s.groups.FindByID(scope, groupID)
+	if err != nil {
+		return err
+	}
+	rules, err := s.groups.FindRulesForGroup(groupID)
+	if err != nil {
+		return err
+	}
+	if !isCompleteTriggerOrder(rules, ruleIDs) {
+		return ErrRuleOrderInvalid
+	}
+	if err := s.groups.SetRulePositions(ruleIDs); err != nil {
+		return err
+	}
+	s.audit.Log(actor, "rule.reorder", "group", groupID, fmt.Sprintf("%s: %v", group.Name, ruleIDs))
+	_ = s.reload()
+	return nil
+}
+
+// isCompleteTriggerOrder prüft, dass ids jede Regel genau eines Auslösers
+// genau einmal nennt.
+func isCompleteTriggerOrder(rules []domain.Rule, ids []uint) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	trigger := map[uint]string{}
+	for _, r := range rules {
+		trigger[r.ID] = ruleTrigger(&r)
+	}
+	want, ok := trigger[ids[0]]
+	if !ok {
+		return false
+	}
+	seen := map[uint]bool{}
+	for _, id := range ids {
+		if seen[id] || trigger[id] != want {
+			return false
+		}
+		seen[id] = true
+	}
+	count := 0
+	for _, t := range trigger {
+		if t == want {
+			count++
+		}
+	}
+	return count == len(ids)
+}
+
+// ruleTrigger benennt den Auslöser einer Regel: ihren Zeitplan oder die
+// Grundsatz-Regeln der Gruppe.
+func ruleTrigger(r *domain.Rule) string {
+	if r.ScheduleID == nil {
+		return "enforce"
+	}
+	return "schedule:" + strconv.FormatUint(uint64(*r.ScheduleID), 10)
 }

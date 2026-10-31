@@ -85,11 +85,12 @@ func TestRegelKommandoNurWoVerwendet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// apt-proxy mit Kommando: abgelehnt (früher 201 + totes Feld).
+	// apt-proxy trägt im Kommando nur die Cache-ID - eine URL wird
+	// abgelehnt (früher 201 + totes Feld).
 	_, err = env.Groups.DefineRule(repositories.ScopeAll(), group.ID,
 		"proxy", domain.RuleTypeAptProxy, "http://example.invalid:3142", nil, true, "admin")
-	if !errors.Is(err, services.ErrRuleCommandUnused) {
-		t.Fatalf("apt-proxy mit Kommando muss abgelehnt werden, bekam: %v", err)
+	if !errors.Is(err, services.ErrInvalidAptCacheChoice) {
+		t.Fatalf("apt-proxy mit url muss abgelehnt werden, bekam: %v", err)
 	}
 	// Ohne Kommando bleibt der Typ nutzbar.
 	if _, err := env.Groups.DefineRule(repositories.ScopeAll(), group.ID,
@@ -98,7 +99,7 @@ func TestRegelKommandoNurWoVerwendet(t *testing.T) {
 	}
 	// Typen MIT Kommando bleiben unberührt (script braucht seins) - seit
 	// R2-087 allerdings nur noch an einem Zeitplan, nicht als Grundsatz-Regel.
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "nachts", "0 3 * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "nachts", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +123,11 @@ func TestGlobaleRegelSichtRespektiertDenScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedA, err := env.Groups.DefineSchedule(repositories.ScopeAll(), a.ID, "nachts", "0 3 * * *", "admin")
+	schedA, err := env.Groups.DefineSchedule(repositories.ScopeAll(), a.ID, "nachts", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedB, err := env.Groups.DefineSchedule(repositories.ScopeAll(), b.ID, "nachts", "0 4 * * *", "admin")
+	schedB, err := env.Groups.DefineSchedule(repositories.ScopeAll(), b.ID, "nachts", "0 4 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestScriptIstKeineGrundsatzregel(t *testing.T) {
 	}
 
 	// Am Zeitplan bleibt script erlaubt.
-	sched, err := env.Groups.DefineSchedule(scope, group.ID, "nachts", "0 3 * * *", "admin")
+	sched, err := env.Groups.DefineSchedule(scope, group.ID, "nachts", "0 3 * * *", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}

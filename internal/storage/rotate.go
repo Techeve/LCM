@@ -28,6 +28,7 @@ var encryptedColumns = []struct {
 	// explizit gepinnten crowdsec_*-Spalten am Server-Modell).
 	{"global_settings", "id", "crowd_sec_lapi_password_enc"}, // CrowdSec-LAPI-Maschinenkonto
 	{"global_settings", "id", "crowd_sec_console_key_enc"},   // CrowdSec-Console-Key
+	{"crowdsec_lapis", "id", "password_enc"},                 // Maschinenkonten der CrowdSec-LAPIs
 	{"notification_channels", "id", "secret_enc"},            // SMTP-Passwort bzw. Webhook-URL
 }
 

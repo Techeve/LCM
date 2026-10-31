@@ -109,6 +109,7 @@ func cleanupReleases(info domain.KernelInfo) ([]string, error) {
 // ein Neustart den laufenden Kernel gewechselt haben.
 func removeKernelsScript(releases []string) string {
 	var b strings.Builder
+	b.WriteString(aptPrelude)
 	b.WriteString("set -e\n")
 	b.WriteString("RUNNING=$(uname -r)\n")
 	b.WriteString("echo \"Laufender Kernel: $RUNNING (bleibt)\"\n")
@@ -131,7 +132,7 @@ func removeKernelsScript(releases []string) string {
 	b.WriteString("TARGETS=$(printf '%s\\n' $TARGETS | grep -v -F \"$RUNNING\" | sort -u || true)\n")
 	b.WriteString("if [ -z \"$TARGETS\" ]; then echo 'Nichts zu entfernen.'; exit 0; fi\n")
 	b.WriteString("echo 'Wird entfernt:'; printf '  %s\\n' $TARGETS\n")
-	b.WriteString(aptNonInteractive + " -y purge $TARGETS\n")
+	b.WriteString("lcm_apt -y purge $TARGETS\n")
 	b.WriteString("df -h /boot 2>/dev/null || true\n")
 	return b.String()
 }

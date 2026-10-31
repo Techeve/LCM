@@ -83,7 +83,7 @@ func TestGlobalSettingsTimeFieldsBind(t *testing.T) {
 		t.Errorf("default_timezone kommt nicht im Service an: %v", in.DefaultTimezone)
 	}
 	// Nicht mitgeschickte Felder bleiben nil (PATCH-Semantik, R2-029).
-	if in.BackupEnabled != nil || in.AptCacheURL != nil {
+	if in.BackupEnabled != nil || in.CVEScanEnabled != nil {
 		t.Error("nicht mitgeschickte Felder dürfen nicht gesetzt werden")
 	}
 }

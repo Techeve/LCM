@@ -95,7 +95,7 @@ func TestRebootScheduledRule(t *testing.T) {
 	if err := env.Groups.AssignServer(repositories.ScopeAll(), group.ID, serverID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "wartungsfenster", "0 3 * * 0", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "wartungsfenster", "0 3 * * 0", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestRebootRuleSkippedOnRestrictedServer(t *testing.T) {
 	if err := env.Groups.AssignServer(repositories.ScopeAll(), group.ID, serverID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "wartungsfenster", "0 3 * * 0", "admin")
+	sched, err := env.Groups.DefineSchedule(repositories.ScopeAll(), group.ID, "wartungsfenster", "0 3 * * 0", 0, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -294,6 +294,20 @@ ohnehin nicht - auf Demo-Servern, Synology-DSM-Geräten, Agent-Servern (der
 Agent-Transport führt keinen Strom) und auf Servern in Wartung wird die
 Konsole gar nicht erst angeboten.
 
+### Sitzungen
+
+- **Offene Konsolen sind sichtbar**: Server-Detail und Dashboard zeigen das
+  Kennzeichen **„Konsole offen"** samt Benutzer und Beginn - so weiß jeder,
+  dass dort gerade jemand von Hand arbeitet.
+- **LCM arbeitet weiter**: Eine Konsole hat eigene Verbindungsplätze (zwei je
+  Server) und blockiert keine Zeitpläne, Updates oder Aktionen. Treffen
+  apt-Läufe aufeinander, wartet LCM auf die Paketverwaltung (siehe
+  [APT-Cache](/guides/apt-cache/#wenn-apt-belegt-ist)).
+- **Ende**: *Beenden*, Schließen des Fensters, `exit` in der Shell oder
+  **15 Minuten ohne Eingabe** trennen die Sitzung samt SSH-Verbindung. Danach
+  muss die Konsole neu geöffnet werden. Öffnen und Schließen stehen im
+  Audit-Log, die Sitzung selbst im SSH-Protokoll.
+
 ## Enrollment-Token
 
 Das Token ist das **dauerhafte** Credential des Agents (wie ein API-Key). Es

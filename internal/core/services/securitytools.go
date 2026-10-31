@@ -32,7 +32,7 @@ var (
 	// ErrInvalidAllowlistIP: ein Allowlist-Eintrag ist keine gültige IP.
 	ErrInvalidAllowlistIP = errors.New("ungültige Allowlist-IP")
 	// ErrCrowdSecLapiMissing: Remote-LAPI gewählt, aber in den Einstellungen kein Zugang hinterlegt.
-	ErrCrowdSecLapiMissing = errors.New("keine CrowdSec-LAPI-Zugangsdaten hinterlegt (Einstellungen → CrowdSec)")
+	ErrCrowdSecLapiMissing = errors.New("keine CrowdSec-LAPI gewählt oder hinterlegt (Einstellungen → CrowdSec)")
 	// ErrCrowdSecConsoleMissing: Console gewählt, aber kein Enrollment-Key hinterlegt.
 	ErrCrowdSecConsoleMissing = errors.New("kein CrowdSec-Console-Key hinterlegt (Einstellungen → CrowdSec)")
 	// ErrCrowdSecUnsupported: die Distribution bietet CrowdSec nicht als Paket.
@@ -63,6 +63,9 @@ type SecurityToolInput struct {
 	Bouncer     bool     // Firewall-Bouncer mitinstallieren
 	Collections []string // z.B. ["crowdsecurity/sshd"]
 	LapiMode    string   // local | remote | console
+	// LapiID wählt im Remote-Modus die LAPI (Einstellungen → CrowdSec).
+	// 0 = die einzige, wenn es genau eine gibt.
+	LapiID uint
 }
 
 // validateSecurityToolInput prüft Tool, IPs, Collections und LAPI-Modus.
@@ -335,6 +338,9 @@ func (s *ServerService) ConfigureSecurityTool(scope repositories.AccessScope, id
 		if s.crowdsecConfig == nil {
 			return nil, ErrCrowdSecLapiMissing
 		}
+		if cfg, err := s.crowdsecConfig(in.LapiID); in.LapiMode == "remote" && (err != nil || cfg.LapiURL == "") {
+			return nil, ErrCrowdSecLapiMissing
+		}
 	}
 	// Allowlist-Referenzen früh prüfen: eine unbekannte ID lief bisher mit
 	// „success" durch, und ignoreip fiel wortlos auf die Standardbelegung
@@ -412,7 +418,7 @@ func (s *ServerService) runSecurityToolJob(job *domain.Job, server *domain.Serve
 	} else {
 		cfg := CrowdSecConfig{}
 		if s.crowdsecConfig != nil {
-			if c, e := s.crowdsecConfig(); e == nil {
+			if c, e := s.crowdsecConfig(in.LapiID); e == nil {
 				cfg = c
 			}
 		}

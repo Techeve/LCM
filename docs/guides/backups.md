@@ -68,7 +68,15 @@ lässt sich mit dem privaten Schlüssel auch ohne LCM öffnen:
 
 ```bash
 age -d -i schluessel.txt lcm-backup-20260910-033000.lcmbak > backup.zip
+bsdtar -xf backup.zip        # Debian/Ubuntu: apt install libarchive-tools
 ```
+
+Seit 1.43 komprimiert das ZIP im Archiv mit zstd statt Deflate. Die großen
+Felder der Datenbank liegen verschlüsselt als Base64 vor; Deflate holt davon
+nichts zurück, zstd ein Viertel. Das klassische `unzip` kennt dieses
+Verfahren nicht, `bsdtar` aus `libarchive-tools` schon. Aus demselben Grund
+lässt sich ein Archiv ab 1.43 nicht mit einer älteren LCM-Version
+wiederherstellen - ältere Archive dagegen liest jede neuere Version.
 
 ## Automatische Backups
 

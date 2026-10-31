@@ -189,6 +189,10 @@ func New(deps Deps) *fiber.App {
 	// Agent-Schnittstelle und der Agent-Port keine UI/REST.
 
 	api := app.Group("/api/v1")
+	// Jede ändernde Anfrage kann eine Ampel verschieben (Einstellungen,
+	// Container-Relevanz, Speicherüberwachung ...) - der Cache der fertigen
+	// Bewertungen fängt danach neu an (siehe services/server_status.go).
+	api.Use(middlewares.AfterChange(func() { deps.Servers.ForgetStatus(nil) }))
 
 	// Mitgelieferte Anwender-Doku (öffentlich): Die Anleitung zum Einrichten
 	// des SSH-Schlüssels braucht man, BEVOR man einen Zugang hat - etwa aus
@@ -298,6 +302,8 @@ func New(deps Deps) *fiber.App {
 	// wird zusätzlich pro Query auf die Gruppen des Users eingeschränkt.
 	servers := api.Group("/servers")
 	servers.Get("/", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.List)
+	servers.Get("/statuses", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Statuses)
+	servers.Get("/consoles", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.OpenConsoles)
 	servers.Post("/probe", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Probe)
 	servers.Post("/join", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Join)
 	// LCM Remote: Agent-Server anlegen (Enrollment-Token) + Token erneuern.
@@ -459,6 +465,7 @@ func New(deps Deps) *fiber.App {
 	groups.Post("/:id/schedules/define", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.DefineSchedule)
 	groups.Get("/:id/rules", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.ListRules)
 	groups.Post("/:id/rules/define", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.DefineRule)
+	groups.Put("/:id/rules/order", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.ReorderRules)
 
 	// Linux-Benutzer (Betriebssystem-Accounts der verwalteten Server).
 	linux := api.Group("/linux-users")
@@ -612,9 +619,21 @@ func New(deps Deps) *fiber.App {
 	api.Put("/settings/mail-channel", middlewares.RequirePermission(domain.PermSettingsManage), notificationCtrl.SetSystemChannel)
 	// Katalog bekannter Paketquellen (pflegbar; Lese-Sicht für das
 	// Server-Detail: GET /servers/known-repos)
-	api.Get("/settings/apt-cache/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.AptCacheStatus)
+	// APT-Caches: Verwaltung unter settings:manage, plus eine
+	// servers:read-Leseroute für die Auswahl (Regel, Server-Aktion).
+	api.Get("/settings/apt-caches", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.ListAptCaches)
+	api.Post("/settings/apt-caches", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.SaveAptCache)
+	api.Delete("/settings/apt-caches/:id", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.DeleteAptCache)
+	api.Get("/settings/apt-caches/:id/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.AptCacheStatus)
+	api.Get("/apt-caches", middlewares.RequirePermission(domain.PermServersRead), opsCtrl.ListAptCaches)
 	// Zentrale CrowdSec-Seite: LAPI-Erreichbarkeits-Check (Login-Probe).
-	api.Get("/settings/crowdsec/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.CrowdSecLapiStatus)
+	// CrowdSec-LAPIs: Verwaltung unter settings:manage, plus eine
+	// servers:read-Leseroute für die Auswahl bei der CrowdSec-Einrichtung.
+	api.Get("/settings/crowdsec/lapis", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.ListCrowdSecLapis)
+	api.Post("/settings/crowdsec/lapis", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.SaveCrowdSecLapi)
+	api.Delete("/settings/crowdsec/lapis/:id", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.DeleteCrowdSecLapi)
+	api.Get("/settings/crowdsec/lapis/:id/status", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.CrowdSecLapiStatus)
+	api.Get("/crowdsec-lapis", middlewares.RequirePermission(domain.PermServersRead), opsCtrl.ListCrowdSecLapis)
 	// Zentrale APT-Cache-Seite: Übersicht (URL, Erreichbarkeit, Statistik,
 	// Verwaltbarkeit auf dem LCM-Host). Neustart/permanentes Caching laufen über
 	// die server-scoped /servers/:id/apt-cache/*-Endpunkte mit der zurückgegebenen server_id.

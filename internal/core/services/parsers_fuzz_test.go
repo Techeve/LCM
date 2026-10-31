@@ -61,7 +61,7 @@ func FuzzParseDockerPS(f *testing.F) {
 }
 func FuzzParseDockerImages(f *testing.F) {
 	seed(f)
-	f.Fuzz(func(t *testing.T, s string) { parseDockerImages(s) })
+	f.Fuzz(func(t *testing.T, s string) { parseDockerImages(s, nil) })
 }
 func FuzzParseListeningPorts(f *testing.F) {
 	seed(f)

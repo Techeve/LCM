@@ -432,6 +432,10 @@ type Server struct {
 	// AptProxyActive: der Server leitet seine APT-Anfragen über den zentralen
 	// APT-Cache (Drop-in /etc/apt/apt.conf.d/02lcm-apt-cache).
 	AptProxyActive bool `gorm:"default:false" json:"apt_proxy_active"`
+	// AptProxyURL ist die Cache-Adresse, auf die das Drop-in zeigt (beim
+	// Anbinden gesetzt, beim Scan aus dem Drop-in gelesen) - daran erkennt
+	// die Oberfläche, an welchem der APT-Caches der Server hängt.
+	AptProxyURL string `json:"apt_proxy_url"`
 	// RHSMStatus ist der Registrierungsstand bei Red Hats Subscription
 	// Management - leer auf allem, was kein subscription-manager kennt
 	// (Rocky, AlmaLinux, CentOS und die ganze Debian-Welt).

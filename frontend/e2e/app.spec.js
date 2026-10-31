@@ -47,9 +47,10 @@ async function createProduktionSchedule(page, name) {
   await page.locator('#sf-name').fill(name);
   await page.locator('#sf-cron').fill('0 2 * * *');
   await page.getByRole('button', { name: 'Speichern' }).click();
-  const row = page.locator('table').filter({ hasText: 'Zeitplan' }).locator('tr', { hasText: name });
-  await expect(row).toBeVisible();
-  return row;
+  // Jeder Zeitplan ist eine eigene Karte; Regeln entstehen über ihr „+ Regel".
+  const card = page.getByTestId('sched-card').filter({ hasText: name });
+  await expect(card).toBeVisible();
+  return card;
 }
 
 // Stellt einen Schalter auf den gewuenschten Zustand - statt ihn
@@ -62,6 +63,18 @@ async function setzeSchalter(schalter, an) {
     await schalter.click();
     await expect(schalter).toBeChecked({ checked: an });
   }
+}
+
+// Öffnet das ⓘ-Popover eines StatusBadge und liefert seinen Text. Der Knopf
+// schaltet um: Ein zweiter Klick in einer toPass-Schleife schloss das eben
+// geöffnete Popover wieder, und innerText() wartete ohne eigene Frist die
+// ganzen 15 s auf einen Dialog, der nicht mehr kam. Deshalb nur klicken,
+// wenn es zu ist, und kurz lesen - die Schleife darum wiederholt.
+async function popoverLesen(page, knopf) {
+  if ((await knopf.getAttribute('aria-expanded')) !== 'true') {
+    await knopf.click();
+  }
+  return page.getByRole('dialog').innerText({ timeout: 2000 });
 }
 
 test.describe('LCM', () => {
@@ -287,12 +300,14 @@ test.describe('LCM', () => {
     // nennt die kritische Sicherheitslücke als Grund. Das Popover schließt
     // sich bei jedem Scroll-Ereignis - nachladende Inhalte können es direkt
     // nach dem Klick wieder zuklappen, daher Klick + Sichtprüfung mit Retry.
+    // Auch der Text gehört in den Wiederholungsblock: Zwischen Sichtprüfung und
+    // Text kann das Popover wieder zuklappen.
     await expect(async () => {
       await page.getByRole('button', { name: /^Warum/ }).click();
       await expect(page.getByRole('dialog')).toBeVisible({ timeout: 1000 });
+      await expect(page.getByRole('dialog')).toContainText('Warum Kritisch?', { timeout: 1000 });
+      await expect(page.getByRole('dialog')).toContainText('kritische Sicherheitslücke', { timeout: 1000 });
     }).toPass();
-    await expect(page.getByRole('dialog')).toContainText('Warum Kritisch?');
-    await expect(page.getByRole('dialog')).toContainText('kritische Sicherheitslücke');
 
     // db01 ist ein LXC-Container mit Ubuntu 22.04 LTS.
     await page.goto('/#/servers/2');
@@ -594,12 +609,38 @@ test.describe('LCM', () => {
     await expect(page.getByTestId('chart-hover-label')).toBeVisible();
     await expect(page.getByTestId('chart-hover-label')).toContainText('%');
 
+    // Die Grafik füllt die Kartenbreite, und der Datenpunkt unter der Maus
+    // sitzt an der Mausposition - auch weit rechts, ohne seitlichen Versatz.
+    // Breite der Zeichenfläche gegen die Inhaltsbreite der Karte (ohne Innenabstand).
+    const fill = await chart.evaluate((svg) => {
+      const body = svg.parentElement;
+      const cs = getComputedStyle(body);
+      const inner = body.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      return svg.getBoundingClientRect().width - inner;
+    });
+    expect(Math.abs(fill)).toBeLessThan(2);
+    const box = await chart.boundingBox();
+    const mouseX = box.x + box.width * 0.9;
+    await chart.hover({ position: { x: box.width * 0.9, y: box.height / 2 } });
+    const dot = await chart.locator('circle[r="4.5"]').boundingBox();
+    expect(Math.abs(dot.x + dot.width / 2 - mouseX)).toBeLessThan(20);
+
     // Volume-Tabelle: web01 hat mehrere Dateisysteme, Root „/" mit System-Badge.
     const volumes = page.getByTestId('volumes-table');
     await expect(volumes).toBeVisible();
     await expect(volumes).toContainText('/data');
     await expect(volumes).toContainText('System'); // Badge am Root-Volume
     await expect(volumes).toContainText('GiB');
+  });
+
+  test('Server-Detail: Benutzer-Reiter verlinkt die Linux-Benutzer-Anleitung', async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto('/#/servers/1');
+    await page.getByTestId('tab-users').click();
+    const guide = page.getByTestId('users-guide');
+    await expect(guide).toHaveAttribute('href', '#/doku/linux-benutzer');
+    await guide.click();
+    await expect(page.locator('body')).toContainText('Linux-Benutzer einrichten');
   });
 
   test('Server-Detail: Post-Quanten-Zustand des Schlüsselaustauschs', async ({ page }) => {
@@ -616,8 +657,7 @@ test.describe('LCM', () => {
     // Die Verbindung ist heute sicher, behebbar ist es nur auf dem Server.
     const knopf = page.locator('button[aria-label]', { hasText: 'ⓘ' }).first();
     await expect(async () => {
-      await knopf.click();
-      const inhalt = await page.getByRole('dialog').innerText();
+      const inhalt = await popoverLesen(page, knopf);
       expect(inhalt).toContain('Post-Quanten');
       expect(inhalt).not.toContain('insights.');
     }).toPass({ timeout: 15000 });
@@ -794,8 +834,7 @@ test.describe('LCM', () => {
     // wiederholen, statt sich darauf zu verlassen, dass es offen bleibt.
     const knopf = page.locator('button[aria-label]', { hasText: 'ⓘ' }).first();
     await expect(async () => {
-      await knopf.click();
-      const inhalt = await page.getByRole('dialog').innerText();
+      const inhalt = await popoverLesen(page, knopf);
       expect(inhalt).toContain('ZFS-Pool tank');
       // Der Befund muss als übersetzter Satz erscheinen, nicht als roher
       // i18n-Schlüssel - fehlte die Übersetzung, stünde hier "insights.…".
@@ -1567,25 +1606,25 @@ test.describe('LCM', () => {
     await expect(page.getByTestId('allowlist-row').filter({ hasText: 'E2E-Liste' })).toHaveCount(0);
   });
 
-  test('Servergruppen zeigen Schedules- und Rules-Tabellen', async ({ page }) => {
+  test('Servergruppen zeigen Regeln je Auslöser', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto('/#/groups');
     // Produktion bringt keinen vorgefertigten Wartungs-Schedule mehr mit -
     // nur die Firewall-Grundsatz-Regel.
     await page.getByRole('button', { name: 'Produktion' }).click();
     await expect(page.locator('body')).toContainText('Noch keine Schedules');
-    const rulesTable = page.locator('table').filter({ hasText: 'Konfiguration' });
-    const fwRow = rulesTable.locator('tr', { hasText: 'Firewall Webserver' });
-    await expect(fwRow).toContainText('Grundsatz');
-    await expect(fwRow).toContainText('Ports: 80/tcp, 443/tcp');
+    const fwRule = page.getByTestId('enforce-card').getByTestId('rule-item').filter({ hasText: 'Firewall Webserver' });
+    await expect(fwRule).toContainText('Ports: 80/tcp, 443/tcp');
+    // Server und Verwaltungs-User sind zugeklappt, die Anzahl steht im Titel.
+    await expect(page.getByTestId('group-servers-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByTestId('group-servers-toggle')).toContainText(/Server \(\d+\)/);
     // Die Basis-Schedules liegen in der System-Gruppe: Health-Check und
-    // System-Sync (inkl. zentralem Docker-Check als Rule).
+    // System-Sync (inkl. zentralem Docker-Check als Regel darin).
     await page.getByRole('button', { name: /^System/ }).click();
-    const schedTable = page.locator('table').filter({ hasText: 'Zeitplan' });
-    await expect(schedTable.locator('tr', { hasText: 'Health-Check' })).toContainText('*/15 * * * *');
-    await expect(schedTable.locator('tr', { hasText: 'System-Sync' })).toContainText('0 4 * * *');
-    const sysRules = page.locator('table').filter({ hasText: 'Konfiguration' });
-    await expect(sysRules.locator('tr', { hasText: 'Docker-Check' })).toContainText('System-Sync');
+    await expect(page.getByTestId('sched-card').filter({ hasText: 'Health-Check' })).toContainText('*/15 * * * *');
+    const sync = page.getByTestId('sched-card').filter({ hasText: 'System-Sync' });
+    await expect(sync).toContainText('0 4 * * *');
+    await expect(sync.getByTestId('rule-item').filter({ hasText: 'Docker-Check' })).toHaveCount(1);
   });
 
   test('Servergruppen: Verwaltungs-User zuweisen und entfernen', async ({ page }) => {
@@ -1595,6 +1634,8 @@ test.describe('LCM', () => {
     // Produktion bringt den Demo-Manager bereits mit - ohne diese Zuordnung
     // saehe ein Benutzer der Manager-Rolle ueberhaupt keine Server.
     await page.getByRole('button', { name: 'Produktion' }).click();
+    // Der Abschnitt ist zugeklappt - erst öffnen.
+    await page.getByTestId('group-managers-toggle').click();
     const managers = page.getByTestId('group-managers-table');
     await expect(managers).toContainText('ops.manager');
 
@@ -1633,42 +1674,42 @@ test.describe('LCM', () => {
 
   test('Servergruppen: Rule-Popup öffnet sich und schränkt Typen ein', async ({ page }) => {
     await loginAsAdmin(page);
-    const schedRow = await createProduktionSchedule(page, 'e2e-Typen');
-    // Erfassungsmaske ist NICHT dauerhaft sichtbar, sondern öffnet per „+".
+    const schedCard = await createProduktionSchedule(page, 'e2e-Typen');
+    // Erfassungsmaske ist NICHT dauerhaft sichtbar, sondern öffnet per „+ Regel".
     await expect(page.locator('.modal-title')).toHaveCount(0);
-    // „+" der Rules-Tabelle (per title) öffnet das Popup.
-    await page.locator('button[title="Neue Rule"]').click();
+    await schedCard.locator('button[title="Neue Rule"]').click();
     await expect(page.getByRole('heading', { name: 'Neue Rule' })).toBeVisible();
-    // Am Schedule stehen die Paket-Typen zur Verfügung.
+    // Der Auslöser steht durch die Karte fest.
+    await expect(page.getByTestId('rf-trigger')).toContainText('e2e-Typen');
+    // Am Schedule stehen die Paket-Typen zur Verfügung - und auch
+    // Rechte-Soll (Rechte zu fester Zeit härten) und Script.
     const typeSelect = page.locator('#rf-type');
     await expect(typeSelect.locator('option', { hasText: 'Paket-Updates (benannt)' })).toHaveCount(1);
     await expect(typeSelect.locator('option', { hasText: 'Security/Bugfix' })).toHaveCount(1);
+    await expect(typeSelect.locator('option', { hasText: 'Rechte-Soll halten' })).toHaveCount(1);
+    await expect(typeSelect.locator('option', { hasText: /^Script$/ })).toHaveCount(1);
     await typeSelect.selectOption('packages');
     await expect(page.getByPlaceholder('z.B. htop, unzip, openssh-server')).toBeVisible();
+    await page.getByRole('button', { name: 'Abbrechen' }).click();
     // Als Grundsatz-Regel stehen nur Typen mit Soll-Zustand zur Verfügung:
-    // Firewall, APT-Cache, ACL einrichten und Rechte-Soll. „Skript" ist hier
+    // Firewall, APT-Cache, ACL einrichten und Rechte-Soll. „Script" ist hier
     // bewusst NICHT dabei - ein Kommando hat keinen Soll-Zustand und lief
-    // unprotokolliert alle 15 Minuten (R2-087); dafür ist ein Zeitplan der
-    // richtige Ort.
-    await page.locator('#rf-target').selectOption('enforce');
+    // unprotokolliert alle 15 Minuten (R2-087).
+    await page.getByTestId('enforce-card').locator('button[title="Neue Rule"]').click();
     await expect(page.locator('#rf-type option')).toHaveCount(4);
     await expect(page.locator('#rf-type option', { hasText: 'APT-Cache erzwingen' })).toHaveCount(1);
     await expect(page.locator('#rf-type option', { hasText: 'ACL einrichten' })).toHaveCount(1);
     await expect(page.locator('#rf-type option', { hasText: 'Rechte-Soll halten' })).toHaveCount(1);
-    await expect(page.locator('#rf-type option', { hasText: 'Skript' })).toHaveCount(0);
-    // Umgekehrt gehören sie NICHT an einen Zeitplan: Dort gäbe es für sie
-    // keinen Ausführungspfad.
-    await page.locator('#rf-target').selectOption({ index: 0 });
-    await expect(page.locator('#rf-type option', { hasText: 'Rechte-Soll halten' })).toHaveCount(0);
+    await expect(page.locator('#rf-type option', { hasText: /^Script$/ })).toHaveCount(0);
     // Aufräumen (shared Demo-State).
     await page.getByRole('button', { name: 'Abbrechen' }).click();
-    await schedRow.getByRole('button', { name: 'Schedule löschen' }).click();
+    await schedCard.getByRole('button', { name: 'Schedule löschen' }).click();
   });
 
   test('Servergruppen: Paket-Rule ohne Paketnamen ist nicht speicherbar', async ({ page }) => {
     await loginAsAdmin(page);
     const schedRow = await createProduktionSchedule(page, 'e2e-Pakete');
-    await page.locator('button[title="Neue Rule"]').click();
+    await schedRow.locator('button[title="Neue Rule"]').click();
     await page.locator('#rf-name').fill('LeerePakete');
     await page.locator('#rf-type').selectOption('packages');
     const save = page.getByRole('button', { name: 'Speichern' });
@@ -1715,40 +1756,38 @@ test.describe('LCM', () => {
     await expect(page.locator('#sf-cron')).toHaveValue('30 6 1 * *');
     await page.locator('#sf-name').fill('e2e-Baukasten');
     await page.getByRole('button', { name: 'Speichern' }).click();
-    const row = page.locator('table').filter({ hasText: 'Zeitplan' }).locator('tr', { hasText: 'e2e-Baukasten' });
+    const row = page.getByTestId('sched-card').filter({ hasText: 'e2e-Baukasten' });
     await expect(row).toContainText('30 6 1 * *');
     await row.getByRole('button', { name: 'Schedule löschen' }).click();
     await expect(row).toHaveCount(0);
   });
 
-  test('Servergruppen: Rule an einem Schedule anlegen (Regression schedule_id)', async ({ page }) => {
+  test('Servergruppen: Regeln am Schedule anlegen und umsortieren', async ({ page }) => {
     await loginAsAdmin(page);
-    // Schedule-Löschen ist mit confirm() abgesichert - automatisch bestätigen.
-    page.on('dialog', (d) => d.accept());
-    await page.goto('/#/groups');
-    await page.getByRole('button', { name: 'Produktion' }).click();
-    // Erst einen Schedule anlegen (die Gruppe startet ohne Zeitpläne).
-    await page.locator('button[title="Neuer Schedule"]').click();
-    await page.locator('#sf-name').fill('e2e-Wartung');
-    await page.locator('#sf-cron').fill('0 2 * * *');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    const schedTable = page.locator('table').filter({ hasText: 'Zeitplan' });
-    const schedRow = schedTable.locator('tr', { hasText: 'e2e-Wartung' });
-    await expect(schedRow).toContainText('0 2 * * *');
-    // Dann die Rule: Ziel bleibt der erste Schedule (Default), Typ update.
-    await page.locator('button[title="Neue Rule"]').click();
-    await page.locator('#rf-name').fill('e2e-Update-Rule');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    // Keine Fehlermeldung „Schedule auswählen …", sondern Rule erscheint mit
-    // dem Schedule als Ziel (schedule_id wurde korrekt gesendet).
+    const card = await createProduktionSchedule(page, 'e2e-Wartung');
+    await expect(card).toContainText('0 2 * * *');
+    // Zwei Regeln über „+ Regel" der Karte - sie reihen sich hinten an.
+    for (const name of ['e2e-Erste', 'e2e-Zweite']) {
+      await card.locator('button[title="Neue Rule"]').click();
+      await page.locator('#rf-name').fill(name);
+      await page.getByRole('button', { name: 'Speichern' }).click();
+      await expect(card.getByTestId('rule-item').filter({ hasText: name })).toHaveCount(1);
+    }
     await expect(page.locator('.alert-danger')).toHaveCount(0);
-    const rulesTable = page.locator('table').filter({ hasText: 'Konfiguration' });
-    const newRow = rulesTable.locator('tr', { hasText: 'e2e-Update-Rule' });
-    await expect(newRow).toContainText('e2e-Wartung');
-    // Wieder entfernen (shared Demo-State sauber halten) - der Schedule
-    // löscht seine Rules mit.
-    await schedRow.getByRole('button', { name: 'Schedule löschen' }).click();
-    await expect(rulesTable.locator('tr', { hasText: 'e2e-Update-Rule' })).toHaveCount(0);
+    const items = card.getByTestId('rule-item');
+    await expect(items.nth(0)).toContainText('e2e-Erste');
+    await expect(items.nth(1)).toContainText('e2e-Zweite');
+    // Die zweite nach oben: Reihenfolge und Nummern wechseln.
+    await items.nth(1).getByRole('button', { name: 'Nach oben' }).click();
+    await expect(items.nth(0)).toContainText('e2e-Zweite');
+    await expect(items.nth(0).getByTestId('rule-position')).toHaveText('1');
+    // Nach dem Neuladen bleibt es dabei - die Reihenfolge ist gespeichert.
+    await page.reload();
+    await page.getByRole('button', { name: 'Produktion' }).click();
+    await expect(card.getByTestId('rule-item').nth(0)).toContainText('e2e-Zweite');
+    // Wieder entfernen - der Schedule löscht seine Regeln mit.
+    await card.getByRole('button', { name: 'Schedule löschen' }).click();
+    await expect(page.getByTestId('sched-card').filter({ hasText: 'e2e-Wartung' })).toHaveCount(0);
   });
 
   test('Server entfernen bietet Bereinigung oder einfaches Löschen', async ({ page }) => {
@@ -2074,26 +2113,41 @@ test.describe('LCM', () => {
     await expect(table).not.toContainText('e2e-Webserver');
   });
 
-  test('APT-Cache: eigene Einstellungsseite mit URL-Feld und Prüf-Button', async ({ page }) => {
+  test('APT-Cache: mehrere Caches anlegen, prüfen und in der Regel wählen', async ({ page }) => {
     await loginAsAdmin(page);
-    // Der APT-Cache hat eine eigene Einstellungsseite (die Repositories-Seite
-    // verweist nur noch dorthin).
     await page.goto('/#/settings/apt-cache');
-    await expect(page.getByTestId('apt-cache-url')).toBeVisible();
-    // Ohne konfigurierte URL: Badge „nicht konfiguriert", Prüf-Button deaktiviert.
-    await expect(page.getByTestId('apt-cache-badge')).toContainText('nicht konfiguriert');
-    const check = page.getByTestId('apt-cache-recheck');
-    await expect(check).toBeDisabled();
-    await page.getByTestId('apt-cache-url').fill('http://127.0.0.1:3142');
-    await expect(check).toBeEnabled();
-    // Speichern validiert serverseitig und prüft direkt - 127.0.0.1:3142 ist
-    // im Test nicht belegt, also „nicht erreichbar".
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByTestId('apt-cache-badge')).toContainText('nicht erreichbar');
-    // Aufräumen: URL wieder leeren.
-    await page.getByTestId('apt-cache-url').fill('');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByTestId('apt-cache-badge')).toContainText('nicht konfiguriert');
+    await expect(page.getByTestId('apt-cache-none')).toBeVisible();
+
+    // Zwei Caches mit eigenem Namen (127.0.0.1:1/:2 sind nicht belegt).
+    for (const [name, url] of [['Standort A', 'http://127.0.0.1:1'], ['Standort B', 'http://127.0.0.1:2']]) {
+      await page.getByTestId('apt-cache-add').click();
+      await page.getByTestId('apt-cache-name').fill(name);
+      await page.getByTestId('apt-cache-url').fill(url);
+      await page.getByTestId('apt-cache-save').click();
+      await expect(page.getByTestId('apt-cache-table')).toContainText(name);
+    }
+    await expect(page.getByTestId('apt-cache-row')).toHaveCount(2);
+    const a = page.getByTestId('apt-cache-row').filter({ hasText: 'Standort A' });
+    await a.getByTestId('apt-cache-check').click();
+    await expect(a.getByTestId('apt-cache-badge')).toContainText('nicht erreichbar');
+
+    // Die Regel „APT-Cache anbinden" bietet beide zur Wahl.
+    const schedRow = await createProduktionSchedule(page, 'e2e-APT');
+    await schedRow.locator('button[title="Neue Rule"]').click();
+    await page.locator('#rf-type').selectOption('apt-proxy');
+    await expect(page.getByTestId('rf-apt-cache').locator('option')).toHaveText([/der einzige/, /Standort A/, /Standort B/]);
+    await page.getByRole('button', { name: 'Abbrechen' }).click();
+    await schedRow.getByRole('button', { name: 'Schedule löschen' }).click();
+
+    // Aufräumen (shared Demo-State).
+    await page.goto('/#/settings/apt-cache');
+    const rows = page.getByTestId('apt-cache-row');
+    for (const left of [1, 0]) {
+      await expect(rows).toHaveCount(left + 1);
+      await page.getByTestId('apt-cache-delete').first().click();
+      await expect(rows).toHaveCount(left);
+    }
+    await expect(page.getByTestId('apt-cache-none')).toBeVisible();
   });
 
   test('Subscription: Einstellungsseite mit Key-Eingabe, Instanz-ID und ehrlicher Fehlermeldung', async ({ page }) => {
@@ -2139,43 +2193,62 @@ test.describe('LCM', () => {
     }
   });
 
-  test('CrowdSec: LAPI-Check, Überwachungs-Empfehlung und Server-Liste', async ({ page }) => {
+  test('CrowdSec: mehrere LAPIs, Check, Überwachungs-Empfehlung und Server-Liste', async ({ page }) => {
     await loginAsAdmin(page);
-    // Regel-Löschen ist mit confirm() abgesichert - automatisch bestätigen.
+    // Löschen ist mit confirm() abgesichert - automatisch bestätigen.
     page.on('dialog', (d) => d.accept());
     await page.goto('/#/settings/crowdsec');
-    // LAPI konfigurieren (127.0.0.1:1 ist nicht belegt → Check scheitert schnell).
-    await page.getByTestId('cs-lapi-url').fill('http://127.0.0.1:1');
-    await page.locator('#cs-login').fill('lcm-managed');
-    await page.getByTestId('cs-lapi-pw').fill('e2e-lapi-passwort');
-    await page.getByTestId('cs-save').click();
-    // Nach dem Speichern erscheinen Status-Check, Überwachung und Server-Liste
-    // sofort (die Seite lädt die abgeleiteten Flags frisch nach).
-    await expect(page.getByTestId('cs-check')).toBeVisible();
-    await page.getByTestId('cs-check').click();
-    await expect(page.getByTestId('cs-status-badge')).toContainText('nicht erreichbar');
+    await expect(page.getByTestId('cs-lapi-none')).toBeVisible();
+
+    // Zwei LAPIs mit eigenem Namen anlegen (127.0.0.1:1/:2 sind nicht belegt →
+    // der Check scheitert schnell).
+    for (const [name, url] of [['LAPI Techeve', 'http://127.0.0.1:1'], ['LAPI Service 2000', 'http://127.0.0.1:2']]) {
+      await page.getByTestId('cs-lapi-add').click();
+      await page.getByTestId('cs-lapi-name').fill(name);
+      await page.getByTestId('cs-lapi-url').fill(url);
+      await page.getByTestId('cs-lapi-pw').fill('e2e-lapi-passwort');
+      await page.getByTestId('cs-lapi-save').click();
+      await expect(page.getByTestId('cs-lapi-table')).toContainText(name);
+    }
+    await expect(page.getByTestId('cs-lapi-row')).toHaveCount(2);
+
+    const techeve = page.getByTestId('cs-lapi-row').filter({ hasText: 'LAPI Techeve' });
+    await techeve.getByTestId('cs-check').click();
+    await expect(techeve.getByTestId('cs-status-badge')).toContainText('nicht erreichbar');
+
     // Überwachungs-Empfehlung: Regel per Klick anlegen → Status „nur Historie".
     await page.getByTestId('cs-create-rule').click();
     await expect(page.locator('.card', { hasText: 'Überwachung' })).toContainText('nur Historie');
-    // Angebundene Server: in der Demo meldet kein Server an diese LAPI.
+    // Angebundene Server: in der Demo meldet kein Server an diese LAPIs.
     await expect(page.getByTestId('cs-none-connected')).toBeVisible();
-    // Aufräumen (shared Demo-State): Regel löschen, LAPI-Zugang leeren.
+
+    // Bei der CrowdSec-Einrichtung eines Servers stehen beide zur Wahl.
+    await page.goto('/#/servers/1');
+    await page.getByTestId('server-actions-toggle').click();
+    await page.getByTestId('server-action-security-tools').click();
+    await page.locator('#sec-tool').selectOption('crowdsec');
+    await page.getByTestId('sec-lapi').selectOption('remote');
+    await expect(page.getByTestId('sec-lapi-id').locator('option')).toHaveText([/LAPI Service 2000/, /LAPI Techeve/]);
+
+    // Aufräumen (shared Demo-State): Regel und LAPIs löschen.
     await page.goto('/#/settings/alerts');
     const rulesTable = page.locator('table').filter({ hasText: 'Schwelle' });
     const rrow = rulesTable.locator('tr', { hasText: 'CrowdSec-LAPI nicht erreichbar' });
     await rrow.getByRole('button', { name: 'Löschen' }).click();
     await expect(rulesTable).not.toContainText('CrowdSec-LAPI nicht erreichbar');
     await page.goto('/#/settings/crowdsec');
-    await page.getByTestId('cs-lapi-url').fill('');
-    await page.locator('#cs-login').fill('');
-    await page.getByTestId('cs-save').click();
-    await expect(page.getByTestId('cs-check')).toHaveCount(0);
+    const lapiRows = page.getByTestId('cs-lapi-row');
+    for (let n = 2; n > 0; n--) {
+      await expect(lapiRows).toHaveCount(n);
+      await page.getByTestId('cs-lapi-delete').first().click();
+    }
+    await expect(page.getByTestId('cs-lapi-none')).toBeVisible();
   });
 
   test('Servergruppen: Rule-Typ Custom-Aktion mit Auswahl', async ({ page }) => {
     await loginAsAdmin(page);
     const schedRow = await createProduktionSchedule(page, 'e2e-Custom');
-    await page.locator('button[title="Neue Rule"]').click();
+    await schedRow.locator('button[title="Neue Rule"]').click();
     // "Custom-Aktion" ist als Typ wählbar.
     await expect(page.locator('#rf-type option', { hasText: 'Custom-Aktion' })).toHaveCount(1);
     await page.locator('#rf-type').selectOption('custom');

@@ -33,7 +33,7 @@ func TestRefreshHardwareReadsFactsWithoutUpgrade(t *testing.T) {
 		t.Errorf("hardware nicht aktualisiert: %d kerne, %d MB", srv.CPUCores, srv.MemTotalMB)
 	}
 	all := strings.Join(env.Dialer.Commands, "\n")
-	if strings.Contains(all, "upgrade") || strings.Contains(all, "install") {
+	if installs(all) {
 		t.Errorf("refresh darf nichts installieren:\n%s", all)
 	}
 }
@@ -69,6 +69,30 @@ func TestRefreshAllReadsFirewallAndSSHStatus(t *testing.T) {
 	if !srv.SSHHardened {
 		t.Errorf("ssh-härtung nicht live erkannt: %+v", srv)
 	}
+}
+
+// TestRefreshMisstSSHHaertungEffektiv: das Drop-in allein ist kein Beleg. Eine
+// lexikalisch frühere Datei (50-cloud-init.conf) kann es außer Kraft setzen;
+// die Prüfung muss deshalb den effektiven Wert aus `sshd -T` heranziehen.
+func TestRefreshMisstSSHHaertungEffektiv(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	env.Dialer.Commands = nil
+
+	if _, err := env.Servers.RefreshAll(repositories.ScopeAll(), id, "admin"); err != nil {
+		t.Fatalf("refresh-all: %v", err)
+	}
+	waitServerJob(t, env, id, services.JobTypeFullRefresh)
+
+	for _, cmd := range env.Dialer.Commands {
+		if strings.Contains(cmd, "60-lcm-hardening.conf") {
+			if !strings.Contains(cmd, "sshd -T") || !strings.Contains(cmd, "passwordauthentication no") {
+				t.Fatalf("härtungs-status prüft nur die datei, nicht die wirkung: %q", cmd)
+			}
+			return
+		}
+	}
+	t.Fatal("refresh hat den härtungs-status nicht abgefragt")
 }
 
 // TestPortlisteVerschwindetMitDerFirewall: die Portliste beschreibt, was

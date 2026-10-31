@@ -16,7 +16,7 @@ func TestConfigureAptProxyRequiresCacheURL(t *testing.T) {
 	id := joinTestServer(t, env, "web01")
 
 	// Ohne konfigurierte Cache-URL wird die Anbindung klar abgelehnt.
-	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, "admin"); !errors.Is(err, services.ErrNoAptCacheURL) {
+	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, 0, "admin"); !errors.Is(err, services.ErrNoAptCacheURL) {
 		t.Fatalf("erwartet ErrNoAptCacheURL, bekommen %v", err)
 	}
 }
@@ -24,11 +24,9 @@ func TestConfigureAptProxyRequiresCacheURL(t *testing.T) {
 func TestConfigureAptProxyEnableDisable(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
-	if _, err := env.Settings.UpdateGlobal(services.GlobalSettingsInput{AptCacheURL: sp("http://cache.local:3142")}, "admin"); err != nil {
-		t.Fatal(err)
-	}
+	addAptCache(t, env, "Standort A", "http://cache.local:3142")
 
-	out, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, "admin")
+	out, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, 0, "admin")
 	if err != nil {
 		t.Fatalf("anbinden: %v (output: %q)", err, out)
 	}
@@ -59,7 +57,7 @@ func TestConfigureAptProxyEnableDisable(t *testing.T) {
 	}
 
 	// Trennen entfernt das Drop-in und setzt das Feld zurück.
-	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, false, "admin"); err != nil {
+	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, false, 0, "admin"); err != nil {
 		t.Fatalf("trennen: %v", err)
 	}
 	server, _ = env.Servers.Get(repositories.ScopeAll(), id)
@@ -71,9 +69,7 @@ func TestConfigureAptProxyEnableDisable(t *testing.T) {
 func TestConfigureAptProxyRollbackOnFailure(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
-	if _, err := env.Settings.UpdateGlobal(services.GlobalSettingsInput{AptCacheURL: sp("http://cache.local:3142")}, "admin"); err != nil {
-		t.Fatal(err)
-	}
+	addAptCache(t, env, "Standort A", "http://cache.local:3142")
 
 	// apt-Update durch den Proxy schlägt fehl → Skript meldet exit 1
 	// (und hat das Drop-in serverseitig wieder entfernt).
@@ -81,7 +77,7 @@ func TestConfigureAptProxyRollbackOnFailure(t *testing.T) {
 		Output:   "LCM: apt-update ueber den cache fehlgeschlagen - drop-in wieder entfernt\n",
 		ExitCode: 1,
 	}
-	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, "admin"); err == nil {
+	if _, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), id, true, 0, "admin"); err == nil {
 		t.Fatal("fehlgeschlagene anbindung muss als fehler gemeldet werden")
 	}
 	server, _ := env.Servers.Get(repositories.ScopeAll(), id)
@@ -90,12 +86,14 @@ func TestConfigureAptProxyRollbackOnFailure(t *testing.T) {
 	}
 }
 
-// Der Refresh-Live-Status erkennt die Anbindung am Drop-in.
+// Der Refresh-Live-Status erkennt die Anbindung am Drop-in - samt der
+// Adresse, auf die es zeigt.
 func TestReadServerLiveStatusDetectsAptProxy(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
 
-	env.Dialer.Responses["test -f /etc/apt/apt.conf.d/02lcm-apt-cache"] = sshx.FakeResponse{Output: "yes\n"}
+	env.Dialer.Responses["cat /etc/apt/apt.conf.d/02lcm-apt-cache"] = sshx.FakeResponse{
+		Output: "Acquire::http::Proxy \"http://cache.local:3142\";\nAcquire::https::Proxy \"DIRECT\";\n"}
 	if _, err := env.Servers.RefreshAll(repositories.ScopeAll(), id, "admin"); err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +102,8 @@ func TestReadServerLiveStatusDetectsAptProxy(t *testing.T) {
 		t.Fatalf("job nicht erfolgreich: %+v", done)
 	}
 	server, _ := env.Servers.Get(repositories.ScopeAll(), id)
-	if !server.AptProxyActive {
-		t.Error("refresh-all hat die apt-cache-anbindung nicht erkannt")
+	if !server.AptProxyActive || server.AptProxyURL != "http://cache.local:3142" {
+		t.Errorf("refresh-all hat die apt-cache-anbindung nicht erkannt: %v %q", server.AptProxyActive, server.AptProxyURL)
 	}
 }
 
@@ -120,7 +118,7 @@ func TestConfigureAptProxyDisconnectWarnsAboutEnforceRule(t *testing.T) {
 		t.Fatalf("enforce-rule definieren: %v", err)
 	}
 
-	out, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), serverID, false, "admin")
+	out, err := env.Servers.ConfigureAptProxy(repositories.ScopeAll(), serverID, false, 0, "admin")
 	if err != nil {
 		t.Fatalf("trennen: %v", err)
 	}
@@ -131,10 +129,8 @@ func TestConfigureAptProxyDisconnectWarnsAboutEnforceRule(t *testing.T) {
 	// Ohne Grundsatz-Regel: kein Hinweis.
 	env2 := newTestEnv(t)
 	id2 := joinTestServer(t, env2, "web02")
-	if _, err := env2.Settings.UpdateGlobal(services.GlobalSettingsInput{AptCacheURL: sp("http://cache.local:3142")}, "admin"); err != nil {
-		t.Fatal(err)
-	}
-	out2, err := env2.Servers.ConfigureAptProxy(repositories.ScopeAll(), id2, false, "admin")
+	addAptCache(t, env2, "Standort A", "http://cache.local:3142")
+	out2, err := env2.Servers.ConfigureAptProxy(repositories.ScopeAll(), id2, false, 0, "admin")
 	if err != nil {
 		t.Fatalf("trennen ohne regel: %v", err)
 	}

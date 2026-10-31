@@ -2,8 +2,6 @@ package services_test
 
 import (
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -237,7 +235,12 @@ func TestAlertAptCacherDownFiresWhenUnreachable(t *testing.T) {
 	env := newAlertEnv(t)
 	env.createServer(t, "web-01", nil)
 	env.createServer(t, "web-02", nil)
-	env.alerts.WithAptCacheChecker(func() (string, error) { return "http://127.0.0.1:1", nil })
+	env.alerts.WithAptCacheChecker(func() ([]services.AptCacheStatus, error) {
+		return []services.AptCacheStatus{
+			{Name: "Standort A", Running: true},
+			{Name: "Standort B", Message: "nicht erreichbar"},
+		}, nil
+	})
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{
 		Name: "APT-Cache tot", Type: domain.AlertTypeAptCacherDown, Enabled: true,
@@ -256,18 +259,17 @@ func TestAlertAptCacherDownFiresWhenUnreachable(t *testing.T) {
 	if events[0].ServerID != nil {
 		t.Errorf("Selbstbeobachtung darf auf keinen Server zeigen, bekam %v", *events[0].ServerID)
 	}
+	// Die Meldung nennt genau den Cache, der nicht antwortet.
+	if d := events[0].Description; !strings.Contains(d, "Standort B") || strings.Contains(d, "Standort A") {
+		t.Errorf("meldung nennt den falschen cache: %q", d)
+	}
 }
 
 func TestAlertAptCacherDownDoesNotFireWhenRunning(t *testing.T) {
 	env := newAlertEnv(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		// Report-Seite eines echten apt-cacher-ng - die gehärtete Prüfung verlangt
-		// den Inhalts-Marker, nicht nur HTTP 200.
-		_, _ = w.Write([]byte("<html><head><title>Apt-Cacher NG</title></head><body>ok</body></html>"))
-	}))
-	defer srv.Close()
-	env.alerts.WithAptCacheChecker(func() (string, error) { return srv.URL, nil })
+	env.alerts.WithAptCacheChecker(func() ([]services.AptCacheStatus, error) {
+		return []services.AptCacheStatus{{Name: "Standort A", Running: true}}, nil
+	})
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{
 		Name: "APT-Cache tot", Type: domain.AlertTypeAptCacherDown, Enabled: true,
@@ -285,7 +287,8 @@ func TestAlertAptCacherDownDoesNotFireWhenRunning(t *testing.T) {
 
 func TestAlertAptCacherDownSkipsWithoutConfiguredURL(t *testing.T) {
 	env := newAlertEnv(t)
-	env.alerts.WithAptCacheChecker(func() (string, error) { return "", nil })
+	// Ohne Cache liefert die Prüfung eine leere Liste.
+	env.alerts.WithAptCacheChecker(func() ([]services.AptCacheStatus, error) { return nil, nil })
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{
 		Name: "APT-Cache tot", Type: domain.AlertTypeAptCacherDown, Enabled: true,
@@ -390,8 +393,11 @@ func TestAlertCrowdSecLapiDownFiresWhenUnreachable(t *testing.T) {
 	env := newAlertEnv(t)
 	env.createServer(t, "web-01", nil)
 	env.createServer(t, "web-02", nil)
-	env.alerts.WithCrowdSecLapiChecker(func() (*services.CrowdSecLapiStatus, error) {
-		return &services.CrowdSecLapiStatus{Configured: true, Message: "nicht erreichbar"}, nil
+	env.alerts.WithCrowdSecLapiChecker(func() ([]services.CrowdSecLapiStatus, error) {
+		return []services.CrowdSecLapiStatus{
+			{Name: "LAPI Techeve", Configured: true, Reachable: true, Running: true},
+			{Name: "LAPI Service 2000", Configured: true, Message: "nicht erreichbar"},
+		}, nil
 	})
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{
@@ -410,12 +416,16 @@ func TestAlertCrowdSecLapiDownFiresWhenUnreachable(t *testing.T) {
 	if events[0].ServerID != nil {
 		t.Errorf("Selbstbeobachtung darf auf keinen Server zeigen, bekam %v", *events[0].ServerID)
 	}
+	// Die Meldung nennt genau die LAPI, die nicht arbeitet.
+	if d := events[0].Description; !strings.Contains(d, "LAPI Service 2000") || strings.Contains(d, "Techeve") {
+		t.Errorf("meldung nennt die falsche LAPI: %q", d)
+	}
 }
 
 func TestAlertCrowdSecLapiDownDoesNotFireWhenRunning(t *testing.T) {
 	env := newAlertEnv(t)
-	env.alerts.WithCrowdSecLapiChecker(func() (*services.CrowdSecLapiStatus, error) {
-		return &services.CrowdSecLapiStatus{Configured: true, Reachable: true, Running: true}, nil
+	env.alerts.WithCrowdSecLapiChecker(func() ([]services.CrowdSecLapiStatus, error) {
+		return []services.CrowdSecLapiStatus{{Name: "LAPI Techeve", Configured: true, Reachable: true, Running: true}}, nil
 	})
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{
@@ -434,8 +444,9 @@ func TestAlertCrowdSecLapiDownDoesNotFireWhenRunning(t *testing.T) {
 
 func TestAlertCrowdSecLapiDownSkipsWithoutConfig(t *testing.T) {
 	env := newAlertEnv(t)
-	env.alerts.WithCrowdSecLapiChecker(func() (*services.CrowdSecLapiStatus, error) {
-		return &services.CrowdSecLapiStatus{Configured: false, Message: "keine CrowdSec-LAPI konfiguriert"}, nil
+	// Ohne LAPI liefert der Check eine leere Liste.
+	env.alerts.WithCrowdSecLapiChecker(func() ([]services.CrowdSecLapiStatus, error) {
+		return nil, nil
 	})
 
 	if _, err := env.alerts.Create(services.AlertRuleInput{

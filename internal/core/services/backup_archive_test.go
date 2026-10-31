@@ -4,12 +4,15 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestBackupArchiveRoundtrip(t *testing.T) {
@@ -268,5 +271,30 @@ func TestBackupArchiveStreamsWithoutBuffering(t *testing.T) {
 	if limit := int64(large-small) / 4; growth > limit {
 		t.Fatalf("Zuteilung wächst um %d MiB, wenn das Archiv um %d MiB wächst - läuft nicht mehr streamend?",
 			growth>>20, (large-small)>>20)
+	}
+}
+
+// TestPackSourcesUsesZstd: Das ZIP im Archiv komprimiert mit zstd - und holt
+// damit aus verschlüsselt-Base64-kodierten Feldern das Viertel zurück, an dem
+// Deflate scheitert.
+func TestPackSourcesUsesZstd(t *testing.T) {
+	random := make([]byte, 1<<20)
+	if _, err := rand.Read(random); err != nil {
+		t.Fatal(err)
+	}
+	db := []byte(base64.StdEncoding.EncodeToString(random))
+	var buf bytes.Buffer
+	if err := packSources(&buf, []archiveSource{{Name: "app.db", Data: db}}); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := zr.File[0].Method; m != zstd.ZipMethodWinZip {
+		t.Fatalf("zip-methode %d, erwartet zstd (%d)", m, zstd.ZipMethodWinZip)
+	}
+	if ratio := float64(buf.Len()) / float64(len(db)); ratio > 0.8 {
+		t.Fatalf("base64 nur auf %.0f %% verkleinert, erwartet höchstens 80 %%", ratio*100)
 	}
 }

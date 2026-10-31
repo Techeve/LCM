@@ -20,6 +20,13 @@ type GlobalSettings struct {
 	// Log Retention: Job-Historien und Konsolen-Outputs werden nach
 	// dieser Frist automatisch gelöscht (0 = nie).
 	LogRetentionDays int `gorm:"default:90" json:"log_retention_days"`
+	// Routine-Protokolle (Health-Check, Alarm-Auswertung) laufen je Server
+	// alle paar Minuten und sagen nach wenigen Tagen nichts mehr. Ihre
+	// Ausgaben werden nach dieser Frist entfernt; der Eintrag selbst - dass
+	// der Lauf stattfand, wann und mit welchem Ergebnis - bleibt bis zur
+	// allgemeinen Frist stehen. Erlaubt sind 1-3650 Tage; eine 0 ersetzte der
+	// gorm-Default beim Anlegen stillschweigend durch 7.
+	RoutineLogRetentionDays int `gorm:"default:7" json:"routine_log_retention_days"`
 
 	// Speicher-Verlauf: Aufbewahrung der täglichen Festplatten-Snapshots
 	// (Tagesdurchschnitte). Über die UI einstellbar, wird auf 90-365 Tage
@@ -181,6 +188,12 @@ type GlobalSettings struct {
 	// APT-Anfragen über diesen Proxy, sobald die Aktion „APT-Cache verwenden"
 	// bzw. die Gruppen-Regel apt-proxy greift.
 	AptCacheURL string `json:"apt_cache_url"`
+
+	// AptIncludePhased: gestaffelte Ubuntu-Updates (Phased-Update-Percentage)
+	// sofort einspielen statt zu warten, bis der Server an der Reihe ist.
+	// Aus = Ubuntus Vorgabe; die Staffelung schützt vor fehlerhaften Updates.
+	// Gestaffelte Updates mit bekannter CVE zieht LCM unabhängig davon vor.
+	AptIncludePhased bool `json:"apt_include_phased"`
 
 	// Onboarding-SSH-Key: ein beim ersten Start erzeugtes Schlüsselpaar, das
 	// als ALTERNATIVE zum Passwort für den initialen Login beim Join/Reconnect
@@ -466,6 +479,12 @@ func (g *GlobalSettings) DNSTestDomainList() []string {
 	if raw == "" {
 		raw = DefaultDNSTestDomains
 	}
+	return SplitDomainList(raw)
+}
+
+// SplitDomainList zerlegt eine Domainliste (getrennt durch Zeilenumbruch,
+// Komma oder Leerzeichen) in ihre Einträge.
+func SplitDomainList(raw string) []string {
 	var list []string
 	for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == '\n' || r == ' ' || r == '\t'

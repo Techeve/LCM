@@ -132,7 +132,10 @@ Auslösen:
   :::
 - **Server-Aktion** - Server-Detail → *Aktionen → DNS-Test*.
 - **Gruppen-Regel** - in einer Gruppe eine Regel vom Typ **„DNS-Test"** anlegen
-  (geplant oder manuell auslösbar); sie nutzt die zentral gepflegten Test-Domains.
+  (geplant oder manuell auslösbar). Ohne Angabe nutzt sie die zentral gepflegten
+  Test-Domains; im Regel-Dialog lassen sich stattdessen **eigene Domains** je
+  Regel eintragen (eine je Zeile) - etwa interne Namen, die nur diese Gruppe
+  auflösen muss.
 
 Das Ergebnis erscheint auf der Server-Detailseite unter **System & Security**
 neben der Firewall - samt dem **aktuell aktiven DNS** des Servers (bei

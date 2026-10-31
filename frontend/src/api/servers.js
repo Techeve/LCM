@@ -31,6 +31,16 @@ export class ServersApi {
     return this.#client.get(`/servers/${id}/status`);
   }
 
+  /** Gerade offene Web-Konsolen: [{server_id, actor, since}]. */
+  consoles() {
+    return this.#client.get('/servers/consoles');
+  }
+
+  /** Ampeln aller sichtbaren Server in einer Anfrage (Dashboard). */
+  statuses() {
+    return this.#client.get('/servers/statuses');
+  }
+
   /** Server-Einstellungen ändern (z. B. { user_sync_disabled: true }). */
   updateSettings(id, data) {
     return this.#client.patch(`/servers/${id}/settings`, data);
@@ -271,7 +281,7 @@ export class ServersApi {
 
   /**
    * Sicherheits-Tool (fail2ban/CrowdSec) installieren & einrichten - Job.
-   * opts: {tool, allowlist_ips, bouncer, collections, lapi_mode}.
+   * opts: {tool, allowlist_ips, bouncer, collections, lapi_mode, lapi_id}.
    */
   configureSecurityTool(id, opts) {
     return this.#client.post(`/servers/${id}/security-tool`, opts);
@@ -431,6 +441,11 @@ export class ServersApi {
     return this.#client.get('/ip-allowlists');
   }
 
+  /** CrowdSec-LAPIs für die Auswahl bei der Einrichtung: [{id, name, url, login}]. */
+  crowdsecLapis() {
+    return this.#client.get('/crowdsec-lapis');
+  }
+
   /** CrowdSec-LAPI-Server auf dem LCM-Host einrichten (optional mit Bouncer). */
   installCrowdSecLapi(id, { bouncer } = {}) {
     return this.#client.post(`/servers/${id}/lcm-host/install-crowdsec-lapi`, { bouncer: !!bouncer });
@@ -573,9 +588,14 @@ export class ServersApi {
     return this.#client.post(`/servers/${id}/listening-ports/scan`, {});
   }
 
-  /** APT-Anfragen des Servers über den zentralen APT-Cache leiten (oder trennen). */
-  configureAptProxy(id, enable) {
-    return this.#client.post(`/servers/${id}/apt-proxy`, { enable });
+  /** APT-Anfragen des Servers über einen APT-Cache leiten (oder trennen); cacheId 0 = der einzige. */
+  configureAptProxy(id, enable, cacheId = 0) {
+    return this.#client.post(`/servers/${id}/apt-proxy`, { enable, cache_id: cacheId });
+  }
+
+  /** APT-Caches für die Auswahl: [{id, name, url}]. */
+  aptCaches() {
+    return this.#client.get('/apt-caches');
   }
 
   rotateKey(id) {

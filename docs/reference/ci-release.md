@@ -351,10 +351,11 @@ Konfiguration: `renovate.json` im Repo-Root.
 
 - **Ziel-Branch** ist `develop` (`baseBranches`), niemals ein Kanal-Branch.
 - **Gruppierung:** alle Go-minor/patch-Updates in einem MR, alle npm-minor/patch-Updates in einem MR; **Major-Updates** kommen einzeln (bessere Review-Kontrolle).
-- **Automerge:** **Patch-Updates** werden nach grüner Pipeline automatisch gemergt (`platformAutomerge` = „mergen, wenn Pipeline erfolgreich"); **minor/major** bleiben als MR zur manuellen Review offen.
+- **Automerge:** **Patch-Updates** vertrauenswürdiger Herausgeber (Stufe 4-5, siehe [Abhängigkeiten](./dependencies/)) werden nach grüner Pipeline automatisch gemergt (`platformAutomerge` = „mergen, wenn Pipeline erfolgreich"); alle übrigen Updates bleiben als MR zur manuellen Review offen.
 - **Conventional Commits:** Renovate committet als `chore(deps): …` - passt den `check:commits`-Job und löst als `chore` **kein** Release aus (die neue Version entsteht erst, wenn die Bumps später über den regulären Release-Zug fließen).
 - `go mod tidy` bzw. `npm dedupe` laufen nach jedem Update (`postUpdateOptions`), damit `go.sum`/Lockfile konsistent bleiben.
-- Sicherheits-relevante Updates (bekannte CVEs in Abhängigkeiten) werden über OSV erkannt, mit dem Label `security` markiert und **nicht** automatisch gemergt.
+- **Sicherheitsupdates** (bekannte Lücken laut OSV) kommen als eigener MR mit dem Label `security`, **ohne** Karenzzeit, und werden **automatisch gemergt, sobald die volle MR-Pipeline grün ist** - unabhängig von Herausgeber und Update-Typ. Ist die Pipeline rot, bleibt der MR offen und braucht einen Menschen.
+- Die globalen Optionen `onboarding` und `requireConfig` stehen als `RENOVATE_*`-Variablen im CI-Job, nicht in `renovate.json` (dort wären sie unzulässig).
 - Ein **Dependency-Dashboard**-Issue gibt jederzeit den Überblick über anstehende/ignorierte Updates.
 
 **Einmalige Einrichtung:**
@@ -380,13 +381,13 @@ Konfiguration: `renovate.json` im Repo-Root.
 
    Optional für Changelog-Abruf von GitHub-gehosteten Deps: dieselbe Prozedur mit `RENOVATE_GITHUB_TOKEN` (ein GitHub-PAT ohne Scopes reicht - nur zum Lesen öffentlicher Release-Notes).
 
-3. **Geplante Pipeline** anlegen, die den Bot z.B. wöchentlich auf `develop` mit `RENOVATE_BOT=true` startet:
+3. **Geplante Pipeline** anlegen, die den Bot täglich um 6 Uhr (nach der Image-Auffrischung der Runner um 3 Uhr) auf `develop` mit `RENOVATE_BOT=true` startet:
 
    ```sh
    curl -s -X POST -H "PRIVATE-TOKEN: $TOKEN" "$GITLAB/projects/<id>/pipeline_schedules" \
      --data-urlencode "description=Renovate Dependency-Bot" \
      --data-urlencode "ref=develop" \
-     --data-urlencode "cron=0 6 * * 1" \
+     --data-urlencode "cron=0 6 * * *" \
      --data-urlencode "cron_timezone=Europe/Berlin" \
      --data-urlencode "active=true"
    # ID der eben angelegten Schedule merken und die Trigger-Variable setzen:
