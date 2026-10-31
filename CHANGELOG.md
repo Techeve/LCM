@@ -1,109 +1,59 @@
 # Changelog
 
-## v1.48.0-beta.1 - 2026-10-31
+## v1.48.0 - 2026-10-31
 
 ### 🚀 Features
 
-- **paket**: apt purge entfernt alles, was LCM angelegt hat (bcaa6c68)
-
-### 🐛 Bugfixes
-
-- **cli**: credentials init nimmt die Paketpfade, nicht das Binary-Verzeichnis (548a80a8)
-- **mail**: Klartext-Anmeldung ohne STARTTLS, STARTTLS-Haken wirkt (7c1df3d0)
-
-### 🔧 Sonstiges
-
-- **deps**: update dependency @playwright/test to v1.64.1 (3926e7df)
-- **e2e**: ⓘ-Popover nur öffnen, wenn es zu ist (b52dce3d)
-- Go-Cache vom Runner statt über MinIO (2424b569)
-- LCM läuft auf Runner-Paar A (73e63b10)
-
-## v1.47.0-beta.1 - 2026-10-18
-
-### 🚀 Features
-
+- **apt**: Kernel-Updates mitnehmen, Zurückgehaltenes benennen und nicht abwerten (4e356391)
 - **apt-cache**: mehrere APT-Caches, Auswahl in Regel und Aktion, Funktionstest (4db5b56e)
+- **crowdsec**: mehrere zentrale LAPIs mit Bezeichnung (adac88a5)
 - **gruppen**: Regeln je Auslöser als Karten, umsortierbar; Server und Verwaltungs-User einklappbar (d680d8bd)
+- **paket**: apt purge entfernt alles, was LCM angelegt hat (bcaa6c68)
 - **regeln**: Ausführungsreihenfolge je Auslöser festlegbar (5df6fc87)
 - **regeln**: DNS-Test-Regel mit eigenen Domains (1184db83)
 - **regeln**: Rechte-Soll und ACL einrichten auch per Zeitplan (23e6edbc)
+- **schedules**: Zeitfenster statt fester Startzeit (51a4f78d)
+- **storage**: Protokolle komprimieren, Routine-Ausgaben kurz aufbewahren, Datenbank verdichten (c0bfb472)
 - Festplatten-Diagramm, Linux-Benutzer-Anleitung, Docker-Regeln wie Watchtower (8af16890)
 
 ### 🐛 Bugfixes
 
 - **abgleich**: gesetztes Server-Passwort bleibt bei Synchronisation erhalten (69f378d5)
+- **apt**: Sperren abwarten, verwaiste Updates beenden, Ausgabe live streamen (3dd2d309)
+- **cli**: credentials init nimmt die Paketpfade, nicht das Binary-Verzeichnis (548a80a8)
 - **crypto**: Rohschlüssel mit Leerzeichen am Rand nicht mehr verwerfen (08e66c9c)
+- **deps**: source-map-js auf 1.2.2 gegen GHSA-68fv-2mgg-jv7q (07c8adb9)
 - **docker**: Scan für Docker 26 und 29, Container-Regel wählt veraltete Container (c00d47d5)
 - **gruppen**: Regel-Dialog für Firewall-Regeln breit genug (19d726fc)
 - **konsole**: Sitzung schließt nach exit in der Shell (83e46c85)
 - **konsole**: Sitzungen enden wirklich, blockieren LCM nicht und sind sichtbar (a3e989cd)
+- **mail**: Klartext-Anmeldung ohne STARTTLS, STARTTLS-Haken wirkt (7c1df3d0)
 - **ssh**: Härtungs-Status beim Aktualisieren effektiv messen (78b07974)
-
-### 🔧 Sonstiges
-
-- **deps**: Go- und npm-Abhängigkeiten aktualisieren (5cd7f080)
-- **deps**: update aquasec/trivy docker tag to v0.75.0 (d016a742)
-- **e2e**: Rechte-Soll ist auch am Zeitplan wählbar; Script-Prüfung greift wieder (cd615b68)
-- **plan**: Arbeitsliste der Iteration 2026-10-17 (969ebef1)
-- **plan**: Iteration 2026-10-17 abgeschlossen (d7f9a707)
-- **plan**: Nachtrag 2026-10-17 umgesetzt (a3781a17)
-- **plan**: Stand der Iteration festgehalten (8d962dfb)
-- **renovate**: Sicherheitsupdates nach grüner Pipeline automatisch mergen (b44611ed)
-
-## v1.46.0-beta.2 - 2026-10-10
-
-### 🐛 Bugfixes
-
-- **deps**: source-map-js auf 1.2.2 gegen GHSA-68fv-2mgg-jv7q (07c8adb9)
-
-### 🔧 Sonstiges
-
-- **deps**: Go 1.27.2 und golang.org/x/net v0.60.0 gegen HTTP/2-Lücken (1c51d19d)
-- **e2e**: LAPI-Aufräumen wartet, bis jede Zeile gelöscht ist (7b179fb8)
-- **openspec**: OpenSpec für spec-getriebene Entwicklung einführen (d703663a)
-- **renovate**: täglich, mit Go-Toolchain, Node und CI-Images (512e3a15)
-
-## v1.46.0-beta.1 - 2026-10-04
-
-### 🚀 Features
-
-- **crowdsec**: mehrere zentrale LAPIs mit Bezeichnung (adac88a5)
-
-## v1.45.0-beta.1 - 2026-10-02
-
-### 🚀 Features
-
-- **apt**: Kernel-Updates mitnehmen, Zurückgehaltenes benennen und nicht abwerten (4e356391)
-
-## v1.44.0-beta.1 - 2026-10-02
-
-### 🚀 Features
-
-- **schedules**: Zeitfenster statt fester Startzeit (51a4f78d)
-
-### 🐛 Bugfixes
-
-- **apt**: Sperren abwarten, verwaiste Updates beenden, Ausgabe live streamen (3dd2d309)
-
-### 🔧 Sonstiges
-
-- **executor**: Begründung der globalen Lauf-Schranke berichtigt (dd4b272a)
-
-## v1.43.1-beta.1 - 2026-09-25
+- **ui**: Web-Konsole wächst nicht mehr über den Bildschirm hinaus (fe596785)
 
 ### ⚡ Performance
 
 - **dashboard**: Ampeln gesammelt laden, zwischenspeichern und den letzten Job per Index finden (e47f24f5)
 
-## v1.43.0-beta.1 - 2026-09-24
+### 🔧 Sonstiges
 
-### 🚀 Features
-
-- **storage**: Protokolle komprimieren, Routine-Ausgaben kurz aufbewahren, Datenbank verdichten (c0bfb472)
-
-### 🐛 Bugfixes
-
-- **ui**: Web-Konsole wächst nicht mehr über den Bildschirm hinaus (fe596785)
+- **deps**: Go 1.27.2 und golang.org/x/net v0.60.0 gegen HTTP/2-Lücken (1c51d19d)
+- **deps**: Go- und npm-Abhängigkeiten aktualisieren (5cd7f080)
+- **deps**: update aquasec/trivy docker tag to v0.75.0 (d016a742)
+- **deps**: update dependency @playwright/test to v1.64.1 (3926e7df)
+- **e2e**: LAPI-Aufräumen wartet, bis jede Zeile gelöscht ist (7b179fb8)
+- **e2e**: Rechte-Soll ist auch am Zeitplan wählbar; Script-Prüfung greift wieder (cd615b68)
+- **e2e**: ⓘ-Popover nur öffnen, wenn es zu ist (b52dce3d)
+- **executor**: Begründung der globalen Lauf-Schranke berichtigt (dd4b272a)
+- **openspec**: OpenSpec für spec-getriebene Entwicklung einführen (d703663a)
+- **plan**: Arbeitsliste der Iteration 2026-10-17 (969ebef1)
+- **plan**: Iteration 2026-10-17 abgeschlossen (d7f9a707)
+- **plan**: Nachtrag 2026-10-17 umgesetzt (a3781a17)
+- **plan**: Stand der Iteration festgehalten (8d962dfb)
+- **renovate**: Sicherheitsupdates nach grüner Pipeline automatisch mergen (b44611ed)
+- **renovate**: täglich, mit Go-Toolchain, Node und CI-Images (512e3a15)
+- Go-Cache vom Runner statt über MinIO (2424b569)
+- LCM läuft auf Runner-Paar A (73e63b10)
 
 ## v1.42.3 - 2026-09-23
 
