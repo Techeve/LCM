@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.49.1-beta.1 - 2026-11-01
+
+### 🐛 Bugfixes
+
+- **ci**: Merge von community nach enterprise rollt das Paket aus, ohne Tag (42e317b3)
+
 ## v1.49.0-beta.1 - 2026-11-01
 
 ### 🚀 Features
