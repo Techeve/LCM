@@ -2834,6 +2834,147 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/capabilities:
+    get:
+      tags:
+      - Server
+      summary: Operational capability of the server - always all four categories.
+      operationId: serverCtrl_Capabilities
+      description: 'Returns the operational capability of the server: always four entries in the order connection,
+        packages, rules, cve_scan, even without history. Each entry carries the stored state (state: ok
+        or failed, failing_since, consecutive_failures, last_success_at, last_error_class, last_error_message,
+        last_job_id, last_job_type, last_job_name, warning_class, warning_message) and computed fields:
+        effective (critical, warning or empty), stale (packages only: package updates are overdue,
+        warning, critical or empty), repair (dpkg_configure, fix_deps or empty - the repair that fits the
+        error class and package manager of the server) and retryable (whether the failed action can be
+        triggered again).
+
+
+        Required permission: `servers:read`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: List of the four categories.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    server_id:
+                      type: integer
+                    category:
+                      type: string
+                      enum: [connection, packages, rules, cve_scan]
+                    state:
+                      type: string
+                      enum: [ok, failed]
+                    failing_since:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    consecutive_failures:
+                      type: integer
+                    last_success_at:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    last_error_class:
+                      type: string
+                    last_error_message:
+                      type: string
+                    last_error_params:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    last_job_id:
+                      type: string
+                    last_job_type:
+                      type: string
+                    last_job_name:
+                      type: string
+                    warning_class:
+                      type: string
+                    warning_message:
+                      type: string
+                    effective:
+                      type: string
+                      enum: ['', critical, warning]
+                    stale:
+                      type: string
+                      enum: ['', critical, warning]
+                    repair:
+                      type: string
+                      enum: ['', dpkg_configure, fix_deps]
+                    retryable:
+                      type: boolean
+        '401':
+          description: Not signed in.
+        '403':
+          description: Permission denied.
+        '404':
+          description: Server not found or outside the caller's scope.
+  /api/v1/servers/{id}/capabilities/{category}/retry:
+    post:
+      tags:
+      - Server
+      summary: Triggers the failed action of a category again.
+      operationId: serverCtrl_RetryCapability
+      description: 'Triggers the failed action of the category again and returns the started job.
+        If the failure came from a rule, the same rule runs for this server only; otherwise the matching
+        ad-hoc action runs (updates, security updates, package list, CVE scan). The connection category
+        checks the connection. Only the success of this action resets the category.
+
+
+        Required permission: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: category
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [connection, packages, rules, cve_scan]
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  job_id:
+                    type: string
+                  job_name:
+                    type: string
+        '400':
+          description: Unknown category.
+        '401':
+          description: Not signed in.
+        '403':
+          description: Permission denied.
+        '404':
+          description: Server not found or outside the caller's scope.
+        '409':
+          description: The category has not failed, the action cannot be triggered again, or the server is busy.
   /api/v1/servers/{id}/console:
     put:
       tags:
@@ -3839,6 +3980,63 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/packages/repair:
+    post:
+      tags:
+      - Server
+      summary: Repairs the package manager (dpkg --configure -a or dependencies).
+      operationId: serverCtrl_RepairPackages
+      description: 'Repairs the package manager as a job. dpkg_configure finishes interrupted
+        dpkg installations (apt only), fix_deps pulls in missing dependencies (apt: apt-get -f install,
+        zypper: zypper verify). The repair does not reset any capability category - only the success of
+        the retried action does.
+
+
+        Required permission: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [dpkg_configure, fix_deps]
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  job_id:
+                    type: string
+                  job_name:
+                    type: string
+        '400':
+          description: Unknown action, or not supported for the package manager of the server.
+        '401':
+          description: Not signed in.
+        '403':
+          description: Permission denied.
+        '404':
+          description: Server not found or outside the caller's scope.
+        '409':
+          description: The server is busy or the action is not available for this device.
   /api/v1/servers/{id}/packages/update:
     post:
       tags:
@@ -5791,6 +5989,16 @@ paths:
                   type: integer
                 job_idle_timeout_slow_minutes:
                   type: integer
+                packages_stale_warn_hours:
+                  type: integer
+                  minimum: 24
+                  maximum: 720
+                  default: 48
+                packages_stale_critical_days:
+                  type: integer
+                  minimum: 2
+                  maximum: 90
+                  default: 7
                 require_2fa_roles:
                   type: string
                 public_base_url:

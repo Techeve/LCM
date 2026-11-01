@@ -709,6 +709,8 @@ type globalSettingsRequest struct {
 	SessionTTLMinutes           *int    `json:"session_ttl_minutes"`
 	JobIdleTimeoutMinutes       *int    `json:"job_idle_timeout_minutes"`
 	JobIdleTimeoutSlowMinutes   *int    `json:"job_idle_timeout_slow_minutes"`
+	PackagesStaleWarnHours      *int    `json:"packages_stale_warn_hours"`
+	PackagesStaleCriticalDays   *int    `json:"packages_stale_critical_days"`
 	Require2FARoles             *string `json:"require_2fa_roles"`
 	PublicBaseURL               *string `json:"public_base_url"`
 	DNSServerPresets            *string `json:"dns_server_presets"`
@@ -760,6 +762,8 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		SessionTTLMinutes:           req.SessionTTLMinutes,
 		JobIdleTimeoutMinutes:       req.JobIdleTimeoutMinutes,
 		JobIdleTimeoutSlowMinutes:   req.JobIdleTimeoutSlowMinutes,
+		PackagesStaleWarnHours:      req.PackagesStaleWarnHours,
+		PackagesStaleCriticalDays:   req.PackagesStaleCriticalDays,
 		Require2FARoles:             req.Require2FARoles,
 		PublicBaseURL:               req.PublicBaseURL,
 		DNSServerPresets:            req.DNSServerPresets,

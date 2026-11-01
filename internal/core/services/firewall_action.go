@@ -124,7 +124,7 @@ func (s *ServerService) runFirewallJob(job *domain.Job, server *domain.Server, e
 			fields["firewall_ssh_sources"] = server.FirewallSSHSources
 		}
 		_ = s.servers.UpdateFields(server.ID, fields)
-		s.jobs.Complete(job, "Demo-Server - Firewall-Konfiguration simuliert (kein SSH-Kontakt).", ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, "Demo-Server - Firewall-Konfiguration simuliert (kein SSH-Kontakt).")
 		return
 	}
 	conn, err := s.connectRec(server, "firewall", actor)

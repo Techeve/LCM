@@ -87,6 +87,8 @@ func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS) (*fiber.App
 	executor := services.NewExecutor(serverRepo, groupRepo, jobs, audit, prov,
 		services.NewBackupService(db, settingsRepo, t.TempDir(), ":memory:", ""), settingsRepo, servers.Connect)
 	scheduler := services.NewScheduler(groupRepo, settingsRepo, executor)
+	// Betriebsfähigkeit samt „Erneut versuchen" wie in cmd/app/main.go.
+	servers.WithGroups(groupRepo).WithCapabilities(repositories.NewCapabilityRepository(db)).WithRetryRunner(executor)
 	app := router.New(router.Deps{
 		Auth:                     services.NewAuthService(userRepo, time.Hour),
 		APIKeys:                  services.NewAPIKeyService(repositories.NewAPIKeyRepository(db)),

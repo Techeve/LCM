@@ -80,6 +80,14 @@ func (r *AlertRepository) FindEnabled() ([]domain.AlertRule, error) {
 	return rules, nil
 }
 
+// FindEnabledByType liefert die aktiven Regeln eines Typs - für Alarme, die ein
+// Ereignis sofort auslöst und nicht erst die halbstündige Auswertung abwarten.
+func (r *AlertRepository) FindEnabledByType(alertType string) ([]domain.AlertRule, error) {
+	var rules []domain.AlertRule
+	err := r.db.Preload("Groups").Where("enabled = ? AND type = ?", true, alertType).Order("name").Find(&rules).Error
+	return rules, err
+}
+
 // CountRulesUsingChannel zählt Regeln, die einen bestimmten Kanal referenzieren
 // (für den Löschschutz eines Kanals).
 func (r *AlertRepository) CountRulesUsingChannel(channelID uint) (int64, error) {
@@ -152,13 +160,22 @@ func (r *AlertRepository) FindEventsFiltered(f AlertEventFilter) ([]domain.Alert
 // LastEventAt liefert den Zeitpunkt des jüngsten Events für (Regel, Server) -
 // Grundlage der Cooldown-Entprellung. serverID darf nil sein (nicht
 // serverbezogene Alarme). Nullzeit, wenn noch kein Event existiert.
-func (r *AlertRepository) LastEventAt(ruleID uint, serverID *uint) (time.Time, error) {
+//
+// code "" zählt Events beliebigen Codes. Mit Code zählen nur Events genau dieses
+// Codes: Alarme, die je Server mehrere unabhängige Zustände melden
+// (action_failed: eine Kategorie je Code), entprellen jeden für sich - sonst
+// unterdrückte die Meldung der einen Kategorie die der anderen. Der Index über
+// (Regel, Server) grenzt vor; der Code filtert nur noch die wenigen Treffer.
+func (r *AlertRepository) LastEventAt(ruleID uint, serverID *uint, code string) (time.Time, error) {
 	var e domain.AlertEvent
 	q := r.db.Where("rule_id = ?", ruleID)
 	if serverID == nil {
 		q = q.Where("server_id IS NULL")
 	} else {
 		q = q.Where("server_id = ?", *serverID)
+	}
+	if code != "" {
+		q = q.Where("code = ?", code)
 	}
 	err := q.Order("created_at DESC").First(&e).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

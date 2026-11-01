@@ -19,6 +19,15 @@ const (
 	JobTypeFullRefresh     = "full-refresh"
 )
 
+// Job-Typen der Paket-Reparaturen (ServerService.RepairPackages). Sie gehören
+// zu keiner Kategorie der Betriebsfähigkeit (domain.CapabilityCategoryFor
+// liefert ""): Eine Reparatur behebt die Ursache, belegt aber nicht, dass die
+// fehlgeschlagene Aktion wieder läuft - das beweist erst deren Wiederholung.
+const (
+	JobTypeRepairDpkg = "repair-dpkg"
+	JobTypeRepairDeps = "repair-deps"
+)
+
 // sshHardenedProbe meldet „yes" nur, wenn LCMs Härtungs-Drop-in liegt und die
 // effektive sshd-Konfiguration die Passwort-Anmeldung abschaltet.
 // `mkdir -p /run/sshd` wie in verifyPasswordAuthDisabled: ohne das Verzeichnis
@@ -71,7 +80,7 @@ func (s *ServerService) RefreshAll(scope repositories.AccessScope, id uint, acto
 // Live-Status von Firewall/SSH-Härtung.
 func (s *ServerService) runRefreshJob(job *domain.Job, server *domain.Server, actor string, full bool) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "demo-server: datenerfassung simuliert (kein ssh-kontakt)", ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, "demo-server: datenerfassung simuliert (kein ssh-kontakt)")
 		return
 	}
 	// Synology DSM: eigener Erfassungspfad über die DSM-Web-API - es gibt

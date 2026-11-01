@@ -349,6 +349,11 @@ func New(deps Deps) *fiber.App {
 	servers.Post("/:id/refresh-hardware", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RefreshHardware)
 	servers.Post("/:id/refresh-all", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RefreshAll)
 	servers.Post("/:id/packages/refresh", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RefreshPackages)
+	servers.Post("/:id/packages/repair", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RepairPackages)
+	// Betriebsfähigkeit: Zustand je Kategorie und „Erneut versuchen" der
+	// fehlgeschlagenen Aktion.
+	servers.Get("/:id/capabilities", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Capabilities)
+	servers.Post("/:id/capabilities/:category/retry", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RetryCapability)
 	servers.Post("/:id/packages/upgrade-all", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.UpgradeAllPackages)
 	servers.Post("/:id/packages/upgrade-security", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.UpgradeSecurityPackages)
 	servers.Post("/:id/packages/update", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.UpdatePackages)

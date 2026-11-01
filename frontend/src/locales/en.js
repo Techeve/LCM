@@ -198,8 +198,6 @@ export default {
       one: '1 deep scan warning (hardening/configuration)',
       other: '{count} deep scan warnings (hardening/configuration)',
     },
-    lastJobFailed: 'Last job failed',
-    lastJobFailedNamed: 'Last job failed: {job}',
     osEol:
       '{os} has not received security updates since {eol} (end of life). Upgrading to {recommended} is strongly recommended.',
     osEolSoon:
@@ -226,6 +224,144 @@ export default {
       other:
         'Firewall active, but {count} Docker ports are reachable past it: {ports}. Docker publishes ports ahead of the ufw chain - that is by design and LCM does not change it.',
     },
+    // Operational capability (see lib/capability.js): {duration}, {cause} and
+    // {job} are assembled by the UI before substitution.
+    actionFailed: {
+      connection: 'The connection has been failing for {duration} ({count}×): {cause}',
+      packages: 'Updates have been failing for {duration} ({count}×): {cause}',
+      rules: 'Rules and actions have been failing for {duration} ({count}×): {cause}{job}',
+      cve_scan: 'The CVE scan has been failing for {duration} ({count}×): {cause}',
+    },
+    packagesStale:
+      'Package state outdated for {duration} - LCM has not refreshed the package list successfully since',
+    packagesStaleCritical:
+      'Package state outdated for {duration} - LCM has not refreshed the package list successfully for a long time, new updates and vulnerabilities go unnoticed',
+    repoWarning: 'Faulty package source: {repo}',
+    aptWarning: 'Note from apt: {message}',
+  },
+  // Durations for "for …" (lib/capability.js).
+  capabilityDuration: {
+    lessThanMinute: 'less than a minute',
+    minutes: { one: '1 minute', other: '{count} minutes' },
+    hours: { one: '1 hour', other: '{count} hours' },
+    days: { one: '1 day', other: '{count} days' },
+  },
+  // Failure causes per error class. The "…Unknown" variants apply when the
+  // server did not supply the parameter of the main variant.
+  capabilityCause: {
+    anonymousProcess: 'another process',
+    lock_busy: 'dpkg lock held by {process} (PID {pid})',
+    lock_busyUnknown: 'dpkg lock: another process is holding the package manager',
+    dpkg_interrupted: 'dpkg was interrupted in the middle of an installation',
+    broken_deps: 'Unmet dependencies: {packages}',
+    broken_depsUnknown: 'Dependencies cannot be satisfied',
+    disk_full: 'No space left on {path}',
+    disk_fullUnknown: 'No space left on the server',
+    repo_error: 'Faulty package source: {repo}',
+    repo_errorUnknown: 'A package source is faulty',
+    repo_errorClock: 'Package source rejected as "not valid yet" - the server clock is probably wrong',
+    network: 'Network problem - check DNS, proxy or package cache',
+    timeout: 'Timeout - the operation hung and was aborted',
+    scanner_unavailable: 'CVE scanner unavailable',
+    unknown: 'Cause unknown - details are in the job output',
+  },
+  // What to do for each error class ("Operational capability" card).
+  capabilityHint: {
+    lock_busy:
+      'Usually an automatic update (unattended-upgrades) or another package action is running. Wait for the process to finish, then try again. If it hangs for good, inspect it on the server and stop it if necessary.',
+    dpkg_interrupted:
+      'An earlier run was interrupted and left dpkg half-finished. "Run dpkg --configure -a" lets LCM complete the installation; afterwards, retry the failed action.',
+    broken_deps:
+      'The dependencies cannot be resolved. "Repair dependencies" tries to fix them. If the error stays, check the named packages for pins, holds and third-party sources.',
+    disk_full:
+      'Free up space on the named file system (clear the package cache, remove old kernels or logs) and then try again.',
+    repo_error:
+      'Check the package source: is the address reachable, the signing key valid, the release still available? You can correct or remove it under "Repositories". For "not valid yet", check the server clock first.',
+    network:
+      "Check the server's DNS, proxy and package cache (e.g. APT cache). If the server is reachable but the package source is not, it is usually a firewall, proxy or the package cache.",
+    timeout:
+      'The operation exceeded its time limit. Check load and network of the server and try again; if it hangs again, the job output helps.',
+    scanner_unavailable:
+      'The CVE scanner runs centrally on the LCM host, not on this server. Check Trivy and the vulnerability database there (Settings → Security or system status).',
+    unknown:
+      "The job output shows the server's exact message. Fix the cause and then try again.",
+    // For the "Connection" category the package hints for network, timeout
+    // and unknown cause do not fit.
+    connection:
+      'Check that the server is reachable, plus SSH access and firewall. If that does not help, reconnect the server via "Actions" → "Reconnect".',
+  },
+  // "Operational capability" card on the server page (components/CapabilityCard.svelte).
+  capability: {
+    title: 'Operational capability',
+    intro:
+      'Shows whether LCM can still act on this server. Only a success of the same kind heals a failed capability - a passed health check does not fix a failed update run.',
+    jobSuffix: ' - job: {job}',
+    summaryOk: 'OK',
+    summaryWarning: 'Limited',
+    summaryCritical: 'Failed',
+    category: {
+      connection: 'Connection',
+      packages: 'Package management',
+      rules: 'Rules and actions',
+      cve_scan: 'CVE scan',
+    },
+    categoryHelp: {
+      connection: 'SSH or agent connection to the server',
+      packages: 'Package list, updates, security updates and single-package actions',
+      rules: 'Scheduled rules, scripts, firewall, user sync and permissions',
+      cve_scan: 'Vulnerability scan of the server',
+    },
+    stateOk: 'OK',
+    stateWarning: 'Limited',
+    stateCritical: 'Failed',
+    stateStale: 'Outdated',
+    failingSince: 'for {duration}',
+    failingSinceTitle: 'First failure: {when}',
+    failures: { one: '1 failure in a row', other: '{count} failures in a row' },
+    lastSuccess: 'Last success: {when}',
+    neverSucceeded: 'Never succeeded',
+    lastError: 'Last error',
+    excerptMore: 'Show more',
+    excerptLess: 'Show less',
+    lastJob: 'Last job: {name}',
+    showOutput: 'Show job output',
+    hideOutput: 'Hide job output',
+    jobHistory: 'Job history',
+    staleSince: 'Package state outdated: the package list has not been refreshed successfully for {duration}.',
+    staleNever: 'Package state outdated: the package list has never been refreshed successfully.',
+    warningClass: {
+      repo_error: 'Faulty package source',
+      apt_warning: 'Note from apt',
+    },
+    retry: 'Try again',
+    retryTitle:
+      'Repeats the failed operation of this category on the server. Runs as a logged job.',
+    repairDpkg: 'Run dpkg --configure -a',
+    repairDpkgTitle:
+      'Runs dpkg --configure -a on the server and thereby completes interrupted package installations. Runs as a logged job; the failed action is not repeated automatically.',
+    repairFixApt: 'Run apt -f install',
+    repairFixAptTitle:
+      'Runs apt-get -f install on the server and thereby repairs missing or broken dependencies. Runs as a logged job; the failed action is not repeated automatically.',
+    repairFix: 'Repair dependencies',
+    repairFixTitle:
+      "Repairs missing or broken dependencies using the server's package manager. Runs as a logged job; the failed action is not repeated automatically.",
+    busyTitle: 'A job is currently running on this server - wait until it has finished.',
+    confirmRun: 'Run',
+    retryConfirmTitle: 'Try again?',
+    retryConfirm:
+      'LCM will now repeat the failed operation of the "{category}" category on {server}. It runs as a logged job; you will see the result here and in the job history.',
+    retryConfirmJob:
+      'LCM will now repeat the failed operation of the "{category}" category on {server} (last: {job}). It runs as a logged job; you will see the result here and in the job history.',
+    repairConfirmTitle: 'Run repair?',
+    repairConfirmDpkg:
+      'On {server}, "dpkg --configure -a" will run as a logged job. This completes interrupted package installations. The failed action is NOT repeated automatically - afterwards, start it with "Try again" if needed.',
+    repairConfirmFixApt:
+      'On {server}, "apt-get -f install" will run as a logged job. This repairs missing or broken dependencies. The failed action is NOT repeated automatically - afterwards, start it with "Try again" if needed.',
+    repairConfirmFix:
+      "On {server}, the package manager's dependency repair will run as a logged job. The failed action is NOT repeated automatically - afterwards, start it with \"Try again\" if needed.",
+    jobLabelRetry: 'Try again: {category}',
+    loadError: 'Could not load operational capability: {error}',
+    reload: 'Reload',
   },
   // Schedule builder (components/CronBuilder.svelte).
   cron: {
@@ -336,6 +472,9 @@ export default {
     filterOs: 'Operating system',
     filterKernel: 'Kernel',
     filterStatus: 'Status',
+    filterIncapable: 'Only servers LCM is unable to act on',
+    filterIncapableTitle:
+      'Shows only servers where updates or the connection keep failing, or where the package state is critically outdated.',
     searchName: 'Search by name …',
     searchHost: 'Host/IP …',
     searchKernel: 'e.g. 6 or 6.5 …',
@@ -1244,6 +1383,10 @@ export default {
       jobIdleSlowLabel: 'Permitted silence on slow hardware (minutes)',
       jobIdleSlowHint:
         'Applies to Raspberry Pi and similar boards as well as servers with at most 2 cores and 2 GB RAM. Long silent phases are normal there - a single dpkg trigger such as update-initramfs runs for minutes on an SD card without a line of output.',
+      packagesStaleWarnLabel: 'Package status stale (yellow) after … hours',
+      packagesStaleCritLabel: 'Package status stale (red) after … days',
+      packagesStaleHint:
+        'If the last successful package update of a server is older than this, LCM regards that server as unable to act.',
       mailTitle: 'Default email delivery',
       mailIntroA:
         'System outbox for transactional mail: password resets, invitation links for new users and notices to administrators (e.g. on backup problems). Separate from the ',
@@ -1983,7 +2126,8 @@ export default {
       typeDiskCapacity: 'Capacity (disk space)',
       typeStorageForecast: 'Predictive storage analysis',
       typeSecurityCve: 'Security vulnerabilities (CVE)',
-      typeFailedUpdates: 'Overdue updates',
+      typeFailedUpdates: 'Pending updates',
+      typeActionFailed: 'Action failed (LCM unable to act)',
       typeHeartbeat: 'Downtime / heartbeat',
       typeRebootRequired: 'Reboot required',
       typeAptCacherDown: 'APT cache unreachable',
@@ -2053,6 +2197,9 @@ export default {
       thrDeepScan: 'warnings/kernel reboot',
       thrCveDbStale: 'older than 48 h',
       thrBackupStale: 'older than 2× interval',
+      thrActionFailed: 'category switches to "failed"',
+      actionFailedHint:
+        'Fires immediately as soon as a capability of LCM on a server switches to "failed" (connection, package management, rules and actions, or CVE scan) and sends an all-clear when it works again. While the failure persists, the cooldown acts as the reminder interval. No threshold needed.',
       aptCacherDownHint:
         'Fires when the central apt-cacher-ng service does not respond on its report page - only relevant when an URL is configured under Settings → APT cache. Checked once, not per server. No threshold needed - repetitions are dampened by the cooldown.',
       crowdsecLapiDownHint:

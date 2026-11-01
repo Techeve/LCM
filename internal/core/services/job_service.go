@@ -26,6 +26,21 @@ var ErrJobNotRunning = errors.New("dieser job läuft nicht (mehr)")
 // Durchgang ist aktueller als er.
 var ErrJobSuperseded = errors.New("zeitplan-lauf übersprungen - der nächste durchgang ist aktueller")
 
+// watchdogActor ist der Actor, unter dem der Watchdog Jobs abbricht. An ihm
+// unterscheidet sich ein Abbruch wegen Stillstand vom manuellen.
+const watchdogActor = "job-watchdog"
+
+// JobOutcome ist das Ende eines Jobs, wie es die Betriebsfähigkeit eines
+// Servers braucht. ByWatchdog trennt den Abbruch wegen Stillstand (zählt als
+// Fehlschlag des Servers) vom manuellen Abbruch (wird nur protokolliert).
+// Skipped: Der Job gilt als Erfolg, hat aber nichts ausgeführt (siehe
+// CompleteSkipped) und sagt nichts über den Server.
+type JobOutcome struct {
+	Job        *domain.Job
+	ByWatchdog bool
+	Skipped    bool
+}
+
 // activeJob ist das Laufzeit-Handle eines laufenden Jobs: die zugehörigen
 // SSH-Verbindungen (zum Zwangs-Schließen beim Abbruch) und das
 // Finalisierungs-Flag, das das Rennen zwischen Abort und Complete entscheidet.
@@ -62,6 +77,10 @@ type JobService struct {
 	// System-Job) - damit verwirft der ServerService die zwischengespeicherte
 	// Ampel des Servers. Optional.
 	onFinished func(serverID *uint)
+
+	// onOutcome erfährt vom Ergebnis jedes regulär beendeten Jobs und jedes
+	// Watchdog-Abbruchs - Grundlage der Betriebsfähigkeit. Optional.
+	onOutcome func(JobOutcome)
 
 	// activity hält je überwachtem Job den Zeitpunkt seines letzten
 	// Lebenszeichens. Bewusst mit EIGENEM Mutex: Der Eintrag wird bei jedem
@@ -456,6 +475,20 @@ func (s *JobService) lastActivity(jobID string) (time.Time, bool) {
 // Wurde der Job zwischenzeitlich abgebrochen (Abort/Watchdog), ist die
 // DB-Zeile bereits finalisiert - dann wird sie nicht mehr überschrieben.
 func (s *JobService) Complete(job *domain.Job, output string, exitCode *int, runErr error) {
+	s.complete(job, output, exitCode, runErr, false)
+}
+
+// CompleteSkipped schließt einen Job als Erfolg ab, der nichts ausgeführt hat
+// und den Server nie kontaktierte (Demo-Server, eingeschränkter Modus,
+// nicht zutreffender Gerätetyp, nichts zu tun). Für den Benutzer ist das ein
+// grüner Job, für die Betriebsfähigkeit aber kein Beweis: Er erreichte weder
+// den Server noch hat er eine Aktion durchgeführt - ein fehlgeschlagenes
+// Update oder eine kaputte Verbindung bliebe sonst durch ihn „geheilt".
+func (s *JobService) CompleteSkipped(job *domain.Job, output string) {
+	s.complete(job, output, ptrInt(0), nil, true)
+}
+
+func (s *JobService) complete(job *domain.Job, output string, exitCode *int, runErr error, skipped bool) {
 	s.mu.Lock()
 	entry := s.active[job.ID]
 	delete(s.active, job.ID)
@@ -501,6 +534,21 @@ func (s *JobService) Complete(job *domain.Job, output string, exitCode *int, run
 		job.Status = domain.JobStatusSuccess
 	}
 	_ = s.jobs.Update(job)
+	// Vor onFinished (deferred): Der Statuscache wird erst danach verworfen und
+	// die Ampel mit der neuen Betriebsfähigkeit neu berechnet.
+	s.reportOutcome(JobOutcome{Job: job, Skipped: skipped})
+}
+
+// reportOutcome meldet das Ergebnis an den Abonnenten, falls es einen gibt.
+func (s *JobService) reportOutcome(o JobOutcome) {
+	if s.onOutcome != nil {
+		s.onOutcome(o)
+	}
+}
+
+// OnOutcome meldet künftig das Ergebnis jedes Jobs an fn (siehe onOutcome).
+func (s *JobService) OnOutcome(fn func(JobOutcome)) {
+	s.onOutcome = fn
 }
 
 // OnFinished meldet künftig das Ende jedes Jobs an fn (siehe onFinished).
@@ -642,6 +690,11 @@ func (s *JobService) abort(job *domain.Job, actor, reason string) (*domain.Job, 
 		s.audit.Log(actor, "job.abort", "job", 0,
 			"job "+job.ID+" ("+job.Name+"): "+reason)
 	}
+	// Nur der Watchdog-Abbruch sagt etwas über den Server (der Lauf hing); ein
+	// manueller Abbruch ist eine Entscheidung des Benutzers.
+	if actor == watchdogActor {
+		s.reportOutcome(JobOutcome{Job: job, ByWatchdog: true})
+	}
 	s.releaseServer(job)
 	return job, nil
 }
@@ -697,6 +750,8 @@ type SelfUpdateRecovery struct {
 // Dienst mitgenommen hat, ist durchgelaufen, sonst liefe jetzt nicht die neue
 // Version. Solche Jobs als Fehler zu melden, wäre schlicht falsch.
 func (s *JobService) FailInterruptedOnStartup(self *SelfUpdateRecovery) {
+	// Meldet bewusst kein OnOutcome: Der Dienst-Neustart ist nicht Schuld des
+	// Servers und darf seine Betriebsfähigkeit nicht verschlechtern.
 	jobs, err := s.jobs.FindUnfinished()
 	if err != nil {
 		slog.Error("orphaned jobs could not be determined", "error", err)
@@ -822,7 +877,7 @@ func (s *JobService) abortIfStalled(job *domain.Job, idleLimit func(job *domain.
 	reason := "Ohne Lebenszeichen: seit " + idle.Round(time.Second).String() +
 		" kam keine Ausgabe mehr (erlaubt sind " + limit.String() +
 		") - der Lauf gilt als hängend, die Server-Sperre wurde aufgehoben."
-	if _, err := s.abort(job, "job-watchdog", reason); err != nil {
+	if _, err := s.abort(job, watchdogActor, reason); err != nil {
 		if !errors.Is(err, ErrJobNotRunning) {
 			slog.Error("job watchdog: abort failed", "job", job.ID, "error", err)
 		}

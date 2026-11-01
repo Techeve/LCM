@@ -29,6 +29,11 @@ configurable 1-365) does it become critical after all.
 - **At least one critical CVE** (after weighting, see below).
 - **Operating system out of vendor support (EOL)** - or less than **one
   month** before support ends.
+- **LCM is unable to act:** package management or the connection fails (see
+  [Operational capability](#operational-capability)) - a busy dpkg lock only
+  from the second consecutive failure.
+- **Package state stale (red):** the last successful package refresh is
+  older than 7 days (Settings → General).
 
 ### 3. Yellow criteria → 🟡
 
@@ -42,7 +47,10 @@ insight):
 | In-use Docker images with an available update | ≥ 1 |
 | Usage of the root volume `/` | ≥ 85 % |
 | System requests a reboot (e.g. after a kernel update) | yes |
-| Last job failed | yes |
+| Rules/actions or the CVE scan fail | yes |
+| Busy dpkg lock on the first failure | yes |
+| A single package source is broken | yes |
+| Package state stale (last successful package refresh older than 48 h, configurable) | yes |
 
 ### 4. "Excellent" or "OK"
 
@@ -57,6 +65,34 @@ If none of the above signals apply, the server is green. It only reaches
 
 If any of these is missing, the server stays at **OK** - and the ⓘ popover
 lists exactly what is still missing.
+
+## Operational capability
+
+For every server LCM keeps track of whether it can still act in four areas:
+**connection**, **package management** (package list, updates, security
+updates, single packages), **rules and actions** and **CVE scan**. The
+"Operational capability" card in the server overview shows for each area
+since when it has been failing, how often in a row, the cause and what to do.
+
+- A failure only affects **its own** area. A run that already fails to
+  connect counts against the connection, not against package management.
+- **Only a success of the same action heals** an area. A successful health
+  check therefore does not clear a failed update; a full update does clear
+  failed security updates, though.
+- A run aborted by the job watchdog counts as a failure, a manually aborted
+  one does not. Rejected runs (server busy) do not count.
+- "Refresh package list" evaluates the output of `apt-get update`: if all
+  sources fail or apt reports a general error, the run fails; if only one of
+  several sources fails, it counts as a success with a yellow "package source
+  broken" hint.
+- For an interrupted dpkg and broken dependencies the card offers a **repair
+  button** (`dpkg --configure -a` or `apt -f install`, `zypper verify` on
+  zypper). Afterwards **"Try again"** runs the failed action once more - only
+  its success resets the area.
+- On the dashboard, **"Only servers LCM is unable to act on"** shows all servers
+  whose package management or connection failed or whose package state is
+  critically stale. The **"Action failed"** alert reports such changes
+  immediately (see [Alerts](/guides/alerts/)).
 
 ## CVE weighting
 

@@ -92,7 +92,7 @@ one selected group is still evaluated only once.
 | **Disk capacity** | usage reaches the percentage threshold |
 | **Storage forecast** | the linear extrapolation exceeds the limit within the deadline |
 | **Security/CVE** | CVE findings from the configured minimum severity |
-| **Overdue updates** | number of open package updates exceeds the threshold |
+| **Pending updates** | number of open package updates exceeds the threshold |
 | **Heartbeat** | last server contact is more than *n* hours ago |
 | **Reboot required** | the system itself requests a reboot after an update (e.g. a new kernel) - a plain yes/no criterion without a threshold |
 | **APT cache unreachable** | one of the [APT caches](/en/guides/apt-cache/) does not respond; the message names each affected one. Stays silent while no cache is configured under *Settings → APT cache* |
@@ -100,6 +100,7 @@ one selected group is still evaluated only once.
 | **CrowdSec LAPI unreachable** | one of the central CrowdSec LAPIs does not respond or rejects the stored machine login; the message names each affected one. Applies only to the LCM host and stays silent while no LAPI is stored under *Settings → CrowdSec* |
 | **CVE database outdated** | the vulnerability database of the CVE scanner is older than 48&nbsp;hours or was never downloaded. This matters because an old database reports no error but returns outdated results - from the outside that looks like “no vulnerabilities”. Applies only to the LCM host |
 | **System backup overdue** | automatic backups are enabled, but the newest backup is older than **twice the interval** - or none exists at all. Deliberately measures the outcome instead of individual failed attempts: however the backup went missing, the missing state is what gets reported. Applies only to the LCM host |
+| **Action failed** | LCM can no longer act on a server: updates fail, the connection is lost, rules or the CVE scan fail, or package runs silently stopped (stand-still). Fires **immediately** when a capability category fails, reports the return to normal as an **all-clear** (severity *info*) and sends a reminder once the cooldown has passed while the failure persists. Each category is debounced on its own. A busy dpkg lock only counts from the second consecutive failure. The stand-still alerts on the red level only (Settings → General); the yellow level stays a traffic-light hint. The message names category, error class and hint, **never the raw output** of the server |
 
 ## Examples per alert type
 
@@ -116,7 +117,7 @@ threshold is given, the built-in default applies.
 - **Security/CVE** - "Critical gaps immediately": minimum severity
   **critical**, all servers, severity *critical*. A second, looser rule with
   minimum severity **high** just for the group *Production* (default: `high`).
-- **Overdue updates** - "Patch backlog": allowed number of open updates
+- **Pending updates** - "Patch backlog": allowed number of open updates
   **0** (any pending update fires), group *Production*. More generous for
   staging, e.g. **20**.
 - **Heartbeat** - "Server went quiet": timeout **6 hours**, all servers,
@@ -128,6 +129,9 @@ threshold is given, the built-in default applies.
   cache is configured under *Settings → APT cache*.
 - **Deep scan** - "Report hardening findings": no threshold, severity
   *warning*. Fires as soon as a deep scan yields warnings or critical findings.
+- **Action failed** - "Server can no longer be maintained": no threshold, all
+  servers, severity *critical*. The cooldown is the reminder interval (e.g.
+  1440 minutes for a daily reminder).
 
 ## Severity & cooldown
 

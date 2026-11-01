@@ -170,6 +170,14 @@ type GlobalSettings struct {
 	// läuft auf einer SD-Karte minutenlang ohne eine Zeile Ausgabe.
 	JobIdleTimeoutSlowMinutes int `gorm:"default:30" json:"job_idle_timeout_slow_minutes"`
 
+	// Paketstand-Überwachung („Stillstand"): LCM ist handlungsunfähig, wenn die
+	// Paketaktualisierung eines Servers stillsteht - der Zeitplan ist aus, ein
+	// Lauf ist dauerhaft gesperrt oder hängt. Maßgeblich ist die letzte
+	// ERFOLGREICHE Aktualisierung, nicht der letzte Versuch. Gelb ab
+	// PackagesStaleWarnHours, rot ab PackagesStaleCriticalDays.
+	PackagesStaleWarnHours    int `gorm:"default:48" json:"packages_stale_warn_hours"`
+	PackagesStaleCriticalDays int `gorm:"default:7" json:"packages_stale_critical_days"`
+
 	// TerminalEnabled gibt die Web-Konsole für diese Installation frei.
 	//
 	// Sie ist die eingriffsstärkste Funktion des Systems: Wer sie benutzen
@@ -386,6 +394,39 @@ func ClampJobIdleTimeout(minutes int) int {
 		return JobIdleTimeoutMax
 	}
 	return minutes
+}
+
+// Grenzen und Vorgaben der Paketstand-Überwachung. Gelb (Stunden) und rot
+// (Tage) gelten für die Zeit seit der letzten erfolgreichen Paketaktualisierung.
+const (
+	PackagesStaleWarnHoursMin    = 24
+	PackagesStaleWarnHoursMax    = 720
+	PackagesStaleWarnHoursDef    = 48
+	PackagesStaleCriticalDaysMin = 2
+	PackagesStaleCriticalDaysMax = 90
+	PackagesStaleCriticalDaysDef = 7
+)
+
+// PackagesStaleWarnAfter liefert die Zeit, nach der ein Server gelb als
+// „Paketstand veraltet" gilt. Ein Wert außerhalb der Grenzen (etwa 0 aus
+// einem Altbestand) fällt auf die Vorgabe zurück.
+func (g *GlobalSettings) PackagesStaleWarnAfter() time.Duration {
+	h := g.PackagesStaleWarnHours
+	if h < PackagesStaleWarnHoursMin || h > PackagesStaleWarnHoursMax {
+		h = PackagesStaleWarnHoursDef
+	}
+	return time.Duration(h) * time.Hour
+}
+
+// PackagesStaleCriticalAfter liefert die Zeit, nach der ein Server rot als
+// „Paketstand veraltet" gilt. Ein Wert außerhalb der Grenzen fällt auf die
+// Vorgabe zurück.
+func (g *GlobalSettings) PackagesStaleCriticalAfter() time.Duration {
+	d := g.PackagesStaleCriticalDays
+	if d < PackagesStaleCriticalDaysMin || d > PackagesStaleCriticalDaysMax {
+		d = PackagesStaleCriticalDaysDef
+	}
+	return time.Duration(d) * 24 * time.Hour
 }
 
 // DefaultCVEHighWeightPackages ist die eingebaute Liste exponierter Pakete,

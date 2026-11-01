@@ -183,6 +183,9 @@ func (r *ServerRepository) Delete(id uint) error {
 		if err := tx.Where("server_id = ?", id).Delete(&domain.AptRepository{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("server_id = ?", id).Delete(&domain.ServerCapability{}).Error; err != nil {
+			return err
+		}
 		// Offene Benutzer-Abgleiche verfallen mit dem Server - sie hätten
 		// sonst kein Ziel mehr.
 		if err := tx.Where("server_id = ?", id).Delete(&domain.PendingUserSync{}).Error; err != nil {

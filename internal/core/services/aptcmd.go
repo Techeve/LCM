@@ -140,6 +140,22 @@ func aptRefreshScript() string {
 	return aptScript("lcm_apt_update")
 }
 
+// aptRepairDpkgScript schließt angebrochene Installationen ab
+// (`dpkg --configure -a`) - der Handgriff nach „dpkg was interrupted". Vorher
+// wartet es auf die Sperren: dpkg gegen einen laufenden apt-Lauf anzustoßen
+// wäre selbst ein Fehler. Der Exit-Code 75 („apt ist belegt") bleibt erhalten.
+func aptRepairDpkgScript() string {
+	return aptScript(
+		"lcm_apt_wait || exit $?",
+		"DEBIAN_FRONTEND=noninteractive dpkg --configure -a",
+	)
+}
+
+// aptFixDepsScript zieht fehlende Abhängigkeiten nach (`apt-get -f install`).
+func aptFixDepsScript() string {
+	return aptScript("lcm_apt -f install -y")
+}
+
 // aptUpgradePackagesScript aktualisiert ausschließlich die genannten Pakete
 // auf die neueste verfügbare Version (--only-upgrade installiert keine neuen
 // Pakete, falls eines nicht installiert ist).

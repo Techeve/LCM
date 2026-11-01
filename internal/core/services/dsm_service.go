@@ -290,9 +290,9 @@ func (e *Executor) runDSMRule(job *domain.Job, server *domain.Server, rule *doma
 		}
 		e.jobs.Complete(job, out, ptrInt(0), nil)
 	default:
-		e.jobs.Complete(job, "Synology DSM: Aktionstyp „"+rule.Type+"“ übersprungen - "+
+		e.jobs.CompleteSkipped(job, "Synology DSM: Aktionstyp „"+rule.Type+"“ übersprungen - "+
 			"LCM überwacht dieses Gerät über die DSM-Web-API; Paketverwaltung, Firewall, "+
-			"Benutzer-Sync und Skripte gibt es dort nicht.", ptrInt(0), nil)
+			"Benutzer-Sync und Skripte gibt es dort nicht.")
 	}
 }
 

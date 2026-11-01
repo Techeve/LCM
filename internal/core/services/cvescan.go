@@ -23,6 +23,12 @@ type VulnScanner = trivy.Scanner
 // von einem echten Scanner-Fehler.
 var ErrCVEScanUnreachable = errors.New("Server nicht erreichbar")
 
+// errCVEScannerUnavailable: Trivy fehlt auf dem LCM-Host. Der Text beginnt mit
+// domain.ScannerUnavailableMarker, woran der Klassifizierer die Klasse
+// scanner_unavailable erkennt.
+var errCVEScannerUnavailable = errors.New(domain.ScannerUnavailableMarker +
+	" - CVE-Scan übersprungen. Trivy installieren, damit installierte Pakete auf bekannte Sicherheitslücken geprüft werden.")
+
 // scanServerCVEs prüft den Paketbestand eines Servers gegen Trivy, ersetzt den
 // CVE-Bestand in der DB und aktualisiert die Scan-Metadaten des Servers. Es
 // liefert die Anzahl kritischer/hoher Funde für die Job-Zusammenfassung.

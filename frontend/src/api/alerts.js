@@ -17,7 +17,8 @@ export class AlertsApi {
    * data: {name, type, enabled, group_ids, channel_id, severity,
    *        threshold_percent, forecast_days, max_outdated, min_severity,
    *        heartbeat_hours, cooldown_minutes}
-   * type: disk_capacity | storage_forecast | security_cve | failed_updates | heartbeat
+   * type: disk_capacity | storage_forecast | security_cve | failed_updates (Ausstehende Updates) |
+   *       action_failed (LCM handlungsunfähig; ohne Schwellenwerte, Cooldown = Erinnerungsintervall) | heartbeat
    */
   createRule(data) {
     return this.#client.post('/alert-rules', data);

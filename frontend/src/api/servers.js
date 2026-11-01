@@ -166,6 +166,27 @@ export class ServersApi {
     return this.#client.post(`/servers/${id}/packages/refresh`);
   }
 
+  /**
+   * Betriebsfähigkeit des Servers: immer alle vier Kategorien (connection,
+   * packages, rules, cve_scan) in dieser Reihenfolge, auch ohne Verlauf.
+   */
+  capabilities(id) {
+    return this.#client.get(`/servers/${id}/capabilities`);
+  }
+
+  /** Fehlgeschlagene Kategorie erneut versuchen - startet einen Job ({status, job_id, job_name}). */
+  retryCapability(id, category) {
+    return this.#client.post(`/servers/${id}/capabilities/${encodeURIComponent(category)}/retry`);
+  }
+
+  /**
+   * Paketverwaltung reparieren - startet einen Job ({status, job_id, job_name}).
+   * action: 'dpkg_configure' | 'fix_deps'
+   */
+  repairPackages(id, action) {
+    return this.#client.post(`/servers/${id}/packages/repair`, { action });
+  }
+
   /** Hardware-/OS-Daten neu auslesen (kein Upgrade) - startet einen Job. */
   refreshHardware(id) {
     return this.#client.post(`/servers/${id}/refresh-hardware`);

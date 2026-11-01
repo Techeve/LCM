@@ -736,9 +736,18 @@ func countParams(n int) map[string]string {
 // TrafficLightInput bündelt die Fakten für die Ampel-Bewertung, die
 // nicht am Server-Struct selbst hängen.
 type TrafficLightInput struct {
-	OutdatedPackages int  // Anzahl überfälliger Paket-Updates
-	LastJobFailed    bool // letzter abgeschlossener Job fehlgeschlagen?
-	LastJobName      string
+	OutdatedPackages int // Anzahl überfälliger Paket-Updates
+	// Capabilities: die Betriebsfähigkeit des Servers je Kategorie. Ersetzt
+	// die frühere Frage „ist der letzte Job fehlgeschlagen?": Die kennt nur
+	// den jüngsten Job irgendeiner Art, sodass ein Health-Ping einen
+	// fehlgeschlagenen Update-Lauf Minuten später überdeckte.
+	Capabilities []ServerCapability
+	// PackagesStale ist die Stufe des Stillstands der Paketaktualisierung:
+	// "", PackagesStaleWarning oder PackagesStaleCritical. Der Aufrufer
+	// berechnet sie (Schwellen stehen in den Einstellungen);
+	// PackagesStaleSince ist der Bezugszeitpunkt, den der Befund nennt.
+	PackagesStale      string
+	PackagesStaleSince time.Time
 	// Now aktiviert die OS-Support-/EOL-Bewertung (Zero-Wert = deaktiviert,
 	// damit schlanke Tests ohne Zeitbezug unverändert bleiben).
 	Now time.Time
@@ -869,8 +878,8 @@ func (s *Server) unreachableGraceExpired(now time.Time) bool {
 // TrafficLight bewertet den Server nach dem strikten Ampelsystem:
 //
 //	🔴 Rot   - keine Verbindung möglich (offline, Auth-/Host-Key-Fehler)
-//	🟡 Gelb  - erreichbar, aber Handlungsbedarf (Updates, Disk, Job-Fehler)
-//	🟢 Grün  - erreichbar, alles aktuell, letzte Jobs erfolgreich
+//	🟡 Gelb  - erreichbar, aber Handlungsbedarf (Updates, Disk, Aktionsfehler)
+//	🟢 Grün  - erreichbar, alles aktuell, alle Fähigkeiten in Ordnung
 func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 	// Nicht erreichbar → normalerweise sofort rot. Ist „Nichterreichbarkeit
 	// unkritisch" für diesen Server gesetzt und die Kulanzfrist noch nicht
@@ -1056,13 +1065,20 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 			formatCount(in.DeepScanWarnings, "Deep-Scan-Warnung (Härtung/Konfiguration)", "Deep-Scan-Warnungen (Härtung/Konfiguration)"),
 			countParams(in.DeepScanWarnings)))
 	}
-	if in.LastJobFailed {
-		if in.LastJobName != "" {
-			insights = append(insights, insight("warning", "lastJobFailedNamed",
-				"Letzter Job fehlgeschlagen: "+in.LastJobName, map[string]string{"job": in.LastJobName}))
-		} else {
-			insights = append(insights, insight("warning", "lastJobFailed", "Letzter Job fehlgeschlagen", nil))
-		}
+	// Betriebsfähigkeit: was LCM auf diesem Server nicht mehr kann, und seit
+	// wann. Eine kritische Fähigkeit färbt den Server rot (siehe unten).
+	caps := in.Capabilities
+	if !s.Reachable {
+		// Bis hierher kommt ein nicht erreichbarer Server nur, wenn die
+		// Nichterreichbarkeit geduldet wird. Der Verbindungsfehler wäre dann
+		// genau das Geduldete - und würde den Server doch rot färben.
+		caps = withoutConnection(caps)
+	}
+	capInsights, capInfos, capCritical := capabilityInsights(caps, in.Now)
+	insights = append(insights, capInsights...)
+	infos = append(infos, capInfos...)
+	if in.PackagesStale != "" {
+		insights = append(insights, packagesStaleInsight(in.PackagesStale, in.PackagesStaleSince, in.Now))
 	}
 	// Betriebssystem außerhalb des Herstellersupports (EOL) oder in weniger als
 	// einem Monat davor - Sicherheitsrisiko. Beides eskaliert die Ampel auf Rot.
@@ -1117,8 +1133,8 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 
 	// Kritische CVEs oder ein (bald) nicht mehr unterstütztes Betriebssystem
 	// machen den Server rot (stärkstes Signal, gleichrangig mit „nicht
-	// erreichbar").
-	if in.CriticalVulns > 0 || osCritical {
+	// erreichbar"). Ebenso, wenn LCM ihn nicht mehr pflegen kann.
+	if in.CriticalVulns > 0 || osCritical || capCritical || in.PackagesStale == PackagesStaleCritical {
 		return ServerStatusRed, withInfos(insights, infos)
 	}
 	// Nur Befunde mit Handlungsbedarf färben gelb - reine Hinweise nicht.

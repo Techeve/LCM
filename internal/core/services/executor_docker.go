@@ -34,9 +34,9 @@ func isDockerUpdateRule(ruleType string) bool {
 func (e *Executor) dockerUpdateSkip(job *domain.Job, server *domain.Server) bool {
 	switch {
 	case !server.HasDocker:
-		e.jobs.Complete(job, "docker nicht vorhanden - nichts zu aktualisieren", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "docker nicht vorhanden - nichts zu aktualisieren")
 	case server.DockerUpdatesDisabled:
-		e.jobs.Complete(job, "docker-updates sind für diesen server abgeschaltet - übersprungen", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "docker-updates sind für diesen server abgeschaltet - übersprungen")
 	default:
 		return false
 	}
@@ -120,7 +120,7 @@ func (e *Executor) runDockerComposeUpdateRule(job *domain.Job, server *domain.Se
 		return
 	}
 	if len(targets) == 0 {
-		e.jobs.Complete(job, "kein compose-projekt mit verfügbarem update", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "kein compose-projekt mit verfügbarem update")
 		return
 	}
 	conn, ok := e.dockerUpdateConn(job, server, rule, triggeredBy)
@@ -192,7 +192,7 @@ func (e *Executor) runDockerContainerUpdateRule(job *domain.Job, server *domain.
 		return
 	}
 	if len(targets) == 0 {
-		e.jobs.Complete(job, "kein laufender container mit verfügbarem update", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "kein laufender container mit verfügbarem update")
 		return
 	}
 	conn, ok := e.dockerUpdateConn(job, server, rule, triggeredBy)

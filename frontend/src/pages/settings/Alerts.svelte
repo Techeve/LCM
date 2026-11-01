@@ -18,6 +18,7 @@
     { value: 'storage_forecast', label: t('settings.alerts.typeStorageForecast') },
     { value: 'security_cve', label: t('settings.alerts.typeSecurityCve') },
     { value: 'failed_updates', label: t('settings.alerts.typeFailedUpdates') },
+    { value: 'action_failed', label: t('settings.alerts.typeActionFailed') },
     { value: 'heartbeat', label: t('settings.alerts.typeHeartbeat') },
     { value: 'reboot_required', label: t('settings.alerts.typeRebootRequired') },
     { value: 'apt_cacher_down', label: t('settings.alerts.typeAptCacherDown') },
@@ -208,6 +209,8 @@
         return t('settings.alerts.thrCve', { sev: r.min_severity || 'high' });
       case 'failed_updates':
         return t('settings.alerts.thrUpdates', { n: r.max_outdated || 0 });
+      case 'action_failed':
+        return t('settings.alerts.thrActionFailed');
       case 'heartbeat':
         return t('settings.alerts.thrHeartbeat', { h: r.heartbeat_hours || 24 });
       case 'reboot_required':
@@ -399,6 +402,8 @@
   {:else if form.type === 'heartbeat'}
     <label class="form-label small mb-1" for="al-hb">{t('settings.alerts.heartbeatLabel')}</label>
     <input id="al-hb" type="number" min="1" class="form-control" bind:value={form.heartbeat_hours} />
+  {:else if form.type === 'action_failed'}
+    <p class="small text-body-secondary mb-0">{t('settings.alerts.actionFailedHint')}</p>
   {:else if form.type === 'reboot_required'}
     <p class="small text-body-secondary mb-0">{t('settings.alerts.rebootHint')}</p>
   {:else if form.type === 'apt_cacher_down'}

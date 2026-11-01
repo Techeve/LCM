@@ -48,8 +48,22 @@ func insightScenarios() []struct {
 		{"Zeitdienst unsynchron", Server{Reachable: true, TimeCheckedAt: &now, NTPService: "chrony"}, base},
 		{"Neustart nötig", Server{Reachable: true, RebootRequired: true}, base},
 		{"Deep-Scan-Warnungen", Server{Reachable: true}, TrafficLightInput{Now: now, DeepScanWarnings: 2}},
-		{"letzter Job fehlgeschlagen", Server{Reachable: true}, TrafficLightInput{Now: now, LastJobFailed: true}},
-		{"letzter Job benannt", Server{Reachable: true}, TrafficLightInput{Now: now, LastJobFailed: true, LastJobName: "Update"}},
+		{"Aktionsfehler je Kategorie", Server{Reachable: true}, TrafficLightInput{Now: now, Capabilities: []ServerCapability{
+			failedCapability(CapabilityConnection, ErrClassNetwork, 2),
+			failedCapability(CapabilityPackages, ErrClassLockBusy, 2),
+			failedCapability(CapabilityRules, ErrClassUnknown, 1),
+			failedCapability(CapabilityCVEScan, ErrClassTimeout, 1),
+		}}},
+		{"Paketstand veraltet", Server{Reachable: true}, TrafficLightInput{
+			Now: now, PackagesStale: PackagesStaleWarning, PackagesStaleSince: now.Add(-72 * time.Hour)}},
+		{"Paketstand lange veraltet", Server{Reachable: true}, TrafficLightInput{
+			Now: now, PackagesStale: PackagesStaleCritical, PackagesStaleSince: now.Add(-9 * 24 * time.Hour)}},
+		{"Paketquelle fehlerhaft", Server{Reachable: true}, TrafficLightInput{Now: now, Capabilities: []ServerCapability{
+			{Category: CapabilityPackages, State: CapabilityOK, WarningClass: ErrClassRepoError, WarningMessage: "ppa.example"},
+		}}},
+		{"apt-Hinweis", Server{Reachable: true}, TrafficLightInput{Now: now, Capabilities: []ServerCapability{
+			{Category: CapabilityPackages, State: CapabilityOK, WarningClass: "apt_warning", WarningMessage: "W: x"},
+		}}},
 		{"Betriebssystem EOL", Server{Reachable: true, OSID: "ubuntu", OSVersionID: "18.04"}, base},
 		{"RouterOS-Update", Server{
 			Reachable: true, OSID: OSIDRouterOS, RouterOSUpdateAvailable: true,
@@ -117,10 +131,29 @@ func TestJederStatusBefundStehtInBeidenSprachkatalogen(t *testing.T) {
 			}
 			seen[in.Key] = true
 			for lang, text := range catalogs {
-				if !strings.Contains(text, "\n    "+in.Key+":") {
+				if !catalogHasKey(text, in.Key) {
 					t.Errorf("Befund %q fehlt im Sprachkatalog %s (Szenario %s)", in.Key, lang, sc.name)
 				}
 			}
 		}
 	}
+}
+
+// catalogHasKey sucht einen Befund-Schlüssel im insights-Abschnitt. Ein Punkt
+// im Schlüssel (actionFailed.packages) bedeutet Verschachtelung: erst die
+// Gruppe auf der Ebene der Befunde, darin der Eintrag.
+func catalogHasKey(section, key string) bool {
+	group, entry, nested := strings.Cut(key, ".")
+	if !nested {
+		return strings.Contains(section, "\n    "+key+":")
+	}
+	start := strings.Index(section, "\n    "+group+": {")
+	if start < 0 {
+		return false
+	}
+	body := section[start+1:]
+	if end := strings.Index(body, "\n    },"); end >= 0 {
+		body = body[:end]
+	}
+	return strings.Contains(body, "\n      "+entry+":")
 }

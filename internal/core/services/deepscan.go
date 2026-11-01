@@ -378,7 +378,7 @@ func (e *Executor) RunDeepScanServer(id uint, triggeredBy string) {
 		return
 	}
 	if server.IsDemo {
-		e.jobs.Complete(job, "Demo-Server - Deep Scan übersprungen.", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "Demo-Server - Deep Scan übersprungen.")
 		return
 	}
 	conn, err := e.connect(server)
@@ -399,7 +399,7 @@ func (e *Executor) RunDeepScanServer(id uint, triggeredBy string) {
 // runDeepScanRule führt den Deep Scan als Gruppen-Regel auf einem Server aus.
 func (e *Executor) runDeepScanRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
 	if server.IsDemo {
-		e.jobs.Complete(job, "Demo-Server - Deep Scan übersprungen.", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "Demo-Server - Deep Scan übersprungen.")
 		return
 	}
 	conn, err := e.connect(server)

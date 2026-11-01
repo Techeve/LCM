@@ -204,7 +204,7 @@ func (s *ServerService) ConfigureSSH2FA(scope repositories.AccessScope, id uint,
 
 func (s *ServerService) runSSH2FAJob(job *domain.Job, server *domain.Server, enable bool, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "Demo-Server - SSH-2FA simuliert (kein SSH-Kontakt).", ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, "Demo-Server - SSH-2FA simuliert (kein SSH-Kontakt).")
 		_ = s.servers.UpdateFields(server.ID, map[string]any{"ssh_2fa_enabled": enable})
 		return
 	}

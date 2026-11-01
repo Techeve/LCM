@@ -199,6 +199,33 @@
             <input id="jobidleslow" type="number" min="0" max="1440" class="form-control" bind:value={settings.job_idle_timeout_slow_minutes} />
             <div class="form-text">{t('settings.general.jobIdleSlowHint')}</div>
           </div>
+          <div class="d-flex flex-wrap gap-3 mt-3">
+            <div style="max-width: 220px">
+              <label class="form-label" for="pswarn">{t('settings.general.packagesStaleWarnLabel')}</label>
+              <input
+                id="pswarn"
+                type="number"
+                min="24"
+                max="720"
+                class="form-control"
+                aria-describedby="psw-hint"
+                bind:value={settings.packages_stale_warn_hours}
+              />
+            </div>
+            <div style="max-width: 220px">
+              <label class="form-label" for="pscrit">{t('settings.general.packagesStaleCritLabel')}</label>
+              <input
+                id="pscrit"
+                type="number"
+                min="2"
+                max="90"
+                class="form-control"
+                aria-describedby="psw-hint"
+                bind:value={settings.packages_stale_critical_days}
+              />
+            </div>
+          </div>
+          <p id="psw-hint" class="form-text mb-0">{t('settings.general.packagesStaleHint')}</p>
         </div>
       </div>
 

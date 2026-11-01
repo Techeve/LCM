@@ -29,6 +29,11 @@ Status und wird nur ausgegraut; erst nach Ablauf der **Kulanzfrist**
 - **Mindestens eine kritische CVE** (nach Gewichtung, siehe unten).
 - **Betriebssystem außerhalb des Herstellersupports (EOL)** - oder weniger
   als **einen Monat** vor dem Support-Ende.
+- **LCM ist handlungsunfähig:** Die Paketverwaltung oder die Verbindung
+  schlägt fehl (siehe [Betriebsfähigkeit](#betriebsfähigkeit)) - eine belegte
+  dpkg-Sperre erst ab dem zweiten Fehlschlag in Folge.
+- **Paketstand veraltet (rot):** Die letzte erfolgreiche
+  Paketaktualisierung ist älter als 7 Tage (Einstellungen → Allgemein).
 
 ### 3. Gelb-Kriterien → 🟡
 
@@ -42,7 +47,10 @@ als eigener Insight):
 | Genutzte Docker-Images mit verfügbarem Update | ≥ 1 |
 | Belegung des Root-Volumes `/` | ≥ 85 % |
 | System fordert Neustart an (z. B. nach Kernel-Update) | ja |
-| Letzter Job fehlgeschlagen | ja |
+| Regeln/Aktionen oder CVE-Scan schlagen fehl | ja |
+| Belegte dpkg-Sperre beim ersten Fehlschlag | ja |
+| Einzelne Paketquelle fehlerhaft | ja |
+| Paketstand veraltet (letzte erfolgreiche Paketaktualisierung älter als 48 h, einstellbar) | ja |
 
 ### 4. „Sehr gut" oder „OK"
 
@@ -58,6 +66,35 @@ erreicht er nur makellos, wenn **alle drei** Kriterien erfüllt sind:
 
 Fehlt eines davon, bleibt der Server bei **OK** - und das ⓘ-Popover listet
 genau auf, was noch fehlt.
+
+## Betriebsfähigkeit
+
+LCM merkt sich je Server für vier Bereiche, ob es dort noch handeln kann:
+**Verbindung**, **Paketverwaltung** (Paketliste, Updates, Security-Updates,
+Einzelpakete), **Regeln und Aktionen** und **CVE-Scan**. Die Karte
+„Betriebsfähigkeit" in der Server-Übersicht zeigt je Bereich, seit wann er
+fehlschlägt, wie oft in Folge, die Ursache und was zu tun ist.
+
+- Ein Fehlschlag betrifft nur **seinen** Bereich. Scheitert ein Lauf schon an
+  der Verbindung, zählt er zur Verbindung, nicht zur Paketverwaltung.
+- **Nur ein Erfolg derselben Aktion heilt** einen Bereich. Ein erfolgreicher
+  Gesundheitstest behebt also kein fehlgeschlagenes Update; ein volles Update
+  heilt aber auch fehlgeschlagene Security-Updates.
+- Ein vom Job-Watchdog abgebrochener Lauf zählt als Fehlschlag, ein von Hand
+  abgebrochener nicht. Abgewiesene Läufe (Server gerade belegt) zählen nicht.
+- „Paketliste aktualisieren" wertet die Ausgabe von `apt-get update` aus:
+  Scheitern alle Quellen oder meldet apt einen allgemeinen Fehler, schlägt
+  der Lauf fehl; scheitert nur eine von mehreren Quellen, gilt er als Erfolg
+  mit gelbem Hinweis „Paketquelle fehlerhaft".
+- Für ein unterbrochenes dpkg und kaputte Abhängigkeiten bietet die Karte
+  einen **Reparatur-Knopf** (`dpkg --configure -a` bzw. `apt -f install`,
+  bei zypper `zypper verify`). Danach führt **„Erneut versuchen"** die
+  gescheiterte Aktion noch einmal aus - erst deren Erfolg setzt den Bereich
+  zurück.
+- Das Dashboard filtert mit **„Nur handlungsunfähige Server"** alle Server,
+  bei denen Paketverwaltung oder Verbindung ausgefallen sind oder der
+  Paketstand kritisch veraltet ist. Der Alarm **„Aktion fehlgeschlagen"**
+  meldet solche Wechsel sofort (siehe [Alarme](/guides/alerts/)).
 
 ## CVE-Gewichtung
 

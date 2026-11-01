@@ -95,7 +95,7 @@ wird trotzdem nur einmal ausgewertet.
 | **Festplatten-Kapazität** | Belegung erreicht den prozentualen Schwellenwert |
 | **Speicher-Prognose** | die lineare Hochrechnung überschreitet das Limit innerhalb der Frist |
 | **Security/CVE** | CVE-Funde ab der konfigurierten Mindest-Schwere |
-| **Überfällige Updates** | Zahl offener Paket-Updates übersteigt den Schwellenwert |
+| **Ausstehende Updates** | Zahl offener Paket-Updates übersteigt den Schwellenwert |
 | **Heartbeat** | letzter Server-Kontakt liegt länger als *n* Stunden zurück |
 | **Neustart erforderlich** | das System fordert nach einem Update selbst einen Neustart an (z.&nbsp;B. neuer Kernel) - reines Ja/Nein-Kriterium ohne Schwellenwert |
 | **APT-Cache nicht erreichbar** | einer der [APT-Caches](/guides/apt-cache/) antwortet nicht; die Meldung nennt jeden betroffenen. Bleibt stumm, solange unter *Einstellungen → APT-Cache* kein Cache hinterlegt ist |
@@ -103,6 +103,7 @@ wird trotzdem nur einmal ausgewertet.
 | **CrowdSec-LAPI nicht erreichbar** | eine der zentralen CrowdSec-LAPIs antwortet nicht oder lehnt den hinterlegten Maschinen-Login ab; die Meldung nennt jede betroffene. Greift nur auf dem LCM-Host und bleibt stumm, solange unter *Einstellungen → CrowdSec* keine LAPI hinterlegt ist |
 | **CVE-Datenbank veraltet** | die Schwachstellen-Datenbank des CVE-Scanners ist älter als 48&nbsp;Stunden oder wurde nie geladen. Wichtig, weil eine alte Datenbank keinen Fehler meldet, sondern veraltete Ergebnisse liefert - nach außen sieht das wie „keine Sicherheitslücken" aus. Greift nur auf dem LCM-Host |
 | **System-Backup überfällig** | automatische Backups sind aktiviert, aber das jüngste Backup ist älter als das **Doppelte des Intervalls** - oder es existiert noch gar keines. Misst bewusst das Ergebnis statt einzelner Fehlversuche: egal, auf welchem Weg das Backup ausblieb, gemeldet wird der fehlende Stand. Greift nur auf dem LCM-Host |
+| **Aktion fehlgeschlagen** | LCM kann auf einem Server nicht mehr handeln: Updates scheitern, die Verbindung ist weg, Regeln oder der CVE-Scan schlagen fehl, oder die Paketläufe sind stillschweigend ausgeblieben (Stillstand). Löst **sofort** aus, wenn eine Kategorie der Betriebsfähigkeit ausfällt, meldet die Rückkehr als **Entwarnung** (Schwere *info*) und erinnert nach Ablauf des Cooldowns, solange der Fehler besteht. Jede Kategorie wird für sich entprellt. Eine belegte dpkg-Sperre zählt erst ab dem zweiten Fehlschlag in Folge. Der Stillstand meldet erst auf der roten Stufe (Einstellungen → Allgemein); die gelbe bleibt ein Hinweis in der Ampel. Die Meldung nennt Kategorie, Fehlerklasse und Hinweis, **nie die Rohausgabe** des Servers |
 
 ## Beispiele je Alarmtyp
 
@@ -119,7 +120,7 @@ kein Schwellenwert angegeben ist, greift der eingebaute Standard.
 - **Security/CVE** - „Kritische Lücken sofort": Mindest-Schwere **critical**,
   alle Server, Schwere *critical*. Eine zweite, lockerere Regel mit
   Mindest-Schwere **high** nur für die Gruppe *Produktion* (Default: `high`).
-- **Überfällige Updates** - „Patch-Rückstand": erlaubte Zahl offener Updates
+- **Ausstehende Updates** - „Patch-Rückstand": erlaubte Zahl offener Updates
   **0** (jedes ausstehende Update meldet), Gruppe *Produktion*. Für Staging
   großzügiger, z.&nbsp;B. **20**.
 - **Heartbeat** - „Server meldet sich nicht": Timeout **6 Stunden**, alle
@@ -132,6 +133,9 @@ kein Schwellenwert angegeben ist, greift der eingebaute Standard.
 - **Deep Scan** - „Härtungsbefunde melden": kein Schwellenwert, Schwere
   *warning*. Löst aus, sobald ein Deep Scan Warnungen oder kritische Befunde
   liefert.
+- **Aktion fehlgeschlagen** - „Server nicht mehr pflegbar": kein Schwellenwert,
+  alle Server, Schwere *critical*. Der Cooldown ist die Erinnerungsfrist (z.&nbsp;B.
+  1440 Minuten für eine tägliche Erinnerung).
 
 ## Schwere & Cooldown
 

@@ -35,8 +35,13 @@ func TestJederBefundHatEineUebersetzung(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	faehigkeit, err := os.ReadFile("capability_insights.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	schluessel := map[string]bool{}
-	for _, treffer := range insightAufruf.FindAllStringSubmatch(string(quelle)+string(weitere), -1) {
+	for _, treffer := range insightAufruf.FindAllStringSubmatch(string(quelle)+string(weitere)+string(faehigkeit), -1) {
 		schluessel[treffer[1]] = true
 	}
 	if len(schluessel) < 5 {

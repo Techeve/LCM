@@ -66,6 +66,12 @@ func mapServerError(err error) error {
 		errors.Is(err, services.ErrInvalidTimezone), errors.Is(err, services.ErrInvalidNTPServer),
 		errors.Is(err, services.ErrTooManyNTPServers):
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	case errors.Is(err, services.ErrUnknownRepairAction), errors.Is(err, services.ErrRepairUnsupported),
+		errors.Is(err, services.ErrUnknownCapability):
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	case errors.Is(err, services.ErrCapabilityNotFailed), errors.Is(err, services.ErrNotRetryable),
+		errors.Is(err, services.ErrRetryNotWired):
+		return fiber.NewError(fiber.StatusConflict, err.Error())
 	case errors.Is(err, services.ErrClockFromHost):
 		// Kein Eingabefehler und kein Ziel-Fehler: die Aktion ergibt auf
 		// diesem Server prinzipiell keinen Sinn - dasselbe Muster wie bei

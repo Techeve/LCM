@@ -104,6 +104,13 @@ type ServerService struct {
 	// settings sind die globalen Einstellungen (nur für den Konsolen-Schalter
 	// gebraucht; optional verdrahtet, siehe WithSettings).
 	settings *repositories.SettingsRepository
+	// capabilities hält die Betriebsfähigkeit je Server (Ampel, Handlungs-
+	// unfähigkeit). Optional - ohne sie gelten alle Fähigkeiten als in
+	// Ordnung (schlanke Tests).
+	capabilities *repositories.CapabilityRepository
+	// retry löst „Erneut versuchen" der Betriebsfähigkeit aus (der Executor).
+	// Optional - ohne ihn ist nichts wiederholbar.
+	retry CapabilityRetryRunner
 	// apps ist der Anwendungskatalog samt der Funde je Server. Optional -
 	// ohne ihn entfällt die Erkennung (schlanke Tests).
 	apps *repositories.AppRepository
@@ -1996,7 +2003,7 @@ func (s *ServerService) startPackageJob(scope repositories.AccessScope, id uint,
 // mit dem Job verknüpft) und liest danach den Paketbestand neu ein.
 func (s *ServerService) runPackageJob(job *domain.Job, server *domain.Server, script, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, demoSimulatePackageUpdate(s.servers, server), ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, demoSimulatePackageUpdate(s.servers, server))
 		return
 	}
 	conn, err := s.connect(server)
@@ -2012,9 +2019,7 @@ func (s *ServerService) runPackageJob(job *domain.Job, server *domain.Server, sc
 	defer conn.Close()
 
 	output, code, runErr := conn.Run(privRun(server, script))
-	if runErr == nil && code != 0 {
-		runErr = fmt.Errorf("paket-update endete mit exit-code %d", code)
-	}
+	code, runErr = packageRunResult(job.Type, server.PackageManager, output, code, runErr)
 	if runErr == nil {
 		rescanPackagesInto(s.servers, conn, server)
 		_ = s.servers.UpdateFields(server.ID, map[string]any{

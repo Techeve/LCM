@@ -14,6 +14,7 @@
   import FirewallRulesEditor from '../components/FirewallRulesEditor.svelte';
   import Pagination from '../components/Pagination.svelte';
   import CollapsibleCard from '../components/CollapsibleCard.svelte';
+  import CapabilityCard from '../components/CapabilityCard.svelte';
   import { PAGE_SIZE, pageCount, pageSlice } from '../lib/paging.js';
   import SandboxBadge from '../components/SandboxBadge.svelte';
   import { lastSeen, fmtSize, severityBadge, severityLabel } from '../lib/format.js';
@@ -1341,6 +1342,10 @@
       if (auth.can('groups:read')) allGroups = await api.groups.list();
       // LCM-Host-Status (Trivy/apt-cacher-ng) nur für den localhost-Server.
       if (isLcmHost) loadLcmHost();
+      // Betriebsfähigkeit ändert sich nur durch Jobs - und load() läuft, wenn
+      // einer zu Ende ist. Die Karte lädt sich beim Einblenden selbst; beim
+      // allerersten load() gibt es sie noch nicht.
+      capabilityCard?.reload();
     } catch (e) {
       toasts.error(e instanceof ApiError ? e.message : String(e));
     }
@@ -1610,6 +1615,13 @@
       pkgBusy = false;
       pkgVersionsFor = null;
     }
+  }
+
+  // Wiederholung/Reparatur aus der Karte „Betriebsfähigkeit": wie jede andere
+  // Paketaktion (Job verfolgen, Bestand und Ampel neu laden).
+  let capabilityCard = $state(null);
+  async function runCapabilityAction(fn, label) {
+    await pkgAction(fn, label);
   }
 
   async function refreshPackages() {
@@ -2384,6 +2396,20 @@
           </div>
         </div>
       {/if}
+      <!-- Betriebsfähigkeit ganz oben: Ob LCM hier noch handeln kann, ist
+           wichtiger als jede Stammdatenzeile darunter. {#key id} lädt die
+           Karte beim Wechsel auf einen anderen Server neu. -->
+      {#key id}
+        <CapabilityCard
+          bind:this={capabilityCard}
+          serverId={id}
+          serverName={server.name}
+          packageManager={server.package_manager}
+          canWrite={auth.can('servers:write')}
+          busy={busy || pkgBusy || jobLocked}
+          onrun={runCapabilityAction}
+        />
+      {/key}
       <div class="row g-3">
         <div class="col-md-6">
           <div class="card"><div class="card-body">

@@ -173,7 +173,8 @@ func knownJobType(t string) bool {
 		domain.RuleTypeAptProxy, domain.RuleTypeAlertCheck,
 		domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
 		domain.RuleTypeDNSTest, domain.RuleTypeDeepScan,
-		services.JobTypeHardwareRefresh, services.JobTypeFullRefresh:
+		services.JobTypeHardwareRefresh, services.JobTypeFullRefresh,
+		services.JobTypeRepairDpkg, services.JobTypeRepairDeps:
 		return true
 	}
 	return false

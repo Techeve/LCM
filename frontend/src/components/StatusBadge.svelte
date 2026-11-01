@@ -4,6 +4,7 @@
   // kritisch?". Fixe Positionierung, damit es nicht vom Tabellen-Overflow
   // abgeschnitten wird.
   import { i18n } from '../stores/i18n.svelte.js';
+  import { enrichInsightParams } from '../lib/capability.js';
   const t = (k, p) => i18n.t(k, p);
 
   let { status = 'red', insights = [] } = $props();
@@ -66,8 +67,10 @@
 
   // Befundtext: Der Server liefert einen Übersetzungsschlüssel samt
   // Parametern; message ist die deutsche Fassung und greift nur, wenn ein
-  // Befund (noch) keinen Schlüssel mitbringt.
-  const insightText = (i) => (i.key ? t('insights.' + i.key, i.params) : i.message);
+  // Befund (noch) keinen Schlüssel mitbringt. Zeitspannen („seit 2 Tagen") und
+  // Fehlerursachen setzt enrichInsightParams aus den Rohwerten zusammen, denn
+  // der Katalog kennt nur flache Platzhalter.
+  const insightText = (i) => (i.key ? t('insights.' + i.key, enrichInsightParams(i.params)) : i.message);
 
   // info = keine Probleme, sondern die Gründe, warum es bei „OK" (noch)
   // nicht für „Sehr gut" reicht - neutraler grauer Punkt.

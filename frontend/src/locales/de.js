@@ -199,8 +199,6 @@ export default {
       one: '1 Deep-Scan-Warnung (Härtung/Konfiguration)',
       other: '{count} Deep-Scan-Warnungen (Härtung/Konfiguration)',
     },
-    lastJobFailed: 'Letzter Job fehlgeschlagen',
-    lastJobFailedNamed: 'Letzter Job fehlgeschlagen: {job}',
     osEol:
       '{os} wird seit {eol} nicht mehr mit Sicherheitsupdates versorgt (End-of-Life). Upgrade auf {recommended} dringend empfohlen.',
     osEolSoon:
@@ -227,6 +225,144 @@ export default {
       other:
         'Firewall aktiv, aber {count} Docker-Ports sind an ihr vorbei erreichbar: {ports}. Docker veröffentlicht Ports vor der ufw-Kette - das ist so vorgesehen und wird von LCM nicht verändert.',
     },
+    // Betriebsfähigkeit (siehe lib/capability.js): {duration}, {cause} und
+    // {job} setzt die Oberfläche vor dem Einsetzen zusammen.
+    actionFailed: {
+      connection: 'Die Verbindung schlägt seit {duration} fehl ({count}×): {cause}',
+      packages: 'Updates schlagen seit {duration} fehl ({count}×): {cause}',
+      rules: 'Regeln und Aktionen schlagen seit {duration} fehl ({count}×): {cause}{job}',
+      cve_scan: 'Der CVE-Scan schlägt seit {duration} fehl ({count}×): {cause}',
+    },
+    packagesStale:
+      'Paketstand veraltet seit {duration} - LCM hat die Paketliste nicht mehr erfolgreich aktualisiert',
+    packagesStaleCritical:
+      'Paketstand seit {duration} veraltet - LCM hat die Paketliste seit langem nicht mehr erfolgreich aktualisiert, neue Updates und Sicherheitslücken bleiben unerkannt',
+    repoWarning: 'Paketquelle fehlerhaft: {repo}',
+    aptWarning: 'Hinweis von apt: {message}',
+  },
+  // Zeitspannen für „seit …" (lib/capability.js); Dativ, daher „2 Tagen".
+  capabilityDuration: {
+    lessThanMinute: 'weniger als einer Minute',
+    minutes: { one: '1 Minute', other: '{count} Minuten' },
+    hours: { one: '1 Stunde', other: '{count} Stunden' },
+    days: { one: '1 Tag', other: '{count} Tagen' },
+  },
+  // Fehlerursachen je Fehlerklasse. Die Fassungen „…Unknown" gelten, wenn der
+  // Server den Parameter der Hauptfassung nicht geliefert hat.
+  capabilityCause: {
+    anonymousProcess: 'einen anderen Prozess',
+    lock_busy: 'dpkg-Sperre durch {process} (PID {pid})',
+    lock_busyUnknown: 'dpkg-Sperre: ein anderer Prozess hält die Paketverwaltung fest',
+    dpkg_interrupted: 'dpkg wurde mitten in einer Installation unterbrochen',
+    broken_deps: 'Abhängigkeiten nicht erfüllbar: {packages}',
+    broken_depsUnknown: 'Abhängigkeiten sind nicht erfüllbar',
+    disk_full: 'Kein Speicherplatz mehr auf {path}',
+    disk_fullUnknown: 'Kein Speicherplatz mehr auf dem Server',
+    repo_error: 'Paketquelle fehlerhaft: {repo}',
+    repo_errorUnknown: 'Eine Paketquelle ist fehlerhaft',
+    repo_errorClock: 'Paketquelle als „noch nicht gültig“ abgelehnt - die Uhr des Servers geht vermutlich falsch',
+    network: 'Netzwerkproblem - DNS, Proxy bzw. Paket-Cache prüfen',
+    timeout: 'Zeitüberschreitung - der Vorgang hing und wurde abgebrochen',
+    scanner_unavailable: 'CVE-Scanner nicht verfügbar',
+    unknown: 'Ursache unbekannt - Details stehen in der Job-Ausgabe',
+  },
+  // Was bei der jeweiligen Fehlerklasse zu tun ist (Karte „Betriebsfähigkeit").
+  capabilityHint: {
+    lock_busy:
+      'Meist läuft gerade ein automatisches Update (unattended-upgrades) oder eine andere Paketaktion. Warte, bis der Prozess fertig ist, und versuche es dann erneut. Hängt er dauerhaft, prüfe ihn auf dem Server und beende ihn bei Bedarf.',
+    dpkg_interrupted:
+      'Ein früherer Lauf wurde unterbrochen und hat dpkg halbfertig zurückgelassen. Mit „dpkg --configure -a ausführen“ schließt LCM die Installation ab; danach versuchst Du die fehlgeschlagene Aktion erneut.',
+    broken_deps:
+      'Die Abhängigkeiten lassen sich nicht auflösen. „Abhängigkeiten reparieren“ versucht, sie zu korrigieren. Bleibt der Fehler, prüfe die genannten Pakete auf Pins, Haltemarkierungen und Fremdquellen.',
+    disk_full:
+      'Schaffe Platz auf dem genannten Dateisystem (Paket-Cache leeren, alte Kernel oder Logs entfernen) und versuche es dann erneut.',
+    repo_error:
+      'Prüfe die Paketquelle: ist die Adresse erreichbar, der Signaturschlüssel gültig, das Release noch vorhanden? Unter „Repositories“ lässt sie sich korrigieren oder entfernen. Bei „noch nicht gültig“ prüfst Du zuerst die Uhr des Servers.',
+    network:
+      'Prüfe DNS, Proxy und Paket-Cache (z. B. APT-Cache) des Servers. Ist der Server erreichbar, aber nicht die Paketquelle, liegt es meist an Firewall, Proxy oder dem Paket-Cache.',
+    timeout:
+      'Der Vorgang hat das Zeitlimit überschritten. Prüfe Last und Netzwerk des Servers und versuche es erneut; hängt er wieder, hilft die Job-Ausgabe weiter.',
+    scanner_unavailable:
+      'Der CVE-Scanner läuft zentral auf dem LCM-Host, nicht auf diesem Server. Prüfe dort Trivy und die Schwachstellen-Datenbank (Einstellungen → Sicherheit bzw. Systemstatus).',
+    unknown:
+      'Die Job-Ausgabe zeigt die genaue Meldung des Servers. Behebe die Ursache und versuche es dann erneut.',
+    // Für die Kategorie „Verbindung“ passen die Paket-Hinweise zu Netzwerk,
+    // Zeitüberschreitung und unbekannter Ursache nicht.
+    connection:
+      'Prüfe, ob der Server erreichbar ist, sowie SSH-Zugang und Firewall. Hilft das nicht, verbinde den Server über „Aktionen“ → „Neu verbinden“ neu.',
+  },
+  // Karte „Betriebsfähigkeit" auf der Serverseite (components/CapabilityCard.svelte).
+  capability: {
+    title: 'Betriebsfähigkeit',
+    intro:
+      'Zeigt, ob LCM auf diesem Server noch handeln kann. Nur ein Erfolg derselben Art heilt eine gestörte Fähigkeit - ein bestandener Gesundheitstest behebt keinen fehlgeschlagenen Update-Lauf.',
+    jobSuffix: ' - Job: {job}',
+    summaryOk: 'In Ordnung',
+    summaryWarning: 'Eingeschränkt',
+    summaryCritical: 'Gestört',
+    category: {
+      connection: 'Verbindung',
+      packages: 'Paketverwaltung',
+      rules: 'Regeln und Aktionen',
+      cve_scan: 'CVE-Scan',
+    },
+    categoryHelp: {
+      connection: 'SSH- bzw. Agent-Verbindung zum Server',
+      packages: 'Paketliste, Updates, Sicherheitsupdates und einzelne Paketaktionen',
+      rules: 'Zeitgesteuerte Regeln, Skripte, Firewall, Benutzerabgleich und Berechtigungen',
+      cve_scan: 'Schwachstellen-Scan des Servers',
+    },
+    stateOk: 'In Ordnung',
+    stateWarning: 'Eingeschränkt',
+    stateCritical: 'Gestört',
+    stateStale: 'Veraltet',
+    failingSince: 'seit {duration}',
+    failingSinceTitle: 'Erster Fehlschlag: {when}',
+    failures: { one: '1 Fehlschlag in Folge', other: '{count} Fehlschläge in Folge' },
+    lastSuccess: 'Zuletzt erfolgreich: {when}',
+    neverSucceeded: 'Noch nie erfolgreich',
+    lastError: 'Letzter Fehler',
+    excerptMore: 'Mehr anzeigen',
+    excerptLess: 'Weniger anzeigen',
+    lastJob: 'Letzter Job: {name}',
+    showOutput: 'Job-Ausgabe anzeigen',
+    hideOutput: 'Job-Ausgabe ausblenden',
+    jobHistory: 'Job-Historie',
+    staleSince: 'Paketstand veraltet: Die Paketliste wurde seit {duration} nicht mehr erfolgreich aktualisiert.',
+    staleNever: 'Paketstand veraltet: Die Paketliste wurde noch nie erfolgreich aktualisiert.',
+    warningClass: {
+      repo_error: 'Paketquelle fehlerhaft',
+      apt_warning: 'Hinweis von apt',
+    },
+    retry: 'Erneut versuchen',
+    retryTitle:
+      'Wiederholt den fehlgeschlagenen Vorgang dieser Kategorie auf dem Server. Läuft als protokollierter Job.',
+    repairDpkg: 'dpkg --configure -a ausführen',
+    repairDpkgTitle:
+      'Führt auf dem Server dpkg --configure -a aus und schließt damit unterbrochene Paketinstallationen ab. Läuft als protokollierter Job; die fehlgeschlagene Aktion wird nicht automatisch wiederholt.',
+    repairFixAptTitle:
+      'Führt auf dem Server apt-get -f install aus und repariert damit fehlende oder kaputte Abhängigkeiten. Läuft als protokollierter Job; die fehlgeschlagene Aktion wird nicht automatisch wiederholt.',
+    repairFixApt: 'apt -f install ausführen',
+    repairFix: 'Abhängigkeiten reparieren',
+    repairFixTitle:
+      'Repariert fehlende oder kaputte Abhängigkeiten mit der Paketverwaltung des Servers. Läuft als protokollierter Job; die fehlgeschlagene Aktion wird nicht automatisch wiederholt.',
+    busyTitle: 'Auf diesem Server läuft gerade ein Job - warte, bis er fertig ist.',
+    confirmRun: 'Ausführen',
+    retryConfirmTitle: 'Erneut versuchen?',
+    retryConfirm:
+      'LCM wiederholt jetzt den fehlgeschlagenen Vorgang der Kategorie „{category}“ auf {server}. Er läuft als protokollierter Job; das Ergebnis siehst Du hier und in der Job-Historie.',
+    retryConfirmJob:
+      'LCM wiederholt jetzt den fehlgeschlagenen Vorgang der Kategorie „{category}“ auf {server} (zuletzt: {job}). Er läuft als protokollierter Job; das Ergebnis siehst Du hier und in der Job-Historie.',
+    repairConfirmTitle: 'Reparatur ausführen?',
+    repairConfirmDpkg:
+      'Auf {server} wird als protokollierter Job „dpkg --configure -a“ ausgeführt. Das schließt unterbrochene Paketinstallationen ab. Die fehlgeschlagene Aktion wird dabei NICHT automatisch wiederholt - danach startest Du sie bei Bedarf mit „Erneut versuchen“.',
+    repairConfirmFixApt:
+      'Auf {server} wird als protokollierter Job „apt-get -f install“ ausgeführt. Das repariert fehlende oder kaputte Abhängigkeiten. Die fehlgeschlagene Aktion wird dabei NICHT automatisch wiederholt - danach startest Du sie bei Bedarf mit „Erneut versuchen“.',
+    repairConfirmFix:
+      'Auf {server} wird als protokollierter Job die Abhängigkeitsreparatur der Paketverwaltung ausgeführt. Die fehlgeschlagene Aktion wird dabei NICHT automatisch wiederholt - danach startest Du sie bei Bedarf mit „Erneut versuchen“.',
+    jobLabelRetry: 'Erneut versuchen: {category}',
+    loadError: 'Betriebsfähigkeit konnte nicht geladen werden: {error}',
+    reload: 'Neu laden',
   },
   // Baukasten für Zeitpläne (components/CronBuilder.svelte).
   cron: {
@@ -337,6 +473,9 @@ export default {
     filterOs: 'Betriebssystem',
     filterKernel: 'Kernel',
     filterStatus: 'Status',
+    filterIncapable: 'Nur handlungsunfähige Server (LCM kann nicht mehr handeln)',
+    filterIncapableTitle:
+      'Zeigt nur Server, auf denen Updates oder die Verbindung dauerhaft fehlschlagen oder der Paketstand kritisch veraltet ist.',
     searchName: 'Namenssuche …',
     searchHost: 'Host/IP …',
     searchKernel: 'z. B. 6 oder 6.5 …',
@@ -1248,6 +1387,10 @@ export default {
       jobIdleSlowLabel: 'Erlaubte Stille auf schwacher Hardware (Minuten)',
       jobIdleSlowHint:
         'Gilt für Raspberry Pi & Co. sowie Server mit höchstens 2 Kernen und 2 GB RAM. Dort sind lange stille Phasen normal - ein einzelner dpkg-Trigger wie update-initramfs läuft auf einer SD-Karte minutenlang ohne eine Zeile Ausgabe.',
+      packagesStaleWarnLabel: 'Paketstand veraltet (gelb) nach … Stunden',
+      packagesStaleCritLabel: 'Paketstand veraltet (rot) nach … Tagen',
+      packagesStaleHint:
+        'Ist die letzte erfolgreiche Paketaktualisierung eines Servers älter, gilt LCM dort als handlungsunfähig.',
       mailTitle: 'Standard-E-Mail-Versand',
       mailIntroA:
         'System-Postausgang für transaktionale Mails: Passwort-Resets, Einladungslinks für neue Benutzer und Hinweise an die Administratoren (z.B. bei Backup-Problemen). Getrennt von den ',
@@ -1988,7 +2131,8 @@ export default {
       typeDiskCapacity: 'Kapazität (Speicherplatz)',
       typeStorageForecast: 'Prädiktive Speicheranalyse',
       typeSecurityCve: 'Sicherheitslücken (CVE)',
-      typeFailedUpdates: 'Überfällige Updates',
+      typeFailedUpdates: 'Ausstehende Updates',
+      typeActionFailed: 'Aktion fehlgeschlagen (LCM handlungsunfähig)',
       typeHeartbeat: 'Downtime / Heartbeat',
       typeRebootRequired: 'Neustart erforderlich',
       typeAptCacherDown: 'APT-Cache nicht erreichbar',
@@ -2058,6 +2202,9 @@ export default {
       thrDeepScan: 'Warnungen/Kernel-Reboot',
       thrCveDbStale: 'älter als 48 h',
       thrBackupStale: 'älter als 2× Intervall',
+      thrActionFailed: 'Kategorie wechselt auf „fehlgeschlagen“',
+      actionFailedHint:
+        'Löst sofort aus, sobald eine Fähigkeit von LCM auf einem Server auf „fehlgeschlagen“ wechselt (Verbindung, Paketverwaltung, Regeln und Aktionen oder CVE-Scan), und sendet eine Entwarnung, wenn sie wieder funktioniert. Solange der Fehler besteht, wirkt der Cooldown als Erinnerungsintervall. Kein Schwellenwert nötig.',
       aptCacherDownHint:
         'Löst aus, wenn der zentrale apt-cacher-ng-Dienst nicht auf seiner Report-Seite antwortet - nur relevant, wenn unter Einstellungen → APT-Cache eine URL konfiguriert ist. Wird einmal geprüft, nicht je Server. Kein Schwellenwert nötig - Wiederholungen dämpft der Cooldown.',
       crowdsecLapiDownHint:

@@ -26,13 +26,13 @@
       : `${s.os_name} ${s.os_version}`;
 
   let servers = $state([]);
-  let statuses = $state({}); // serverId -> { status, insights }
+  let statuses = $state({}); // serverId -> { status, insights, incapable }
   let consoles = $state({}); // serverId -> offene Web-Konsolen [{actor, since}]
   let error = $state('');
   let loading = $state(true);
 
   // Filter (clientseitig - Status wird ohnehin pro Server geladen) + Seite.
-  let filters = $state({ name: '', host: '', os: '', kernel: '', status: '' });
+  let filters = $state({ name: '', host: '', os: '', kernel: '', status: '', incapable: false });
   let page = $state(1);
 
   // Kernel-Filter: komponentenweiser Präfix-Vergleich über die Punkte. „6"
@@ -63,6 +63,10 @@
       if (f.os && s.os_name !== f.os) return false;
       if (f.kernel && !kernelMatches(s.kernel_version, f.kernel)) return false;
       if (f.status && (statuses[s.id]?.status ?? 'red') !== f.status) return false;
+      // Handlungsunfähig ist keine Ampelfarbe, sondern eine zweite Achse
+      // (Updates oder Verbindung scheitern dauerhaft) - deshalb ein eigener
+      // Schalter, der sich mit dem Statusfilter kombinieren lässt.
+      if (f.incapable && !statuses[s.id]?.incapable) return false;
       return true;
     }),
   );
@@ -84,6 +88,7 @@
     filters.os = '';
     filters.kernel = '';
     filters.status = '';
+    filters.incapable = false;
     page = 1;
   }
   function goto(p) {
@@ -114,6 +119,10 @@
       loading = false;
     }
   }
+
+  // Anzahl handlungsunfähiger Server - im Schalter sichtbar, damit man ihn
+  // nicht erst anlegen muss, um zu wissen, ob es sich lohnt.
+  let incapableCount = $derived(servers.filter((s) => statuses[s.id]?.incapable).length);
 
   function counts() {
     const c = { excellent: 0, green: 0, yellow: 0, red: 0 };
@@ -223,6 +232,16 @@
           </div>
           <div class="col-6 col-md-1 d-grid">
             <button class="btn btn-sm btn-outline-secondary" onclick={resetFilters}>{t('common.reset')}</button>
+          </div>
+          <div class="col-12">
+            <div class="form-check form-switch small mb-0">
+              <input id="f-incapable" class="form-check-input" type="checkbox" role="switch"
+                bind:checked={filters.incapable} onchange={applyFilters} data-testid="filter-incapable" />
+              <label class="form-check-label" for="f-incapable" title={t('dashboard.filterIncapableTitle')}>
+                {t('dashboard.filterIncapable')}
+                {#if incapableCount > 0}<span class="badge text-bg-danger ms-1">{incapableCount}</span>{/if}
+              </label>
+            </div>
           </div>
         </div>
       </div></div>

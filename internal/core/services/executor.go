@@ -70,6 +70,10 @@ type Executor struct {
 	apps       *AppService
 	alerts     *AlertService
 	advisories *AdvisoryService
+	// capabilities hält die Ergebnisse des flottenweiten CVE-Scans fest (er ist
+	// ein serverloser Job und erreicht die Betriebsfähigkeit nicht über den
+	// Job-Hook). Optional.
+	capabilities *CapabilityService
 	// ipAllowlistExpand löst benannte IP-Allowlists (IDs) in Quell-CIDRs auf -
 	// für die Quell-Einschränkung in Firewall-Grundsatz-Regeln. Optional.
 	ipAllowlistExpand func([]uint) ([]string, error)
@@ -137,6 +141,13 @@ func (e *Executor) WithAlerts(alerts *AlertService) *Executor {
 // sie faellt der Poll-Takt ersatzlos aus, alles andere laeuft weiter.
 func (e *Executor) WithAdvisories(svc *AdvisoryService) *Executor {
 	e.advisories = svc
+	return e
+}
+
+// WithCapabilities verdrahtet die Betriebsfähigkeit für den flottenweiten
+// CVE-Scan. Optional - ohne sie bleibt dessen Ergebnis unvermerkt.
+func (e *Executor) WithCapabilities(svc *CapabilityService) *Executor {
+	e.capabilities = svc
 	return e
 }
 
@@ -519,8 +530,18 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 		return
 	}
 
-	sem <- struct{}{}
-	defer func() { <-sem }()
+	e.runStarted(job, server, rule, triggeredBy, sem)
+}
+
+// runStarted führt einen bereits angelegten Job aus. Von runOnServer getrennt,
+// damit auch ein einzelner Wiederholungslauf (RunRuleOnServer) denselben Weg
+// nimmt, ohne ihn zu kopieren. sem darf nil sein: Ein Einzellauf von Hand
+// teilt sich keinen Gruppen-Lauf, nur die prozessweite Schranke.
+func (e *Executor) runStarted(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string, sem chan struct{}) {
+	if sem != nil {
+		sem <- struct{}{}
+		defer func() { <-sem }()
+	}
 	e.takeSlot()
 	defer e.freeSlot()
 	slog.Debug("job running", "job", job.ID, "server", server.Name, "rule", rule.Name)
@@ -528,7 +549,7 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	// Demo-Server werden nie kontaktiert - die Simulation liefert plausiblen
 	// Output und zieht den Datenbestand nach (siehe demo_sim.go).
 	if server.IsDemo {
-		e.jobs.Complete(job, demoRuleOutput(e.servers, server, rule), ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, demoRuleOutput(e.servers, server, rule))
 		return
 	}
 
@@ -536,7 +557,7 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 	// (script/custom/reboot) sauber überspringen, statt mit einem
 	// kryptischen sudo-Fehler zu enden - so bleibt ein gemischter Schedule grün.
 	if server.RestrictedSudo && !restrictedAllowsRule(rule.Type) {
-		e.jobs.Complete(job, "im eingeschränkten Modus übersprungen - der Management-Benutzer dieses Servers hat keine Rechte für den Aktionstyp „"+rule.Type+"“", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "im eingeschränkten Modus übersprungen - der Management-Benutzer dieses Servers hat keine Rechte für den Aktionstyp „"+rule.Type+"“")
 		return
 	}
 
@@ -639,7 +660,7 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 
 	cmd := commandForRule(rule)
 	if cmd == "" {
-		e.jobs.Complete(job, "kein kommando für rule-typ "+rule.Type, ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "kein kommando für rule-typ "+rule.Type)
 		return
 	}
 
@@ -716,13 +737,13 @@ const queueWaitShare = 2
 // Aktion von Hand, ein manuell ausgelöster Zeitplan - bekommt weiterhin sofort
 // eine Antwort, weil dort jemand davorsteht.
 func (e *Executor) startOnServer(server *domain.Server, rule *domain.Rule, triggeredBy string, plan runPlan) (*domain.Job, error) {
-	ruleID := rule.ID
+	ruleID := ruleIDOf(rule)
 	name := rule.Name + " @ " + server.Name
 	if !plan.queueable || plan.interval <= 0 {
-		return e.jobs.Start(&server.ID, &ruleID, rule.Type, name, triggeredBy)
+		return e.jobs.Start(&server.ID, ruleID, rule.Type, name, triggeredBy)
 	}
 	return e.jobs.StartOrQueue(QueuedStart{
-		ServerID: server.ID, RuleID: &ruleID, Type: rule.Type, Name: name,
+		ServerID: server.ID, RuleID: ruleID, Type: rule.Type, Name: name,
 		TriggeredBy: triggeredBy, Priority: plan.priority,
 		MaxWait: plan.interval / queueWaitShare,
 	})
@@ -1014,7 +1035,7 @@ func (e *Executor) runDNSTestRule(job *domain.Job, server *domain.Server, rule *
 	// RouterOS hat keine POSIX-Shell - getent/nslookup würden in der
 	// RouterOS-CLI nur Syntaxfehler produzieren.
 	if server.IsRouterOS() {
-		e.jobs.Complete(job, "routeros: dns-test nicht anwendbar - übersprungen", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "routeros: dns-test nicht anwendbar - übersprungen")
 		return
 	}
 	settings, err := e.settings.Get()
@@ -1024,7 +1045,7 @@ func (e *Executor) runDNSTestRule(job *domain.Job, server *domain.Server, rule *
 	}
 	domains := ruleTestDomains(rule, settings)
 	if len(domains) == 0 {
-		e.jobs.Complete(job, "keine DNS-Test-Domains gepflegt (Einstellungen → DNS)", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "keine DNS-Test-Domains gepflegt (Einstellungen → DNS)")
 		return
 	}
 	conn, err := e.connect(server)
@@ -1062,11 +1083,11 @@ func (e *Executor) runDNSTestRule(job *domain.Job, server *domain.Server, rule *
 func (e *Executor) runFirewallRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
 	// Proxmox bringt seine eigene Firewall mit - sie wird dort nie angefasst.
 	if server.IsProxmox() {
-		e.jobs.Complete(job, "proxmox-system: firewall-regel übersprungen (proxmox verwaltet die firewall selbst)", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "proxmox-system: firewall-regel übersprungen (proxmox verwaltet die firewall selbst)")
 		return
 	}
 	if server.IsRouterOS() {
-		e.jobs.Complete(job, "routeros: firewall-regel übersprungen (keine LCM-Firewall-Verwaltung möglich)", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "routeros: firewall-regel übersprungen (keine LCM-Firewall-Verwaltung möglich)")
 		return
 	}
 	rules, err := parseFirewallRuleSpec(rule.Command)
@@ -1076,7 +1097,7 @@ func (e *Executor) runFirewallRule(job *domain.Job, server *domain.Server, rule 
 	}
 	backend := firewallBackendFor(server)
 	if server.RestrictedSudo && backend != domain.FirewallToolUfw {
-		e.jobs.Complete(job, fmt.Sprintf("firewall-backend %s braucht volle sudo-rechte - im eingeschränkten modus übersprungen", backend), ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, fmt.Sprintf("firewall-backend %s braucht volle sudo-rechte - im eingeschränkten modus übersprungen", backend))
 		return
 	}
 	conn, err := e.connect(server)
@@ -1127,16 +1148,14 @@ func (e *Executor) runAptRule(job *domain.Job, server *domain.Server, rule *doma
 	defer conn.Close()
 
 	output, code, runErr := conn.Run(privRun(server, script))
-	if runErr == nil && code != 0 {
-		runErr = fmt.Errorf("paket-update endete mit exit-code %d", code)
-	}
+	code, runErr = packageRunResult(rule.Type, server.PackageManager, output, code, runErr)
 	if runErr == nil {
 		rescanPackagesInto(e.servers, conn, server)
 		// Nach dem Update die CVE-Bewertung auffrischen, damit keine veralteten
 		// Sicherheits-Labels an bereits aktualisierten Paketen hängen bleiben.
 		output = strings.TrimSpace(output) + rescanCVEsAfterPackageUpdate(e.scanner, e.servers, e.cveRescanEnabled(), server)
 	}
-	e.finishWithHealth(job, server, output, runErr)
+	e.finishWithHealthCode(job, server, output, code, runErr)
 }
 
 // cveRescanEnabled meldet, ob nach einem Paket-Update die CVE-Bewertung
@@ -1151,7 +1170,7 @@ func (e *Executor) cveRescanEnabled() bool {
 // Auf Servern ohne Docker ist der Lauf ein sauberer No-Op.
 func (e *Executor) runDockerPruneRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
 	if !server.HasDocker {
-		e.jobs.Complete(job, "docker nicht vorhanden - nichts aufzuräumen", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "docker nicht vorhanden - nichts aufzuräumen")
 		return
 	}
 	conn, err := e.connect(server)
@@ -1185,14 +1204,14 @@ func (e *Executor) runDockerPruneRule(job *domain.Job, server *domain.Server, ru
 // Stände werden erst nach dessen nächstem Lauf wieder als aktuell gemeldet.
 func (e *Executor) runDockerUpdateUnusedRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
 	if !server.HasDocker {
-		e.jobs.Complete(job, "docker nicht vorhanden - nichts zu aktualisieren", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "docker nicht vorhanden - nichts zu aktualisieren")
 		return
 	}
 	// Kein Fehler, sondern eine Entscheidung: Der Server ist bewusst
 	// ausgenommen. Ein Regellauf über eine Gruppe darf davon nicht rot
 	// werden - sonst erzöge die Ausnahme zum Wegsehen bei echten Fehlern.
 	if server.DockerUpdatesDisabled {
-		e.jobs.Complete(job, "docker-updates sind für diesen server abgeschaltet - übersprungen", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "docker-updates sind für diesen server abgeschaltet - übersprungen")
 		return
 	}
 	images, err := e.servers.FindDockerImages(server.ID)
@@ -1208,7 +1227,7 @@ func (e *Executor) runDockerUpdateUnusedRule(job *domain.Job, server *domain.Ser
 		}
 	}
 	if len(targets) == 0 {
-		e.jobs.Complete(job, "keine ungenutzten images mit verfügbarem update", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "keine ungenutzten images mit verfügbarem update")
 		return
 	}
 
@@ -1260,7 +1279,7 @@ func (e *Executor) runCustomRule(job *domain.Job, server *domain.Server, rule *d
 	}
 	commands := parseActionCommands(action.Commands)
 	if len(commands) == 0 {
-		e.jobs.Complete(job, "custom-aktion enthält keine kommandos", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "custom-aktion enthält keine kommandos")
 		return
 	}
 
@@ -1306,13 +1325,23 @@ func runActionCommands(conn sshx.Conn, server *domain.Server, log *strings.Build
 // finishWithHealth schließt den Job ab und aktualisiert den
 // Erreichbarkeits-Zustand des Servers (letzter Kontakt / Fehler).
 func (e *Executor) finishWithHealth(job *domain.Job, server *domain.Server, output string, runErr error) {
-	now := time.Now()
+	e.finishWithHealthCode(job, server, output, 0, runErr)
+}
+
+// finishWithHealthCode wie finishWithHealth, reicht aber den echten Exit-Code
+// des Fehlschlags durch. Der Klassifizierer braucht ihn: Ohne ihn ginge LCMs
+// eigener Code 75 („apt ist belegt") verloren, Job.Complete setzte 1 ein.
+func (e *Executor) finishWithHealthCode(job *domain.Job, server *domain.Server, output string, code int, runErr error) {
 	if runErr == nil {
-		_ = e.servers.UpdateFields(server.ID, reachableFields(now))
+		_ = e.servers.UpdateFields(server.ID, reachableFields(time.Now()))
 		e.jobs.Complete(job, output, ptrInt(0), nil)
-	} else {
-		e.jobs.Complete(job, output, nil, runErr)
+		return
 	}
+	var exit *int
+	if code > 0 { // -1 = Transportfehler, kein Exit-Code des Kommandos
+		exit = ptrInt(code)
+	}
+	e.jobs.Complete(job, output, exit, runErr)
 }
 
 // markUnreachable setzt einen Server auf nicht erreichbar (=> rote Ampel) und
@@ -1515,11 +1544,14 @@ func (e *Executor) RunAdvisoryEnrich(triggeredBy string) {
 
 // RunCVEScan prüft den Paketbestand ALLER Server gegen Trivy (serverloser
 // System-Job, analog zu Backup/Cleanup). Fehlt Trivy, endet der Job mit einem
-// klaren Hinweis statt mit einem Fehler (graceful degrade).
+// klaren Hinweis statt mit einem Fehler (graceful degrade) - an den Servern
+// steht der fehlende Scanner trotzdem (Kategorie cve_scan, siehe
+// recordCVEScan).
 func (e *Executor) RunCVEScan(triggeredBy string) {
 	e.runSystemJob(domain.RuleTypeCVEScan, triggeredBy, "CVE-Scan", func() (string, error) {
 		if e.scanner == nil || !e.scanner.Available() {
-			return "Trivy nicht verfügbar - CVE-Scan übersprungen. Trivy installieren, damit installierte Pakete auf bekannte Sicherheitslücken geprüft werden.", nil
+			e.recordScannerUnavailable()
+			return errCVEScannerUnavailable.Error(), nil
 		}
 		// Datenbank direkt vor dem Durchlauf ziehen - der nächtliche Lauf
 		// soll mit der frischesten Ausgabe arbeiten, nicht mit der vom
@@ -1545,10 +1577,12 @@ func (e *Executor) RunCVEScan(triggeredBy string) {
 			c, h, err := scanServerCVEs(context.Background(), e.scanner, e.servers, &servers[i])
 			if errors.Is(err, ErrCVEScanUnreachable) {
 				// Kein Fehler, sondern eine bewusste Auslassung (R2-017) -
-				// sie gehört benannt ins Protokoll, nicht ins WARN-Log.
+				// sie gehört benannt ins Protokoll, nicht ins WARN-Log, und
+				// nicht in die Betriebsfähigkeit.
 				unreachable = append(unreachable, servers[i].Name)
 				continue
 			}
+			e.recordCVEScan(&servers[i], err)
 			if err != nil {
 				failed++
 				slog.Warn("cve scan failed", "server", servers[i].Name, "error", err)
@@ -1587,8 +1621,15 @@ func (e *Executor) RunCVEScanServer(id uint, triggeredBy string) {
 		}
 		return
 	}
+	e.runCVEScanJob(job, server)
+}
+
+// runCVEScanJob führt den Einzelscan für einen bereits angelegten Job aus.
+func (e *Executor) runCVEScanJob(job *domain.Job, server *domain.Server) {
 	if e.scanner == nil || !e.scanner.Available() {
-		e.jobs.Complete(job, "Trivy nicht verfügbar - CVE-Scan übersprungen.", ptrInt(0), nil)
+		// Ein Fehlschlag, kein Erfolg: Der Server wurde nicht geprüft, und die
+		// Betriebsfähigkeit (cve_scan) muss das zeigen.
+		e.jobs.Complete(job, "", nil, errCVEScannerUnavailable)
 		return
 	}
 	ctx := context.Background()
@@ -1607,6 +1648,35 @@ func (e *Executor) RunCVEScanServer(id uint, triggeredBy string) {
 	// bekommt jetzt beide Quellen.
 	summary += "\n" + e.scanServerDockerImages(ctx, server)
 	e.jobs.Complete(job, summary, ptrInt(0), nil)
+}
+
+// recordCVEScan hält das Ergebnis des flottenweiten Scans für einen Server in
+// seiner Betriebsfähigkeit fest. Geräte ohne Linux-Paketbestand (RouterOS, DSM)
+// scannt scanServerCVEs gar nicht - ein „Erfolg" dort wäre erfunden.
+func (e *Executor) recordCVEScan(server *domain.Server, err error) {
+	if e.capabilities == nil || server.IsAPIDevice() {
+		return
+	}
+	e.capabilities.RecordCVEScan(server.ID, err)
+}
+
+// recordScannerUnavailable meldet allen Servern, die der flottenweite Scan
+// geprüft hätte, dass der Scanner fehlt.
+func (e *Executor) recordScannerUnavailable() {
+	if e.capabilities == nil {
+		return
+	}
+	servers, err := e.servers.FindAllUnscoped()
+	if err != nil {
+		slog.Warn("cve scan: servers not loadable to record missing scanner", "error", err)
+		return
+	}
+	for i := range servers {
+		if servers[i].IsDemo || servers[i].InMaintenance() {
+			continue
+		}
+		e.recordCVEScan(&servers[i], errCVEScannerUnavailable)
+	}
 }
 
 // scanServerDockerImages scannt die Container-Images EINES Servers auf CVEs

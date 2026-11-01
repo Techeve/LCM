@@ -340,6 +340,8 @@ type GlobalSettingsInput struct {
 	SessionTTLMinutes           *int
 	JobIdleTimeoutMinutes       *int
 	JobIdleTimeoutSlowMinutes   *int
+	PackagesStaleWarnHours      *int
+	PackagesStaleCriticalDays   *int
 	Require2FARoles             *string
 	PublicBaseURL               *string
 	CVEHighWeightPackages       *string
@@ -547,6 +549,20 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		settings.JobIdleTimeoutSlowMinutes = domain.ClampJobIdleTimeout(*in.JobIdleTimeoutSlowMinutes)
 		touch("job_idle_timeout_slow_minutes")
 	}
+	if in.PackagesStaleWarnHours != nil {
+		if err := validateRange(*in.PackagesStaleWarnHours, domain.PackagesStaleWarnHoursMin, domain.PackagesStaleWarnHoursMax, "packages_stale_warn_hours"); err != nil {
+			return nil, err
+		}
+		settings.PackagesStaleWarnHours = *in.PackagesStaleWarnHours
+		touch("packages_stale_warn_hours")
+	}
+	if in.PackagesStaleCriticalDays != nil {
+		if err := validateRange(*in.PackagesStaleCriticalDays, domain.PackagesStaleCriticalDaysMin, domain.PackagesStaleCriticalDaysMax, "packages_stale_critical_days"); err != nil {
+			return nil, err
+		}
+		settings.PackagesStaleCriticalDays = *in.PackagesStaleCriticalDays
+		touch("packages_stale_critical_days")
+	}
 	if in.Require2FARoles != nil {
 		// Rollennamen normalisieren: ohne das machte ein „Admin" statt
 		// „admin" die 2FA-Pflicht LAUTLOS wirkungslos.
@@ -619,6 +635,14 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 	}
 	// Konsistenz des ENDzustands prüfen (unabhängig davon, welche Felder
 	// dieser PATCH anfasste).
+	if in.PackagesStaleWarnHours != nil || in.PackagesStaleCriticalDays != nil {
+		// Rot muss nach gelb kommen - sonst meldet LCM nie „gelb", sondern
+		// springt direkt auf „rot".
+		if settings.PackagesStaleCriticalAfter() <= settings.PackagesStaleWarnAfter() {
+			return nil, fmt.Errorf("%w: packages_stale_critical_days (%d Tage) muss länger sein als packages_stale_warn_hours (%d Stunden)",
+				ErrSettingInvalid, settings.PackagesStaleCriticalDays, settings.PackagesStaleWarnHours)
+		}
+	}
 	if settings.MailEnabled {
 		if settings.MailHost == "" || settings.MailFrom == "" {
 			return nil, ErrMailerIncomplete

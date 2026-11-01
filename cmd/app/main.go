@@ -408,6 +408,12 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	apiKeyService := services.NewAPIKeyService(apiKeyRepo)
 	systemService := services.NewSystemService().WithAgentPort(cfg.AgentPort)
 	jobService := services.NewJobService(jobRepo)
+	// Betriebsfähigkeit der Server: jedes Jobende (und jeder Watchdog-Abbruch)
+	// schreibt den Zustand seiner Kategorie fort. Vor dem Watchdog verdrahten,
+	// damit dessen Goroutine den Hook nicht mitten im Setzen sieht.
+	capabilityRepo := repositories.NewCapabilityRepository(db)
+	capabilityService := services.NewCapabilityService(capabilityRepo)
+	jobService.OnOutcome(capabilityService.RecordJob)
 	// Verwaiste Jobs des letzten Laufs aufräumen: nach einem Neustart kann
 	// kein Job mehr legitim "running" sein - hängengebliebene Einträge würden
 	// die Server-Sperre sonst für immer halten. VOR Scheduler-/API-Start.
@@ -478,7 +484,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		WithSettings(settingsRepo).
 		WithKnownRepos(knownRepoRepo).WithCVERescanEnabled(cveScanEnabled).
 		WithCVEWeightList(cveWeightList).WithDNSTestDomains(dnsTestDomains).
-		WithPackagePins(packagePinRepo).WithApps(appRepo)
+		WithPackagePins(packagePinRepo).WithApps(appRepo).WithCapabilities(capabilityRepo)
 	// Endet ein Job, kann sich die Ampel seines Servers geändert haben.
 	jobService.OnFinished(serverService.ForgetStatus)
 
@@ -561,12 +567,16 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	alertRepo := repositories.NewAlertRepository(db)
 	notificationService := services.NewNotificationService(notificationRepo, alertRepo, cipher, auditService)
 	alertService := services.NewAlertService(alertRepo, serverRepo, groupRepo, notificationService, auditService).
-		WithCVEWeightList(cveWeightList)
+		WithCVEWeightList(cveWeightList).WithCapabilities(capabilityRepo)
+	// action_failed: Wechsel der Betriebsfähigkeit lösen den Alarm sofort aus,
+	// nicht erst im 30-Minuten-Lauf.
+	capabilityService.OnTransition(alertService.OnCapabilityTransition)
 	executor := services.NewExecutor(serverRepo, groupRepo, jobService, auditService,
 		provService, backupService, settingsRepo, serverService.Connect).
 		WithRecorder(sshRecorder).WithCustomActions(customActionRepo).WithScanner(cveScanner).
 		WithRegistry(registry.New()).
 		WithAlerts(alertService).WithProfiles(profileRepo).WithApps(appService).
+		WithCapabilities(capabilityService).
 		WithCompactor(func() (string, error) {
 			res, err := storage.CompactDatabase(db, func() (uint64, bool) { return storage.FreeDiskBytes(dataDir) })
 			return res.String(), err
@@ -575,6 +585,8 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Nach Container-/Image-Updates die Docker-CVE-Bewertung sofort
 	// auffrischen: der zentrale Docker-Check läuft als eigener System-Job.
 	serverService.WithDockerCheckTrigger(executor.RunDockerCheck)
+	// „Erneut versuchen" der Betriebsfähigkeit läuft über den Executor.
+	serverService.WithRetryRunner(executor)
 	groupService := services.NewGroupService(groupRepo, serverRepo, auditService, scheduler.Reload).
 		WithCustomActions(customActionRepo).WithUsers(userRepo).WithProvisioning(provService)
 	// Grundsatz-Regeln gleichen Typs aus mehreren Gruppen entscheidet seit
@@ -618,6 +630,8 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Login-Check wie die CrowdSec-Einstellungsseite. (Nachträglich verdrahtet,
 	// weil der SettingsService erst nach dem AlertService entsteht.)
 	alertService.WithCrowdSecLapiChecker(settingsService.CheckCrowdSecLapis)
+	// Frist des Stillstands (action_failed) aus den globalen Einstellungen.
+	alertService.WithSettings(settingsService.Get)
 	// Stand der CVE-Datenbank fuer den cve_db_stale-Alarm (derselbe Wert, den
 	// auch Ampel und Sicherheitsseite zeigen).
 	alertService.WithCVEDBChecker(serverService.CVEDBStatus)

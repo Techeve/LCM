@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.49.0-beta.1 - 2026-11-01
+
+### 🚀 Features
+
+- **status**: fehlgeschlagene Aktionen wirken auf den Serverstatus (c5b92409)
+
+### 🐛 Bugfixes
+
+- **status**: Regel-Fehler heilt nur der Health-Ping derselben Quelle (654b9a04)
+- **status**: zypper wie apt auswerten, Netzwerk-Hinweis ohne APT-Bezug (5e0a89a9)
+
 ## v1.48.1 - 2026-10-31
 
 ### 🐛 Bugfixes

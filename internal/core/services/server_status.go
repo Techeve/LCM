@@ -41,6 +41,10 @@ type ServerStatus struct {
 	Status    string                 `json:"status"`
 	Insights  []domain.StatusInsight `json:"insights"`
 	OSSupport domain.OSSupportInfo   `json:"os_support"`
+	// Incapable: LCM kann den Server nicht mehr pflegen - Paketverwaltung
+	// oder Verbindung sind ausgefallen, oder der Paketstand ist kritisch
+	// veraltet. Speist den Dashboard-Filter „LCM handlungsunfähig".
+	Incapable bool `json:"incapable"`
 }
 
 type cachedStatus struct {
@@ -92,18 +96,125 @@ func (s *ServerService) ForgetStatus(serverID *uint) {
 	s.statuses.forget(serverID)
 }
 
+// WithCapabilities verdrahtet den Speicher der Betriebsfähigkeit. Ohne ihn
+// (schlanke Tests) gibt es keine Aktionsfehler und keinen Stillstand.
+func (s *ServerService) WithCapabilities(repo *repositories.CapabilityRepository) *ServerService {
+	s.capabilities = repo
+	return s
+}
+
+// staleLimits sind die Schwellen für „Paketstand veraltet" aus den globalen
+// Einstellungen.
+type staleLimits struct {
+	warn, critical time.Duration
+}
+
+// loadStaleLimits liest die Einstellungen EINMAL je Anfrage. Ohne
+// Einstellungen (schlanke Tests) gelten die Vorgaben.
+func (s *ServerService) loadStaleLimits() (staleLimits, error) {
+	settings := &domain.GlobalSettings{}
+	if s.settings != nil {
+		loaded, err := s.settings.Get()
+		if err != nil {
+			return staleLimits{}, err
+		}
+		settings = loaded
+	}
+	return staleLimitsOf(settings), nil
+}
+
+func staleLimitsOf(settings *domain.GlobalSettings) staleLimits {
+	return staleLimits{warn: settings.PackagesStaleWarnAfter(), critical: settings.PackagesStaleCriticalAfter()}
+}
+
+// statusFacts sind die für alle Server gemeinsamen Eingaben der Bewertung, die
+// StatusAll einmal lädt statt je Server.
+type statusFacts struct {
+	capabilities map[uint][]domain.ServerCapability
+	limits       staleLimits
+}
+
+// loadStatusFacts lädt die Betriebsfähigkeit der Server mit EINER Abfrage und
+// die Schwellen einmal. Das Dashboard bewertet hunderte Server auf einmal;
+// eine Abfrage je Server ließe die Liste an der Datenbank hängen.
+func (s *ServerService) loadStatusFacts(ids []uint) (statusFacts, error) {
+	limits, err := s.loadStaleLimits()
+	if err != nil {
+		return statusFacts{}, err
+	}
+	facts := statusFacts{limits: limits}
+	if s.capabilities == nil {
+		return facts, nil
+	}
+	facts.capabilities, err = s.capabilities.FindForServers(ids)
+	return facts, err
+}
+
 // Status bewertet einen Server frisch und legt das Ergebnis im Cache ab.
 func (s *ServerService) Status(scope repositories.AccessScope, id uint) (string, []domain.StatusInsight, domain.OSSupportInfo, error) {
 	server, err := s.servers.FindByID(scope, id)
 	if err != nil {
 		return "", nil, domain.OSSupportInfo{}, err
 	}
-	st, err := s.computeStatus(server)
+	facts, err := s.loadStatusFacts([]uint{id})
+	if err != nil {
+		return "", nil, domain.OSSupportInfo{}, err
+	}
+	st, err := s.computeStatus(server, facts.capabilities[id], facts.limits)
 	if err != nil {
 		return "", nil, domain.OSSupportInfo{}, err
 	}
 	s.statuses.put(st)
 	return st.Status, st.Insights, st.OSSupport, nil
+}
+
+// ServerCapabilities ist die Betriebsfähigkeit eines Servers samt dem dabei
+// geladenen Server: Wer die Aktionen je Kategorie braucht (CapabilityActions),
+// muss ihn nicht ein zweites Mal laden.
+type ServerCapabilities struct {
+	Server *domain.Server
+	Rows   []domain.ServerCapability // alle Kategorien in Anzeigereihenfolge
+	Stale  string                    // Stufe des Paketstand-Stillstands
+}
+
+// Capabilities liefert die vier Kategorien der Betriebsfähigkeit eines Servers
+// in der Anzeigereihenfolge und die Stufe des Paketstand-Stillstands. Kategorien
+// ohne Zeile (noch nie ein Job dieser Art) erscheinen als in Ordnung.
+func (s *ServerService) Capabilities(scope repositories.AccessScope, id uint) (*ServerCapabilities, error) {
+	// Der Zugriffsprüfung wegen zuerst den Server laden (Mandantentrennung).
+	server, err := s.servers.FindByID(scope, id)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := s.loadStatusFacts([]uint{id})
+	if err != nil {
+		return nil, err
+	}
+	rows := facts.capabilities[id]
+	level, _ := packagesStaleness(server, rows, facts.limits, time.Now())
+	return &ServerCapabilities{Server: server, Rows: allCategories(id, rows), Stale: level}, nil
+}
+
+// allCategories füllt fehlende Kategorien als in Ordnung auf.
+func allCategories(serverID uint, rows []domain.ServerCapability) []domain.ServerCapability {
+	out := make([]domain.ServerCapability, 0, len(domain.CapabilityCategories))
+	for _, category := range domain.CapabilityCategories {
+		c := capabilityOf(rows, category)
+		if c == nil {
+			c = &domain.ServerCapability{ServerID: serverID, Category: category, State: domain.CapabilityOK}
+		}
+		out = append(out, *c)
+	}
+	return out
+}
+
+func capabilityOf(rows []domain.ServerCapability, category string) *domain.ServerCapability {
+	for i := range rows {
+		if rows[i].Category == category {
+			return &rows[i]
+		}
+	}
+	return nil
 }
 
 // StatusAll liefert die Ampeln aller für den Aufrufer sichtbaren Server - aus
@@ -116,20 +227,12 @@ func (s *ServerService) StatusAll(scope repositories.AccessScope) ([]ServerStatu
 	}
 	results := make([]ServerStatus, len(servers))
 	found := make([]bool, len(servers))
-	work := make(chan int)
-	var wg sync.WaitGroup
-	for range statusWorkers {
-		wg.Go(func() {
-			for i := range work {
-				results[i], found[i] = s.cachedStatus(&servers[i])
-			}
-		})
+	missing := s.fillFromCache(servers, results, found)
+	if len(missing) > 0 {
+		if err := s.computeMissing(servers, missing, results, found); err != nil {
+			return nil, err
+		}
 	}
-	for i := range servers {
-		work <- i
-	}
-	close(work)
-	wg.Wait()
 
 	out := results[:0]
 	for i, ok := range found {
@@ -140,12 +243,52 @@ func (s *ServerService) StatusAll(scope repositories.AccessScope) ([]ServerStatu
 	return out, nil
 }
 
-// cachedStatus liefert die Ampel aus dem Cache oder berechnet sie.
-func (s *ServerService) cachedStatus(server *domain.Server) (ServerStatus, bool) {
-	if st, ok := s.statuses.get(server.ID); ok {
-		return st, true
+// fillFromCache übernimmt frische Ampeln aus dem Cache und nennt die
+// Positionen der Server, die neu zu berechnen sind.
+func (s *ServerService) fillFromCache(servers []domain.Server, results []ServerStatus, found []bool) []int {
+	var missing []int
+	for i := range servers {
+		if st, ok := s.statuses.get(servers[i].ID); ok {
+			results[i], found[i] = st, true
+			continue
+		}
+		missing = append(missing, i)
 	}
-	st, err := s.computeStatus(server)
+	return missing
+}
+
+// computeMissing berechnet die Ampeln der übrigen Server parallel. Die
+// gemeinsamen Eingaben werden vorher einmal geladen - nur wenn überhaupt etwas
+// zu berechnen ist.
+func (s *ServerService) computeMissing(servers []domain.Server, missing []int, results []ServerStatus, found []bool) error {
+	ids := make([]uint, len(missing))
+	for n, i := range missing {
+		ids[n] = servers[i].ID
+	}
+	facts, err := s.loadStatusFacts(ids)
+	if err != nil {
+		return err
+	}
+	work := make(chan int)
+	var wg sync.WaitGroup
+	for range statusWorkers {
+		wg.Go(func() {
+			for i := range work {
+				results[i], found[i] = s.computeAndCache(&servers[i], facts)
+			}
+		})
+	}
+	for _, i := range missing {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	return nil
+}
+
+// computeAndCache berechnet die Ampel eines Servers und legt sie im Cache ab.
+func (s *ServerService) computeAndCache(server *domain.Server, facts statusFacts) (ServerStatus, bool) {
+	st, err := s.computeStatus(server, facts.capabilities[server.ID], facts.limits)
 	if err != nil {
 		return ServerStatus{}, false
 	}
@@ -154,14 +297,11 @@ func (s *ServerService) cachedStatus(server *domain.Server) (ServerStatus, bool)
 }
 
 // computeStatus bewertet einen geladenen Server: Ampel, Befunde und
-// OS-Support (aktuelle LTS/EOL) zum aktuellen Zeitpunkt.
-func (s *ServerService) computeStatus(server *domain.Server) (ServerStatus, error) {
+// OS-Support (aktuelle LTS/EOL) zum aktuellen Zeitpunkt. Betriebsfähigkeit und
+// Schwellen kommen vom Aufrufer, damit die Liste sie nicht je Server lädt.
+func (s *ServerService) computeStatus(server *domain.Server, caps []domain.ServerCapability, limits staleLimits) (ServerStatus, error) {
 	id := server.ID
 	outdated, err := s.servers.CountOutdatedPackages(id)
-	if err != nil {
-		return ServerStatus{}, err
-	}
-	last, err := s.jobs.jobs.LastFinishedForServer(id)
 	if err != nil {
 		return ServerStatus{}, err
 	}
@@ -209,10 +349,8 @@ func (s *ServerService) computeStatus(server *domain.Server) (ServerStatus, erro
 		// faerbt die Ampel nicht (siehe TrafficLightInput.CVEDB).
 		CVEDB: s.CVEDBStatus(),
 	}
-	if last != nil {
-		in.LastJobFailed = last.Status == domain.JobStatusFailed
-		in.LastJobName = last.Name
-	}
+	in.Capabilities = caps
+	in.PackagesStale, in.PackagesStaleSince = packagesStaleness(server, caps, limits, in.Now)
 	status, insights := server.TrafficLight(in)
 	// Die Docker-Qualifizierung hängt BEWUSST hinter der Farbentscheidung:
 	// sie beschreibt die Erreichbarkeit genauer, ist aber kein Mangel, der
@@ -221,5 +359,51 @@ func (s *ServerService) computeStatus(server *domain.Server) (ServerStatus, erro
 		insights = append(insights, *qual)
 	}
 	osSupport := domain.OSSupportStatus(server.OSID, server.OSVersionID, server.OSName, in.Now)
-	return ServerStatus{ID: id, Status: status, Insights: insights, OSSupport: osSupport}, nil
+	return ServerStatus{
+		ID: id, Status: status, Insights: insights, OSSupport: osSupport,
+		Incapable: isIncapable(caps, in.PackagesStale),
+	}, nil
+}
+
+// packagesStaleness stuft den Stillstand der Paketaktualisierung ein. Bezug ist
+// der letzte ERFOLG, nicht der letzte Versuch - ein Server, dessen Läufe alle
+// scheitern oder hängen, ist genau der Fall. Ohne bisherigen Erfolg zählt das
+// Anlagedatum, sonst bliebe ein nie gelungener Server ewig unauffällig.
+//
+// Ausgenommen sind Geräte, deren Pakete LCM gar nicht verwaltet (RouterOS,
+// DSM), Demo-Server (erfundene Daten) und nicht erreichbare Server: Deren
+// Stillstand erklärt die Verbindung - und ein bewusst geduldeter Ausfall
+// (Nichterreichbarkeit unkritisch) soll nicht über diesen Umweg rot werden.
+func packagesStaleness(server *domain.Server, caps []domain.ServerCapability, limits staleLimits, now time.Time) (string, time.Time) {
+	if server.IsAPIDevice() || server.IsDemo || !server.Reachable {
+		return "", time.Time{}
+	}
+	ref := server.CreatedAt
+	if c := capabilityOf(caps, domain.CapabilityPackages); c != nil && c.LastSuccessAt != nil {
+		ref = *c.LastSuccessAt
+	}
+	if ref.IsZero() {
+		return "", time.Time{}
+	}
+	switch age := now.Sub(ref); {
+	case age > limits.critical:
+		return domain.PackagesStaleCritical, ref
+	case age > limits.warn:
+		return domain.PackagesStaleWarning, ref
+	}
+	return "", time.Time{}
+}
+
+// isIncapable: LCM kann den Server nicht mehr pflegen. Ein fehlgeschlagener
+// Regel- oder CVE-Lauf zählt nicht dazu - der Server bleibt dann pflegbar.
+func isIncapable(caps []domain.ServerCapability, staleLevel string) bool {
+	if staleLevel == domain.PackagesStaleCritical {
+		return true
+	}
+	for _, category := range []string{domain.CapabilityPackages, domain.CapabilityConnection} {
+		if c := capabilityOf(caps, category); c != nil && c.State == domain.CapabilityFailed {
+			return true
+		}
+	}
+	return false
 }

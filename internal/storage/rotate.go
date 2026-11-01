@@ -84,6 +84,10 @@ var serializerColumns = []struct {
 	{"storage_healths", "id", "name"},
 	{"storage_healths", "id", "raw_state"},
 	{"storage_healths", "id", "message"},
+	// Fehlertexte der Betriebsfähigkeit (aus der Server-Ausgabe).
+	{"server_capabilities", "id", "last_error_message"},
+	{"server_capabilities", "id", "last_error_params"},
+	{"server_capabilities", "id", "warning_message"},
 }
 
 // blindIndexedColumns sind verschlüsselte Felder mit einem MITZUFÜHRENDEN

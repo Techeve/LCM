@@ -99,7 +99,7 @@ func (s *ServerService) InstallCrowdSecLapi(scope repositories.AccessScope, id u
 
 func (s *ServerService) runCrowdSecLapiJob(job *domain.Job, server *domain.Server, in LapiInstallInput, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "Demo-Server - CrowdSec-LAPI-Einrichtung simuliert (kein SSH-Kontakt).", ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, "Demo-Server - CrowdSec-LAPI-Einrichtung simuliert (kein SSH-Kontakt).")
 		return
 	}
 	conn, err := s.connectRec(server, "crowdsec-lapi", actor)

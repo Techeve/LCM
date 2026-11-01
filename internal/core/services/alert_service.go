@@ -40,6 +40,9 @@ type AlertService struct {
 	// notifyWG zählt laufende asynchrone Zustellungen (R2-033) - für Tests
 	// und geordneten Shutdown abwartbar (WaitForNotifications).
 	notifyWG sync.WaitGroup
+	// transitions reiht die Wechsel der Betriebsfähigkeit ein (siehe
+	// OnCapabilityTransition).
+	transitions transitionQueue
 	// now ist die Zeitquelle (in Tests überschreibbar).
 	now func() time.Time
 	// weightList liefert die CVE-Hochgewichtungs-Liste (globale Einstellung);
@@ -62,6 +65,12 @@ type AlertService struct {
 	backupStatus func() (enabled bool, intervalHours int, newest *time.Time, err error)
 	// advisoryFindings liefert die offenen Fruehwarn-Befunde eines Servers.
 	advisoryFindings func(serverID uint) ([]domain.AdvisoryFinding, error)
+	// capabilities liefert die Betriebsfähigkeit der Server für die Erinnerung
+	// und den Stillstand des action_failed-Alarms; nil = Auswertung entfällt.
+	capabilities *repositories.CapabilityRepository
+	// settings liefert die globalen Einstellungen (Frist des Stillstands);
+	// nil = Vorgaben.
+	settings func() (*domain.GlobalSettings, error)
 }
 
 func NewAlertService(rules *repositories.AlertRepository, servers *repositories.ServerRepository, groups *repositories.GroupRepository, notifier *NotificationService, audit *AuditService) *AlertService {
@@ -158,7 +167,7 @@ func validAlertType(t string) bool {
 		domain.AlertTypeRebootRequired, domain.AlertTypeAptCacherDown,
 		domain.AlertTypeCrowdSecLapiDown, domain.AlertTypeDeepScan,
 		domain.AlertTypeCVEDBStale, domain.AlertTypeBackupStale,
-		domain.AlertTypeAdvisory:
+		domain.AlertTypeAdvisory, domain.AlertTypeActionFailed:
 		return true
 	default:
 		return false
@@ -293,6 +302,11 @@ type finding struct {
 	fired       bool
 	description string
 	details     string
+	// code und severity sind nur gesetzt, wo ein Typ mehrere unabhängige
+	// Zustände je Server meldet (action_failed: eine Kategorie je Code, die
+	// Entwarnung als Info). Leer = Typ der Regel bzw. deren Schwere.
+	code     string
+	severity string
 }
 
 // Evaluate prüft alle aktiven Alarm-Regeln gegen die Zielserver und löst bei
@@ -303,7 +317,8 @@ func (s *AlertService) Evaluate(actor string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var checked, fired, notified, suppressed int
+	var checked int
+	var total tally
 	for i := range rules {
 		rule := &rules[i]
 		// Selbstbeobachtung läuft OHNE Server: Backup-Stand, CVE-Datenbank,
@@ -312,15 +327,18 @@ func (s *AlertService) Evaluate(actor string) (string, error) {
 		// fehlte der (Container, oder von Hand gelöscht), blieb sie stumm.
 		if domain.IsSelfAlert(rule.Type) {
 			checked++
-			outcome := s.fire(rule, nil, s.evaluateSelf(rule))
-			fired += outcome.fired
-			notified += outcome.notified
-			suppressed += outcome.suppressed
+			total.add(s.fire(rule, nil, s.evaluateSelf(rule)))
 			continue
 		}
 		servers, err := s.targetServers(rule)
 		if err != nil {
 			slog.Warn("alert evaluation: target servers not loadable", "rule", rule.Name, "error", err)
+			continue
+		}
+		if rule.Type == domain.AlertTypeActionFailed {
+			n, out := s.evaluateActionFailed(rule, servers)
+			checked += n
+			total.add(out)
 			continue
 		}
 		for j := range servers {
@@ -329,26 +347,29 @@ func (s *AlertService) Evaluate(actor string) (string, error) {
 				continue
 			}
 			checked++
-			outcome := s.fire(rule, server, s.evaluateServer(rule, server))
-			fired += outcome.fired
-			notified += outcome.notified
-			suppressed += outcome.suppressed
+			total.add(s.fire(rule, server, s.evaluateServer(rule, server)))
 		}
 	}
 	summary := fmt.Sprintf("%d prüfung(en), %d alarm(e) ausgelöst, %d benachrichtigung(en) angestoßen",
-		checked, fired, notified)
-	if suppressed > 0 {
-		summary += fmt.Sprintf(", %d wegen Sperrfrist unterdrückt", suppressed)
+		checked, total.fired, total.notified)
+	if total.suppressed > 0 {
+		summary += fmt.Sprintf(", %d wegen Sperrfrist unterdrückt", total.suppressed)
 	}
 	if actor != "" {
-		slog.Info("alert evaluation finished", "checked", checked, "fired", fired,
-			"notified", notified, "suppressed", suppressed, "actor", actor)
+		slog.Info("alert evaluation finished", "checked", checked, "fired", total.fired,
+			"notified", total.notified, "suppressed", total.suppressed, "actor", actor)
 	}
 	return summary, nil
 }
 
 // tally zählt das Ergebnis EINER Prüfung für die Zusammenfassung.
 type tally struct{ fired, notified, suppressed int }
+
+func (t *tally) add(o tally) {
+	t.fired += o.fired
+	t.notified += o.notified
+	t.suppressed += o.suppressed
+}
 
 // fire wickelt den Weg vom Befund zum Ereignis ab: Sperrfrist prüfen,
 // protokollieren, benachrichtigen. server darf nil sein - dann gilt der Befund
@@ -361,7 +382,7 @@ func (s *AlertService) fire(rule *domain.AlertRule, server *domain.Server, f fin
 	if server != nil {
 		serverID = &server.ID
 	}
-	if s.inCooldown(rule, serverID) {
+	if s.inCooldown(rule, serverID, f.code) {
 		// Der Zustand verletzt die Regel, die Benachrichtigung ist nur durch
 		// die Sperrfrist unterdrückt - das gehört ins Lagebild, sonst wirkt
 		// „0 Alarme" wie „alles in Ordnung" (R2-063).
@@ -775,13 +796,14 @@ func (s *AlertService) evalHeartbeat(rule *domain.AlertRule, server *domain.Serv
 
 // inCooldown meldet, ob für (Regel, Server) innerhalb des Cooldown-Fensters
 // bereits ein Event existiert. serverID nil = Selbstbeobachtung; die Sperre
-// gilt dann für die Regel als Ganzes.
-func (s *AlertService) inCooldown(rule *domain.AlertRule, serverID *uint) bool {
+// gilt dann für die Regel als Ganzes. Mit code zählen nur Events dieses Codes
+// (action_failed entprellt jede Kategorie für sich).
+func (s *AlertService) inCooldown(rule *domain.AlertRule, serverID *uint, code string) bool {
 	cd := rule.Cooldown()
 	if cd <= 0 {
 		return false // 0 = keine Sperre (R2-063)
 	}
-	last, err := s.rules.LastEventAt(rule.ID, serverID)
+	last, err := s.rules.LastEventAt(rule.ID, serverID, code)
 	if err != nil || last.IsZero() {
 		return false
 	}
@@ -806,6 +828,13 @@ func (s *AlertService) recordAndNotify(rule *domain.AlertRule, server *domain.Se
 		}
 		groupName = strings.Join(names, ", ")
 	}
+	code, severity := f.code, f.severity
+	if code == "" {
+		code = rule.Type
+	}
+	if severity == "" {
+		severity = rule.Severity
+	}
 	event := domain.AlertEvent{
 		CreatedAt:   s.now(),
 		RuleID:      rule.ID,
@@ -814,8 +843,8 @@ func (s *AlertService) recordAndNotify(rule *domain.AlertRule, server *domain.Se
 		ServerName:  serverName,
 		GroupName:   groupName,
 		Type:        rule.Type,
-		Severity:    rule.Severity,
-		Code:        rule.Type,
+		Severity:    severity,
+		Code:        code,
 		Description: f.description,
 	}
 
@@ -840,10 +869,10 @@ func (s *AlertService) recordAndNotify(rule *domain.AlertRule, server *domain.Se
 	}
 	notifyEvent := domain.NotificationEvent{
 		Timestamp:   event.CreatedAt,
-		Severity:    rule.Severity,
+		Severity:    severity,
 		ServerGroup: groupName,
 		ServerName:  serverName,
-		Code:        rule.Type,
+		Code:        code,
 		Description: f.description,
 		Details:     f.details,
 	}

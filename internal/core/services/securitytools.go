@@ -364,7 +364,7 @@ func (s *ServerService) ConfigureSecurityTool(scope repositories.AccessScope, id
 
 func (s *ServerService) runSecurityToolJob(job *domain.Job, server *domain.Server, in SecurityToolInput, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "Demo-Server - Sicherheits-Tool-Installation simuliert (kein SSH-Kontakt).", ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, "Demo-Server - Sicherheits-Tool-Installation simuliert (kein SSH-Kontakt).")
 		return
 	}
 	conn, err := s.connectRec(server, "security-tool", actor)

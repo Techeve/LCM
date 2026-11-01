@@ -3909,6 +3909,147 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/capabilities:
+    get:
+      tags:
+      - Server
+      summary: Betriebsfähigkeit des Servers - immer alle vier Kategorien.
+      operationId: serverCtrl_Capabilities
+      description: 'Liefert die Betriebsfähigkeit des Servers: immer vier Einträge in der Reihenfolge connection,
+        packages, rules, cve_scan, auch ohne Verlauf. Jeder Eintrag enthält den gespeicherten Zustand (state: ok
+        oder failed, failing_since, consecutive_failures, last_success_at, last_error_class, last_error_message,
+        last_job_id, last_job_type, last_job_name, warning_class, warning_message) und berechnete Felder:
+        effective (critical, warning oder leer), stale (nur packages: Stillstand der Paketaktualisierung,
+        warning, critical oder leer), repair (dpkg_configure, fix_deps oder leer - die Reparatur, die zur
+        Fehlerklasse und Paketverwaltung des Servers passt) und retryable (ob die fehlgeschlagene Aktion
+        erneut ausgelöst werden kann).
+
+
+        Benötigte Berechtigung: `servers:read`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Liste der vier Kategorien.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    server_id:
+                      type: integer
+                    category:
+                      type: string
+                      enum: [connection, packages, rules, cve_scan]
+                    state:
+                      type: string
+                      enum: [ok, failed]
+                    failing_since:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    consecutive_failures:
+                      type: integer
+                    last_success_at:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    last_error_class:
+                      type: string
+                    last_error_message:
+                      type: string
+                    last_error_params:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    last_job_id:
+                      type: string
+                    last_job_type:
+                      type: string
+                    last_job_name:
+                      type: string
+                    warning_class:
+                      type: string
+                    warning_message:
+                      type: string
+                    effective:
+                      type: string
+                      enum: ['', critical, warning]
+                    stale:
+                      type: string
+                      enum: ['', critical, warning]
+                    repair:
+                      type: string
+                      enum: ['', dpkg_configure, fix_deps]
+                    retryable:
+                      type: boolean
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden oder außerhalb des Zugriffsbereichs.
+  /api/v1/servers/{id}/capabilities/{category}/retry:
+    post:
+      tags:
+      - Server
+      summary: Löst die fehlgeschlagene Aktion einer Kategorie erneut aus.
+      operationId: serverCtrl_RetryCapability
+      description: 'Löst die fehlgeschlagene Aktion der Kategorie erneut aus und liefert den gestarteten Job.
+        Stammt der Fehlschlag aus einer Regel, läuft dieselbe Regel nur für diesen Server; sonst die passende
+        Ad-hoc-Aktion (Updates, Security-Updates, Paketliste, CVE-Scan). Die Kategorie connection prüft die
+        Verbindung. Erst der Erfolg dieser Aktion setzt die Kategorie zurück.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: category
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [connection, packages, rules, cve_scan]
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job gestartet.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  job_id:
+                    type: string
+                  job_name:
+                    type: string
+        '400':
+          description: Unbekannte Kategorie.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden oder außerhalb des Zugriffsbereichs.
+        '409':
+          description: Die Kategorie ist nicht fehlgeschlagen, die Aktion lässt sich nicht erneut auslösen oder der Server ist belegt.
   /api/v1/servers/{id}/console:
     put:
       tags:
@@ -5333,6 +5474,63 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/packages/repair:
+    post:
+      tags:
+      - Server
+      summary: Repariert die Paketverwaltung (dpkg --configure -a oder Abhängigkeiten).
+      operationId: serverCtrl_RepairPackages
+      description: 'Repariert die Paketverwaltung als Job. dpkg_configure schließt angebrochene
+        dpkg-Installationen ab (nur apt), fix_deps zieht fehlende Abhängigkeiten nach (apt: apt-get -f install,
+        zypper: zypper verify). Die Reparatur setzt keine Kategorie der Betriebsfähigkeit zurück - das
+        tut erst der Erfolg der erneut versuchten Aktion.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [dpkg_configure, fix_deps]
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job gestartet.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  job_id:
+                    type: string
+                  job_name:
+                    type: string
+        '400':
+          description: Unbekannte Aktion oder für die Paketverwaltung des Servers nicht unterstützt.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden oder außerhalb des Zugriffsbereichs.
+        '409':
+          description: Der Server ist belegt oder für dieses Gerät nicht verfügbar.
   /api/v1/servers/{id}/packages/update:
     post:
       tags:
@@ -7540,6 +7738,16 @@ paths:
                   type: integer
                 job_idle_timeout_slow_minutes:
                   type: integer
+                packages_stale_warn_hours:
+                  type: integer
+                  minimum: 24
+                  maximum: 720
+                  default: 48
+                packages_stale_critical_days:
+                  type: integer
+                  minimum: 2
+                  maximum: 90
+                  default: 7
                 require_2fa_roles:
                   type: string
                 public_base_url:

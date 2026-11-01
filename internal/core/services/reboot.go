@@ -177,7 +177,7 @@ func (s *ServerService) Reboot(scope repositories.AccessScope, id uint, actor st
 
 func (s *ServerService) runRebootJob(job *domain.Job, server *domain.Server, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, demoSimulateReboot(s.servers, server), ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, demoSimulateReboot(s.servers, server))
 		return
 	}
 	conn, err := s.connect(server)
