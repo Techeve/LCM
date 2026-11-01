@@ -419,6 +419,21 @@ version:
         RELEASE_NEEDED=true
         echo "Neue Version v${NEXT_VERSION} - Release wird erstellt."
       fi
+    # Merge von community nach enterprise: Die Version ist die von community,
+    # ihr Tag existiert dort schon. Enterprise ist nur die verzögerte Ausgabe
+    # derselben Version, also wird sie ausgerollt - ohne neuen Tag und ohne
+    # Release. Eigene Enterprise-Versionen (Sicherheits- oder Renovate-Fixes)
+    # laufen weiter über die Tag-Prüfung oben.
+    - |
+      PUBLISH_ONLY=false
+      if [ "$CI_COMMIT_BRANCH" = "enterprise" ] && PARENT2=$(git rev-parse -q --verify "$CI_COMMIT_SHA^2"); then
+        git fetch --quiet origin community
+        if git merge-base --is-ancestor "$PARENT2" origin/community; then
+          PUBLISH_ONLY=true
+          RELEASE_NEEDED=true
+          echo "Merge von community nach enterprise: v${NEXT_VERSION} wird ausgerollt, ohne Tag."
+        fi
+      fi
     # beta releast ausschließlich Vorabversionen (1.12.0-beta.1). Eine finale
     # Version durchläuft beta zwar (der Release-Zug führt dort entlang), wird
     # aber erst auf community getaggt und ausgerollt. Ohne diese Regel nimmt
@@ -445,7 +460,7 @@ version:
     - LAST_TAG=$(git for-each-ref --sort=-v:refname --format='%(refname:short)' --count=1 'refs/tags/v*')
     # Obersten Abschnitt (## v… bis zum nächsten ## …) als Release-Beschreibung.
     - awk '/^## /{c++} c==1{print} c==2{exit}' CHANGELOG.md > changelog-snippet.md
-    - printf 'NEXT_VERSION=%s\nRELEASE_NEEDED=%s\nLAST_TAG=%s\n' "$NEXT_VERSION" "$RELEASE_NEEDED" "$LAST_TAG" > release.env
+    - printf 'NEXT_VERSION=%s\nRELEASE_NEEDED=%s\nPUBLISH_ONLY=%s\nLAST_TAG=%s\n' "$NEXT_VERSION" "$RELEASE_NEEDED" "$PUBLISH_ONLY" "$LAST_TAG" > release.env
     - cat release.env
   artifacts:
     reports:
@@ -748,6 +763,11 @@ release:
     - if: $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "enterprise"
   script:
     - apk add --no-cache curl
+    - |
+      if [ "$PUBLISH_ONLY" = "true" ]; then
+        echo "v${NEXT_VERSION} stammt aus community - Tag und Release bleiben dort, nur das Paket wird ausgerollt."
+        exit 0
+      fi
     - |
       if [ "$RELEASE_NEEDED" != "true" ]; then
         echo "Tag v${NEXT_VERSION} existiert bereits - kein neues Release."
