@@ -11,6 +11,7 @@ import (
 	"LCM/internal/safego"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/storage/repositories"
 )
 
@@ -71,10 +72,18 @@ type AlertService struct {
 	// settings liefert die globalen Einstellungen (Frist des Stillstands);
 	// nil = Vorgaben.
 	settings func() (*domain.GlobalSettings, error)
+	// bus meldet ausgelöste Alarme an die Oberfläche; nil = keine Ereignisse.
+	bus *events.Bus
 }
 
 func NewAlertService(rules *repositories.AlertRepository, servers *repositories.ServerRepository, groups *repositories.GroupRepository, notifier *NotificationService, audit *AuditService) *AlertService {
 	return &AlertService{rules: rules, servers: servers, groups: groups, notifier: notifier, audit: audit, now: time.Now}
+}
+
+// WithEvents verdrahtet den Ereignisbus (optional).
+func (s *AlertService) WithEvents(bus *events.Bus) *AlertService {
+	s.bus = bus
+	return s
 }
 
 // WithCVEWeightList verdrahtet die CVE-Hochgewichtungs-Liste (optional).
@@ -149,9 +158,10 @@ func (s *AlertService) ListEvents(limit int) ([]domain.AlertEvent, error) {
 	return s.rules.FindEvents(limit)
 }
 
-// ListEventsFiltered: seitenweise Event-Historie mit Gesamtzahl (R2-023).
-func (s *AlertService) ListEventsFiltered(f repositories.AlertEventFilter) ([]domain.AlertEvent, int64, error) {
-	return s.rules.FindEventsFiltered(f)
+// ListEventsFiltered: seitenweise Event-Historie mit Gesamtzahl (R2-023),
+// beschränkt auf den Sichtbereich des Aufrufers.
+func (s *AlertService) ListEventsFiltered(scope repositories.AccessScope, f repositories.AlertEventFilter) ([]domain.AlertEvent, int64, error) {
+	return s.rules.FindEventsFiltered(scope, f)
 }
 
 // CleanupEventsOlderThan entfernt Alarm-Events vor dem Stichtag - Teil der
@@ -859,6 +869,10 @@ func (s *AlertService) recordAndNotify(rule *domain.AlertRule, server *domain.Se
 		slog.Error("alert event could not be stored", "rule", rule.Name, "error", err)
 		return false
 	}
+	// Ohne Beschreibung: die kann Rohausgaben enthalten (siehe AlertFiredData).
+	s.bus.Publish(events.AlertFired(events.AlertFiredData{
+		ID: event.ID, Type: event.Type, ServerID: serverID, Severity: event.Severity, Code: event.Code,
+	}))
 	if rule.ChannelID == nil || s.notifier == nil {
 		return false
 	}

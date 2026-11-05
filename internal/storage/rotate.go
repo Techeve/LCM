@@ -47,6 +47,7 @@ var serializerColumns = []struct {
 	{"ssh_commands", "id", "output"},
 	{"servers", "id", "host"},
 	{"servers", "id", "ip_addresses"},
+	{"servers", "id", "update_check_error"},
 	// Firewall-/Port-Felder der Server.
 	{"servers", "id", "firewall_allowed_ports"},
 	{"servers", "id", "firewall_rules"},

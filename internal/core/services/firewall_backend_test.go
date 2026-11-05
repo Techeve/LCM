@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -111,13 +112,12 @@ func TestNormalizeFirewallRules(t *testing.T) {
 	if _, err := normalizeFirewallRules([]domain.FirewallRule{{Port: 80, Proto: "tcp", IPVersion: "v5"}}); err == nil {
 		t.Error("ip-version v5 muss fehlschlagen")
 	}
-	// Quell-IPs: ungültig, CIDR-Kanonisierung, Familien-Konflikt.
+	// Quell-IPs: ungültig, Host-Bits im Netz, Familien-Konflikt.
 	if _, err := normalizeFirewallRules([]domain.FirewallRule{{Port: 80, Proto: "tcp", SourceIPs: []string{"kein-ip"}}}); err == nil {
 		t.Error("ungültige quell-ip muss fehlschlagen")
 	}
-	rules, err = normalizeFirewallRules([]domain.FirewallRule{{Port: 80, Proto: "tcp", SourceIPs: []string{"10.1.2.3/24"}}})
-	if err != nil || len(rules[0].SourceIPs) != 1 || rules[0].SourceIPs[0] != "10.1.2.0/24" {
-		t.Errorf("cidr-kanonisierung: %+v (%v)", rules, err)
+	if _, err := normalizeFirewallRules([]domain.FirewallRule{{Port: 80, Proto: "tcp", SourceIPs: []string{"10.1.2.3/24"}}}); err == nil {
+		t.Error("10.1.2.3/24 ist kein Netz: LCM darf nicht raten, was gemeint war")
 	}
 	if _, err := normalizeFirewallRules([]domain.FirewallRule{{Port: 80, Proto: "tcp", IPVersion: "v6", SourceIPs: []string{"10.0.0.1"}}}); err == nil {
 		t.Error("v4-quelle an einer v6-regel muss fehlschlagen")
@@ -128,6 +128,40 @@ func TestNormalizeFirewallRules(t *testing.T) {
 	})
 	if len(rules) != 3 || rules[0].Port != 80 || rules[0].Proto != "tcp" || rules[1].Proto != "udp" || rules[2].Port != 443 {
 		t.Errorf("dedup/sortierung: %+v", rules)
+	}
+}
+
+// TestNormalizeFirewallRulesLimits: Bemerkung, Zahl der Quellen und Zahl der
+// Regeln sind begrenzt - eine zu lange Eingabe wird abgelehnt, nicht still gekürzt.
+func TestNormalizeFirewallRulesLimits(t *testing.T) {
+	long := strings.Repeat("ä", firewallCommentMax+1)
+	if _, err := normalizeFirewallRules([]domain.FirewallRule{{Port: 80, Comment: long}}); err == nil {
+		t.Error("zu lange bemerkung muss fehlschlagen")
+	}
+	exact := strings.Repeat("ä", firewallCommentMax)
+	rules, err := normalizeFirewallRules([]domain.FirewallRule{{Port: 80, Comment: exact}})
+	if err != nil || rules[0].Comment != exact {
+		t.Errorf("bemerkung an der grenze (mehrbyte-zeichen) bleibt ganz: %v", err)
+	}
+	var sources []string
+	for i := 0; i <= firewallMaxSources; i++ {
+		sources = append(sources, fmt.Sprintf("10.0.%d.%d", i/200, i%200+1))
+	}
+	if _, err := normalizeFirewallRules([]domain.FirewallRule{{Port: 80, SourceIPs: sources}}); err == nil {
+		t.Error("zu viele quell-adressen müssen fehlschlagen")
+	}
+	if _, err := normalizeFirewallRules([]domain.FirewallRule{{Port: 80, SourceIPs: sources[:firewallMaxSources]}}); err != nil {
+		t.Errorf("quell-adressen an der grenze: %v", err)
+	}
+	if _, err := normalizeSourceIPs(sources); err == nil {
+		t.Error("zu viele ssh-quellen müssen fehlschlagen")
+	}
+	many := make([]domain.FirewallRule, firewallMaxRules+1)
+	for i := range many {
+		many[i] = domain.FirewallRule{Port: i%65535 + 1}
+	}
+	if _, err := normalizeFirewallRules(many); err == nil {
+		t.Error("zu viele regeln müssen fehlschlagen")
 	}
 }
 
@@ -364,11 +398,11 @@ func TestExpandFiltersSourceFamily(t *testing.T) {
 	}
 }
 
-// TestNormalizeSourceIPs: Kanonisierung (CIDR-Netzadresse), Dedup, Sortierung;
-// ungültige Einträge brechen streng ab.
+// TestNormalizeSourceIPs: Kanonisierung, Dedup, Sortierung; ungültige Einträge
+// brechen streng ab.
 func TestNormalizeSourceIPs(t *testing.T) {
 	rules, err := normalizeFirewallRules([]domain.FirewallRule{
-		{Port: 443, Proto: "tcp", SourceIPs: []string{" 10.0.0.7 ", "10.0.0.7", "192.168.1.9/24", "2001:DB8::1"}},
+		{Port: 443, Proto: "tcp", SourceIPs: []string{" 10.0.0.7 ", "10.0.0.7", "192.168.1.0/24", "2001:DB8::1"}},
 	})
 	if err != nil {
 		t.Fatal(err)

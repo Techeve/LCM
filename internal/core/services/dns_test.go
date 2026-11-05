@@ -20,8 +20,12 @@ func TestValidDNSServers(t *testing.T) {
 	if _, err := validDNSServers([]string{"nicht-ip"}); err == nil {
 		t.Fatal("ungültige IP hätte abgelehnt werden müssen")
 	}
-	// Mehr als das Maximum wird abgelehnt.
-	if _, err := validDNSServers([]string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "8.8.4.4"}); err == nil {
+	// Vier sind erlaubt (systemd-resolved nutzt alle), mehr nicht.
+	four := []string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "8.8.4.4"}
+	if got, err := validDNSServers(four); err != nil || len(got) != 4 {
+		t.Fatalf("vier DNS-Server hätten angenommen werden müssen: %v, %#v", err, got)
+	}
+	if _, err := validDNSServers(append(four, "149.112.112.112")); err == nil {
 		t.Fatalf("mehr als %d DNS-Server hätten abgelehnt werden müssen", domain.MaxDNSServers)
 	}
 }
@@ -77,6 +81,13 @@ func TestDNSApplyScript(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("Apply-Skript enthält %q nicht:\n%s", want, script)
+		}
+	}
+	// Vier Nameserver landen vollständig in beiden Zweigen.
+	four := dnsApplyScript([]string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "2606:4700:4700::1111"}, "example.com")
+	for _, want := range []string{"DNS=1.1.1.1 8.8.8.8 9.9.9.9 2606:4700:4700::1111", "nameserver 9.9.9.9\nnameserver 2606:4700:4700::1111\n"} {
+		if !strings.Contains(four, want) {
+			t.Fatalf("Apply-Skript mit vier Nameservern enthält %q nicht:\n%s", want, four)
 		}
 	}
 	// Leere Liste => Rückbau-Skript.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/runtimeenv"
@@ -49,7 +50,7 @@ const trivyInstallScript = "set -e; " +
 	"apt-get update; " +
 	"apt-get install -y wget gnupg apt-transport-https ca-certificates bubblewrap; " +
 	"install -d -m 0755 /etc/apt/keyrings; " +
-	"wget -qO- https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /etc/apt/keyrings/trivy.gpg; " +
+	"wget -qO- https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/trivy.gpg; " +
 	"chmod 0644 /etc/apt/keyrings/trivy.gpg; " +
 	"echo 'deb [signed-by=/etc/apt/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main' > /etc/apt/sources.list.d/trivy.list; " +
 	"apt-get update; " +
@@ -104,6 +105,10 @@ type LcmHostStatus struct {
 	SandboxRetrofit       bool `json:"sandbox_retrofit"`
 	AptCacherInstalled    bool `json:"apt_cacher_installed"`    // apt-cacher-ng im Paketbestand
 	CrowdSecLapiInstalled bool `json:"crowdsec_lapi_installed"` // CrowdSec (LAPI-Server) im Paketbestand
+	// Scanner ist der Stand des CVE-Scanners (Version, Datenbank, Sandbox),
+	// sobald Trivy verfügbar ist - dieselbe Angabe wie GET /security/scanner,
+	// damit die Karte mit einem Aufruf auskommt.
+	Scanner *domain.CVEDBStatus `json:"scanner,omitempty"`
 }
 
 // inContainer meldet die Betriebsart. Als Methode (nicht als direkter Aufruf
@@ -124,33 +129,48 @@ func (s *ServerService) LcmHostStatus(scope repositories.AccessScope, id uint) (
 	if err != nil {
 		return nil, err
 	}
-	st := &LcmHostStatus{
-		IsLcmHost:      server.IsLcmHost(),
-		PackageManager: server.PackageManager,
-		InContainer:    s.inContainer(),
+	st := &LcmHostStatus{IsLcmHost: server.IsLcmHost(), PackageManager: server.PackageManager}
+	if !st.IsLcmHost {
+		return st, nil
 	}
-	if !st.IsLcmHost || st.InContainer {
+	if server.IsDemo {
+		demoLcmHostStatus(st, time.Now())
+		s.fillHostPackages(st, id)
+		return st, nil
+	}
+	if st.InContainer = s.inContainer(); st.InContainer {
 		return st, nil
 	}
 	// Trivy: maßgeblich ist, ob der LCM-Prozess das Binary findet (== der
 	// Zustand, den der CVE-Scan tatsächlich nutzt).
 	st.TrivyInstalled = s.ScannerAvailable()
+	if st.TrivyInstalled {
+		scanner := s.CVEDBStatus()
+		st.Scanner = &scanner
+	}
 	// Nachrüsten anbieten, solange der Scanner ungesperrt läuft. Ob es dann
 	// wirklich klappt, entscheidet der Host - die Schaltfläche verspricht
 	// nichts, sie installiert bubblewrap und prüft neu.
 	st.SandboxRetrofit = st.TrivyInstalled && !sandbox.Available().Active
-	// apt-cacher-ng und crowdsec aus dem erfassten Paketbestand des Hosts ableiten.
-	if pkgs, err := s.servers.FindPackages(id); err == nil {
-		for i := range pkgs {
-			switch pkgs[i].Name {
-			case "apt-cacher-ng":
-				st.AptCacherInstalled = true
-			case "crowdsec":
-				st.CrowdSecLapiInstalled = true
-			}
+	s.fillHostPackages(st, id)
+	return st, nil
+}
+
+// fillHostPackages leitet apt-cacher-ng und crowdsec aus dem erfassten
+// Paketbestand des Hosts ab.
+func (s *ServerService) fillHostPackages(st *LcmHostStatus, id uint) {
+	pkgs, err := s.servers.FindPackages(id)
+	if err != nil {
+		return
+	}
+	for i := range pkgs {
+		switch pkgs[i].Name {
+		case "apt-cacher-ng":
+			st.AptCacherInstalled = true
+		case "crowdsec":
+			st.CrowdSecLapiInstalled = true
 		}
 	}
-	return st, nil
 }
 
 // InstallTrivy installiert Trivy auf dem LCM-Host (Aqua-APT-Repo + apt install).
@@ -162,7 +182,7 @@ func (s *ServerService) InstallTrivy(scope repositories.AccessScope, id uint, ac
 	if err != nil {
 		return nil, err
 	}
-	script := hostScript(server, trivyInstallScript, "host-install", "trivy")
+	script := trivyHostScript(server)
 	job, err := s.startPackageJob(scope, id, domain.RuleTypeScript,
 		"Trivy installieren & einrichten", func(string) string { return script }, actor)
 	if err != nil {
@@ -187,7 +207,7 @@ func (s *ServerService) InstallSandbox(scope repositories.AccessScope, id uint, 
 	if err != nil {
 		return nil, err
 	}
-	script := hostScript(server, sandboxInstallScript, "host-install", "sandbox")
+	script := sandboxHostScript(server)
 	job, err := s.startPackageJob(scope, id, domain.RuleTypeScript,
 		"Sandbox für den CVE-Scanner nachrüsten", func(string) string { return script }, actor)
 	if err != nil {
@@ -217,7 +237,7 @@ func (s *ServerService) InstallAptCacher(scope repositories.AccessScope, id uint
 		return nil, err
 	}
 	cacheURL := lcmCacheURL(server)
-	script := hostScript(server, aptCacherInstallScript, "host-install", "apt-cacher")
+	script := aptCacherHostScript(server)
 	job, err := s.startPackageJob(scope, id, domain.RuleTypeScript,
 		"apt-cacher-ng installieren & einrichten", func(string) string { return script }, actor)
 	if err != nil {
@@ -241,18 +261,49 @@ func (s *ServerService) requireLcmHostApt(scope repositories.AccessScope, id uin
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkLcmHostApt(server); err != nil {
+		return nil, err
+	}
+	return server, nil
+}
+
+// checkLcmHostApt ist die Prüfung von requireLcmHostApt für einen bereits
+// geladenen Server - die Befehlsvorschau nutzt sie ebenso.
+func (s *ServerService) checkLcmHostApt(server *domain.Server) error {
 	if !server.IsLcmHost() {
-		return nil, ErrNotLcmHost
+		return ErrNotLcmHost
 	}
 	// Eine Stelle für alle vier Einrichtungs-Aktionen: Was hier durchkommt,
 	// läuft anschließend per SSH als root auf dem vermeintlich eigenen Host.
 	if s.inContainer() {
-		return nil, ErrLcmHostInContainer
+		return ErrLcmHostInContainer
 	}
 	if server.PackageManager != "apt" {
-		return nil, ErrLcmHostNotApt
+		return ErrLcmHostNotApt
 	}
-	return server, nil
+	return nil
+}
+
+// Skripte der Einrichtungs-Aktionen des LCM-Hosts. Lauf und Befehlsvorschau
+// bauen sie mit diesen Funktionen.
+func trivyHostScript(server *domain.Server) string {
+	return hostScript(server, trivyInstallScript, "host-install", "trivy")
+}
+
+func sandboxHostScript(server *domain.Server) string {
+	return hostScript(server, sandboxInstallScript, "host-install", "sandbox")
+}
+
+func aptCacherHostScript(server *domain.Server) string {
+	return hostScript(server, aptCacherInstallScript, "host-install", "apt-cacher")
+}
+
+func crowdsecLapiHostScript(server *domain.Server, bouncer bool) string {
+	variant := "plain"
+	if bouncer {
+		variant = "bouncer"
+	}
+	return hostScript(server, crowdsecLapiInstallScript(bouncer), "host-crowdsec-lapi", variant)
 }
 
 // lcmCacheURL leitet die von den verwalteten Servern erreichbare Cache-Adresse

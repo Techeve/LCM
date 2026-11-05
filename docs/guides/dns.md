@@ -2,10 +2,10 @@
 sidebar:
   order: 19
 title: DNS setzen & testen
-description: Bis zu drei Nameserver pro Server setzen und die DNS-Verfügbarkeit prüfen.
+description: Bis zu vier Nameserver pro Server setzen und die DNS-Verfügbarkeit prüfen.
 ---
 
-LCM kann pro Server bis zu **drei Nameserver** setzen und die **DNS-Verfügbarkeit**
+LCM kann pro Server bis zu **vier Nameserver** setzen und die **DNS-Verfügbarkeit**
 prüfen - als Server-Aktion und als Gruppen-Regel. Das Setzen ist bewusst
 **selbstsichernd**: Bricht die Namensauflösung nach dem Schreiben, rollt LCM die
 Änderung automatisch zurück.
@@ -42,8 +42,8 @@ LAN-Resolver (2) = 10.0.0.54
 
 ## DNS auf einem Server setzen
 
-Auf der Server-Detailseite über das **Zahnrad → Abschnitt „DNS-Server"**: bis zu
-drei Nameserver eintragen (freie IP **oder** Auswahl aus den Vorgaben) und
+Auf der Server-Detailseite über das **Zahnrad → Abschnitt „DNS"**: bis zu
+vier Nameserver eintragen (freie IP **oder** Auswahl aus den Vorgaben) und
 **„DNS anwenden"**.
 
 - **systemd-resolved** aktiv → LCM schreibt das Drop-in
@@ -62,6 +62,9 @@ drei Nameserver eintragen (freie IP **oder** Auswahl aus den Vorgaben) und
   nameserver 9.9.9.9
   ```
 
+  glibc liest aus dieser Datei nur die ersten **drei** `nameserver`-Zeilen; ein
+  vierter wirkt nur mit systemd-resolved.
+
 - Nach dem Schreiben prüft LCM die Auflösung (gegen die erste gepflegte
   Test-Domain, ersatzweise `deb.debian.org`). **Scheitert sie, wird die Änderung
   automatisch zurückgerollt** - Drop-in gelöscht bzw. Sicherung zurückgespielt,
@@ -69,7 +72,7 @@ drei Nameserver eintragen (freie IP **oder** Auswahl aus den Vorgaben) und
 - **Alle Felder leer + Anwenden** = LCM gibt die DNS-Verwaltung wieder frei
   (Drop-in entfernt bzw. Sicherung zurückgespielt).
 
-Es lassen sich **höchstens drei** Nameserver setzen; jeder muss eine gültige
+Es lassen sich **höchstens vier** Nameserver setzen; jeder muss eine gültige
 IPv4- oder IPv6-Adresse sein (kein Hostname).
 
 ### Ablauf bei gebrochener Auflösung (Beispiel)
@@ -137,7 +140,7 @@ Auslösen:
   Regel eintragen (eine je Zeile) - etwa interne Namen, die nur diese Gruppe
   auflösen muss.
 
-Das Ergebnis erscheint auf der Server-Detailseite unter **System & Security**
+Das Ergebnis erscheint auf der Server-Detailseite unter **System & Sicherheit**
 neben der Firewall - samt dem **aktuell aktiven DNS** des Servers (bei
 systemd-resolved die echten Upstreams via `resolvectl`, sonst die `nameserver`
 aus `/etc/resolv.conf` ohne den `127.0.0.53`-Stub). Der genaue Ausgang je Domain

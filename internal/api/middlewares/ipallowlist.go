@@ -26,6 +26,7 @@ func ResolveClientIP(trust netfilter.ProxyTrust) fiber.Handler {
 		if addr, ok := netfilter.ClientIP(c.IP(), c.Get("X-Forwarded-For"), trust); ok {
 			c.Locals(clientIPContextKey, addr.String())
 		}
+		c.Locals(secureContextKey, requestIsHTTPS(c, trust))
 		return c.Next()
 	}
 }
@@ -68,12 +69,12 @@ func IPAllowlist(list netfilter.Allowlist, logger *slog.Logger) fiber.Handler {
 		if err != nil {
 			logger.Warn("access denied: client ip not determinable",
 				"path", c.Path(), "remote", c.IP())
-			return fiber.NewError(fiber.StatusForbidden, "Zugriff nicht erlaubt")
+			return errIPDenied
 		}
 		if !list.Allows(addr) {
 			logger.Warn("access denied: ip not in allowlist",
 				"ip", addr.String(), "method", c.Method(), "path", c.Path())
-			return fiber.NewError(fiber.StatusForbidden, "Zugriff von dieser Adresse nicht erlaubt")
+			return errIPDenied
 		}
 		return c.Next()
 	}

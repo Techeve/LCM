@@ -2,10 +2,10 @@
 sidebar:
   order: 19
 title: Set & test DNS
-description: Set up to three nameservers per server and check DNS availability.
+description: Set up to four nameservers per server and check DNS availability.
 ---
 
-LCM can set up to **three nameservers** per server and check **DNS availability** -
+LCM can set up to **four nameservers** per server and check **DNS availability** -
 as a server action and as a group rule. Setting is deliberately **self-guarding**:
 if name resolution breaks after writing, LCM rolls the change back automatically.
 
@@ -40,8 +40,8 @@ LAN resolver (2) = 10.0.0.54
 
 ## Set DNS on a server
 
-On the server detail page via the **gear → "DNS servers" section**: enter up to
-three nameservers (free IP **or** a choice from the presets) and **"Apply DNS"**.
+On the server detail page via the **gear → "DNS" section**: enter up to
+four nameservers (free IP **or** a choice from the presets) and **"Apply DNS"**.
 
 - **systemd-resolved** active → LCM writes the drop-in
   `/etc/systemd/resolved.conf.d/lcm-dns.conf` and restarts the service:
@@ -59,6 +59,9 @@ three nameservers (free IP **or** a choice from the presets) and **"Apply DNS"**
   nameserver 9.9.9.9
   ```
 
+  glibc reads only the first **three** `nameserver` lines from this file; a
+  fourth only takes effect with systemd-resolved.
+
 - After writing, LCM verifies resolution (against the first maintained test
   domain, falling back to `deb.debian.org`). **If it fails, the change is rolled
   back automatically** - drop-in deleted or backup restored, the server stays
@@ -66,7 +69,7 @@ three nameservers (free IP **or** a choice from the presets) and **"Apply DNS"**
 - **All fields empty + Apply** = LCM releases DNS management again (drop-in
   removed / backup restored).
 
-At most **three** nameservers can be set; each must be a valid IPv4 or IPv6
+At most **four** nameservers can be set; each must be a valid IPv4 or IPv6
 address (not a hostname).
 
 ### What happens on broken resolution (example)
@@ -128,7 +131,7 @@ Trigger:
   domains; the rule dialog can instead take **own domains** per rule (one per
   line) - e.g. internal names only this group has to resolve.
 
-The result appears on the server detail page under **System & Security** next to
+The result appears on the server detail page under **System & security** next to
 the firewall - along with the server’s **currently active DNS** (for
 systemd-resolved the real upstreams via `resolvectl`, otherwise the `nameserver`
 entries from `/etc/resolv.conf` without the `127.0.0.53` stub). The exact

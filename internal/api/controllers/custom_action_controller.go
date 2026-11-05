@@ -20,16 +20,10 @@ func NewCustomActionController(actions *services.CustomActionService) *CustomAct
 }
 
 func mapCustomActionError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "custom-aktion nicht gefunden")
-	case errors.Is(err, services.ErrCustomActionNameRequired), errors.Is(err, services.ErrCustomActionEmpty):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, services.ErrCustomActionInUse):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errCustomNotFound
 	}
+	return mapSentinel(err, customActionErrors)
 }
 
 // List - GET /api/v1/custom-actions (rules:manage)
@@ -50,8 +44,8 @@ type customActionRequest struct {
 // Create - POST /api/v1/custom-actions (rules:manage)
 func (ctrl *CustomActionController) Create(c fiber.Ctx) error {
 	var req customActionRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLine("name", req.Name, maxNameLen); err != nil {
 		return err
@@ -76,8 +70,8 @@ func (ctrl *CustomActionController) Update(c fiber.Ctx) error {
 		return err
 	}
 	var req customActionRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLine("name", req.Name, maxNameLen); err != nil {
 		return err

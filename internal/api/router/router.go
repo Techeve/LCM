@@ -5,8 +5,10 @@ package router
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,9 +16,11 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/static"
 
+	"LCM/internal/api/apierr"
 	"LCM/internal/api/controllers"
 	"LCM/internal/api/middlewares"
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/core/services"
 	"LCM/internal/health"
 	"LCM/internal/netfilter"
@@ -87,13 +91,20 @@ type Deps struct {
 	AgentBinDirs []string
 	// DemoPublic aktiviert die Sperren der öffentlichen Demo (DemoGuard).
 	DemoPublic bool
+	// Events ist der Ereignisbus. Mit ihm gibt es GET /api/v1/events
+	// (WebSocket); nil in Tests => die Route fehlt.
+	Events *events.Bus
+	// Dashboard liefert GET /api/v1/dashboard; nil in Tests => die Route fehlt.
+	Dashboard *services.DashboardService
+	// ReleaseNotes liefert die Hinweise zum letzten Update; nil in Tests => die Routen fehlen.
+	ReleaseNotes *services.ReleaseNotesService
 }
 
 // New erstellt die Fiber-App mit allen Routen und Middlewares.
 func New(deps Deps) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName: "LCM",
-		// Fiber-Fehler (fiber.NewError) werden als JSON serialisiert.
+		// Fehler (apierr, rohe fiber-Fehler) werden als JSON mit Code serialisiert.
 		ErrorHandler: jsonErrorHandler,
 		// ReadTimeout begrenzt das Lesen von Request-Header/-Body (Schutz
 		// gegen Slowloris); IdleTimeout schließt untätige Keep-Alive-
@@ -153,6 +164,10 @@ func New(deps Deps) *fiber.App {
 	// Zugriffskontrolle machen RequireAuth/RequirePermission pro Route.
 	// (Ausnahme: read-only API-Keys mit Schreibzugriff => sofort 403.)
 	app.Use(middlewares.Authenticate(deps.Auth, deps.APIKeys))
+	// CSRF-Token bei ändernden Anfragen, die per Sitzungs-Cookie angemeldet
+	// sind (Kopfzeilen-Sitzung und API-Key sind ausgenommen). Vor der Remediation, damit
+	// auch gesperrte Konten keine gefälschte Anfrage durchbringen.
+	app.Use(middlewares.CSRFProtect(deps.Auth))
 	// Erzwingt Passwortänderung bzw. 2FA-Einrichtung, bevor ein Konto in
 	// diesem Zustand andere Endpunkte nutzen darf (server-seitig, nicht nur
 	// als Frontend-Hinweis). Läuft nach Authenticate.
@@ -163,7 +178,9 @@ func New(deps Deps) *fiber.App {
 	// Passwortwechsel prüfen alle denselben zweiten Faktor).
 	loginGuard := controllers.NewLoginGuard()
 	authCtrl := controllers.NewAuthController(deps.Auth, deps.TOTP, deps.Settings, deps.Activation, loginGuard)
-	userCtrl := controllers.NewUserController(deps.Users, deps.TOTP, loginGuard)
+	eventHub := newEventHub(deps)
+	authCtrl.WithEvents(eventHub)
+	userCtrl := controllers.NewUserController(deps.Users, deps.TOTP, loginGuard).WithEvents(eventHub)
 	apiKeyCtrl := controllers.NewAPIKeyController(deps.APIKeys)
 	systemCtrl := controllers.NewSystemController(deps.System)
 	logsCtrl := controllers.NewLogsController(deps.LogFile)
@@ -172,7 +189,7 @@ func New(deps Deps) *fiber.App {
 	jobCtrl := controllers.NewJobController(deps.Jobs, deps.Audit)
 	groupCtrl := controllers.NewGroupController(deps.Groups, deps.Scheduler)
 	opsCtrl := controllers.NewOpsController(deps.Scheduler, deps.Groups, deps.Backups, deps.Packages, deps.Settings, deps.Servers, deps.Restart).
-		WithSelfUpdate(deps.SelfUpdate)
+		WithSelfUpdate(deps.SelfUpdate).WithBrowserSessions(deps.Auth, eventHub).WithReleaseNotes(deps.ReleaseNotes)
 	provCtrl := controllers.NewProvisioningController(deps.Provisioning, deps.Activation, deps.Servers)
 	linuxCtrl := controllers.NewLinuxUserController(deps.LinuxUsers)
 	sshLogCtrl := controllers.NewSSHLogController(deps.SSHLogs)
@@ -189,10 +206,14 @@ func New(deps Deps) *fiber.App {
 	// Agent-Schnittstelle und der Agent-Port keine UI/REST.
 
 	api := app.Group("/api/v1")
+	// Für alle Felder gleich: SQL in Strings und Zahlen außerhalb des Sinnvollen.
+	api.Use(middlewares.InputGuard())
 	// Jede ändernde Anfrage kann eine Ampel verschieben (Einstellungen,
 	// Container-Relevanz, Speicherüberwachung ...) - der Cache der fertigen
 	// Bewertungen fängt danach neu an (siehe services/server_status.go).
 	api.Use(middlewares.AfterChange(func() { deps.Servers.ForgetStatus(nil) }))
+	// Unveränderte JSON-Antworten auf GET kosten per ETag/If-None-Match nur ein 304.
+	api.Use(middlewares.ETag())
 
 	// Mitgelieferte Anwender-Doku (öffentlich): Die Anleitung zum Einrichten
 	// des SSH-Schlüssels braucht man, BEVOR man einen Zugang hat - etwa aus
@@ -248,10 +269,27 @@ func New(deps Deps) *fiber.App {
 	api.Get("/system/logs/stream", middlewares.RequirePermission(domain.PermSettingsManage), logsCtrl.Stream)
 	api.Get("/system/logs/level", middlewares.RequirePermission(domain.PermSettingsManage), logsCtrl.Level)
 	api.Post("/system/logs/level", middlewares.RequirePermission(domain.PermSettingsManage), logsCtrl.SetLevel)
+	// Ereigniskanal (WebSocket): meldet dem Tab, was sich im Hintergrund ändert.
+	// Anmeldung und Origin-Prüfung stecken im Handler (siehe EventHub.Connect):
+	// Browser verbinden mit einer Fahrkarte, Skripte mit X-API-Key.
+	if eventHub != nil {
+		api.Post("/events/ticket", middlewares.RequireAuth(), eventHub.Ticket)
+		api.Get("/events", eventHub.Connect)
+		app.Hooks().OnPreShutdown(eventHub.Close)
+	}
+	// Dashboard: alles für die Startseite in einem Aufruf.
+	if deps.Dashboard != nil {
+		dashboardCtrl := controllers.NewDashboardController(deps.Dashboard)
+		api.Get("/dashboard", middlewares.RequirePermission(domain.PermServersRead), dashboardCtrl.Get)
+	}
 	// Update-Status (installiert vs. neueste bekannte Version) fürs Banner -
 	// jeder eingeloggte Nutzer; die manuelle Prüfung ist Admin-Sache.
 	api.Get("/system/update-info", middlewares.RequireAuth(), opsCtrl.UpdateInfo)
 	api.Post("/system/update-check", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.CheckUpdateNow)
+	if deps.ReleaseNotes != nil {
+		api.Get("/system/release-notes", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.ReleaseNotes)
+		api.Post("/system/release-notes/seen", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.ReleaseNotesSeen)
+	}
 	// Selbst-Update des LCM-Hosts: Zustand lesen und anstoßen. Beides
 	// Admin-Sache - der Vorgang startet den Dienst neu.
 	api.Get("/system/self-update", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.SelfUpdateStatus)
@@ -274,6 +312,7 @@ func New(deps Deps) *fiber.App {
 	auth.Post("/2fa/enable", middlewares.RequireAuth(), authCtrl.EnableTOTP)
 	auth.Post("/2fa/disable", middlewares.RequireAuth(), authCtrl.DisableTOTP)
 	auth.Get("/me", middlewares.RequireAuth(), authCtrl.Me)
+	auth.Patch("/me/preferences", middlewares.RequireAuth(), authCtrl.UpdatePreferences)
 
 	// LCM-User-Management (Login-Benutzer). Profil-Edit und Passwort-Reset
 	// prüfen zusätzlich Self-Edit im Controller (nicht nur users:write).
@@ -330,6 +369,7 @@ func New(deps Deps) *fiber.App {
 	servers.Get("/known-repos", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.KnownRepos)
 	servers.Get("/:id", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Get)
 	servers.Get("/:id/status", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Status)
+	servers.Get("/:id/actions/:action/preview", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.ActionPreview)
 	servers.Get("/:id/active-job", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.ActiveJob)
 	servers.Get("/:id/hardware", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Hardware)
 	servers.Get("/:id/packages", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.Packages)
@@ -442,7 +482,9 @@ func New(deps Deps) *fiber.App {
 	servers.Post("/:id/decommission", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Decommission)
 
 	// Jobs & Audit
-	api.Get("/jobs/history", middlewares.RequirePermission(domain.PermJobsRead), jobCtrl.History)
+	api.Get("/jobs", middlewares.RequirePermission(domain.PermJobsRead), jobCtrl.List)
+	// Alter Name der Liste; derselbe Handler.
+	api.Get("/jobs/history", middlewares.RequirePermission(domain.PermJobsRead), jobCtrl.List)
 	api.Get("/jobs/filter-options", middlewares.RequirePermission(domain.PermJobsRead), jobCtrl.FilterOptions)
 	api.Get("/jobs/:id/ssh-output", middlewares.RequirePermission(domain.PermJobsRead), jobCtrl.ConsoleOutput)
 	// Abbrechen eines laufenden Jobs = Eingriff in den Server-Betrieb - daher
@@ -675,7 +717,7 @@ func New(deps Deps) *fiber.App {
 
 	// Unbekannte API-Pfade => 404 als JSON (nicht die SPA).
 	api.Use(func(c fiber.Ctx) error {
-		return fiber.NewError(fiber.StatusNotFound, "unbekannter API-Endpunkt")
+		return apierr.UnknownEndpoint
 	})
 
 	// SPA: eingebettetes Frontend ausliefern; unbekannte Pfade fallen auf
@@ -689,7 +731,7 @@ func New(deps Deps) *fiber.App {
 	// den no-cache, sodass der Browser die index.html ein Jahr festhält und
 	// nach einem Update weiter die ALTEN Asset-Referenzen lädt (alte UI).
 	if deps.FrontendFS != nil {
-		assetHandler := static.New("", static.Config{FS: deps.FrontendFS, MaxAge: 31536000})
+		assetHandler := precompressedAssets(deps.FrontendFS, static.New("", static.Config{FS: deps.FrontendFS, MaxAge: 31536000}))
 		indexHandler := static.New("index.html", static.Config{FS: deps.FrontendFS})
 		fileHandler := static.New("", static.Config{FS: deps.FrontendFS, NotFoundHandler: indexHandler})
 		// Der ETag hängt am INHALT der index.html, nicht nur an der
@@ -738,12 +780,42 @@ func New(deps Deps) *fiber.App {
 	return app
 }
 
+// newEventHub baut den Ereigniskanal; nil ohne Bus. Version und Build für den
+// Hello-Rahmen kommen aus dem System-Dienst, der Host der öffentlichen
+// Basis-Adresse aus den Einstellungen.
+func newEventHub(deps Deps) *controllers.EventHub {
+	if deps.Events == nil {
+		return nil
+	}
+	hub := controllers.NewEventHub(deps.Events, deps.Auth, deps.APIKeys, deps.Servers)
+	if deps.System != nil {
+		hub.WithBuildInfo(func() (string, string) {
+			info := deps.System.Info()
+			return info.Version, info.Build
+		})
+	}
+	if deps.Settings != nil {
+		hub.WithPublicHost(func() string { return publicHost(deps.Settings.LinkBaseURL()) })
+	}
+	return hub
+}
+
+// publicHost liefert den Host (mit Port) einer Basis-Adresse; leer, wenn sie
+// unbrauchbar ist.
+func publicHost(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
 // NewAgentGateway baut die schlanke Fiber-App für den DEDIZIERTEN Agent-Port
 // (LCM Remote). Sie bietet AUSSCHLIESSLICH den MQTT-über-WebSocket-Endpunkt
 // (GET /mqtt) - keine UI, keine REST-API, keine statischen Assets. Damit ist
 // die Agent-Schnittstelle vollständig vom UI/REST-Listener getrennt.
 //
-// Kein RequireAuth und keine IP-Allowlist: Agents haben keine JWTs (die
+// Kein RequireAuth und keine IP-Allowlist: Agents haben keine Browser-Sitzung (die
 // Authentifizierung per AgentID + Token macht der Broker selbst im MQTT-
 // CONNECT) und verbinden sich roamend von wechselnden IPs. Alles andere auf
 // diesem Port liefert 404.
@@ -766,16 +838,54 @@ func NewAgentGateway(ws fiber.Handler, logger *slog.Logger) *fiber.App {
 	return app
 }
 
-// jsonErrorHandler serialisiert alle Fehler als {"error": "..."}.
-// Interne Fehler werden nicht an den Client durchgereicht.
+// jsonErrorHandler schreibt jeden Fehler als {"error", "code", "params"}
+// (siehe apierr). Rohe fiber-Fehler bekommen einen Code aus ihrem Status;
+// interne Fehler werden nicht an den Client durchgereicht.
 func jsonErrorHandler(c fiber.Ctx, err error) error {
-	code := fiber.StatusInternalServerError
-	message := "interner Serverfehler"
-	if e, ok := err.(*fiber.Error); ok {
-		code = e.Code
-		message = e.Message
+	apiErr := apierr.Internal
+	var typed *apierr.Error
+	var fe *fiber.Error
+	switch {
+	case errors.As(err, &typed):
+		apiErr = typed
+	case errors.As(err, &fe):
+		apiErr = apierr.FromStatus(fe.Code, fe.Message)
+	default:
+		// Auffangnetz: Dienste prüfen eindeutige Namen vorher und melden sie mit
+		// eigenem Code; was durchrutscht, ist trotzdem ein Konflikt und kein
+		// interner Fehler.
+		if column, ok := uniqueViolation(err); ok {
+			apiErr = errDuplicate.With("field", column)
+		}
 	}
-	return c.Status(code).JSON(fiber.Map{"error": message})
+	body := fiber.Map{"error": apiErr.Message, "code": apiErr.Code}
+	if len(apiErr.Params) > 0 {
+		body["params"] = apiErr.Params
+	}
+	return c.Status(apiErr.Status).JSON(body)
+}
+
+// errDuplicate: ein Wert, der eindeutig sein muss, gibt es schon.
+var errDuplicate = apierr.Define(fiber.StatusConflict, "conflict.duplicate", "a record with this value already exists")
+
+// uniqueViolation erkennt den Fehler einer verletzten Eindeutigkeit der
+// Datenbank („UNIQUE constraint failed: tabelle.spalte“) und nennt die Spalte.
+func uniqueViolation(err error) (column string, ok bool) {
+	const marker = "UNIQUE constraint failed: "
+	msg := err.Error()
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		return "", false
+	}
+	name := strings.Fields(strings.Split(msg[i+len(marker):], ",")[0])
+	if len(name) == 0 {
+		return "", true
+	}
+	column = name[0]
+	if dot := strings.LastIndex(column, "."); dot >= 0 {
+		column = column[dot+1:]
+	}
+	return column, true
 }
 
 // indexHash liefert einen kurzen Hash der eingebetteten index.html. Sie

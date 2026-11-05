@@ -15,6 +15,7 @@ import (
 var (
 	ErrChannelNameRequired = errors.New("name des benachrichtigungskanals ist erforderlich")
 	ErrChannelTypeInvalid  = errors.New("unbekannter benachrichtigungs-kanaltyp")
+	ErrChannelNameTaken    = errors.New("ein benachrichtigungskanal mit diesem namen existiert bereits")
 	ErrChannelInUse        = errors.New("der kanal wird von mindestens einer alarmregel verwendet und kann nicht gelöscht werden")
 	ErrChannelDisabled     = errors.New("der benachrichtigungskanal ist deaktiviert")
 	// ErrChannelManaged: der System-E-Mail-Kanal wird über die Checkbox in
@@ -86,6 +87,11 @@ func (s *NotificationService) Create(in ChannelInput, actor string) (*domain.Not
 	if !validChannelType(in.Type) {
 		return nil, ErrChannelTypeInvalid
 	}
+	if taken, err := s.repo.NameTaken(name, 0); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrChannelNameTaken
+	}
 	channel := &domain.NotificationChannel{
 		Name:    name,
 		Type:    in.Type,
@@ -125,6 +131,11 @@ func (s *NotificationService) Update(id uint, in ChannelInput, actor string) (*d
 	}
 	if !validChannelType(in.Type) {
 		return nil, ErrChannelTypeInvalid
+	}
+	if taken, err := s.repo.NameTaken(name, id); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrChannelNameTaken
 	}
 	channel.Name = name
 	channel.Type = in.Type

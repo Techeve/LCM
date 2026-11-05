@@ -33,6 +33,40 @@ func (s *ServerService) ConfigureFirewall(scope repositories.AccessScope, id uin
 	if err != nil {
 		return nil, err
 	}
+	rules, err := s.planFirewall(server, enable, rulesSpec, sshSources)
+	if err != nil {
+		return nil, err
+	}
+	label := "Firewall deaktivieren @ " + server.Name
+	if enable {
+		label = "Firewall anwenden @ " + server.Name
+	}
+	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeFirewall, label, actor)
+	if err != nil {
+		return nil, err
+	}
+	verb := "deaktivieren"
+	if enable {
+		// Der SSH-Port ist immer freigegeben - mit dem echten Port des
+		// Servers protokollieren, nicht hartkodiert 22.
+		sshPort := server.SSHPort
+		if sshPort == 0 {
+			sshPort = 22
+		}
+		verb = "anwenden (Ports: " + strings.TrimSuffix(fmt.Sprintf("%d,", sshPort)+firewallRulesPortsCSV(rules), ",") + ")"
+	}
+	s.audit.Log(actor, "server.firewall", "server", id, server.Name+": "+verb)
+	safego.GoCleanup("job:firewall", jobPanicCleanup(s.jobs, job), func() {
+		s.runFirewallJob(job, server, enable, rules, actor)
+	})
+	return job, nil
+}
+
+// planFirewall prüft die Eingabe der Firewall-Aktion - für den Lauf und die
+// Befehlsvorschau gleich - und liefert die normalisierten Regeln. Die
+// Quell-Einschränkung der SSH-Freigabe landet bereinigt in
+// server.FirewallSSHSources; der Lauf persistiert sie von dort.
+func (s *ServerService) planFirewall(server *domain.Server, enable bool, rulesSpec string, sshSources domain.FirewallSSHSources) ([]domain.FirewallRule, error) {
 	if err := ensureNotRouterOS(server); err != nil {
 		return nil, err
 	}
@@ -84,29 +118,7 @@ func (s *ServerService) ConfigureFirewall(scope repositories.AccessScope, id uin
 	if server.RestrictedSudo && firewallBackendFor(server) != domain.FirewallToolUfw {
 		return nil, ErrFirewallNeedsFullSudo
 	}
-	label := "Firewall deaktivieren @ " + server.Name
-	if enable {
-		label = "Firewall anwenden @ " + server.Name
-	}
-	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeFirewall, label, actor)
-	if err != nil {
-		return nil, err
-	}
-	verb := "deaktivieren"
-	if enable {
-		// Der SSH-Port ist immer freigegeben - mit dem echten Port des
-		// Servers protokollieren, nicht hartkodiert 22.
-		sshPort := server.SSHPort
-		if sshPort == 0 {
-			sshPort = 22
-		}
-		verb = "anwenden (Ports: " + strings.TrimSuffix(fmt.Sprintf("%d,", sshPort)+firewallRulesPortsCSV(rules), ",") + ")"
-	}
-	s.audit.Log(actor, "server.firewall", "server", id, server.Name+": "+verb)
-	safego.GoCleanup("job:firewall", jobPanicCleanup(s.jobs, job), func() {
-		s.runFirewallJob(job, server, enable, rules, actor)
-	})
-	return job, nil
+	return rules, nil
 }
 
 // runFirewallJob führt die Firewall-Aktion aus: Backend bestimmen (erkanntes

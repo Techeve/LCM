@@ -70,7 +70,7 @@ func TestActivationLinkRoundtrip(t *testing.T) {
 		t.Error("must_change_password sollte nach aktivierung false sein")
 	}
 	// Login mit dem neuen Passwort funktioniert.
-	if _, _, err := env.Auth.Login("newbie", "mein-neues-sicheres-passwort"); err != nil {
+	if _, err := env.Auth.VerifyPassword("newbie", "mein-neues-sicheres-passwort"); err != nil {
 		t.Errorf("login nach aktivierung fehlgeschlagen: %v", err)
 	}
 	// Zweite Einlösung desselben Tokens scheitert.

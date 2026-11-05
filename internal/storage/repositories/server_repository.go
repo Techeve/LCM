@@ -107,6 +107,36 @@ func (r *ServerRepository) FindAll(scope AccessScope) ([]domain.Server, error) {
 	return servers, nil
 }
 
+// FindSelected liefert die sichtbaren Server, schon in SQL auf eine Gruppe
+// (groupID > 0) und/oder eine Kennungsliste (ids) eingegrenzt. Die übrigen
+// Filter der Serverliste (Name, Host, OS, Kernel) wirken auf entschlüsselten
+// Spalten und laufen deshalb erst danach in Go.
+func (r *ServerRepository) FindSelected(scope AccessScope, groupID uint, ids []uint) ([]domain.Server, error) {
+	q := scope.scopeServers(r.db.Preload("Groups"))
+	if groupID > 0 {
+		q = q.Where("servers.id IN (SELECT server_id FROM server_group_servers WHERE server_group_id = ?)", groupID)
+	}
+	if len(ids) > 0 {
+		q = q.Where("servers.id IN ?", ids)
+	}
+	var servers []domain.Server
+	if err := q.Find(&servers).Error; err != nil {
+		return nil, err
+	}
+	return servers, nil
+}
+
+// VisibleIDs liefert die Kennungen der Server, die der Scope sehen darf - ohne
+// die Server selbst zu laden (der Ereigniskanal braucht nur die Menge).
+func (r *ServerRepository) VisibleIDs(scope AccessScope) ([]uint, error) {
+	var ids []uint
+	q := scope.scopeServers(r.db.Model(&domain.Server{}))
+	if err := q.Pluck("servers.id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // FindAllUnscoped liefert alle Server - nur für interne Prozesse
 // (Scheduler, System-Sync), nie für User-Requests verwenden.
 func (r *ServerRepository) FindAllUnscoped() ([]domain.Server, error) {
@@ -286,6 +316,34 @@ func (r *ServerRepository) CountOutdatedPackages(serverID uint) (int64, error) {
 		Where("server_ref = ? AND candidate_version != '' AND candidate_version != version AND COALESCE(held_reason, '') = ''", ServerRef(serverID)).
 		Count(&n).Error
 	return n, err
+}
+
+// CountOutdatedPackagesFor zählt die überfälligen Updates (Zählweise wie
+// CountOutdatedPackages) für mehrere Server mit EINER Abfrage. Server ohne
+// überfällige Pakete fehlen im Ergebnis.
+func (r *ServerRepository) CountOutdatedPackagesFor(serverIDs []uint) (map[uint]int, error) {
+	idByRef := make(map[string]uint, len(serverIDs))
+	refs := make([]string, 0, len(serverIDs))
+	for _, id := range serverIDs {
+		ref := ServerRef(id)
+		idByRef[ref] = id
+		refs = append(refs, ref)
+	}
+	var rows []struct {
+		ServerRef string
+		N         int
+	}
+	err := r.db.Model(&domain.Package{}).Select("server_ref, COUNT(*) AS n").
+		Where("server_ref IN ? AND candidate_version != '' AND candidate_version != version AND COALESCE(held_reason, '') = ''", refs).
+		Group("server_ref").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[uint]int, len(rows))
+	for _, row := range rows {
+		counts[idByRef[row.ServerRef]] = row.N
+	}
+	return counts, nil
 }
 
 // PhasedPackagesWithCVE liefert die Pakete, deren Update in gestaffelter

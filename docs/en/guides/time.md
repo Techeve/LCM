@@ -39,7 +39,7 @@ it is reported only from **30 seconds** upward.
 
 ## Setting it
 
-Server detail → **Settings** (gear) → section *Time & sync*:
+Server detail → **Settings** (gear) → *Server settings* → section *Time*:
 
 - **Set time zone** - LCM writes it and **reads it back**. If the system then
   reports something else, it does not count as set; a written file alone is no
@@ -62,7 +62,7 @@ containers with it, and the sync then belongs on the host.
 
 ## Defaults
 
-Under **Settings → Time & NTP** you can store:
+Under **Settings → Time** you can store:
 
 - **Default time servers** (one `Label = host` per line) - they appear as a
   choice when configuring. Empty = built-in list (NTP pool, Cloudflare,

@@ -132,7 +132,7 @@ func TestRumpfBudgetVorDemLesen(t *testing.T) {
 	admin := loginToken(t, app, "admin", "test-admin-passwort")
 	big.Seek(0, 0)
 	req = httptest.NewRequest("POST", "/api/v1/system/backups/restore-upload", big)
-	req.Header.Set("Authorization", "Bearer "+admin)
+	req.Header.Set("X-LCM-Session", admin)
 	resp, err = app.Test(req, testRequestConfig())
 	if err != nil {
 		t.Fatal(err)
@@ -207,8 +207,11 @@ func TestEingabegrenzenAnDerAPI(t *testing.T) {
 	if r := doRequest(t, app, "GET", "/api/v1/jobs/nicht-eine-uuid/ssh-output", admin, ""); r.StatusCode != 400 {
 		t.Errorf("Job-ID ohne UUID-Form: erwartet 400, bekam %d", r.StatusCode)
 	}
-	if r := doRequest(t, app, "GET", "/api/v1/ssh-sessions/1%20OR%201=1", admin, ""); r.StatusCode != 400 {
+	if r := doRequest(t, app, "GET", "/api/v1/ssh-sessions/nicht-eine-uuid", admin, ""); r.StatusCode != 400 {
 		t.Errorf("Session-ID ohne UUID-Form: erwartet 400, bekam %d", r.StatusCode)
+	}
+	if r := doRequest(t, app, "GET", "/api/v1/ssh-sessions/1%20OR%201=1", admin, ""); r.StatusCode != 422 {
+		t.Errorf("SQL im Pfad: erwartet 422, bekam %d", r.StatusCode)
 	}
 	if r := doRequest(t, app, "GET", "/api/v1/jobs/00000000-0000-4000-8000-000000000000/ssh-output", admin, ""); r.StatusCode != 404 {
 		t.Errorf("unbekannte, aber wohlgeformte UUID: erwartet 404, bekam %d", r.StatusCode)
@@ -237,5 +240,38 @@ func TestEingabegrenzenAnDerAPI(t *testing.T) {
 	// Gegenprobe: gewöhnliche Eingaben kommen durch.
 	if r := doRequest(t, app, "POST", "/api/v1/server-groups/create", admin, `{"name":"Büro Süd","description":"Zeile 1\nZeile 2"}`); r.StatusCode != 201 {
 		t.Errorf("normaler Gruppenname mit Umlaut: erwartet 201, bekam %d", r.StatusCode)
+	}
+}
+
+// TestEindeutigeFehlerFuerUnsinn: Unsinnige Eingaben bekommen einen Code, der
+// den Grund nennt - nicht „ungültiger Rumpf“, und nie ein 500.
+func TestEindeutigeFehlerFuerUnsinn(t *testing.T) {
+	app := newTestApp(t)
+	admin := loginToken(t, app, "admin", "test-admin-passwort")
+
+	tests := []struct{ name, path, body, code string }{
+		{"Buchstabe in IP", "/api/v1/servers/probe", `{"host":"192.168.1.x","port":22}`, "validation.ip_letter"},
+		{"Zahl über 255", "/api/v1/servers/probe", `{"host":"300.1.1.1","port":22}`, "validation.ip_octet"},
+		{"Führende Null", "/api/v1/servers/probe", `{"host":"010.0.0.1","port":22}`, "validation.ip_leading_zero"},
+		{"Kaputtes IPv6", "/api/v1/servers/probe", `{"host":"2001:db8::g","port":22}`, "validation.ipv6"},
+		{"Buchstaben im Port", "/api/v1/servers/probe", `{"host":"10.0.0.1","port":"abc"}`, "validation.not_a_number"},
+		{"Port zu groß", "/api/v1/servers/probe", `{"host":"10.0.0.1","port":70000}`, "validation.invalid_port"},
+		{"SQL im Namen", "/api/v1/server-groups", `{"name":"x'; DROP TABLE servers; --"}`, "validation.sql_suspicious"},
+		{"Riesige ID", "/api/v1/server-groups/1/servers", `{"server_id":99999999999999999999}`, "validation.out_of_range"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := doRequest(t, app, "POST", tt.path, admin, tt.body)
+			defer r.Body.Close()
+			var got struct {
+				Code string `json:"code"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if r.StatusCode != 422 || got.Code != tt.code {
+				t.Errorf("bekam %d %q, erwartet 422 %q", r.StatusCode, got.Code, tt.code)
+			}
+		})
 	}
 }

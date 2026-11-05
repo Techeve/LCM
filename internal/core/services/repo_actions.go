@@ -55,6 +55,32 @@ func (s *ServerService) SecureRepositories(scope repositories.AccessScope, id ui
 	if err != nil {
 		return "", err
 	}
+	script, err := planSecureRepos(server)
+	if err != nil {
+		return "", err
+	}
+	conn, err := s.connectRec(server, "secure-repos", actor)
+	if err != nil {
+		return "", fmt.Errorf("verbindung: %w", err)
+	}
+	defer conn.Close()
+
+	output, code, runErr := conn.Run(privRun(server, script))
+	if runErr != nil {
+		return output, runErr
+	}
+	if code != 0 {
+		return output, fmt.Errorf("https-umstellung fehlgeschlagen (exit %d)", code)
+	}
+	// Die http→https-Umstellung ist apt-spezifisch (sources.list).
+	s.rescanRepositories(conn, server, pkgApt)
+	s.audit.Log(actor, "server.secure-repos", "server", id, server.Name)
+	return output, nil
+}
+
+// planSecureRepos prüft den Server und baut das Skript der https-Umstellung -
+// für den Lauf und die Befehlsvorschau gleich.
+func planSecureRepos(server *domain.Server) (string, error) {
 	// Gleiche Guards wie AddKnownRepository: RouterOS hat keine apt-Quellen,
 	// Proxmox pflegt seine Paketquellen selbst, und die Umstellung ist
 	// apt-spezifisch - auf anderen Paketverwaltungen wäre „nichts zu tun"
@@ -69,29 +95,11 @@ func (s *ServerService) SecureRepositories(scope repositories.AccessScope, id ui
 		return "", fmt.Errorf("%w: die https-Umstellung betrifft apt-Quellen, dieser Server nutzt %s",
 			ErrRepoPackageManagerMismatch, PackageManagerLabel(server.PackageManager))
 	}
-	conn, err := s.connectRec(server, "secure-repos", actor)
-	if err != nil {
-		return "", fmt.Errorf("verbindung: %w", err)
-	}
-	defer conn.Close()
-
-	script := secureHTTPSScript()
 	// Eingeschränkter Modus: dieselbe Logik steckt validiert im LCM-Helper.
 	if server.RestrictedSudo {
-		script = helperCmd("repos-https")
+		return helperCmd("repos-https"), nil
 	}
-
-	output, code, runErr := conn.Run(privRun(server, script))
-	if runErr != nil {
-		return output, runErr
-	}
-	if code != 0 {
-		return output, fmt.Errorf("https-umstellung fehlgeschlagen (exit %d)", code)
-	}
-	// Die http→https-Umstellung ist apt-spezifisch (sources.list).
-	s.rescanRepositories(conn, server, pkgApt)
-	s.audit.Log(actor, "server.secure-repos", "server", id, server.Name)
-	return output, nil
+	return secureHTTPSScript(), nil
 }
 
 // AddKnownRepository richtet eine bekannte Paketquelle aus dem Katalog auf dem
@@ -108,6 +116,31 @@ func (s *ServerService) AddKnownRepository(scope repositories.AccessScope, id ui
 	if err != nil {
 		return "", err
 	}
+	script, err := planAddRepo(server, repo)
+	if err != nil {
+		return "", err
+	}
+	conn, err := s.connectRec(server, "add-repo:"+repo.Key, actor)
+	if err != nil {
+		return "", fmt.Errorf("verbindung: %w", err)
+	}
+	defer conn.Close()
+
+	output, code, runErr := conn.Run(privRun(server, script))
+	if runErr != nil {
+		return output, runErr
+	}
+	if code != 0 {
+		return output, fmt.Errorf("repository %s einrichten fehlgeschlagen (exit %d)", repo.Name, code)
+	}
+	s.rescanRepositories(conn, server, server.PackageManager)
+	s.audit.Log(actor, "server.add-repo", "server", id, server.Name+": "+repo.Name)
+	return output, nil
+}
+
+// planAddRepo prüft Server und Quelle und baut das Einrichtungsskript - für
+// den Lauf und die Befehlsvorschau gleich.
+func planAddRepo(server *domain.Server, repo domain.KnownRepo) (string, error) {
 	if server.IsRouterOS() {
 		return "", ErrRouterOSUnsupported
 	}
@@ -123,30 +156,13 @@ func (s *ServerService) AddKnownRepository(scope repositories.AccessScope, id ui
 			ErrRepoPackageManagerMismatch, repo.Name,
 			PackageManagerLabel(repo.RepoPackageManager()), PackageManagerLabel(server.PackageManager))
 	}
-	conn, err := s.connectRec(server, "add-repo:"+repo.Key, actor)
-	if err != nil {
-		return "", fmt.Errorf("verbindung: %w", err)
-	}
-	defer conn.Close()
-
-	script := repoAddScript(server.PackageManager, repo)
 	// Eingeschränkter Modus gibt es nur auf apt-Systemen (sudoers + LCM-Helper):
 	// Key-Download, Quellen-Zeile und apt-Update erledigt dort der validierte
 	// Helper.
 	if server.RestrictedSudo && server.PackageManager == pkgApt {
-		script = helperCmd("repo-add", repo.Key, helperB64(repo.KeyURL), helperB64(repo.Line))
+		return helperCmd("repo-add", repo.Key, helperB64(repo.KeyURL), helperB64(repo.Line)), nil
 	}
-
-	output, code, runErr := conn.Run(privRun(server, script))
-	if runErr != nil {
-		return output, runErr
-	}
-	if code != 0 {
-		return output, fmt.Errorf("repository %s einrichten fehlgeschlagen (exit %d)", repo.Name, code)
-	}
-	s.rescanRepositories(conn, server, server.PackageManager)
-	s.audit.Log(actor, "server.add-repo", "server", id, server.Name+": "+repo.Name)
-	return output, nil
+	return repoAddScript(server.PackageManager, repo), nil
 }
 
 // repoAddScript baut das Einrichtungsskript einer Katalog-Quelle passend zur
@@ -321,17 +337,7 @@ func (s *ServerService) RevertRepositoriesHTTPS(scope repositories.AccessScope, 
 	if err != nil {
 		return "", err
 	}
-	if server.IsRouterOS() {
-		return "", ErrRouterOSUnsupported
-	}
-	if server.IsProxmox() {
-		return "", ErrProxmoxRestricted
-	}
-	if pkgFamily(server.PackageManager) != pkgApt {
-		return "", fmt.Errorf("%w: die https-Rückstellung betrifft apt-Quellen, dieser Server nutzt %s",
-			ErrRepoPackageManagerMismatch, PackageManagerLabel(server.PackageManager))
-	}
-	targets, err := revertTargets(server.HTTPSRevertURLs, uris)
+	script, _, err := planRevertRepos(server, uris)
 	if err != nil {
 		return "", err
 	}
@@ -341,11 +347,6 @@ func (s *ServerService) RevertRepositoriesHTTPS(scope repositories.AccessScope, 
 		return "", fmt.Errorf("verbindung: %w", err)
 	}
 	defer conn.Close()
-
-	script := revertHTTPSScript(targets)
-	if server.RestrictedSudo {
-		script = helperCmd("repos-http", targets...)
-	}
 	output, code, runErr := conn.Run(privRun(server, script))
 	if runErr != nil {
 		return output, runErr
@@ -356,6 +357,30 @@ func (s *ServerService) RevertRepositoriesHTTPS(scope repositories.AccessScope, 
 	s.rescanRepositories(conn, server, pkgApt)
 	s.audit.Log(actor, "server.revert-repos-https", "server", id, server.Name)
 	return output, nil
+}
+
+// planRevertRepos prüft Server und Auswahl und baut das Skript der
+// Rückstellung - für den Lauf und die Befehlsvorschau gleich. Der zweite
+// Rückgabewert sind die URLs, die zurückgestellt werden.
+func planRevertRepos(server *domain.Server, uris []string) (string, []string, error) {
+	if server.IsRouterOS() {
+		return "", nil, ErrRouterOSUnsupported
+	}
+	if server.IsProxmox() {
+		return "", nil, ErrProxmoxRestricted
+	}
+	if pkgFamily(server.PackageManager) != pkgApt {
+		return "", nil, fmt.Errorf("%w: die https-Rückstellung betrifft apt-Quellen, dieser Server nutzt %s",
+			ErrRepoPackageManagerMismatch, PackageManagerLabel(server.PackageManager))
+	}
+	targets, err := revertTargets(server.HTTPSRevertURLs, uris)
+	if err != nil {
+		return "", nil, err
+	}
+	if server.RestrictedSudo {
+		return helperCmd("repos-http", targets...), targets, nil
+	}
+	return revertHTTPSScript(targets), targets, nil
 }
 
 // revertTargets prüft die Auswahl gegen die beim Scan ermittelten Kandidaten

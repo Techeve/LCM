@@ -96,7 +96,7 @@ apt-cacher-ng.
 ### Update per Klick
 
 Liegt im eingestellten Paketkanal eine neuere Version, erscheint oben ein
-Balken - samt Schaltfläche **Jetzt updaten**. LCM spielt sein eigenes Paket
+Balken - samt Schaltfläche **Jetzt installieren**. LCM spielt sein eigenes Paket
 dann selbst ein. Drei Dinge sind daran wichtig:
 
 - **Vorher wird gesichert.** Vor dem Einspielen erstellt LCM ein
@@ -117,9 +117,15 @@ Installation aus dem Debian-Paket, deren Host als apt-Server in der
 Verwaltung steht. Andernfalls nennt der Balken den Grund. Im Container wird
 statt dessen das Image getauscht.
 
-*Einstellungen → Info* (Klick auf den Copyright-Vermerk unten) hat außerdem
+Der Dialog *Über LCM* (Kontomenü oben rechts) hat außerdem
 **Jetzt prüfen**: Das fragt den Paketkanal sofort ab und zeigt das Ergebnis
 im Balken an - auch dann, wenn LCM bereits aktuell ist.
+
+**Neu in dieser Version.** Nach einem Update zeigt LCM jedem Administrator
+einmal ein Fenster *Neu in Version …* mit den Neuerungen. Die Hinweise holt
+LCM vom Doku-Server (doc.techeve.de); ist der nicht erreichbar, bleibt das
+Fenster zu und erscheint beim nächsten Mal, sobald er wieder antwortet.
+Nach *Schließen* kommt es nicht wieder.
 
 ### Trivy für den CVE-Scan nachinstallieren
 
@@ -146,7 +152,7 @@ LCM-Hosts → Trivy einrichten*.
 |------|--------|
 | `/usr/bin/lcm` | die Programmdatei (Binary mit eingebettetem Web-UI) |
 | `/lib/systemd/system/lcm.service` | die gehärtete systemd-Unit |
-| `/etc/lcm/config.json` | Konfiguration (erstellt mit zufälligem JWT-Secret) |
+| `/etc/lcm/config.json` | Konfiguration (mit sicheren Standardwerten erzeugt, ohne Geheimnis) |
 | `/var/lib/lcm/` | Zustand: verschlüsselte DB, Master-Key, TLS-Zertifikat, Backups |
 | `/var/lib/lcm/logs/lcm.log` | persistente, rotierende Logdatei (s.u.) |
 
@@ -303,9 +309,9 @@ Auf dem Agent-Port liegt **nur** die Agent-Schnittstelle, auf dem UI/REST-Port
 [MCP-Schnittstelle](/guides/mcp/).
 
 :::note[Jeder Neustart beendet alle Sitzungen]
-Das JWT-Signaturmaterial wird bei jedem Start neu erzeugt und lebt nur im
+Browser-Sitzungen und das Signaturmaterial der 2FA-Challenge leben nur im
 Arbeitsspeicher; ein gespeichertes Geheimnis gibt es dafür nicht. Folge: Nach
-einem (Neu-)Start sind **alle** zuvor ausgestellten Tokens ungültig - jeder
+einem (Neu-)Start sind **alle** Sitzungen ungültig - jeder
 muss sich neu anmelden. Das deckt u.&nbsp;a. Rebuild, Prozess-Neustart und
 ein frisches Datenbank-Seeding ab.
 :::
@@ -321,5 +327,13 @@ journalctl -u lcm | grep -A3 'Admin-Zugang'   # bei der .deb-Installation
 
 Dann `https://<host>:9310` im Browser öffnen (self-signed Zertifikat - die
 Browser-Warnung ist erwartbar), als `admin` anmelden und das Passwort ändern.
+
+Danach fragt LCM einmalig, **wie die Anmeldung im Browser funktionieren soll**:
+nur im Arbeitsspeicher des Tabs (Standard, sicherste Variante: kein Cookie, nach
+dem Neuladen oder in einem neuen Tab meldest du dich neu an) oder als
+Sitzungs-Cookie (bequemer, nur über HTTPS). Das lässt sich jederzeit unter
+*Einstellungen → Allgemein → Anmeldung im Browser* ändern, direkt neben der
+*Sitzungsdauer in Minuten*; ein Wechsel meldet alle Benutzer ab. Skripte
+nutzen davon unabhängig einen API-Schlüssel.
 
 Weiter mit dem [Schnellstart](/getting-started/quickstart/).

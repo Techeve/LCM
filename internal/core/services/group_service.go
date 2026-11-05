@@ -14,6 +14,7 @@ import (
 )
 
 var (
+	ErrGroupNameTaken    = errors.New("eine gruppe mit diesem namen existiert bereits")
 	ErrProtectedGroup    = errors.New("die system-gruppe kann nicht verändert oder aufgelöst werden")
 	ErrProtectedRule     = errors.New("system-rules können nicht gelöscht werden")
 	ErrProtectedSchedule = errors.New("system-schedules können nicht gelöscht werden")
@@ -92,6 +93,12 @@ func (s *GroupService) List(scope repositories.AccessScope) ([]domain.ServerGrou
 	return s.groups.FindAll(scope)
 }
 
+// Search liefert die sichtbaren Gruppen, deren Name den Suchtext enthält (leer =
+// alle).
+func (s *GroupService) Search(scope repositories.AccessScope, text string) ([]domain.ServerGroup, error) {
+	return s.groups.FindMatching(scope, text)
+}
+
 func (s *GroupService) Get(scope repositories.AccessScope, id uint) (*domain.ServerGroup, error) {
 	return s.groups.FindByID(scope, id)
 }
@@ -103,6 +110,11 @@ func (s *GroupService) Create(name, description string, priority *int, actor str
 	}
 	if err := applyGroupPriority(group, priority); err != nil {
 		return nil, err
+	}
+	if taken, err := s.groups.NameTaken(name, 0); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrGroupNameTaken
 	}
 	if err := s.groups.Create(group); err != nil {
 		return nil, err
@@ -122,6 +134,11 @@ func (s *GroupService) UpdateSettings(scope repositories.AccessScope, id uint, n
 		return nil, ErrProtectedGroup
 	}
 	if name != "" {
+		if taken, err := s.groups.NameTaken(name, id); err != nil {
+			return nil, err
+		} else if taken {
+			return nil, ErrGroupNameTaken
+		}
 		group.Name = name
 	}
 	group.Description = description

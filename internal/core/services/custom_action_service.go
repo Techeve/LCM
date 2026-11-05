@@ -12,6 +12,7 @@ import (
 var (
 	ErrCustomActionNameRequired = errors.New("name der custom-aktion ist erforderlich")
 	ErrCustomActionEmpty        = errors.New("die custom-aktion enthält kein einziges kommando")
+	ErrCustomActionNameTaken    = errors.New("eine custom-aktion mit diesem namen existiert bereits")
 	ErrCustomActionInUse        = errors.New("die custom-aktion wird von mindestens einer rule verwendet und kann nicht gelöscht werden")
 )
 
@@ -55,6 +56,13 @@ func parseActionCommands(text string) []string {
 	return out
 }
 
+// parseCustomActionID liest die ID der Custom-Aktion aus dem Command-Feld einer
+// Regel vom Typ custom.
+func parseCustomActionID(command string) (uint, error) {
+	id, err := strconv.ParseUint(strings.TrimSpace(command), 10, 64)
+	return uint(id), err
+}
+
 func (s *CustomActionService) List() ([]domain.CustomAction, error) {
 	return s.repo.FindAll()
 }
@@ -66,6 +74,11 @@ func (s *CustomActionService) Create(name, description, commands, actor string) 
 	}
 	if len(parseActionCommands(commands)) == 0 {
 		return nil, ErrCustomActionEmpty
+	}
+	if taken, err := s.repo.NameTaken(name, 0); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrCustomActionNameTaken
 	}
 	action := &domain.CustomAction{Name: name, Description: description, Commands: commands}
 	if err := s.repo.Create(action); err != nil {
@@ -87,6 +100,11 @@ func (s *CustomActionService) Update(id uint, name, description, commands, actor
 	}
 	if len(parseActionCommands(commands)) == 0 {
 		return nil, ErrCustomActionEmpty
+	}
+	if taken, err := s.repo.NameTaken(name, id); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, ErrCustomActionNameTaken
 	}
 	oldCommands := action.Commands
 	action.Name = name

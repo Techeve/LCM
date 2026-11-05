@@ -57,6 +57,13 @@ client that reaches the port directly gives itself any address with a forged
 header - into the allowlist and out of the login lockout.
 :::
 
+The same rule decides whether LCM recognises a request as **HTTPS**:
+`X-Forwarded-Proto: https` only counts from a trusted proxy. The cookie variant of
+the browser sign-in (*Settings → General → Sign-in in the browser*) needs that:
+without a trusted proxy every request behind the proxy counts as HTTP, the option is
+disabled, and a login runs as a memory session. So the proxy must set
+`X-Forwarded-Proto` (the reference configurations below do).
+
 Restart the service after the change. To check: failed attempts in the journal
 carry the client's address, not the proxy's:
 
@@ -108,6 +115,16 @@ server {
 
     # Web console (WebSocket) - the session stays open.
     location ~ ^/api/v1/servers/[0-9]+/terminal$ {
+        proxy_pass https://127.0.0.1:9310;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        include /etc/nginx/lcm-proxy.conf;
+    }
+
+    # Event channel (WebSocket) - keeps the interface live while the page is open.
+    location = /api/v1/events {
         proxy_pass https://127.0.0.1:9310;
         proxy_http_version 1.1;
         proxy_set_header Upgrade    $http_upgrade;

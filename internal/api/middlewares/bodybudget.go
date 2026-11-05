@@ -4,6 +4,8 @@ import (
 	"io"
 
 	"github.com/gofiber/fiber/v3"
+
+	"LCM/internal/api/apierr"
 )
 
 // BodyBudget begrenzt Request-Rümpfe je Route, BEVOR sie gelesen werden.
@@ -35,11 +37,10 @@ func BodyBudget(limit int, exempt func(path string) bool) fiber.Handler {
 		// bedeutet bei Anfragen einen leeren Rumpf (HTTP/1.1 §6).
 		length := c.Request().Header.ContentLength()
 		if length == -1 {
-			return reject(c, fiber.StatusLengthRequired,
-				"Content-Length erforderlich - Rümpfe ohne Längenangabe sind nur beim Backup-Upload zulässig")
+			return reject(c, errLengthRequired)
 		}
 		if length > limit {
-			return reject(c, fiber.StatusRequestEntityTooLarge, "Request-Body zu groß")
+			return reject(c, errBodyTooLarge)
 		}
 		err := c.Next()
 		drainUnread(c, limit)
@@ -64,7 +65,7 @@ func drainUnread(c fiber.Ctx, limit int) {
 // reject beantwortet einen abgewiesenen Rumpf und schließt die Verbindung
 // danach: Der ungelesene Rumpf liegt noch auf der Leitung, und fasthttp würde
 // ihn sonst als nächste Anfrage zu lesen versuchen.
-func reject(c fiber.Ctx, status int, message string) error {
+func reject(c fiber.Ctx, apiErr *apierr.Error) error {
 	c.RequestCtx().SetConnectionClose()
-	return fiber.NewError(status, message)
+	return apiErr
 }

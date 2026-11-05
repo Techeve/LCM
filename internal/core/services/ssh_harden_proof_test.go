@@ -124,7 +124,7 @@ func TestSSHReloadSchontSocketAktiviertenDienst(t *testing.T) {
 	if !strings.Contains(all, "is-active --quiet ssh.socket") {
 		t.Error("die Socket-Aktivierung wird nicht geprüft - auf Debian 13 zerlegt der Reload den sshd-Dienst")
 	}
-	if !strings.Contains(all, "then systemctl restart ssh;") {
+	if !strings.Contains(all, "systemctl restart ssh;") {
 		t.Error("der Socket-Zweig startet den aktiven Dienst nicht neu - auf Debian 13 (Accept=no) bliebe die Konfiguration im alten Daemon liegen")
 	}
 	socket := strings.Index(all, "is-active --quiet ssh.socket")

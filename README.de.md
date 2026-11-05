@@ -34,7 +34,7 @@ LCM ist eine selbst gehostete Verwaltungszentrale für Linux-Server. Einmal
 installieren - ein einzelnes Binary ohne externe Abhängigkeiten - und beliebig
 viele Maschinen über normales SSH verwalten: nichts auf den Zielservern
 ausrollen, keine Agenten pflegen, keine Konfigurationssprache lernen.
-Go-Backend (Fiber v3, GORM, SQLite) plus Svelte-5-Frontend (Vite, Bootstrap 5)
+Go-Backend (Fiber v3, GORM, SQLite) plus Lit-Oberfläche (TypeScript, Vite)
 in **einem einzigen Binary** - lauffähig unter Linux, Windows und macOS.
 
 Gebaut für den Alltag mit einem Serverpark - ob Homelab, Firmeninfrastruktur
@@ -157,6 +157,7 @@ Aufgenommen im eingebauten Demo-Modus (`lcm --demo`).
 - **Security Automation** - SSH-Hardening (nur Zertifikats-Login), Firewall-Checks (ufw)
 - **Lückenloses Auditing** - jede Aktion als Job/AuditLog mit exaktem SSH-Konsolen-Output, manipulationssichere Hash-Chain, konfigurierbare Log-Retention (Default 90 Tage)
 - **Rollen & Rechte** - Admins, Manager (nur zugewiesene Server, Tenant Isolation auf Query-Ebene), Service-Accounts (API-Keys mit Laufzeit), normale User als Key-Identitäten
+- **Anmeldung im Browser** - zwei einstellbare Wege: nur im Arbeitsspeicher des Tabs (Standard, gar keine Cookies) oder als `__Host-`-Sitzungs-Cookie (nur HTTPS); Skripte nutzen API-Keys, einen Bearer-Login gibt es nicht
 - **Security by Design** - AES-256-GCM-Verschlüsselung sensibler Daten at-rest (Master-Key in `lcm.key` oder `LCM_ENCRYPTION_KEY`), Key-Rotation (`rotate-db-key`, SSH-Zertifikats-Rotation), TOTP-2FA mit Enforcement, HTTPS by default (Self-Signed out-of-the-box, eigene Zertifikate konfigurierbar), Rate-Limiting, strikte Security-Header, optionale **IP-Allowlist** (`allowed_ips` in der config.json: nur localhost, private Netze oder ausgewählte Adressen/CIDRs)
 - **Dark Mode** - umschaltbarer Farbmodus (System/Dunkel/Hell) über die Navigationsleiste; folgt standardmäßig dem Betriebssystem und merkt sich die Wahl im Browser
 - **System-Backups** - passphrase-verschlüsseltes, portables `.lcmbak`-Archiv (DB-Momentaufnahme + Master-Key + Config + TLS) mit konfigurierbarem Intervall/Aufbewahrung; Download, Rollback auf einen früheren Stand und Restore aus hochgeladenem Archiv (auch auf frischer Instanz), angewendet beim Start
@@ -204,7 +205,7 @@ Dann die ausgegebene Adresse öffnen und mit dem initialen Admin-Zugang anmelden
 **Entwicklung** mit Hot-Reload:
 
 ```sh
-make dev       # Backend :9310 + Vite-Dev-Server :5173
+make dev       # Backend :9310 + Vite-Dev-Server :5174
 ```
 
 **Tests:**
@@ -269,7 +270,7 @@ erhält bei jedem Release den Schnappschuss der Branches `community` und `beta`:
 
 ## Stack
 
-Go · Fiber v3 · GORM · SQLite (CGO-frei) · x/crypto/ssh · argon2id · JWT · AES-256-GCM - Svelte 5 (Runes) · Bootstrap 5 · Vite - Playwright · govulncheck · npm audit
+Go · Fiber v3 · GORM · SQLite (CGO-frei) · x/crypto/ssh · argon2id · JWT · AES-256-GCM - Lit 3 · TypeScript · Vite - Playwright · govulncheck · npm audit
 
 ## Abhängigkeiten & Supply Chain
 

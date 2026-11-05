@@ -34,7 +34,7 @@ the address and token already filled in.
 
 > The token is shown **exactly once**. It cannot be retrieved afterwards
 > because LCM only stores its hash. Copy it right away; if it gets lost, just
-> create a new one via **"Regenerate token"**.
+> create a new one via **"Renew agent token"**.
 
 ## Step 2 - Install the agent on the server
 
@@ -85,7 +85,7 @@ operating system, packages and hardware.
 | `enroll` reports the connection failed | Address or port are wrong - it is the **agent port**, not the interface one. Check from that server whether the LCM server is reachable. |
 | `enroll requires root` | Run it with `sudo`. |
 | Server stays offline | `systemctl status lcm-agent` and `journalctl -u lcm-agent -n 50` show the cause. Often: the token was typed instead of pasted. |
-| Token lost | Use **"Regenerate token"** on the server in LCM. The old one becomes invalid immediately and the agent has to be enrolled again. |
+| Token lost | Use **"Renew agent token"** on the server in LCM. The old one becomes invalid immediately and the agent has to be enrolled again. |
 
 ## What is different on an agent server
 

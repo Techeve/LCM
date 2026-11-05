@@ -1,13 +1,16 @@
 package middlewares
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/apierr"
 	"LCM/internal/netfilter"
 )
 
@@ -18,11 +21,21 @@ func testApp(t *testing.T, entries []string, trustProxy bool) *fiber.App {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: apiErrorHandler})
 	app.Use(ResolveClientIP(netfilter.ProxyTrust{Enabled: trustProxy}))
 	app.Use(IPAllowlist(list, slog.New(slog.NewTextHandler(io.Discard, nil))))
 	app.Get("/x", func(c fiber.Ctx) error { return c.SendString("ok") })
 	return app
+}
+
+// apiErrorHandler schreibt apierr-Fehler wie der zentrale Handler des Routers:
+// Status des Fehlers, Code im Rumpf.
+func apiErrorHandler(c fiber.Ctx, err error) error {
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	return c.Status(apiErr.Status).JSON(fiber.Map{"code": apiErr.Code})
 }
 
 // Mit trustProxyHeader entscheidet der X-Forwarded-For-Header - deterministisch
@@ -63,5 +76,9 @@ func TestIPAllowlistMiddlewareDeniesUnknownWithoutHeader(t *testing.T) {
 	}
 	if resp.StatusCode != fiber.StatusForbidden {
 		t.Errorf("ohne passenden Header/Peer erwartet 403, bekam %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), errIPDenied.Code) {
+		t.Errorf("Antwort %s enthält nicht den Code %s", body, errIPDenied.Code)
 	}
 }

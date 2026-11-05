@@ -55,12 +55,12 @@ COPY bin/lcm-linux-${TARGETARCH} /lcm
 
 ## ---- Bauart „source": alles im Container -------------------------------------
 FROM --platform=$BUILDPLATFORM node:lts-alpine AS frontend-builder
-WORKDIR /src/frontend
-COPY frontend/package.json frontend/package-lock.json ./
+WORKDIR /src/ui
+COPY ui/package.json ui/package-lock.json ./
 # --ignore-scripts ist Absicht: postinstall-Skripte sind der meistgenutzte
 # Angriffsweg in npm. Details: docs/reference/dependencies.md
 RUN npm ci --no-audit --ignore-scripts
-COPY frontend/ ./
+COPY ui/ ./
 # Sicherheits-Gate wie im Makefile: unsichere Pakete brechen den Build ab.
 RUN npm audit --audit-level=high && npm run build
 
@@ -69,7 +69,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
+COPY --from=frontend-builder /src/ui/dist ./ui/dist
 # Sicherheits-Gate: bekannte Go-Schwachstellen brechen den Build ab.
 RUN go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 # Cross-Compile statt Emulation: Go baut für die Zielarchitektur selbst.

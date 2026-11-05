@@ -257,7 +257,7 @@ func (s *ServerService) replaceDSMPackages(id uint, info *synology.Info) {
 func (s *ServerService) recordDSMJoin(server *domain.Server, actor, detail string) {
 	now := time.Now()
 	job := &domain.Job{
-		ServerID: &server.ID, Type: "join", Name: "DSM-Onboarding: " + server.Name,
+		ServerID: &server.ID, Type: domain.JobTypeJoin, Name: "DSM-Onboarding: " + server.Name,
 		Status: domain.JobStatusSuccess, TriggeredBy: actor,
 		StartedAt: &now, FinishedAt: &now,
 		Output: "Synology-DSM-Gerät angelegt (Überwachung über die DSM-Web-API).\n" + detail,

@@ -115,7 +115,7 @@ deny_self_and_root() {
 # KillMode=process). Nur ohne aktiven Dienst (Accept=yes, sshd je Verbindung)
 # ist nichts zu tun - jede neue Verbindung liest die Konfiguration frisch.
 sshd_socket_active() { systemctl is-active --quiet ssh.socket 2>/dev/null || systemctl is-active --quiet sshd.socket 2>/dev/null; }
-sshd_reload() { sshd -t && { if sshd_socket_active; then if systemctl is-active --quiet ssh.service 2>/dev/null; then systemctl restart ssh; elif systemctl is-active --quiet sshd.service 2>/dev/null; then systemctl restart sshd; fi; else systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || service ssh reload 2>/dev/null || service sshd reload; fi; }; }
+sshd_reload() { { mkdir -p /run/sshd 2>/dev/null; sshd -t; } && { if sshd_socket_active; then if systemctl is-active --quiet ssh.service 2>/dev/null; then systemctl reset-failed ssh 2>/dev/null; systemctl restart ssh; elif systemctl is-active --quiet sshd.service 2>/dev/null; then systemctl reset-failed sshd 2>/dev/null; systemctl restart sshd; fi; else systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || service ssh reload 2>/dev/null || service sshd reload; fi; }; }
 
 # sshd_ensure_include stellt sicher, dass sshd_config das Drop-in-Verzeichnis
 # ueberhaupt einliest - openSUSE liefert keine Include-Zeile mit, dort blieb
@@ -451,7 +451,9 @@ ssh_options() {
         old_ifs="${IFS}"; IFS=','
         for p in $ports; do
             valid_port "$p" || die "ungueltiger port: $p"
-            if [ "$p" -ne 22 ]; then body="${body}Port $p
+            # Nur ein einzelner Port 22 braucht keine Zeile. Im Uebergang muss er
+            # dastehen: Der Generator leitet die Ports der Socket-Unit hieraus ab.
+            if [ "$ports" != "22" ]; then body="${body}Port $p
 "; fi
         done
         IFS="${old_ifs}"
@@ -518,7 +520,11 @@ ListenStream=
         install -d -m 755 "$d"
         printf '%s' "$want" > "$f"
     fi
-    systemctl daemon-reload && systemctl restart "$u" || die "socket-unit $u konnte nicht neu gestartet werden"
+    # Der Dienst muss stehen, sonst verweigert systemd den Start der Socket-Unit.
+    systemctl daemon-reload || die "daemon-reload fehlgeschlagen"
+    systemctl stop "${u%.socket}.service" 2>/dev/null
+    systemctl reset-failed "${u%.socket}.service" 2>/dev/null
+    systemctl restart "$u" || die "socket-unit $u konnte nicht neu gestartet werden"
 }
 
 # user-ensure <name> <shell> <keys_b64> <sudo|nosudo> [fullname_b64|-] [password_b64|-]
@@ -666,6 +672,26 @@ user_remove() {
     echo "lcm-helper: benutzer $name entfernt"
 }
 
+# self-remove: den aufrufenden Service-User bei der Ziel-Bereinigung entfernen,
+# samt Schluessel, sudo-Grant, Shims und diesem Helper. Der Name kommt aus sudo,
+# nicht vom Aufrufer: Der eingeschraenkte Benutzer kann so nur sich selbst
+# entfernen. Bleibt das Konto bestehen, ist das ein FEHLER; der Helper bleibt
+# dann liegen und der Schluessel ist trotzdem weg.
+self_remove() {
+    name="${SUDO_USER:-}"
+    valid_user "$name" || die "self-remove nur ueber sudo"
+    [ "$name" != "root" ] || die "root wird nicht entfernt"
+    rm -f "/home/$name/.ssh/authorized_keys"
+    rm -f "/etc/sudoers.d/$name"
+    if command -v userdel >/dev/null 2>&1; then userdel -rf "$name" >/dev/null 2>&1
+    elif command -v deluser >/dev/null 2>&1; then deluser --remove-home "$name" >/dev/null 2>&1
+    fi
+    id -u "$name" >/dev/null 2>&1 && die "konto $name besteht weiterhin"
+    rm -rf "/home/$name"
+    rm -f "$0"
+    echo "lcm-helper: service-user $name entfernt"
+}
+
 # user-lock <name>: deaktivierten Benutzer sperren - Passwort gesperrt,
 # LCM-Schluesselblock raus, sudo-Grant weg. Konto und Home bleiben
 # (Deaktivierung ist umkehrbar; endgueltig ist user-remove). R2-039.
@@ -791,6 +817,7 @@ case "$cmd" in
     profile-prune)  [ $# -le 1 ] || die "profile-prune [slugs-csv|-]"; profile_prune "${1:--}" ;;
     user-remove) [ $# -eq 1 ] || die "user-remove <name>"; user_remove "$@" ;;
     user-lock)   [ $# -eq 1 ] || die "user-lock <name>"; user_lock "$@" ;;
+    self-remove) [ $# -eq 0 ] || die "self-remove"; self_remove ;;
     timezone)    [ $# -eq 1 ] || die "timezone <zone>"; set_timezone "$@" ;;
     ntp)         [ $# -eq 1 ] || die "ntp <servers-csv>"; set_ntp "$@" ;;
     user-disable) [ $# -eq 1 ] || die "user-disable <name>"; user_disable "$@" ;;

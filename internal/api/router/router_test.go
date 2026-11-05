@@ -18,6 +18,7 @@ import (
 
 	"LCM/internal/api/router"
 	"LCM/internal/config"
+	"LCM/internal/core/events"
 	"LCM/internal/core/services"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/sshx"
@@ -40,7 +41,10 @@ func newTestAppWithRateLimit(t *testing.T, ratePerMinute int) *fiber.App {
 // buildTestApp liefert zusätzlich die DB, damit Tests den User-Zustand
 // (z.B. must_change_password) gezielt setzen können. frontendFS != nil
 // aktiviert das Ausliefern des (Test-)SPA-Frontends.
-func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS) (*fiber.App, *gorm.DB) {
+//
+// opts darf die Deps vor dem Aufbau des Routers verändern (etwa die Uhr der
+// Sitzungen, das Proxy-Vertrauen oder den Ereignisbus des Tests).
+func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS, opts ...func(*router.Deps)) (*fiber.App, *gorm.DB) {
 	t.Helper()
 	db, err := storage.Open(":memory:")
 	if err != nil {
@@ -88,12 +92,20 @@ func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS) (*fiber.App
 		services.NewBackupService(db, settingsRepo, t.TempDir(), ":memory:", ""), settingsRepo, servers.Connect)
 	scheduler := services.NewScheduler(groupRepo, settingsRepo, executor)
 	// Betriebsfähigkeit samt „Erneut versuchen" wie in cmd/app/main.go.
-	servers.WithGroups(groupRepo).WithCapabilities(repositories.NewCapabilityRepository(db)).WithRetryRunner(executor)
-	app := router.New(router.Deps{
+	servers.WithGroups(groupRepo).WithCapabilities(repositories.NewCapabilityRepository(db)).WithRetryRunner(executor).
+		WithCustomActions(repositories.NewCustomActionRepository(db))
+	bus := events.NewBus()
+	alertRepo := repositories.NewAlertRepository(db)
+	notifications := services.NewNotificationService(repositories.NewNotificationRepository(db), alertRepo, cipher, audit)
+	deps := router.Deps{
+		Events:                   bus,
+		Dashboard:                services.NewDashboardService(servers, repositories.NewJobRepository(db), repositories.NewAlertRepository(db), groupRepo, bus),
 		Auth:                     services.NewAuthService(userRepo, time.Hour),
 		APIKeys:                  services.NewAPIKeyService(repositories.NewAPIKeyRepository(db)),
 		Users:                    services.NewUserService(userRepo, roleRepo),
 		Servers:                  servers,
+		CustomActions:            services.NewCustomActionService(repositories.NewCustomActionRepository(db), audit),
+		Alerts:                   services.NewAlertService(alertRepo, serverRepo, groupRepo, notifications, audit),
 		Jobs:                     jobs,
 		Audit:                    audit,
 		Groups:                   services.NewGroupService(groupRepo, serverRepo, audit, scheduler.Reload),
@@ -107,8 +119,11 @@ func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS) (*fiber.App
 		System:                   services.NewSystemService(),
 		APIKeyRateLimitPerMinute: ratePerMinute,
 		FrontendFS:               frontendFS,
-	})
-	return app, db
+	}
+	for _, opt := range opts {
+		opt(&deps)
+	}
+	return router.New(deps), db
 }
 
 // TestSPACacheHeaders sichert die Cache-Strategie des eingebetteten Frontends:
@@ -166,9 +181,11 @@ func TestAccountRemediationEnforcesPasswordChange(t *testing.T) {
 	token := loginToken(t, app, "admin", "test-admin-passwort")
 
 	// Ein regulärer Endpunkt ist gesperrt (403), obwohl das Token gültig ist.
-	if resp := doRequest(t, app, "GET", "/api/v1/servers", token, ""); resp.StatusCode != 403 {
+	resp := doRequest(t, app, "GET", "/api/v1/servers", token, "")
+	if resp.StatusCode != 403 {
 		t.Errorf("gesperrter Endpunkt: erwartet 403, bekam %d", resp.StatusCode)
 	}
+	assertErrorCode(t, resp, "auth.password_change_required")
 	// Der eigene Passwort-Reset ist erlaubt (Self-Reauth: aktuelles Passwort).
 	reset := doRequest(t, app, "POST", fmt.Sprintf("/api/v1/users/%d/reset-password", admin.ID),
 		token, `{"current_password":"test-admin-passwort","password":"neues-sicheres-passwort"}`)
@@ -194,9 +211,11 @@ func TestSelfPasswordResetRequiresCurrentPassword(t *testing.T) {
 	token := loginToken(t, app, "admin", "test-admin-passwort")
 	path := fmt.Sprintf("/api/v1/users/%d/reset-password", admin.ID)
 
-	if r := doRequest(t, app, "POST", path, token, `{"password":"Regen9-Amsel!Turmfalk"}`); r.StatusCode != 401 {
+	r := doRequest(t, app, "POST", path, token, `{"password":"Regen9-Amsel!Turmfalk"}`)
+	if r.StatusCode != 401 {
 		t.Errorf("ohne aktuelles Passwort: erwartet 401, bekam %d", r.StatusCode)
 	}
+	assertErrorCode(t, r, "auth.password_incorrect")
 	if r := doRequest(t, app, "POST", path, token, `{"current_password":"falsch","password":"Regen9-Amsel!Turmfalk"}`); r.StatusCode != 401 {
 		t.Errorf("mit falschem aktuellem Passwort: erwartet 401, bekam %d", r.StatusCode)
 	}
@@ -207,6 +226,12 @@ func TestSelfPasswordResetRequiresCurrentPassword(t *testing.T) {
 
 func doRequest(t *testing.T, app *fiber.App, method, path, token, body string) *http.Response {
 	t.Helper()
+	return doRequestWithHeaders(t, app, method, path, token, body, nil)
+}
+
+// doRequestWithHeaders ist doRequest mit zusätzlichen Kopfzeilen.
+func doRequestWithHeaders(t *testing.T, app *fiber.App, method, path, token, body string, headers map[string]string) *http.Response {
+	t.Helper()
 	var reader io.Reader
 	if body != "" {
 		reader = strings.NewReader(body)
@@ -216,7 +241,10 @@ func doRequest(t *testing.T, app *fiber.App, method, path, token, body string) *
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-LCM-Session", token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := app.Test(req, testRequestConfig())
 	if err != nil {
@@ -237,6 +265,7 @@ func testRequestConfig() fiber.TestConfig {
 	return fiber.TestConfig{Timeout: time.Minute, FailOnTimeout: true}
 }
 
+// loginToken meldet an und liefert den Sitzungswert (session_token) für X-LCM-Session.
 func loginToken(t *testing.T, app *fiber.App, username, password string) string {
 	t.Helper()
 	resp := doRequest(t, app, "POST", "/api/v1/auth/login", "",
@@ -245,12 +274,15 @@ func loginToken(t *testing.T, app *fiber.App, username, password string) string 
 		t.Fatalf("login %s: status %d", username, resp.StatusCode)
 	}
 	var out struct {
-		Token string `json:"token"`
+		SessionToken string `json:"session_token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	return out.Token
+	if out.SessionToken == "" {
+		t.Fatalf("login %s: kein session_token", username)
+	}
+	return out.SessionToken
 }
 
 // TestRBACMiddlewareRunsBeforeHandler ist der Regressionstest für die
@@ -271,7 +303,7 @@ func TestRBACMiddlewareRunsBeforeHandler(t *testing.T) {
 		{"GET", "/api/v1/servers"},
 		{"POST", "/api/v1/servers/join"},
 		{"GET", "/api/v1/server-groups"},
-		{"GET", "/api/v1/jobs/history"},
+		{"GET", "/api/v1/jobs"},
 		{"GET", "/api/v1/settings/global"},
 		{"GET", "/api/v1/notification-channels"},
 		{"GET", "/api/v1/alert-rules"},
@@ -305,6 +337,7 @@ func TestPermissionDeniedIs403(t *testing.T) {
 	if resp = doRequest(t, app, "GET", "/api/v1/settings/global", manager, ""); resp.StatusCode != 403 {
 		t.Errorf("manager settings: erwartet 403, bekam %d", resp.StatusCode)
 	}
+	assertErrorCode(t, resp, "auth.forbidden")
 	// Admin darf beides.
 	if resp = doRequest(t, app, "GET", "/api/v1/settings/global", admin, ""); resp.StatusCode != 200 {
 		t.Errorf("admin settings: erwartet 200, bekam %d", resp.StatusCode)
@@ -333,9 +366,27 @@ func TestUnknownAPIRouteIsJSON404(t *testing.T) {
 	if resp.StatusCode != 404 {
 		t.Fatalf("erwartet 404, bekam %d", resp.StatusCode)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), `"error"`) {
-		t.Errorf("404 sollte JSON-Fehler sein, bekam: %s", body)
+	assertErrorCode(t, resp, "request.unknown_endpoint")
+}
+
+// assertErrorCode prüft, dass die Antwort den erwarteten Fehlercode trägt
+// (siehe apierr) - der Text in "error" ist englisch und darf sich ändern, der
+// Code nicht.
+func assertErrorCode(t *testing.T, resp *http.Response, code string) {
+	t.Helper()
+	var body struct {
+		Error  string         `json:"error"`
+		Code   string         `json:"code"`
+		Params map[string]any `json:"params"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Fehlerantwort ist kein JSON: %v", err)
+	}
+	if body.Code != code {
+		t.Errorf("Fehlercode %q, erwartet %q (error=%q)", body.Code, code, body.Error)
+	}
+	if body.Error == "" {
+		t.Error("Fehlerantwort ohne englischen Text in \"error\"")
 	}
 }
 
@@ -430,9 +481,9 @@ func TestAPIKeyRateLimit(t *testing.T) {
 		t.Error("429-Antwort ohne Retry-After-Header")
 	}
 
-	// JWT-Requests sind vom API-Key-Limit nicht betroffen.
+	// Browser-Sitzungen sind vom API-Key-Limit nicht betroffen.
 	if resp := doRequest(t, app, "GET", "/api/v1/users", admin, ""); resp.StatusCode != 200 {
-		t.Errorf("JWT-Request trotz Key-Limit: erwartet 200, bekam %d", resp.StatusCode)
+		t.Errorf("Sitzungs-Anfrage trotz Key-Limit: erwartet 200, bekam %d", resp.StatusCode)
 	}
 }
 
@@ -465,7 +516,7 @@ func TestSystemInfo(t *testing.T) {
 	// ANGEMELDET: vollständige Angaben.
 	token := loginToken(t, app, "admin", "test-admin-passwort")
 	req := httptest.NewRequest("GET", "/api/v1/system/info", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-LCM-Session", token)
 	authResp, err := app.Test(req, testRequestConfig())
 	if err != nil {
 		t.Fatal(err)
@@ -550,10 +601,10 @@ func TestStilleVerwerfungAbgewiesen(t *testing.T) {
 	app := newTestApp(t)
 	admin := loginToken(t, app, "admin", "test-admin-passwort")
 
-	// R2-012: ports als JSON-Array → 400 (früher: 200, nur SSH offen).
+	// R2-012: ports als JSON-Array → Fehler mit Feldnamen (früher: 200, nur SSH offen).
 	if r := doRequest(t, app, "POST", "/api/v1/servers/1/firewall", admin,
-		`{"enable":true,"ports":[22,8080,9999]}`); r.StatusCode != 400 {
-		t.Errorf("R2-012 ports-Array: erwartet 400, bekam %d", r.StatusCode)
+		`{"enable":true,"ports":[22,8080,9999]}`); r.StatusCode != 422 {
+		t.Errorf("R2-012 ports-Array: erwartet 422, bekam %d", r.StatusCode)
 	}
 	// Gegenprobe: korrekter String-Weg kommt am Binding vorbei (404 = Server
 	// existiert nicht - das Format war also in Ordnung).
@@ -590,12 +641,12 @@ func TestStilleVerwerfungAbgewiesen(t *testing.T) {
 	// R2-069: unbekannte Job-Filter → 400 statt leerer 200-Treffermenge;
 	// nicht parsbares server_id → 400 statt ALLER Jobs.
 	for _, q := range []string{"status=quatsch", "type=quatsch", "server_id=abc"} {
-		if r := doRequest(t, app, "GET", "/api/v1/jobs/history?"+q, admin, ""); r.StatusCode != 400 {
+		if r := doRequest(t, app, "GET", "/api/v1/jobs?"+q, admin, ""); r.StatusCode != 400 {
 			t.Errorf("R2-069 %s: erwartet 400, bekam %d", q, r.StatusCode)
 		}
 	}
 	for _, q := range []string{"", "?status=failed", "?type=update", "?server_id=999"} {
-		if r := doRequest(t, app, "GET", "/api/v1/jobs/history"+q, admin, ""); r.StatusCode != 200 {
+		if r := doRequest(t, app, "GET", "/api/v1/jobs"+q, admin, ""); r.StatusCode != 200 {
 			t.Errorf("R2-069 Positivprobe %q: erwartet 200, bekam %d", q, r.StatusCode)
 		}
 	}

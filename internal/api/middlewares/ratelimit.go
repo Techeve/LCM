@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+
+	"LCM/internal/api/apierr"
 )
 
 // APIKeyRateLimit begrenzt Requests pro API-Key auf maxPerMinute
@@ -15,8 +17,8 @@ import (
 // (api_key_rate_limit_per_minute); 0 deaktiviert das Limit.
 //
 // Die Middleware greift VOR der Key-Validierung und zählt auch ungültige
-// Keys - das drosselt gleichzeitig Brute-Force-Versuche. Browser-Sessions
-// (JWT) sind nicht betroffen. Bei Überschreitung: 429 + Retry-After.
+// Keys - das drosselt gleichzeitig Brute-Force-Versuche. Browser-Sitzungen
+// sind nicht betroffen. Bei Überschreitung: 429 + Retry-After.
 //
 // Die Zähler liegen in-memory; bei einem Neustart beginnen sie bei null.
 // Für Multi-Instanz-Deployments hinter einem Load-Balancer gehört das
@@ -69,8 +71,7 @@ func APIKeyRateLimit(maxPerMinute int) fiber.Handler {
 
 		if count > maxPerMinute {
 			c.Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
-			return fiber.NewError(fiber.StatusTooManyRequests,
-				"Rate-Limit überschritten - bitte später erneut versuchen")
+			return apierr.TooManyRequests
 		}
 		return c.Next()
 	}

@@ -165,7 +165,7 @@ func (s *ServerService) CreateRouterOSServer(req RouterOSRequest) (*RouterOSResu
 func (s *ServerService) recordRouterOSJoin(server *domain.Server, actor, detail string) {
 	now := time.Now()
 	job := &domain.Job{
-		ServerID: &server.ID, Type: "join", Name: "RouterOS-Onboarding: " + server.Name,
+		ServerID: &server.ID, Type: domain.JobTypeJoin, Name: "RouterOS-Onboarding: " + server.Name,
 		Status: domain.JobStatusSuccess, TriggeredBy: actor,
 		StartedAt: &now, FinishedAt: &now,
 		Output: "MikroTik-RouterOS-Gerät angelegt (reine Überwachung).\n" + detail,

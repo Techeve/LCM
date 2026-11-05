@@ -495,7 +495,13 @@ func (s *ServerService) DeepScanReportDetail(scope repositories.AccessScope, id 
 // InstallDeepScanTools installiert needrestart + lynis auf dem Server (angeboten,
 // nicht automatisch). Multi-Distro, best-effort je Paket.
 func (s *ServerService) InstallDeepScanTools(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	return s.startPackageJob(scope, id, domain.RuleTypeScript,
+	return s.runPlanned(scope, id, actor, s.planDeepScanTools)
+}
+
+// planDeepScanTools baut die Installation von needrestart und lynis - für den
+// Lauf und die Befehlsvorschau gleich.
+func (s *ServerService) planDeepScanTools(server *domain.Server) (packagePlan, error) {
+	return s.newPackagePlan(server, domain.RuleTypeScript,
 		"Deep-Scan-Tools installieren (needrestart, lynis)",
-		func(mgr string) string { return pkgInstallScript(mgr, []string{"needrestart", "lynis"}) }, actor)
+		func(mgr string) string { return pkgInstallScript(mgr, []string{"needrestart", "lynis"}) })
 }

@@ -66,6 +66,14 @@ type User struct {
 	TOTPSecretEnc string `json:"-"`
 	TOTPEnabled   bool   `gorm:"default:false" json:"totp_enabled"`
 
+	// Language ist die gewählte Oberflächensprache (BCP 47, etwa "de", "en-GB").
+	// Leer = noch nicht gewählt; die Oberfläche schlägt dann die Browsersprache vor.
+	Language string `gorm:"size:10" json:"language"`
+
+	// ReleaseNotesSeen ist die Version, deren Hinweise der Benutzer zuletzt
+	// geschlossen hat (siehe services.ReleaseNotesService).
+	ReleaseNotesSeen string `gorm:"size:40" json:"-"`
+
 	Roles []Role `gorm:"many2many:user_roles" json:"roles"`
 }
 

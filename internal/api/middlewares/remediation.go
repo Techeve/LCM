@@ -11,12 +11,13 @@ import (
 // remediationAllowedExact sind die Endpunkte, die ein Nutzer im
 // Remediation-Zustand (Passwort ändern / 2FA einrichten) noch erreichen darf.
 var remediationAllowedExact = map[string]bool{
-	"/api/v1/auth/logout":     true,
-	"/api/v1/auth/me":         true,
-	"/api/v1/auth/2fa/setup":  true,
-	"/api/v1/auth/2fa/enable": true,
-	"/api/v1/system/info":     true,
-	"/api/v1/health":          true,
+	"/api/v1/auth/logout":         true,
+	"/api/v1/auth/me":             true,
+	"/api/v1/auth/me/preferences": true,
+	"/api/v1/auth/2fa/setup":      true,
+	"/api/v1/auth/2fa/enable":     true,
+	"/api/v1/system/info":         true,
+	"/api/v1/health":              true,
 }
 
 // AccountRemediation erzwingt serverseitig, dass ein Nutzer, dessen Konto eine
@@ -59,10 +60,8 @@ func AccountRemediation(settings *services.SettingsService) fiber.Handler {
 			return c.Next()
 		}
 		if needPassword {
-			return fiber.NewError(fiber.StatusForbidden,
-				"Passwort muss zuerst geändert werden - bis dahin ist das Konto gesperrt")
+			return errPasswordChange
 		}
-		return fiber.NewError(fiber.StatusForbidden,
-			"Zwei-Faktor-Authentifizierung ist für diese Rolle Pflicht und muss zuerst eingerichtet werden")
+		return errTOTPSetupNeeded
 	}
 }

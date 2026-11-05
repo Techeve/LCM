@@ -76,16 +76,16 @@ func (h *Handler) Fiber() fiber.Handler {
 		if token == "" || h.auth == nil || !h.auth(token) {
 			c.Set("WWW-Authenticate", `Bearer realm="LCM MCP"`)
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "ungültiger oder fehlender MCP-API-Key (Authorization: Bearer …)",
+				"error": "invalid or missing MCP API key (Authorization: Bearer …)",
 			})
 		}
 
 		var req rpcRequest
 		if err := json.Unmarshal(c.Body(), &req); err != nil {
-			return c.JSON(errResponse(nil, codeParse, "JSON konnte nicht geparst werden"))
+			return c.JSON(errResponse(nil, codeParse, "JSON could not be parsed"))
 		}
 		if req.JSONRPC != "2.0" || req.Method == "" {
-			return c.JSON(errResponse(req.ID, codeInvalidRequest, "ungültige JSON-RPC-2.0-Anfrage"))
+			return c.JSON(errResponse(req.ID, codeInvalidRequest, "invalid JSON-RPC 2.0 request"))
 		}
 
 		// Notifications (ohne ID, z.B. notifications/initialized) werden
@@ -108,18 +108,18 @@ func (h *Handler) Fiber() fiber.Handler {
 			}
 			if len(req.Params) > 0 {
 				if err := json.Unmarshal(req.Params, &p); err != nil {
-					return c.JSON(errResponse(req.ID, codeInvalidParams, "ungültige tools/call-Parameter"))
+					return c.JSON(errResponse(req.ID, codeInvalidParams, "invalid tools/call parameters"))
 				}
 			}
 			if p.Name == "" {
-				return c.JSON(errResponse(req.ID, codeInvalidParams, "tool-name fehlt"))
+				return c.JSON(errResponse(req.ID, codeInvalidParams, "tool name is missing"))
 			}
 			return c.JSON(okResponse(req.ID, h.callTool(p.Name, p.Arguments)))
 		default:
 			if isNotification {
 				return c.SendStatus(fiber.StatusAccepted)
 			}
-			return c.JSON(errResponse(req.ID, codeMethodNotFound, "unbekannte Methode: "+req.Method))
+			return c.JSON(errResponse(req.ID, codeMethodNotFound, "unknown method: "+req.Method))
 		}
 	}
 }

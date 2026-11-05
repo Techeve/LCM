@@ -127,11 +127,3 @@ func (r *AppRepository) ReplaceUnknown(serverID uint, apps []domain.UnknownApp) 
 		return tx.Create(&apps).Error
 	})
 }
-
-// CountDetectedBySlug zählt, auf wie vielen Servern eine Anwendung gefunden
-// wurde - der Verwendungsnachweis vor dem Löschen eines Eintrags.
-func (r *AppRepository) CountDetectedBySlug(slug string) (int64, error) {
-	var n int64
-	err := r.db.Model(&domain.DetectedApp{}).Where("slug = ?", slug).Count(&n).Error
-	return n, err
-}

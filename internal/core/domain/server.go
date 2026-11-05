@@ -62,7 +62,9 @@ const (
 )
 
 // MaxDNSServers ist die Obergrenze der pro Server setzbaren Nameserver.
-const MaxDNSServers = 3
+// systemd-resolved nutzt alle; glibc liest aus /etc/resolv.conf nur die
+// ersten drei (MAXNS), ein vierter wirkt dort also nicht.
+const MaxDNSServers = 4
 
 // MaxNTPServers ist die Obergrenze der pro Server setzbaren Zeitserver. Vier
 // ist die Empfehlung der NTP-Pool-Projekte: genug für einen belastbaren
@@ -453,7 +455,7 @@ type Server struct {
 	// column: explizit setzen - gorm trennte HTTPS sonst zu http_s_revert_urls.
 	HTTPSRevertURLs string `gorm:"column:https_revert_urls;serializer:aesgcm" json:"https_revert_urls"`
 
-	// DNS: von LCM gesetzte Nameserver (bis zu drei, kommagetrennt). Werden per
+	// DNS: von LCM gesetzte Nameserver (bis zu vier, kommagetrennt). Werden per
 	// Aktion „DNS anwenden" auf den Server geschrieben (systemd-resolved-Drop-in
 	// oder /etc/resolv.conf, siehe services/dns.go). Leer = LCM verwaltet DNS nicht.
 	DNSServers string `json:"dns_servers"`
@@ -533,6 +535,12 @@ type Server struct {
 	// CVE-Scan (Trivy) gegen den erfassten Paketbestand.
 	LastCVEScanAt *time.Time `json:"last_cve_scan_at"` // letzter erfolgreicher CVE-Scan
 	CVEScanError  string     `json:"cve_scan_error"`   // z.B. "Trivy nicht verfügbar"
+
+	// UpdateCheckError: Die Update-Prüfung des letzten Scans ist gescheitert
+	// (kaputte Paketquelle). Die Paketliste zeigt dann keine Updates, der Stand
+	// ist aber unbekannt. Stammt aus der Ausgabe des Servers, deshalb at rest
+	// verschlüsselt.
+	UpdateCheckError string `gorm:"serializer:aesgcm" json:"update_check_error"`
 
 	// Demo-Server werden nie per SSH kontaktiert (--demo Testdaten).
 	IsDemo bool `gorm:"default:false" json:"is_demo"`
@@ -799,6 +807,8 @@ type TrafficLightInput struct {
 	// gelaufen ist, war von einem tatsächlich sauberen nicht zu
 	// unterscheiden (BUG-021).
 	CVEScanError string
+	// UpdateCheckError: Die Update-Prüfung ist gescheitert, „keine Updates" gilt nicht.
+	UpdateCheckError string
 	// CVEDB ist der Stand der zentralen Schwachstellen-Datenbank. Sie gilt für
 	// ALLE Server gleichermaßen (der Scan läuft zentral auf dem LCM-Host), ist
 	// also kein Merkmal dieses Servers - wohl aber die Grundlage seiner
@@ -934,6 +944,11 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 	// Konnte die Sicherheitsbewertung nicht laufen, ist "keine Lücken
 	// gefunden" keine Aussage - das muss sichtbar sein statt als Entwarnung
 	// durchzugehen (BUG-021).
+	if in.UpdateCheckError != "" {
+		insights = append(insights, insight("warning", "updateCheckFailed",
+			"Update-Stand unbekannt: "+in.UpdateCheckError,
+			map[string]string{"error": in.UpdateCheckError}))
+	}
 	if in.CVEScanError != "" {
 		insights = append(insights, insight("warning", "cveScanError",
 			"CVE-Bewertung nicht möglich: "+in.CVEScanError,

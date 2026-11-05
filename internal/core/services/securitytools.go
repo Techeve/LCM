@@ -152,7 +152,10 @@ const fail2banDropin = "/etc/fail2ban/jail.d/99-lcm.local"
 func fail2banInstallScript(mgr, srcIP string, extra []string) string {
 	ignore := strings.Join(allowlistIPs(srcIP, extra), " ")
 	return strings.Join([]string{
+		fail2banRepoStep(mgr),
 		pkgInstallScript(mgr, []string{"fail2ban"}),
+		// Auch nach dem Schritt oben kann das Paket fehlen: Der Job darf dann nicht als erfolgreich enden.
+		"command -v fail2ban-client >/dev/null 2>&1 || { echo 'LCM-FEHLER: fail2ban ist nicht installiert, es wurde nichts eingerichtet'; exit 1; }",
 		"install -d -m 755 /etc/fail2ban/jail.d",
 		fmt.Sprintf("printf '# Von LCM verwaltet - eigene Jails und Verschaerfungen gehoeren in jail.local.\\n"+
 			"[DEFAULT]\\nbackend = systemd\\nignoreip = %s\\n\\n[sshd]\\nenabled = true\\n' > %s", ignore, fail2banDropin),
@@ -166,6 +169,22 @@ func fail2banInstallScript(mgr, srcIP string, extra []string) string {
 		fmt.Sprintf("echo 'LCM: fail2ban eingerichtet (ignoreip: %s)'", ignore),
 		"fail2ban-client status sshd 2>/dev/null || true",
 	}, "\n")
+}
+
+// fail2banRepoStep richtet EPEL ein, wenn fail2ban in den Paketquellen fehlt:
+// Auf Rocky, Alma und RHEL liegt es nur dort. `epel-release` steckt bei den
+// Klonen in „extras", RHEL kennt es nicht und bekommt das Paket direkt vom
+// Fedora-Projekt. Fedora selbst führt fail2ban und läuft hier durch.
+func fail2banRepoStep(mgr string) string {
+	if pkgFamily(mgr) != pkgDnf {
+		return ":"
+	}
+	dnf := dnfBin(mgr)
+	return "if ! " + dnf + " -q info fail2ban >/dev/null 2>&1; then " +
+		"if " + dnf + " install -y epel-release >/dev/null 2>&1 || " +
+		dnf + " install -y \"https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel).noarch.rpm\" >/dev/null 2>&1; " +
+		"then echo 'LCM: Paketquelle EPEL eingerichtet (dort liegt fail2ban)'; " +
+		"else echo 'LCM-WARNUNG: die Paketquelle EPEL liess sich nicht einrichten'; fi; fi"
 }
 
 // ---- CrowdSec ---------------------------------------------------------------
@@ -324,32 +343,8 @@ func (s *ServerService) ConfigureSecurityTool(scope repositories.AccessScope, id
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureNotRouterOS(server); err != nil {
+	if err := s.planSecurityTool(server, &in); err != nil {
 		return nil, err
-	}
-	if err := ensureFullSudo(server); err != nil {
-		return nil, err
-	}
-	if err := validateSecurityToolInput(&in); err != nil {
-		return nil, err
-	}
-	// Remote/Console-Voraussetzungen früh prüfen (bevor ein Job startet).
-	if in.Tool == SecurityToolCrowdSec && (in.LapiMode == "remote" || in.LapiMode == "console") {
-		if s.crowdsecConfig == nil {
-			return nil, ErrCrowdSecLapiMissing
-		}
-		if cfg, err := s.crowdsecConfig(in.LapiID); in.LapiMode == "remote" && (err != nil || cfg.LapiURL == "") {
-			return nil, ErrCrowdSecLapiMissing
-		}
-	}
-	// Allowlist-Referenzen früh prüfen: eine unbekannte ID lief bisher mit
-	// „success" durch, und ignoreip fiel wortlos auf die Standardbelegung
-	// zurück - das Verwaltungsnetz war dann sperrbar (R2-075). Der Anwender
-	// sitzt hier davor: 400 statt stiller Rückfall.
-	if len(in.AllowlistIDs) > 0 && s.ipAllowlistExpand != nil {
-		if _, err := s.ipAllowlistExpand(in.AllowlistIDs); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidAllowlistIP, err)
-		}
 	}
 	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeScript, "Sicherheit-Tools ("+in.Tool+") @ "+server.Name, actor)
 	if err != nil {
@@ -360,6 +355,39 @@ func (s *ServerService) ConfigureSecurityTool(scope repositories.AccessScope, id
 		s.runSecurityToolJob(job, server, in, actor)
 	})
 	return job, nil
+}
+
+// planSecurityTool prüft Server und Eingabe der Einrichtung - für den Lauf
+// und die Befehlsvorschau gleich. in wird dabei normalisiert.
+func (s *ServerService) planSecurityTool(server *domain.Server, in *SecurityToolInput) error {
+	if err := ensureNotRouterOS(server); err != nil {
+		return err
+	}
+	if err := ensureFullSudo(server); err != nil {
+		return err
+	}
+	if err := validateSecurityToolInput(in); err != nil {
+		return err
+	}
+	// Remote/Console-Voraussetzungen früh prüfen (bevor ein Job startet).
+	if in.Tool == SecurityToolCrowdSec && (in.LapiMode == "remote" || in.LapiMode == "console") {
+		if s.crowdsecConfig == nil {
+			return ErrCrowdSecLapiMissing
+		}
+		if cfg, err := s.crowdsecConfig(in.LapiID); in.LapiMode == "remote" && (err != nil || cfg.LapiURL == "") {
+			return ErrCrowdSecLapiMissing
+		}
+	}
+	// Allowlist-Referenzen früh prüfen: eine unbekannte ID lief bisher mit
+	// „success" durch, und ignoreip fiel wortlos auf die Standardbelegung
+	// zurück - das Verwaltungsnetz war dann sperrbar (R2-075). Der Anwender
+	// sitzt hier davor: 400 statt stiller Rückfall.
+	if len(in.AllowlistIDs) > 0 && s.ipAllowlistExpand != nil {
+		if _, err := s.ipAllowlistExpand(in.AllowlistIDs); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidAllowlistIP, err)
+		}
+	}
+	return nil
 }
 
 func (s *ServerService) runSecurityToolJob(job *domain.Job, server *domain.Server, in SecurityToolInput, actor string) {
@@ -374,14 +402,54 @@ func (s *ServerService) runSecurityToolJob(job *domain.Job, server *domain.Serve
 	}
 	defer conn.Close()
 
-	// LCM-Quell-IP OHNE sudo lesen (sudo würde $SSH_CONNECTION verwerfen).
-	srcIP := server.LCMSourceIP
-	if out, _, e := conn.Run(`echo "$SSH_CONNECTION" | awk '{print $1}'`); e == nil {
-		if ip := strings.TrimSpace(out); ip != "" {
-			srcIP = ip
-		}
+	srcIP := readLCMSourceIP(conn, server)
+	script, allowlistWarn, err := s.securityToolScript(server, in, srcIP)
+	if err != nil {
+		s.jobs.Complete(job, "", nil, err)
+		return
 	}
 
+	output, code, runErr := conn.Run(privRun(server, script))
+	output += allowlistWarn
+	if runErr == nil && code != 0 {
+		runErr = fmt.Errorf("installation endete mit exit-code %d", code)
+	}
+	if runErr != nil {
+		s.jobs.Complete(job, output, ptrInt(code), runErr)
+		return
+	}
+
+	// Zustand frisch nachlesen (installiert + aktiv) und persistieren.
+	st := s.readSecurityToolState(conn, server)
+	fields := map[string]any{
+		"reachable":          true,
+		"failed_checks":      0, // erfolgreicher Kontakt
+		"lcm_source_ip":      srcIP,
+		"fail2ban_installed": st.fail2banInstalled,
+		"fail2ban_active":    st.fail2banActive,
+		"crowdsec_installed": st.crowdsecInstalled,
+		"crowdsec_active":    st.crowdsecActive,
+	}
+	if st.crowdsecInstalled {
+		// LAPI-Anbindung festhalten: gewählter Modus + die tatsächliche
+		// LAPI-URL aus der Credentials-Datei (Grundlage der „Angebundene
+		// Server"-Liste auf der CrowdSec-Einstellungsseite).
+		if in.Tool == SecurityToolCrowdSec && in.LapiMode != "" {
+			fields["crowdsec_lapi_mode"] = in.LapiMode
+		}
+		for k, v := range crowdsecLapiURLFields(conn, server) {
+			fields[k] = v
+		}
+	}
+	_ = s.servers.UpdateFields(server.ID, fields)
+	s.jobs.Complete(job, output, ptrInt(0), nil)
+}
+
+// securityToolScript baut das Einrichtungs-Skript für die gelesene
+// LCM-Quell-IP - der Lauf und die Befehlsvorschau rufen es gleich auf. Der
+// zweite Rückgabewert ist eine Warnung für den Job, wenn die benannten
+// Allowlists nicht greifen.
+func (s *ServerService) securityToolScript(server *domain.Server, in SecurityToolInput, srcIP string) (string, string, error) {
 	// Benannte Allowlists auflösen und den Ad-hoc-IPs voranstellen (Union in
 	// ignoreip/Whitelist). Fehler bei der Auflösung sind nicht fatal - die
 	// Ad-hoc-IPs und die LCM-Quell-IP greifen weiterhin -, aber sie dürfen
@@ -424,46 +492,26 @@ func (s *ServerService) runSecurityToolJob(job *domain.Job, server *domain.Serve
 		}
 		sc, e := crowdsecInstallScript(server.PackageManager, srcIP, extra, in, cfg)
 		if e != nil {
-			s.jobs.Complete(job, "", nil, e)
-			return
+			return "", "", e
 		}
 		script = sc
 	}
+	return script, allowlistWarn, nil
+}
 
-	output, code, runErr := conn.Run(privRun(server, script))
-	output += allowlistWarn
-	if runErr == nil && code != 0 {
-		runErr = fmt.Errorf("installation endete mit exit-code %d", code)
-	}
-	if runErr != nil {
-		s.jobs.Complete(job, output, ptrInt(code), runErr)
-		return
-	}
+// lcmSourceIPCmd liest die Adresse, von der LCM den Server erreicht. OHNE
+// sudo: sudo würde $SSH_CONNECTION verwerfen.
+const lcmSourceIPCmd = `echo "$SSH_CONNECTION" | awk '{print $1}'`
 
-	// Zustand frisch nachlesen (installiert + aktiv) und persistieren.
-	st := s.readSecurityToolState(conn, server)
-	fields := map[string]any{
-		"reachable":          true,
-		"failed_checks":      0, // erfolgreicher Kontakt
-		"lcm_source_ip":      srcIP,
-		"fail2ban_installed": st.fail2banInstalled,
-		"fail2ban_active":    st.fail2banActive,
-		"crowdsec_installed": st.crowdsecInstalled,
-		"crowdsec_active":    st.crowdsecActive,
-	}
-	if st.crowdsecInstalled {
-		// LAPI-Anbindung festhalten: gewählter Modus + die tatsächliche
-		// LAPI-URL aus der Credentials-Datei (Grundlage der „Angebundene
-		// Server"-Liste auf der CrowdSec-Einstellungsseite).
-		if in.Tool == SecurityToolCrowdSec && in.LapiMode != "" {
-			fields["crowdsec_lapi_mode"] = in.LapiMode
-		}
-		for k, v := range crowdsecLapiURLFields(conn, server) {
-			fields[k] = v
+// readLCMSourceIP liest die LCM-Quell-IP auf dem Server; ohne Ergebnis gilt
+// die zuletzt gespeicherte.
+func readLCMSourceIP(conn sshx.Conn, server *domain.Server) string {
+	if out, _, e := conn.Run(lcmSourceIPCmd); e == nil {
+		if ip := strings.TrimSpace(out); ip != "" {
+			return ip
 		}
 	}
-	_ = s.servers.UpdateFields(server.ID, fields)
-	s.jobs.Complete(job, output, ptrInt(0), nil)
+	return server.LCMSourceIP
 }
 
 type securityToolState struct {

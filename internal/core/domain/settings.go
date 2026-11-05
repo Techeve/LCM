@@ -150,9 +150,24 @@ type GlobalSettings struct {
 	// prüft (je Zeile eine). Leer = eingebaute Standardliste (DefaultDNSTestDomains).
 	DNSTestDomains string `json:"dns_test_domains"`
 
-	// SessionTTLMinutes ist die Lebensdauer einer Anmeldesession (JWT) in
+	// SessionTTLMinutes ist die Leerlauf-Frist einer Browser-Sitzung in
 	// Minuten. 0 = Vorgabe aus der config.json (access_token_ttl_minutes).
 	SessionTTLMinutes int `gorm:"default:0" json:"session_ttl_minutes"`
+
+	// UpdatedToVersion ist die Version des letzten Updates. Nur sie hat
+	// Hinweise für die Administratoren, eine Erstinstallation nicht.
+	UpdatedToVersion string `gorm:"size:40" json:"-"`
+
+	// BrowserSessionMode sagt, wie der Browser seine Anmeldung trägt:
+	// BrowserSessionMemory (Sitzungswert nur im Arbeitsspeicher des Tabs) oder
+	// BrowserSessionCookie (Sitzungs-Cookie, nur über HTTPS). Leer heißt
+	// Arbeitsspeicher - so bleiben bestehende Installationen ohne Wert auf der
+	// sichereren Variante. Kein gorm-Default: SessionMode macht die Vorgabe.
+	BrowserSessionMode string `json:"browser_session_mode"`
+	// BrowserSessionModeConfirmed: Ein Betreiber hat die Wahl bewusst getroffen
+	// (Frage nach den Pflichtschritten). Solange sie fehlt, fragt die Oberfläche
+	// bei der nächsten Anmeldung eines Berechtigten erneut. Keine Pflicht im Backend.
+	BrowserSessionModeConfirmed bool `json:"browser_session_mode_confirmed"`
 
 	// JobIdleTimeoutMinutes ist die erlaubte STILLE eines laufenden Jobs:
 	// Solange von der Gegenseite Ausgabe kommt, arbeitet der Lauf und darf
@@ -245,7 +260,13 @@ type GlobalSettings struct {
 	MailUsername    string `json:"mail_username"`
 	MailPasswordEnc string `json:"-"` // AES-GCM
 	MailFrom        string `json:"mail_from"`
-	// MailUseTLS aktiviert STARTTLS beim Versand (Standard bei Port 587).
+	// MailSecurity ist die Verschlüsselung des Versands: tls (implizit, Port
+	// 465), starttls (Pflicht, Port 587) oder none (Port 25). Leer bei
+	// Installationen vor der Auswahl - dann gilt MailUseTLS (siehe
+	// NormalizeMail). Bewusst ohne gorm-Default.
+	MailSecurity string `json:"mail_security"`
+	// MailUseTLS ist das alte Ja/Nein (true = starttls, false = none). Es
+	// bleibt für ältere Clients erhalten und folgt MailSecurity.
 	MailUseTLS bool `gorm:"default:true" json:"mail_use_tls"`
 	// MailAdminRecipients: Empfänger für Admin-Hinweise (kommagetrennt).
 	MailAdminRecipients string `json:"mail_admin_recipients"`
@@ -477,7 +498,7 @@ const DefaultDNSServerPresets = "Cloudflare = 1.1.1.1\n" +
 const DefaultDNSTestDomains = "deb.debian.org\ngithub.com\ncloudflare.com"
 
 // Hinweis: das Parsen der Vorgabe-Nameserver („Label = IP" je Zeile) macht
-// AUSSCHLIESSLICH das Frontend (parseDnsPresets in ServerDetail.svelte) -
+// AUSSCHLIESSLICH die Oberfläche (parsePresets in ui/src/api/servers-settings.ts) -
 // das Backend reicht DNSServerPresets nur als Rohtext durch.
 
 // DefaultNTPServerPresets sind die eingebauten Vorgabe-Zeitserver. Der
@@ -599,4 +620,55 @@ func ClampAdvisoryCacheTTL(minutes int) int {
 		return AdvisoryCacheTTLMax
 	}
 	return minutes
+}
+
+// Verschlüsselungsmodi des SMTP-Versands (System-Mailer und E-Mail-Kanal).
+const (
+	MailSecurityTLS      = "tls"      // implizites TLS ab Verbindungsaufbau (SMTPS)
+	MailSecurityStartTLS = "starttls" // STARTTLS ist Pflicht
+	MailSecurityNone     = "none"     // unverschlüsselt
+)
+
+// ValidMailSecurity ist wahr für einen der drei Modi.
+func ValidMailSecurity(v string) bool {
+	return v == MailSecurityTLS || v == MailSecurityStartTLS || v == MailSecurityNone
+}
+
+// MailSecurityFromLegacy bildet das alte Ja/Nein ab: true = starttls,
+// false = none.
+func MailSecurityFromLegacy(useTLS bool) string {
+	if useTLS {
+		return MailSecurityStartTLS
+	}
+	return MailSecurityNone
+}
+
+// NormalizeMail macht MailSecurity und MailUseTLS zueinander stimmig: Ist die
+// Auswahl leer (Installation vor der Auswahl), bestimmt MailUseTLS sie; sonst
+// folgt MailUseTLS der Auswahl.
+func (s *GlobalSettings) NormalizeMail() {
+	if s.MailSecurity == "" {
+		s.MailSecurity = MailSecurityFromLegacy(s.MailUseTLS)
+	}
+	s.MailUseTLS = s.MailSecurity != MailSecurityNone
+}
+
+// Wege, auf denen der Browser seine Anmeldung trägt (GlobalSettings.BrowserSessionMode).
+const (
+	BrowserSessionMemory = "memory"
+	BrowserSessionCookie = "cookie"
+)
+
+// ValidBrowserSessionMode meldet, ob der Wert einer der beiden Wege ist.
+func ValidBrowserSessionMode(mode string) bool {
+	return mode == BrowserSessionMemory || mode == BrowserSessionCookie
+}
+
+// SessionMode liefert den wirksamen Weg: Alles außer "cookie" - auch der leere
+// Wert - ist der Arbeitsspeicher.
+func (s *GlobalSettings) SessionMode() string {
+	if s.BrowserSessionMode == BrowserSessionCookie {
+		return BrowserSessionCookie
+	}
+	return BrowserSessionMemory
 }

@@ -79,3 +79,21 @@ func TestRestrictedAllowsRule(t *testing.T) {
 		}
 	}
 }
+
+// sudo-rs (Standard ab Ubuntu 25.10) kennt `requiretty` nicht; bliebe die Zeile
+// stehen, lehnte visudo die ganze Whitelist ab.
+func TestRestrictedProvisionDropsRequirettyOnSudoRs(t *testing.T) {
+	script := strings.Join(restrictedProvisionScript("lcm-svc"), " && ")
+	write := strings.Index(script, "/etc/sudoers.d/lcm-svc.tmp")
+	drop := strings.Index(script, "grep -q sudo-rs")
+	check := strings.Index(script, "visudo -cf")
+	if write < 0 || drop < write || check < drop {
+		t.Fatalf("Reihenfolge Schreiben, Bereinigen, Prüfen stimmt nicht: %d %d %d", write, drop, check)
+	}
+}
+
+func TestRestrictedRollbackRemovesTempFile(t *testing.T) {
+	if !strings.Contains(restrictedRollbackScript("lcm-svc"), "rm -f /etc/sudoers.d/lcm-svc.tmp") {
+		t.Fatal("die Rücknahme muss die temporäre sudoers-Datei entfernen")
+	}
+}

@@ -122,3 +122,45 @@ func TestJoinLoopbackAufDemHostErlaubt(t *testing.T) {
 		t.Error("auf einem Host darf localhost nicht gesperrt sein - so nimmt LCM sich selbst auf")
 	}
 }
+
+// TestLcmHostStatusDerDemo: Der Demo-LCM-Host zeigt einen eingerichteten,
+// eingesperrten Scanner mit frischer Datenbank - unabhängig davon, ob auf dem
+// Rechner der Demo Trivy liegt oder sie im Container läuft. apt-cacher-ng und
+// CrowdSec folgen wie beim echten Host dem Paketbestand.
+func TestLcmHostStatusDerDemo(t *testing.T) {
+	svc, id := containerTestService(t, true)
+	if err := svc.servers.UpdateFields(id, map[string]any{"is_demo": true}); err != nil {
+		t.Fatal(err)
+	}
+	demoAddPackage(svc.servers, id, "apt-cacher-ng", "3.7.4-1")
+
+	st, err := svc.LcmHostStatus(repositories.ScopeAll(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.IsLcmHost || st.InContainer || !st.TrivyInstalled || st.SandboxRetrofit {
+		t.Fatalf("Demo-Host unerwartet: %+v", st)
+	}
+	if st.Scanner == nil || !st.Scanner.Available || st.Scanner.Version == "" || st.Scanner.Freshness != domain.CVEDBFresh || !st.Scanner.Sandboxed {
+		t.Fatalf("Scanner der Demo unerwartet: %+v", st.Scanner)
+	}
+	if !st.AptCacherInstalled || st.CrowdSecLapiInstalled {
+		t.Fatalf("Paketbestand nicht übernommen: %+v", st)
+	}
+}
+
+// TestDemoSkriptJobHebtKeinePakete: Eine simulierte Einrichtung (Skript-Job)
+// spielt keine ausstehenden Updates ein.
+func TestDemoSkriptJobHebtKeinePakete(t *testing.T) {
+	svc, id := containerTestService(t, false)
+	server, err := svc.servers.FindByIDUnscoped(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.servers.ReplacePackages(id, []domain.Package{{Name: "openssl", Version: "3.0.11-1", CandidateVersion: "3.0.14-1"}})
+	demoPackageJobOutput(svc.servers, server, domain.RuleTypeScript)
+	pkgs, _ := svc.servers.FindPackages(id)
+	if len(pkgs) != 1 || pkgs[0].CandidateVersion == "" {
+		t.Fatalf("Skript-Job hat Pakete verändert: %+v", pkgs)
+	}
+}

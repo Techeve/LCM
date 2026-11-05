@@ -3,13 +3,13 @@ package services
 import (
 	"errors"
 	"fmt"
-	"net"
 	"regexp"
 	"strings"
 	"time"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
+	"LCM/internal/inputcheck"
 	"LCM/internal/storage/repositories"
 )
 
@@ -44,8 +44,8 @@ func validDNSServers(servers []string) ([]string, error) {
 		if ip == "" {
 			continue
 		}
-		if net.ParseIP(ip) == nil {
-			return nil, fmt.Errorf("%w: %q", ErrInvalidDNSServer, ip)
+		if reason := inputcheck.IPProblem(ip); reason != "" {
+			return nil, fmt.Errorf("%w: %q: %s", ErrInvalidDNSServer, ip, inputcheck.Describe(reason))
 		}
 		out = append(out, ip)
 	}
@@ -95,7 +95,8 @@ func sanitizeDNSDomains(domains []string) []string {
 }
 
 // dnsApplyScript schreibt die Nameserver auf den Server (systemd-resolved-Drop-in
-// wenn aktiv, sonst /etc/resolv.conf) und verifiziert die Auflösung mit
+// wenn aktiv, sonst /etc/resolv.conf - dort liest glibc nur die ersten drei,
+// die Oberfläche sagt das dazu) und verifiziert die Auflösung mit
 // testDomain; scheitert der Test, wird die Änderung zurückgerollt (exit 1).
 // Leere Server-Liste = Rückbau der LCM-Verwaltung (dnsUnmanageScript).
 func dnsApplyScript(servers []string, testDomain string) string {
@@ -254,7 +255,7 @@ type DNSTestResult struct {
 	Output  string `json:"output"`  // roher Konsolen-Output
 }
 
-// ConfigureDNS setzt bis zu drei Nameserver auf dem Server (leere Liste = LCM
+// ConfigureDNS setzt bis zu vier Nameserver auf dem Server (leere Liste = LCM
 // gibt die DNS-Verwaltung wieder frei). Synchrone Aktion mit Rollback bei
 // gebrochener Auflösung, Muster ConfigureAptProxy.
 func (s *ServerService) ConfigureDNS(scope repositories.AccessScope, id uint, servers []string, actor string) (string, error) {
@@ -262,29 +263,9 @@ func (s *ServerService) ConfigureDNS(scope repositories.AccessScope, id uint, se
 	if err != nil {
 		return "", err
 	}
-	// RouterOS hat kein resolv.conf/systemd-resolved - sauber ablehnen statt
-	// ein Linux-Shell-Skript in die RouterOS-CLI zu schicken.
-	if err := ensureNotRouterOS(server); err != nil {
-		return "", err
-	}
-	clean, err := validDNSServers(servers)
+	script, clean, _, err := s.planDNS(server, servers)
 	if err != nil {
 		return "", err
-	}
-	testDomain := "deb.debian.org"
-	if doms := sanitizeDNSDomains(s.dnsTestDomainList()); len(doms) > 0 {
-		testDomain = doms[0]
-	}
-
-	script := dnsApplyScript(clean, testDomain)
-	if server.RestrictedSudo {
-		// Eingeschränkter Modus: der Helper schreibt DNS validiert (gleiche
-		// Logik samt Auflösungstest + Rollback).
-		arg := "off"
-		if len(clean) > 0 {
-			arg = strings.Join(clean, ",")
-		}
-		script = helperCmd("dns", arg, testDomain)
 	}
 
 	conn, err := s.connectRec(server, "dns", actor)
@@ -309,6 +290,35 @@ func (s *ServerService) ConfigureDNS(scope repositories.AccessScope, id uint, se
 	_ = s.servers.UpdateFields(id, fields)
 	s.audit.Log(actor, "server.dns", "server", id, server.Name+": "+strings.Join(clean, ","))
 	return output, nil
+}
+
+// planDNS prüft Server und Nameserver und baut das Skript - für den Lauf und
+// die Befehlsvorschau gleich. Zurück kommen Skript, bereinigte Nameserver und
+// die Test-Domain, an der die Auflösung belegt wird.
+func (s *ServerService) planDNS(server *domain.Server, servers []string) (string, []string, string, error) {
+	// RouterOS hat kein resolv.conf/systemd-resolved - sauber ablehnen statt
+	// ein Linux-Shell-Skript in die RouterOS-CLI zu schicken.
+	if err := ensureNotRouterOS(server); err != nil {
+		return "", nil, "", err
+	}
+	clean, err := validDNSServers(servers)
+	if err != nil {
+		return "", nil, "", err
+	}
+	testDomain := "deb.debian.org"
+	if doms := sanitizeDNSDomains(s.dnsTestDomainList()); len(doms) > 0 {
+		testDomain = doms[0]
+	}
+	if server.RestrictedSudo {
+		// Eingeschränkter Modus: der Helper schreibt DNS validiert (gleiche
+		// Logik samt Auflösungstest + Rollback).
+		arg := "off"
+		if len(clean) > 0 {
+			arg = strings.Join(clean, ",")
+		}
+		return helperCmd("dns", arg, testDomain), clean, testDomain, nil
+	}
+	return dnsApplyScript(clean, testDomain), clean, testDomain, nil
 }
 
 // DNSTest prüft die Auflösbarkeit der gepflegten Test-Domains auf dem Server und

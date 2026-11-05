@@ -7,9 +7,10 @@ description: How LCM determines a server's traffic-light status - all factors, t
 
 Every server carries one of four statuses: 🟢 **Excellent** (solid green),
 🟢 **OK** (light green), 🟡 **Warning** and 🔴 **Critical**. This page
-explains exactly how the status is determined. The **ⓘ** next to the status
-badge always opens a popover with the concrete reasons ("insights") - for
-yellow/red the problems, for **OK** the points still missing for "Excellent".
+explains exactly how the status is determined. Hover over the status in the
+server list (in the server detail view, click it) to see the concrete reasons
+("insights") - for yellow/red the problems, for **OK** the points still
+missing for "Excellent".
 
 ## Evaluation order
 
@@ -63,8 +64,8 @@ If none of the above signals apply, the server is green. It only reaches
 3. **Firewall (ufw) active** - Proxmox systems bring their own firewall and
    count as covered.
 
-If any of these is missing, the server stays at **OK** - and the ⓘ popover
-lists exactly what is still missing.
+If any of these is missing, the server stays at **OK** - and the reasons
+name exactly what is still missing.
 
 ## Operational capability
 
@@ -89,10 +90,10 @@ since when it has been failing, how often in a row, the cause and what to do.
   button** (`dpkg --configure -a` or `apt -f install`, `zypper verify` on
   zypper). Afterwards **"Try again"** runs the failed action once more - only
   its success resets the area.
-- On the dashboard, **"Only servers LCM is unable to act on"** shows all servers
-  whose package management or connection failed or whose package state is
-  critically stale. The **"Action failed"** alert reports such changes
-  immediately (see [Alerts](/guides/alerts/)).
+- The **"LCM unable to act"** tile on the dashboard leads to the server list
+  with all servers whose package management or connection failed or whose
+  package state is critically stale. The **"Action failed"** alert reports such
+  changes immediately (see [Alerts](/en/guides/alerts/)).
 
 ## CVE weighting
 
@@ -101,12 +102,12 @@ context; the security views keep showing the raw rating:
 
 - **Docker CVEs do not count at all by default.** Containers are isolated,
   their packages are not directly reachable from outside, and the image
-  vendor is responsible for image contents. Only containers **explicitly
-  marked as "CVE-relevant" in the Docker tab** count - then at **full
-  severity**. The mark is attached to the container name and survives image
+  vendor is responsible for image contents. Only containers
+  **explicitly switched on** in the *In the status* column of a server's
+  *Containers* tab count - then at **full severity**. The mark is attached to the container name and survives image
   updates and inventory scans.
 - **CVEs of exposed packages one level higher** - web servers, reverse
-  proxies, mail/DNS servers, databases (list under *Settings → General*) as
+  proxies, mail/DNS servers, databases (list under *Settings → Security*) as
   well as automatically detected packages listening on externally reachable
   ports.
 

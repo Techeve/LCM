@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/storage/repositories"
 )
 
@@ -94,6 +95,13 @@ func (c *statusCache) forget(id *uint) {
 // aller Server). Aufgerufen, wenn ein Job endet oder die API etwas ändert.
 func (s *ServerService) ForgetStatus(serverID *uint) {
 	s.statuses.forget(serverID)
+	s.bus.Publish(events.ServerStatus(serverID))
+}
+
+// WithEvents verdrahtet den Ereignisbus (optional).
+func (s *ServerService) WithEvents(bus *events.Bus) *ServerService {
+	s.bus = bus
+	return s
 }
 
 // WithCapabilities verdrahtet den Speicher der Betriebsfähigkeit. Ohne ihn
@@ -225,6 +233,12 @@ func (s *ServerService) StatusAll(scope repositories.AccessScope) ([]ServerStatu
 	if err != nil {
 		return nil, err
 	}
+	return s.statusOf(servers)
+}
+
+// statusOf bewertet bereits geladene Server (siehe StatusAll). Das Dashboard
+// braucht Server und Ampeln und lädt die Server dafür nur einmal.
+func (s *ServerService) statusOf(servers []domain.Server) ([]ServerStatus, error) {
 	results := make([]ServerStatus, len(servers))
 	found := make([]bool, len(servers))
 	missing := s.fillFromCache(servers, results, found)
@@ -344,6 +358,7 @@ func (s *ServerService) computeStatus(server *domain.Server, caps []domain.Serve
 		// dort über die Versions-Aktualität (siehe TrafficLight).
 		InventoryMissing: inventoried == 0 && !server.IsRouterOS(),
 		CVEScanError:     server.CVEScanError,
+		UpdateCheckError: server.UpdateCheckError,
 		DeepScanWarnings: server.DeepScanWarnings,
 		// Stand der zentralen Schwachstellen-Datenbank - reiner Hinweis, er
 		// faerbt die Ampel nicht (siehe TrafficLightInput.CVEDB).

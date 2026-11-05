@@ -122,20 +122,35 @@ func (r *AlertRepository) FindEvents(limit int) ([]domain.AlertEvent, error) {
 	return events, nil
 }
 
+// FindRecentEventsScoped liefert die jüngsten Alarm-Events, soweit der Scope
+// den zugehörigen Server sehen darf. Events ohne Server (Selbstbeobachtung)
+// gehören nur Admins.
+func (r *AlertRepository) FindRecentEventsScoped(scope AccessScope, limit int) ([]domain.AlertEvent, error) {
+	var events []domain.AlertEvent
+	q := scope.scopeByServerColumn(r.db, "alert_events.server_id")
+	if err := q.Order("created_at DESC").Limit(limit).Find(&events).Error; err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
 // AlertEventFilter grenzt die Event-Historie ein (leer = alles).
 type AlertEventFilter struct {
 	Type     string
 	Severity string
 	ServerID uint
+	Since    *time.Time // created_at >= Since
 	Limit    int
 	Offset   int
 }
 
-// FindEventsFiltered liefert Alarm-Events seitenweise mit Gesamtzahl.
+// FindEventsFiltered liefert Alarm-Events seitenweise mit Gesamtzahl, soweit
+// der Scope den zugehörigen Server sehen darf. Events ohne Server
+// (Selbstbeobachtung) gehören nur Admins.
 // Vorher war die Historie auf die neuesten 200 gedeckelt und Paging/Filter
 // wirkungslos - bei 677 Ereignissen waren 477 unerreichbar (R2-023).
-func (r *AlertRepository) FindEventsFiltered(f AlertEventFilter) ([]domain.AlertEvent, int64, error) {
-	q := r.db.Model(&domain.AlertEvent{})
+func (r *AlertRepository) FindEventsFiltered(scope AccessScope, f AlertEventFilter) ([]domain.AlertEvent, int64, error) {
+	q := scope.scopeByServerColumn(r.db.Model(&domain.AlertEvent{}), "alert_events.server_id")
 	if f.Type != "" {
 		q = q.Where("type = ?", f.Type)
 	}
@@ -144,6 +159,9 @@ func (r *AlertRepository) FindEventsFiltered(f AlertEventFilter) ([]domain.Alert
 	}
 	if f.ServerID != 0 {
 		q = q.Where("server_id = ?", f.ServerID)
+	}
+	if f.Since != nil {
+		q = q.Where("created_at >= ?", *f.Since)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {

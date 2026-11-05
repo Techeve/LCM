@@ -39,7 +39,7 @@ reicht das; gemeldet wird deshalb erst ab **30 Sekunden**.
 
 ## Einstellen
 
-Server-Detail → **Einstellungen** (Zahnrad) → Abschnitt *Zeit & Zeitabgleich*:
+Server-Detail → **Einstellungen** (Zahnrad) → *Servereinstellungen* → Abschnitt *Zeit*:
 
 - **Zeitzone setzen** - LCM schreibt sie und **liest sie zurück**. Meldet das
   System danach etwas anderes, gilt sie als nicht gesetzt; eine geschriebene
@@ -63,7 +63,7 @@ einzurichten.
 
 ## Vorgaben
 
-Unter **Einstellungen → Zeit & NTP** lassen sich hinterlegen:
+Unter **Einstellungen → Zeit** lassen sich hinterlegen:
 
 - **Vorgabe-Zeitserver** (je Zeile `Label = Host`) - sie erscheinen als
   Auswahl beim Einrichten. Leer = eingebaute Liste (NTP-Pool, Cloudflare,

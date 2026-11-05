@@ -619,9 +619,15 @@ func slugOf(profiles []*domain.PrivilegeProfile, id uint) string {
 // wirklich trägt, entscheidet der nächste Scan über die ACL-Probe - auf ZFS
 // ohne acltype=posixacl bleibt es auch mit installiertem Paket wirkungslos.
 func (s *ServerService) InstallACLSupport(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	return s.startPackageJob(scope, id, domain.RuleTypeScript,
+	return s.runPlanned(scope, id, actor, s.planACLSupport)
+}
+
+// planACLSupport baut die Installation des Pakets acl - für den Lauf und die
+// Befehlsvorschau gleich.
+func (s *ServerService) planACLSupport(server *domain.Server) (packagePlan, error) {
+	return s.newPackagePlan(server, domain.RuleTypeScript,
 		"ACL-Unterstützung installieren (Paket acl)",
-		func(mgr string) string { return pkgInstallScript(mgr, []string{"acl"}) }, actor)
+		func(mgr string) string { return pkgInstallScript(mgr, []string{"acl"}) })
 }
 
 // ---- Kontotyp „nur Dateizugriff" ---------------------------------------------

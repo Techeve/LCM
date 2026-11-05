@@ -2,8 +2,7 @@ package controllers
 
 import (
 	"errors"
-	"strconv"
-	"time"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -22,61 +21,64 @@ func NewJobController(jobs *services.JobService, audit *services.AuditService) *
 	return &JobController{jobs: jobs, audit: audit}
 }
 
-// History - GET /api/v1/jobs/history (jobs:read)
-// Gefiltert und seitenweise. Query-Parameter: server_id, status, type,
-// q (Namenssuche), triggered_by, hide_health, from, to (Datum YYYY-MM-DD),
-// page, page_size. Antwort: {items, total, page, page_size}.
-func (ctrl *JobController) History(c fiber.Ctx) error {
-	page := fiber.Query[int](c, "page")
-	if page < 1 {
-		page = 1
-	}
-	pageSize := fiber.Query[int](c, "page_size")
-	if pageSize <= 0 || pageSize > 500 {
-		pageSize = 100
-	}
-	if err := checkLines(lineField{"q", c.Query("q"), maxQueryLen}, lineField{"triggered_by", c.Query("triggered_by"), maxQueryLen}); err != nil {
-		return err
-	}
-	// Unbekannte Filterwerte werden ABGEWIESEN statt still zu einer leeren
-	// Treffermenge zu führen (R2-069): "status=quatsch" sah aus wie „keine
-	// solchen Jobs", und ein nicht parsbares server_id lieferte ALLE Jobs.
-	if s := c.Query("status"); s != "" && !validJobStatusFilter(s) {
-		return fiber.NewError(fiber.StatusBadRequest,
-			"unbekannter status-Filter "+strconv.Quote(s)+" (erlaubt: pending, running, success, failed, blocked)")
-	}
-	if raw := c.Query("server_id"); raw != "" {
-		if _, err := strconv.ParseUint(raw, 10, 64); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "server_id muss eine Zahl sein")
-		}
-	}
-	if jt := c.Query("type"); jt != "" && !knownJobType(jt) {
-		return fiber.NewError(fiber.StatusBadRequest, "unbekannter type-Filter - siehe Job-Typen in der Historie")
-	}
-	f := repositories.JobFilter{
-		ServerID:    uint(fiber.Query[int](c, "server_id")),
-		Status:      c.Query("status"),
-		Type:        c.Query("type"),
-		NameQuery:   c.Query("q"),
-		TriggeredBy: c.Query("triggered_by"),
-		HideHealth:  fiber.Query[bool](c, "hide_health"),
-		Limit:       pageSize,
-		Offset:      (page - 1) * pageSize,
-	}
-	if from := parseDateParam(c.Query("from")); from != nil {
-		f.From = from
-	}
-	if to := parseDateParam(c.Query("to")); to != nil {
-		// "bis"-Tag inklusive: exklusive obere Grenze = Folgetag 00:00.
-		next := to.Add(24 * time.Hour)
-		f.To = &next
-	}
-
-	jobs, total, err := ctrl.jobs.HistoryFiltered(scopeFor(c), f)
+// List - GET /api/v1/jobs (jobs:read)
+// Filtern, Sortieren und Blättern im Backend. Query: server_id, status
+// (Kommaliste), kind oder type (Kommaliste), q (Teil des Namens), triggered_by,
+// hide_health, since und until (RFC 3339; until ist exklusiv), sort
+// (-started_at, started_at oder -duration; Vorgabe -started_at), limit
+// (Vorgabe 50, höchstens 500), offset.
+// Antwort: {items, total}; ein Eintrag ist der Job ohne Ausgabe plus
+// server_name und duration_seconds.
+func (ctrl *JobController) List(c fiber.Ctx) error {
+	f, err := jobFilter(c)
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"items": jobs, "total": total, "page": page, "page_size": pageSize})
+	items, total, err := ctrl.jobs.List(scopeFor(c), f)
+	if err != nil {
+		return err
+	}
+	return c.JSON(newListResponse(items, int(total)))
+}
+
+// jobFilter liest und prüft die Query-Parameter der Job-Liste. Unbekannte
+// Filterwerte werden ABGEWIESEN statt still zu einer leeren Treffermenge zu
+// führen (R2-069).
+func jobFilter(c fiber.Ctx) (repositories.JobFilter, error) {
+	var f repositories.JobFilter
+	if err := checkLines(lineField{"q", c.Query("q"), maxQueryLen}, lineField{"triggered_by", c.Query("triggered_by"), maxQueryLen}); err != nil {
+		return f, err
+	}
+	var err error
+	if f.ServerID, err = idQuery(c, "server_id"); err != nil {
+		return f, err
+	}
+	statuses, err := enumListQuery(c, "status", jobStatuses)
+	if err != nil {
+		return f, err
+	}
+	// kind ist der Name, den die Oberfläche kennt; type der alte.
+	typeKey := "type"
+	if c.Query("kind") != "" {
+		typeKey = "kind"
+	}
+	types, err := enumListQuery(c, typeKey, jobTypes)
+	if err != nil {
+		return f, err
+	}
+	f.Status, f.Type = strings.Join(statuses, ","), strings.Join(types, ",")
+	f.NameQuery, f.TriggeredBy, f.HideHealth = c.Query("q"), c.Query("triggered_by"), fiber.Query[bool](c, "hide_health")
+	if f.From, err = timeQuery(c, "since"); err != nil {
+		return f, err
+	}
+	if f.To, err = timeQuery(c, "until"); err != nil {
+		return f, err
+	}
+	if f.Sort, err = sortQuery(c, []string{repositories.JobSortStartedDesc, repositories.JobSortStartedAsc, repositories.JobSortDurationDesc}, repositories.JobSortStartedDesc); err != nil {
+		return f, err
+	}
+	f.Limit, f.Offset = pagingOf(c, 50, 500)
+	return f, nil
 }
 
 // FilterOptions - GET /api/v1/jobs/filter-options (jobs:read)
@@ -87,18 +89,6 @@ func (ctrl *JobController) FilterOptions(c fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(fiber.Map{"types": types, "triggered_by": triggeredBy})
-}
-
-// parseDateParam liest ein Datum im Format YYYY-MM-DD (leer => nil).
-func parseDateParam(s string) *time.Time {
-	if s == "" {
-		return nil
-	}
-	t, err := time.Parse("2006-01-02", s)
-	if err != nil {
-		return nil
-	}
-	return &t
 }
 
 // ConsoleOutput - GET /api/v1/jobs/:id/ssh-output (jobs:read)
@@ -131,7 +121,7 @@ func (ctrl *JobController) Abort(c fiber.Ctx) error {
 	job, err := ctrl.jobs.Abort(scopeFor(c), id, actor(c))
 	if err != nil {
 		if errors.Is(err, services.ErrJobNotRunning) {
-			return fiber.NewError(fiber.StatusConflict, err.Error())
+			return errJobNotRunning
 		}
 		return mapServerError(err)
 	}
@@ -149,33 +139,29 @@ func (ctrl *JobController) AuditLog(c fiber.Ctx) error {
 	return c.JSON(entries)
 }
 
-// validJobStatusFilter prüft den status-Query gegen die echten Job-Zustände.
-func validJobStatusFilter(s string) bool {
-	switch s {
-	case domain.JobStatusPending, domain.JobStatusRunning, domain.JobStatusSuccess,
-		domain.JobStatusFailed, domain.JobStatusBlocked, domain.JobStatusAborted:
-		return true
-	}
-	return false
+// jobStatuses sind die echten Job-Zustände.
+var jobStatuses = []string{
+	domain.JobStatusPending, domain.JobStatusRunning, domain.JobStatusSuccess,
+	domain.JobStatusFailed, domain.JobStatusBlocked, domain.JobStatusAborted,
 }
 
-// knownJobType prüft den type-Query gegen alle Job-Typen, die LCM erzeugt:
-// die Regel-Typen plus die Refresh-Jobs.
-func knownJobType(t string) bool {
-	switch t {
-	case domain.RuleTypeUpdate, domain.RuleTypePackages, domain.RuleTypeSecurity,
-		domain.RuleTypePackageScan, domain.RuleTypeAutoremove, domain.RuleTypeScript,
-		domain.RuleTypeCustom, domain.RuleTypeSync, domain.RuleTypeHealth,
-		domain.RuleTypeFirewall, domain.RuleTypeBackup, domain.RuleTypeCleanup,
-		domain.RuleTypeCVEScan, domain.RuleTypeDockerCheck, domain.RuleTypeAppCheck, domain.RuleTypeDockerUpdate,
-		domain.RuleTypeDockerPrune, domain.RuleTypeDockerUpdateUnused,
-		domain.RuleTypeDockerComposeUpdate, domain.RuleTypeDockerContainerUpdate,
-		domain.RuleTypeAptProxy, domain.RuleTypeAlertCheck,
-		domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
-		domain.RuleTypeDNSTest, domain.RuleTypeDeepScan,
-		services.JobTypeHardwareRefresh, services.JobTypeFullRefresh,
-		services.JobTypeRepairDpkg, services.JobTypeRepairDeps:
-		return true
-	}
-	return false
+// jobTypes sind alle Job-Typen, die LCM erzeugt: die Regel-Typen plus die
+// Refresh-, Reparatur- und Onboarding-Jobs. Ein Typ, der hier fehlt, lässt sich
+// im Verlauf nicht filtern (400), obwohl die Oberfläche ihn anbietet; ein Test
+// gleicht die Liste der Oberfläche (job-labels.ts) mit dieser ab.
+var jobTypes = []string{
+	domain.RuleTypeUpdate, domain.RuleTypePackages, domain.RuleTypeSecurity,
+	domain.RuleTypePackageScan, domain.RuleTypeAutoremove, domain.RuleTypeScript,
+	domain.RuleTypeCustom, domain.RuleTypeSync, domain.RuleTypeHealth,
+	domain.RuleTypeFirewall, domain.RuleTypeBackup, domain.RuleTypeCleanup,
+	domain.RuleTypeCVEScan, domain.RuleTypeDockerCheck, domain.RuleTypeAppCheck, domain.RuleTypeDockerUpdate,
+	domain.RuleTypeDockerPrune, domain.RuleTypeDockerUpdateUnused,
+	domain.RuleTypeDockerComposeUpdate, domain.RuleTypeDockerContainerUpdate,
+	domain.RuleTypeAptProxy, domain.RuleTypeAlertCheck,
+	domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
+	domain.RuleTypeDNSTest, domain.RuleTypeDeepScan,
+	domain.RuleTypeACLSetup, domain.RuleTypePermSync,
+	domain.JobTypeJoin, domain.JobTypeReconnect, domain.JobTypeHardenSSH,
+	services.JobTypeHardwareRefresh, services.JobTypeFullRefresh,
+	services.JobTypeRepairDpkg, services.JobTypeRepairDeps,
 }

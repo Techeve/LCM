@@ -20,7 +20,7 @@ const sshOptionsDropinPath = "/etc/ssh/sshd_config.d/10-lcm-ssh.conf"
 // selbst kommt aus sshdReloadScript (server_service.go) - inklusive der
 // OpenRC-Fallbacks für Alpine (BUG-027); eine eigene Kurzfassung ohne
 // rc-service hatte den Alpine-Fix hier still ausgelassen.
-const sshdReloadStep = "sshd -t && (" + sshdReloadScript + ")"
+const sshdReloadStep = "{ mkdir -p /run/sshd 2>/dev/null; sshd -t; } && (" + sshdReloadScript + ")"
 
 // sshOptionsBody baut die Direktiven-Zeilen des per-Server-Drop-ins aus dem
 // Soll-Zustand: die Ports und optional PermitRootLogin no. Leeres Ergebnis
@@ -76,6 +76,18 @@ const sshSocketDropinName = "10-lcm-port.conf"
 //
 // Der Neustart der Socket-Unit trennt bestehende Sitzungen NICHT: sshd läuft
 // pro Verbindung als eigener Prozess und hängt nicht am Socket.
+//
+// Der Dienst muss dafür aber stehen: Läuft ssh.service (nach der ersten
+// Verbindung immer), verweigert systemd der Socket-Unit den Start („already
+// active, refusing“) und lässt sie im Fehlerzustand. sshd lauschte dann nur
+// noch über den geerbten Socket und beendete sich beim nächsten SIGHUP mit
+// „Cannot bind any address“ - danach war der Server per SSH nicht mehr
+// erreichbar. Die nächste Verbindung startet den Dienst wieder.
+//
+// Neu gestartet wird nur, wenn sich die Ports geändert haben: Jeder Start
+// zählt gegen das Startlimit von ssh.service (5 in 10 s). Wird es erreicht,
+// fällt auch die Socket-Unit aus und niemand kommt mehr auf den Server.
+// `reset-failed` setzt den Zähler zurück.
 func applySSHSocketPortsScript(ports []int) string {
 	var lines []string
 	for _, p := range ports {
@@ -91,11 +103,15 @@ func applySSHSocketPortsScript(ports []int) string {
 	}
 	return fmt.Sprintf(`u=""; for c in ssh.socket sshd.socket; do systemctl is-active --quiet "$c" 2>/dev/null && { u="$c"; break; }; done
 if [ -n "$u" ]; then
-  d=/etc/systemd/system/$u.d; f=$d/%s; want=%s
+  d=/etc/systemd/system/$u.d; f=$d/%s; want=%s; s="${u%%.socket}.service"; before=$(systemctl show -p Listen --value "$u")
   if [ -z "$want" ]; then rm -f "$f"; else install -d -m 755 "$d" && printf '%%s' "$want" > "$f"; fi
   # daemon-reload lässt den sshd-socket-generator neu laufen (Debian/Ubuntu);
   # erst der Neustart der Unit legt die neuen Ports auf.
-  systemctl daemon-reload && systemctl restart "$u" || exit 1
+  systemctl daemon-reload || exit 1
+  if [ "$(systemctl show -p Listen --value "$u")" != "$before" ]; then
+    systemctl stop "$s" 2>/dev/null; systemctl reset-failed "$s" 2>/dev/null
+    systemctl restart "$u" || exit 1
+  fi
 fi`, sshSocketDropinName, shellQuote(desired))
 }
 
@@ -223,7 +239,8 @@ fi`
 // bleibt das LCM-Drop-in wirkungslos, obwohl es fehlerfrei geschrieben und
 // von `sshd -t` abgenommen wurde. Ohne diese Ausgabe sucht man den Grund in
 // LCM statt in der Datei, die ihn enthält.
-const sshRootLoginVerifyScript = `echo "LCMEFFECTIVE=$(sshd -T 2>/dev/null | sed -n 's/^[Pp]ermit[Rr]oot[Ll]ogin[[:space:]]\+//p' | head -1)"
+const sshRootLoginVerifyScript = `mkdir -p /run/sshd 2>/dev/null
+echo "LCMEFFECTIVE=$(sshd -T 2>/dev/null | sed -n 's/^[Pp]ermit[Rr]oot[Ll]ogin[[:space:]]\+//p' | head -1)"
 echo "LCMSOURCES"
 grep -rniE '^[[:space:]]*PermitRootLogin' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null || true`
 
@@ -283,6 +300,37 @@ func errOrCode(err error, code int) error {
 	return fmt.Errorf("exit-code %d", code)
 }
 
+// rootLoginPlan sind die Skripte von SetSSHRootLogin. Lauf und
+// Befehlsvorschau bauen sie mit planSSHRootLogin.
+type rootLoginPlan struct {
+	restore    string // nur beim Freigeben: eine frühere Stilllegung zurücknehmen
+	apply      string // Drop-in schreiben, sshd prüfen und neu laden
+	verify     string // wirksamen Wert lesen (vor und ggf. nach dem Stilllegen)
+	neutralize string // nur beim Sperren und nur, wenn die Prüfung zeigt, dass die Sperre nicht greift
+}
+
+// planSSHRootLogin prüft den Server und baut die Skripte. Nur klassische
+// SSH-Server: auf RouterOS gibt es kein sshd_config-Drop-in, auf
+// Agent-Servern keinen direkten sshd-Zugriff.
+func planSSHRootLogin(server *domain.Server, disabled bool) (rootLoginPlan, error) {
+	if err := ensureSSHTransport(server); err != nil {
+		return rootLoginPlan{}, err
+	}
+	if err := ensureNotRouterOS(server); err != nil {
+		return rootLoginPlan{}, err
+	}
+	plan := rootLoginPlan{
+		apply:  sshOptionsApplyCmd(server, disabled, []int{server.SSHPort}),
+		verify: sshRootLoginVerifyScript,
+	}
+	if disabled {
+		plan.neutralize = neutralizeRootLoginScript()
+	} else {
+		plan.restore = restoreRootLoginScript()
+	}
+	return plan, nil
+}
+
 // SetSSHRootLogin schaltet das direkte SSH-Login von root für einen Server an
 // oder aus (PermitRootLogin no). Ein bereits gesetzter eigener Port bleibt
 // erhalten. Risikolos für LCM selbst - der Management-Benutzer meldet sich per
@@ -292,12 +340,8 @@ func (s *ServerService) SetSSHRootLogin(scope repositories.AccessScope, id uint,
 	if err != nil {
 		return "", err
 	}
-	// Nur klassische SSH-Server: auf RouterOS gibt es kein sshd_config-Drop-in,
-	// auf Agent-Servern keinen direkten sshd-Zugriff.
-	if err := ensureSSHTransport(server); err != nil {
-		return "", err
-	}
-	if err := ensureNotRouterOS(server); err != nil {
+	plan, err := planSSHRootLogin(server, disabled)
+	if err != nil {
 		return "", err
 	}
 	conn, err := s.connectRec(server, "ssh-root-login", actor)
@@ -310,15 +354,15 @@ func (s *ServerService) SetSSHRootLogin(scope repositories.AccessScope, id uint,
 	// bliebe die Zeile der Hauptdatei stumm, obwohl der Zustand, für den LCM
 	// sie stillgelegt hat, gerade aufgehoben wird.
 	var out string
-	if !disabled {
-		restoreOut, _, restoreErr := conn.Run(privRun(server, restoreRootLoginScript()))
+	if plan.restore != "" {
+		restoreOut, _, restoreErr := conn.Run(privRun(server, plan.restore))
 		out += restoreOut
 		if restoreErr != nil {
 			out += "\nHinweis: Die Wiederherstellung der sshd_config schlug fehl (" + restoreErr.Error() + ")."
 		}
 	}
 
-	applyOut, code, runErr := conn.Run(privRun(server, sshOptionsApplyCmd(server, disabled, []int{server.SSHPort})))
+	applyOut, code, runErr := conn.Run(privRun(server, plan.apply))
 	out += applyOut
 	if runErr != nil {
 		return out, runErr
@@ -332,7 +376,7 @@ func (s *ServerService) SetSSHRootLogin(scope repositories.AccessScope, id uint,
 	// meldete LCM „gesperrt" und merkte sich das, während der Deep Scan
 	// (der `sshd -T` liest) unverändert „Root-Login erlaubt" fand - zwei
 	// Ansichten desselben Servers, von denen nur eine stimmte.
-	verifyOut, _, verifyErr := conn.Run(privRun(server, sshRootLoginVerifyScript))
+	verifyOut, _, verifyErr := conn.Run(privRun(server, plan.verify))
 	if verifyErr != nil {
 		// Die Prüfung selbst ist fehlgeschlagen - der gesetzte Zustand bleibt
 		// bestehen, aber unbestätigt. Das wird gesagt, nicht verschwiegen.
@@ -349,12 +393,12 @@ func (s *ServerService) SetSSHRootLogin(scope repositories.AccessScope, id uint,
 		// wirkungslos und bleibt unberührt.
 		if mismatch != nil && disabled {
 			out += "\n" + mismatch.Error()
-			fixOut, fixCode, fixErr := conn.Run(privRun(server, neutralizeRootLoginScript()))
+			fixOut, fixCode, fixErr := conn.Run(privRun(server, plan.neutralize))
 			out += "\n" + fixOut
 			if fixErr != nil || fixCode != 0 {
 				return out, fmt.Errorf("die vorrangige PermitRootLogin-Zeile konnte nicht stillgelegt werden: %w", errOrCode(fixErr, fixCode))
 			}
-			verifyOut, _, verifyErr = conn.Run(privRun(server, sshRootLoginVerifyScript))
+			verifyOut, _, verifyErr = conn.Run(privRun(server, plan.verify))
 			if verifyErr != nil {
 				return out, fmt.Errorf("nach dem Stilllegen war die Wirkung nicht mehr überprüfbar: %w", verifyErr)
 			}
@@ -396,21 +440,12 @@ func (s *ServerService) ChangeSSHPort(scope repositories.AccessScope, id uint, n
 	if err != nil {
 		return "", err
 	}
-	// Nur klassische SSH-Server (siehe SetSSHRootLogin).
-	if err := ensureSSHTransport(server); err != nil {
+	plan, err := planSSHPort(server, newPort)
+	if err != nil {
 		return "", err
 	}
-	if err := ensureNotRouterOS(server); err != nil {
-		return "", err
-	}
-	if newPort < 1 || newPort > 65535 {
-		return "", fmt.Errorf("ungültiger SSH-Port %d (erlaubt: 1-65535)", newPort)
-	}
-	oldPort := server.SSHPort
-	if oldPort == 0 {
-		oldPort = 22
-	}
-	if newPort == oldPort {
+	oldPort := plan.oldPort
+	if plan.unchanged() {
 		return fmt.Sprintf("SSH-Port ist bereits %d - keine Änderung nötig.", newPort), nil
 	}
 
@@ -427,52 +462,105 @@ func (s *ServerService) ChangeSSHPort(scope repositories.AccessScope, id uint, n
 		return code, runErr
 	}
 
-	firewallActive := server.FirewallActive && !server.IsProxmox()
-	// Firewall-Backend des Servers (ufw/firewalld/nftables) - die Kommandos
-	// je Backend sind gegen ein fehlendes Werkzeug abgesichert (|| true).
-	fwBackend := firewallBackendByName(firewallBackendFor(server))
 	// 1. Neuen Port in der Firewall öffnen (alter bleibt vorerst offen).
-	if firewallActive {
-		if _, err := run("Firewall: neuen Port öffnen", fwBackend.allowPortCmd(newPort)); err != nil {
+	if plan.firewallActive {
+		if _, err := run("Firewall: neuen Port öffnen", plan.firewallOpen); err != nil {
 			return log.String(), fmt.Errorf("firewall (neuer port): %w", err)
 		}
 	}
 
 	// 2. sshd auf beide Ports legen (Übergang), Root-Login-Zustand erhalten.
-	if code, err := run("sshd: Übergang (alt+neu)", sshOptionsApplyCmd(server, server.SSHRootLoginDisabled, []int{oldPort, newPort})); err != nil || code != 0 {
+	if code, err := run("sshd: Übergang (alt+neu)", plan.transition); err != nil || code != 0 {
 		return log.String(), fmt.Errorf("sshd-übergangskonfiguration fehlgeschlagen (exit %d): %w", code, err)
 	}
 
 	// 3. Verifizieren: erreicht LCM den Server auf dem neuen Port?
 	if err := s.verifySSHPort(server, newPort); err != nil {
 		// Rollback: sshd zurück auf den alten Stand, Firewall-Öffnung zurück.
-		_, _ = run("sshd: Rollback auf alten Port", sshOptionsApplyCmd(server, server.SSHRootLoginDisabled, []int{oldPort}))
-		if firewallActive {
-			_, _ = run("Firewall: neuen Port wieder schließen", fwBackend.removePortCmd(newPort))
+		_, _ = run("sshd: Rollback auf alten Port", plan.rollback)
+		if plan.firewallActive {
+			_, _ = run("Firewall: neuen Port wieder schließen", plan.firewallClose)
 		}
 		return log.String(), fmt.Errorf("portwechsel abgebrochen - der neue Port %d ist nicht erreichbar, der alte Port %d bleibt aktiv: %w", newPort, oldPort, err)
 	}
 
 	// 4. Übernehmen: sshd endgültig auf den neuen Port, DB aktualisieren.
-	if code, err := run("sshd: endgültig auf neuen Port", sshOptionsApplyCmd(server, server.SSHRootLoginDisabled, []int{newPort})); err != nil || code != 0 {
+	if code, err := run("sshd: endgültig auf neuen Port", plan.final); err != nil || code != 0 {
 		return log.String(), fmt.Errorf("sshd-endkonfiguration fehlgeschlagen (exit %d): %w", code, err)
 	}
 	_ = s.servers.UpdateFields(id, map[string]any{"ssh_port": newPort})
 	// Firewall auf den neuen Port verengen (alten Port schließen) - volle
 	// Neu-Anwendung des Regelsatzes mit dem neuen SSH-Port; benannte
 	// Allowlists werden dabei aufgelöst.
-	if firewallActive {
-		sshRule := sshFirewallRule(newPort, parseSSHSources(server.FirewallSSHSources))
-		sshRule, applied, fwWarnings, _ := expandSSHAndRules(sshRule, firewallRulesFromServer(server), s.ipAllowlistExpand)
+	if plan.firewallActive {
+		script, fwWarnings := plan.firewallNarrow(server, s.ipAllowlistExpand)
 		for _, w := range fwWarnings {
 			fmt.Fprintf(&log, "%s\n", w)
 		}
-		_, _ = run("Firewall: auf neuen Port verengen",
-			fwBackend.enableScript(sshRule, applied))
+		_, _ = run("Firewall: auf neuen Port verengen", script)
 	}
 	s.audit.Log(actor, "server.ssh-port", "server", id, fmt.Sprintf("%s: SSH-Port %d → %d", server.Name, oldPort, newPort))
 	fmt.Fprintf(&log, "\nSSH-Port erfolgreich auf %d umgestellt.\n", newPort)
 	return log.String(), nil
+}
+
+// sshPortPlan sind die Schritte von ChangeSSHPort. Lauf und Befehlsvorschau
+// bauen sie mit planSSHPort. Die Firewall-Schritte sind leer, wenn auf dem
+// Server keine (von LCM verwaltbare) Firewall aktiv ist.
+type sshPortPlan struct {
+	oldPort, newPort int
+	firewallActive   bool
+	firewallOpen     string // 1. neuen Port öffnen
+	transition       string // 2. sshd auf alt+neu
+	rollback         string // nur wenn die Testverbindung scheitert: sshd zurück auf alt
+	firewallClose    string // nur wenn die Testverbindung scheitert: neuen Port wieder schließen
+	final            string // 4. sshd nur noch auf neu
+}
+
+func (p sshPortPlan) unchanged() bool { return p.newPort == p.oldPort }
+
+// firewallNarrow baut die Neu-Anwendung des Regelsatzes mit dem neuen
+// SSH-Port. Die Allowlists werden erst hier aufgelöst - im Lauf nach der
+// erfolgreichen Umstellung, so wie bisher.
+func (p sshPortPlan) firewallNarrow(server *domain.Server, expand func([]uint) ([]string, error)) (string, []string) {
+	sshRule := sshFirewallRule(p.newPort, parseSSHSources(server.FirewallSSHSources))
+	sshRule, applied, warnings, _ := expandSSHAndRules(sshRule, firewallRulesFromServer(server), expand)
+	return firewallBackendByName(firewallBackendFor(server)).enableScript(sshRule, applied), warnings
+}
+
+// planSSHPort prüft Server und Port und baut die Skripte des Wechsels.
+// Nur klassische SSH-Server (siehe planSSHRootLogin).
+func planSSHPort(server *domain.Server, newPort int) (sshPortPlan, error) {
+	if err := ensureSSHTransport(server); err != nil {
+		return sshPortPlan{}, err
+	}
+	if err := ensureNotRouterOS(server); err != nil {
+		return sshPortPlan{}, err
+	}
+	if newPort < 1 || newPort > 65535 {
+		return sshPortPlan{}, fmt.Errorf("ungültiger SSH-Port %d (erlaubt: 1-65535)", newPort)
+	}
+	oldPort := server.SSHPort
+	if oldPort == 0 {
+		oldPort = 22
+	}
+	plan := sshPortPlan{oldPort: oldPort, newPort: newPort}
+	if newPort == oldPort {
+		return plan, nil
+	}
+	root := server.SSHRootLoginDisabled
+	plan.transition = sshOptionsApplyCmd(server, root, []int{oldPort, newPort})
+	plan.rollback = sshOptionsApplyCmd(server, root, []int{oldPort})
+	plan.final = sshOptionsApplyCmd(server, root, []int{newPort})
+	plan.firewallActive = server.FirewallActive && !server.IsProxmox()
+	if plan.firewallActive {
+		// Firewall-Backend des Servers (ufw/firewalld/nftables) - die Kommandos
+		// je Backend sind gegen ein fehlendes Werkzeug abgesichert (|| true).
+		fw := firewallBackendByName(firewallBackendFor(server))
+		plan.firewallOpen = fw.allowPortCmd(newPort)
+		plan.firewallClose = fw.removePortCmd(newPort)
+	}
+	return plan, nil
 }
 
 // verifySSHPort baut eine kurze Test-Key-Verbindung auf dem angegebenen Port

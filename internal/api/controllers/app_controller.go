@@ -34,23 +34,10 @@ func (ctrl *AppController) WithActions(servers *services.ServerService,
 }
 
 func mapAppError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "anwendung nicht gefunden")
-	case errors.Is(err, services.ErrAppNotDetected), errors.Is(err, services.ErrAppNoAction):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	case errors.Is(err, services.ErrAppBuiltinDelete):
-		return fiber.NewError(fiber.StatusForbidden, err.Error())
-	case errors.Is(err, services.ErrAppSlugTaken):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	case errors.Is(err, domain.ErrAppSlug), errors.Is(err, domain.ErrAppName),
-		errors.Is(err, domain.ErrAppMarker), errors.Is(err, domain.ErrAppNoMarker),
-		errors.Is(err, domain.ErrAppCompare), errors.Is(err, domain.ErrAppPattern),
-		errors.Is(err, domain.ErrAppSource), errors.Is(err, services.ErrAppActionMissing):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errAppNotFound
 	}
+	return mapSentinel(err, appErrors)
 }
 
 type appRequest struct {
@@ -92,8 +79,11 @@ func (ctrl *AppController) ListApps(c fiber.Ctx) error {
 // CreateApp - POST /api/v1/apps (settings:manage)
 func (ctrl *AppController) CreateApp(c fiber.Ctx) error {
 	var req appRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkAppRequest(req); err != nil {
+		return err
 	}
 	entry := req.toEntry()
 	if err := ctrl.apps.Create(entry, actor(c)); err != nil {
@@ -109,8 +99,11 @@ func (ctrl *AppController) UpdateApp(c fiber.Ctx) error {
 		return err
 	}
 	var req appRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkAppRequest(req); err != nil {
+		return err
 	}
 	entry := req.toEntry()
 	if err := ctrl.apps.Update(id, entry, actor(c)); err != nil {
@@ -151,7 +144,7 @@ func (ctrl *AppController) ServerApps(c fiber.Ctx) error {
 // vor dem Update die hinterlegte Sicherung.
 func (ctrl *AppController) RunAppAction(c fiber.Ctx) error {
 	if ctrl.run == nil || ctrl.servers == nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "aktionen sind nicht verfügbar")
+		return errAppActionsOff
 	}
 	id, err := paramID(c)
 	if err != nil {
@@ -159,14 +152,14 @@ func (ctrl *AppController) RunAppAction(c fiber.Ctx) error {
 	}
 	kind := c.Params("action")
 	if kind != services.AppActionBackup && kind != services.AppActionUpdate {
-		return fiber.NewError(fiber.StatusBadRequest, "aktion muss backup oder update sein")
+		return errAppInvalidAction
 	}
 	req := struct {
 		WithBackup *bool `json:"with_backup"`
 	}{}
 	if len(c.Body()) > 0 {
-		if err := c.Bind().Body(&req); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+		if err := bindBody(c, &req); err != nil {
+			return err
 		}
 	}
 	// Ohne Angabe wird gesichert - die vorsichtige Vorgabe ist hier die
@@ -182,4 +175,23 @@ func (ctrl *AppController) RunAppAction(c fiber.Ctx) error {
 		return mapAppError(err)
 	}
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "started", "job_id": job.ID})
+}
+
+// checkAppRequest prüft Länge und Zeichen der Textfelder eines Katalogeintrags.
+// Marker sind eine Zeile je Merkmal, das Versionskommando läuft auf den
+// Servern (der Service prüft Marker, Muster und Quelle).
+func checkAppRequest(req appRequest) error {
+	if err := checkLines(lineField{"slug", req.Slug, maxNameLen}, lineField{"name", req.Name, maxNameLen}, lineField{"name_en", req.NameEN, maxNameLen},
+		lineField{"compare", req.Compare, maxNameLen}, lineField{"version_command", req.VersionCommand, maxCommandLen},
+		lineField{"version_pattern", req.VersionPattern, maxCommandLen}, lineField{"latest_source", req.LatestSource, maxPathLen},
+		lineField{"latest_pattern", req.LatestPattern, maxCommandLen}); err != nil {
+		return err
+	}
+	if err := checkText("description", req.Description, maxDescriptionLen); err != nil {
+		return err
+	}
+	if err := checkText("description_en", req.DescriptionEN, maxDescriptionLen); err != nil {
+		return err
+	}
+	return checkText("markers", req.Markers, maxListLen)
 }

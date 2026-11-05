@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -13,12 +14,16 @@ import (
 )
 
 var (
-	ErrTOTPRequired     = errors.New("2fa-code erforderlich")
 	ErrTOTPInvalid      = errors.New("ungültiger 2fa-code")
 	ErrTOTPNotSetup     = errors.New("2fa wurde noch nicht eingerichtet")
 	ErrTOTPAlreadyOn    = errors.New("2fa ist bereits aktiviert")
 	ErrChallengeInvalid = errors.New("ungültige oder abgelaufene 2fa-anmeldung")
 )
+
+// ErrTOTPReused ist ein richtiger Code, der gerade schon angenommen wurde. Wer
+// sich kurz nach der letzten Anmeldung wieder anmeldet, sieht in der App noch
+// denselben Code und soll erfahren, dass er nur auf den nächsten warten muss.
+var ErrTOTPReused = fmt.Errorf("%w: wurde bereits verwendet", ErrTOTPInvalid)
 
 // totpIssuer erscheint im Authenticator als Aussteller-Name.
 const totpIssuer = "LCM"
@@ -175,8 +180,11 @@ func (s *TOTPService) verify(user *domain.User, code string) error {
 	if err != nil || secret == "" {
 		return ErrTOTPNotSetup
 	}
-	if !totp.Validate(secret, code) || !s.consume(user.ID, strings.TrimSpace(code)) {
+	if !totp.Validate(secret, code) {
 		return ErrTOTPInvalid
+	}
+	if !s.consume(user.ID, strings.TrimSpace(code)) {
+		return ErrTOTPReused
 	}
 	return nil
 }

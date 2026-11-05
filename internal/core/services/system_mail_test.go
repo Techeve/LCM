@@ -411,3 +411,62 @@ func TestUpdateGlobalMailUseTLSAbgewaehltBleibtAus(t *testing.T) {
 		t.Error("abgewählte Verschlüsselung wurde als true gespeichert")
 	}
 }
+
+// mail_security wird gespeichert und mit dem alten mail_use_tls abgeglichen.
+func TestUpdateGlobalMailSecurity(t *testing.T) {
+	cases := []struct {
+		name   string
+		mut    func(*services.GlobalSettingsInput)
+		want   string
+		wantTL bool
+	}{
+		{"tls", func(in *services.GlobalSettingsInput) { in.MailPort = ip(465); in.MailSecurity = sp("tls") }, "tls", true},
+		{"starttls", func(in *services.GlobalSettingsInput) { in.MailSecurity = sp("starttls") }, "starttls", true},
+		{"none", func(in *services.GlobalSettingsInput) { in.MailPort = ip(25); in.MailSecurity = sp("none") }, "none", false},
+		{"alt: use_tls false", func(in *services.GlobalSettingsInput) { in.MailUseTLS = bp(false) }, "none", false},
+		{"alt: use_tls true", func(in *services.GlobalSettingsInput) { in.MailUseTLS = bp(true) }, "starttls", true},
+		{"security hat Vorrang", func(in *services.GlobalSettingsInput) { in.MailSecurity = sp("tls"); in.MailUseTLS = bp(false) }, "tls", true},
+	}
+	for _, tc := range cases {
+		svc, repo := newSettingsService(t)
+		in := mailInput(func(in *services.GlobalSettingsInput) { in.MailUseTLS = nil; tc.mut(in) })
+		if _, err := svc.UpdateGlobal(in, "admin"); err != nil {
+			t.Fatalf("%s: UpdateGlobal: %v", tc.name, err)
+		}
+		got, err := repo.Get()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.MailSecurity != tc.want || got.MailUseTLS != tc.wantTL {
+			t.Errorf("%s: security=%q use_tls=%v, erwartet %q/%v", tc.name, got.MailSecurity, got.MailUseTLS, tc.want, tc.wantTL)
+		}
+	}
+}
+
+func TestUpdateGlobalMailSecurityUngueltig(t *testing.T) {
+	svc, _ := newSettingsService(t)
+	_, err := svc.UpdateGlobal(mailInput(func(in *services.GlobalSettingsInput) {
+		in.MailUseTLS = nil
+		in.MailSecurity = sp("ssl")
+	}), "admin")
+	if !errors.Is(err, services.ErrSettingInvalid) {
+		t.Fatalf("erwartetes ErrSettingInvalid, bekam %v", err)
+	}
+}
+
+// Eine Installation vor der Auswahl (mail_security leer) behält ihr
+// Verhalten: use_tls true wird starttls, false none.
+func TestMailSecurityAltbestand(t *testing.T) {
+	for useTLS, want := range map[bool]string{true: "starttls", false: "none"} {
+		s := domain.GlobalSettings{MailUseTLS: useTLS}
+		s.NormalizeMail()
+		if s.MailSecurity != want || s.MailUseTLS != useTLS {
+			t.Errorf("use_tls=%v: security=%q use_tls=%v, erwartet %q", useTLS, s.MailSecurity, s.MailUseTLS, want)
+		}
+	}
+	s := domain.GlobalSettings{MailSecurity: "tls", MailUseTLS: false}
+	s.NormalizeMail()
+	if !s.MailUseTLS {
+		t.Error("use_tls muss der Auswahl tls folgen")
+	}
+}

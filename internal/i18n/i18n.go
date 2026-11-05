@@ -18,7 +18,7 @@
 // pflegeleicht) - die Umwandlung passiert zuverlässig an einer Stelle.
 //
 // Gilt NICHT für die Weboberfläche: Die liefert UTF-8 über HTTP aus und hat
-// ihre eigene Übersetzung (frontend/src/locales). Und nicht für die
+// ihre eigene Übersetzung (ui/src/locales). Und nicht für die
 // Journal-Logmeldungen (slog) - die sind einheitlich englisch, damit der
 // Support unabhängig vom Kundensystem dieselbe Sprache sieht.
 package i18n

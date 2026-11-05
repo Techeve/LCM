@@ -28,9 +28,9 @@ publishing process?
 
 | Level | Characteristic | Examples in our tree |
 |:-:|---|---|
-| 5 | Go team at Google or equivalent: multi-stage review, public history, security team | `golang.org/x/*`, `google/uuid`, `svelte`, `vite`, `@playwright/test` |
-| 4 | Organization with several active maintainers and a release process | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `bootstrap` |
-| 3 | Small organization or a well-regarded individual, demonstrably active | `mochi-mqtt/server`, `fasthttp/websocket`, `svelte-spa-router`, `filippo.io/age` |
+| 5 | Go team at Google or equivalent: multi-stage review, public history, security team | `golang.org/x/*`, `google/uuid`, `lit`, `vite`, `@playwright/test` |
+| 4 | Organization with several active maintainers and a release process | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `@xterm/xterm` |
+| 3 | Small organization or a well-regarded individual, demonstrably active | `mochi-mqtt/server`, `fasthttp/websocket`, `simple-icons`, `filippo.io/age` |
 | 2 | Individual, sporadic releases, bus factor 1 | `glebarez/sqlite` |
 | 1 | Individual, inactive for years, no release process, untagged versions | - (deliberately empty, see below) |
 
@@ -106,7 +106,7 @@ unknown. Never disable either gate to turn a pipeline green.
 
 ## Build time counts as much as runtime
 
-Vite, Svelte, and Playwright never reach the shipped binary - they run on the CI
+Vite, TypeScript, and Playwright never reach the shipped binary - they run on the CI
 runner, with access to registry tokens, signing keys, and CI variables. Build
 tooling is held to the same rules as runtime dependencies.
 
@@ -128,6 +128,24 @@ GORM driver. Triggers for switching - any one is enough:
 The switch only touches `internal/storage/database.go`; the repository layer is
 unaffected. Before switching, test migrations and backup/restore against an
 existing database - the drivers differ in details of type conversion.
+
+**`robfig/cron` has slipped to level 1:** last tag v3.0.1 from 2020, over 170
+open issues. Only the expression parser (five fields plus descriptors) and the
+scheduler in `internal/core/services/scheduler.go` and `group_service.go` are
+used. The job falls into the build-it-ourselves category: no cryptography, the
+expressions come from the administrator, and an error shows up in the schedule
+immediately. Replacement by an in-house implementation with a differential test
+against `robfig/cron` (a few days of effort); the fallback is the maintained
+fork `netresearch/go-cron`.
+
+**Watch `mochi-mqtt/server`:** the broker is indispensable for the agent
+connection and is protocol parsing, so not something to build ourselves. Last
+release 03/2025, many open issues - trending towards level 2. A way out would be
+an agent channel over WebSocket (`fasthttp/websocket` is in the tree anyway).
+
+**Watch `molecule-man/go-brrr`:** arrives transitively since fasthttp 1.75
+(replaces `andybalholm/brotli`). Pure Go, fuzz-tested, co-maintained by the
+fasthttp maintainer, but young and with a bus factor of 1.
 
 ## Removing a dependency
 

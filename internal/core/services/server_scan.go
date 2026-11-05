@@ -125,6 +125,8 @@ type scanResult struct {
 	RouterOSLatestVersion   string
 	RouterOSUpdateAvailable bool
 	Output                  string // gesammelter Konsolen-Output für das Job-Protokoll
+	// UpdateCheckError: Die Update-Prüfung ist gescheitert, der Stand ist unbekannt.
+	UpdateCheckError string
 }
 
 // scanServerMode führt den System-Scan über eine bestehende SSH-Verbindung
@@ -184,14 +186,14 @@ func scanServerMode(conn sshx.Conn, loginUser string, restricted bool) *scanResu
 	// Dienstbenutzer. Im eingeschränkten Modus laufen sie ohne sudo und
 	// melden dann „unbekannt" - nie ein falsches Gesund.
 	res.StorageHealth = parseStorageHealth(run("storage-health", wrapSudo(loginUser, restricted, storageHealthCmd)))
-	res.IPAddresses = strings.Join(strings.Fields(run("ips", "hostname -I")), ", ")
+	res.IPAddresses = strings.Join(strings.Fields(run("ips", scanIPsCmd)), ", ")
 	res.Hostname = firstLine(run("hostname", hostnameCmd))
 	// Kein Kommando, sondern eine Eigenschaft der Verbindung selbst.
 	res.KexAlgorithm = conn.KeyExchange()
 
 	// Paketverwaltung erkennen und bestandsabhängig scannen (apt/dnf/zypper).
 	res.PackageManager = detectPackageManager(run)
-	res.Packages, res.Repositories = scanPackagesAndRepos(res.PackageManager, run)
+	res.Packages, res.Repositories, res.UpdateCheckError = scanPackagesAndRepos(res.PackageManager, run)
 	// Installierte Kernel-Pakete (Rueckfallebene + Erkennung „neuer Kernel
 	// installiert, laeuft aber noch nicht"). Braucht die erkannte
 	// Paketverwaltung und den Proxmox-Befund, steht deshalb hier.
@@ -283,17 +285,69 @@ func detectPackageManager(run func(label, cmd string) string) string {
 	}
 }
 
+// scanIPsCmd listet die Adressen des Servers ohne die der Container-Netze:
+// Bridges von Docker & Co. sind von außen nicht erreichbar und taugen weder als
+// Vorschlag für die Verbindungsadresse noch als Host. Gefiltert wird nach
+// Schnittstelle, nicht nach Adressbereich - 172.16.0.0/12 kann auch ein echtes
+// Netz sein. Ohne `ip` (Minimalsysteme) bleibt es bei `hostname -I`.
+const scanIPsCmd = `if command -v ip >/dev/null 2>&1; then ip -o addr show scope global | ` +
+	`awk '$2 !~ /^(docker|br-|veth|virbr|cni|flannel|cali|podman|lxcbr|lxdbr|nerdctl|weave|kube-)/ { sub(/\/.*/, "", $4); print $4 }'; ` +
+	`else hostname -I; fi`
+
+// updateListExitMark steht hinter der Ausgabe der Update-Prüfung, siehe
+// upgradeList.
+const updateListExitMark = "LCM-EXIT:"
+
+// upgradeList fragt die Update-Kandidaten ab und meldet, wenn das scheitert.
+// dnf und zypper laden dafür die Paketquellen; ist eine kaputt, enden sie mit
+// einem Fehler und ohne Liste - ohne diese Prüfung sah das aus wie „keine
+// Updates". `run` verwirft die Ausgabe bei Exit ≠ 0, deshalb steht der Code
+// hinter der Ausgabe statt im Exit-Status.
+func upgradeList(run func(label, cmd string) string, cmd string) (out, problem string) {
+	raw := run("upgradable", "LC_ALL=C "+cmd+" 2>&1; echo \""+updateListExitMark+"$?\"")
+	body, code, marked := strings.Cut(raw, updateListExitMark)
+	if !marked || strings.TrimSpace(code) == "0" {
+		return body, ""
+	}
+	// Ältere dnf-Fassungen enden mit Exit 1, wenn es schlicht nichts zu tun gibt.
+	if strings.Contains(body, "No matching Packages") {
+		return "", ""
+	}
+	return "", summarize(body)
+}
+
+// zypperRepoProblem findet eine Paketquelle, die zypper übersprungen hat. Es
+// endet dann mit Exit 0 und listet die Updates der übrigen Quellen - die Liste
+// gilt, ist aber unvollständig.
+func zypperRepoProblem(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Problem loading data from") || strings.HasPrefix(line, "Warning: Skipping repository") {
+			return summarize(line)
+		}
+	}
+	return ""
+}
+
 // scanPackagesAndRepos liest installierte Pakete (mit Update-Kandidaten) und
-// Paketquellen passend zur erkannten Paketverwaltung.
-func scanPackagesAndRepos(mgr string, run func(label, cmd string) string) ([]domain.Package, []domain.AptRepository) {
+// Paketquellen passend zur erkannten Paketverwaltung. Der dritte Wert nennt
+// den Fehler der Update-Prüfung, wenn der Update-Stand deshalb unbekannt ist.
+func scanPackagesAndRepos(mgr string, run func(label, cmd string) string) ([]domain.Package, []domain.AptRepository, string) {
 	var pkgs []domain.Package
+	var problem string
 	switch pkgFamily(mgr) {
 	case pkgDnf:
 		pkgs = parseRPMList(run("packages", "rpm -qa --qf '%{NAME} %{VERSION}-%{RELEASE}\\n'"))
-		applyDnfUpgrades(pkgs, run("upgradable", dnfBin(mgr)+" -q list --upgrades 2>/dev/null"))
+		var list string
+		list, problem = upgradeList(run, dnfBin(mgr)+" -q list --upgrades")
+		applyDnfUpgrades(pkgs, list)
 	case pkgZypper:
 		pkgs = parseRPMList(run("packages", "rpm -qa --qf '%{NAME} %{VERSION}-%{RELEASE}\\n'"))
-		applyZypperUpdates(pkgs, run("upgradable", "zypper --non-interactive list-updates 2>/dev/null"))
+		var list string
+		list, problem = upgradeList(run, "zypper --non-interactive list-updates")
+		if problem == "" {
+			problem = zypperRepoProblem(list)
+		}
+		applyZypperUpdates(pkgs, list)
 	case pkgPacman:
 		// pacman -Q listet "name version" (wie dpkg); -Qu die aktualisierbaren.
 		pkgs = parseDpkgList(run("packages", "pacman -Q 2>/dev/null"))
@@ -306,7 +360,7 @@ func scanPackagesAndRepos(mgr string, run func(label, cmd string) string) ([]dom
 		applyUpgradable(pkgs, run("upgradable", "apt list --upgradable 2>/dev/null"))
 		applyHeldBack(pkgs, run("held-back", aptHeldBackFunc+"lcm_apt_heldback"))
 	}
-	return pkgs, scanReposFor(mgr, run)
+	return pkgs, scanReposFor(mgr, run), problem
 }
 
 // scanReposFor liest die konfigurierten Paketquellen passend zur
@@ -397,10 +451,10 @@ func scanListeningPackages(mgr, loginUser string, restricted bool, run func(labe
 // scanPackages liest den Paketbestand samt Update-Kandidaten über eine
 // bestehende Verbindung neu ein (ohne den vollen System-Scan). Fehler
 // einzelner Kommandos werden ignoriert - was lesbar ist, wird übernommen.
-func scanPackages(conn sshx.Conn, mgr string) []domain.Package {
+func scanPackages(conn sshx.Conn, mgr string) ([]domain.Package, string) {
 	run := func(_, cmd string) string { out, _, _ := conn.Run(cmd); return out }
-	pkgs, _ := scanPackagesAndRepos(mgr, run)
-	return pkgs
+	pkgs, _, problem := scanPackagesAndRepos(mgr, run)
+	return pkgs, problem
 }
 
 // rescanPackagesInto aktualisiert den Paketbestand eines Servers in der DB
@@ -408,11 +462,12 @@ func scanPackages(conn sshx.Conn, mgr string) []domain.Package {
 // der Paket-Tabelle berechnet, daher genügt das Ersetzen des Bestands).
 func rescanPackagesInto(servers *repositories.ServerRepository, conn sshx.Conn, server *domain.Server) {
 	mgr := server.PackageManager
-	pkgs := scanPackages(conn, mgr)
+	pkgs, problem := scanPackages(conn, mgr)
 	if len(pkgs) == 0 {
 		return
 	}
 	_ = servers.ReplacePackages(server.ID, pkgs)
+	_ = servers.UpdateFields(server.ID, map[string]any{"update_check_error": problem})
 	run := func(label, cmd string) string {
 		out, code, err := conn.Run(cmd)
 		if err != nil || code != 0 {

@@ -7,9 +7,10 @@ description: Wie LCM den Ampel-Status eines Servers ermittelt - alle Faktoren, S
 
 Jeder Server trägt einen von vier Status: 🟢 **Sehr gut** (sattes Grün),
 🟢 **OK** (helles Grün), 🟡 **Warnung** und 🔴 **Kritisch**. Diese Seite
-erklärt exakt, wie sich der Status ergibt. Über das **ⓘ** am Status-Badge
-öffnet sich immer ein Popover mit den konkreten Gründen („Insights") - bei
-Gelb/Rot die Probleme, bei **OK** die Punkte, die noch zu „Sehr gut" fehlen.
+erklärt exakt, wie sich der Status ergibt. Fährst du in der Serverliste mit der Maus
+über den Status (in der Server-Detailansicht klickst du darauf), erscheinen
+die konkreten Gründe („Insights") - bei Gelb/Rot die Probleme, bei **OK** die
+Punkte, die noch zu „Sehr gut" fehlen.
 
 ## Die Prüf-Reihenfolge
 
@@ -64,8 +65,8 @@ erreicht er nur makellos, wenn **alle drei** Kriterien erfüllt sind:
 3. **Firewall (ufw) aktiv** - Proxmox-Systeme bringen ihre eigene Firewall
    mit und gelten als abgedeckt.
 
-Fehlt eines davon, bleibt der Server bei **OK** - und das ⓘ-Popover listet
-genau auf, was noch fehlt.
+Fehlt eines davon, bleibt der Server bei **OK** - und die Gründe nennen
+genau, was noch fehlt.
 
 ## Betriebsfähigkeit
 
@@ -91,9 +92,9 @@ fehlschlägt, wie oft in Folge, die Ursache und was zu tun ist.
   bei zypper `zypper verify`). Danach führt **„Erneut versuchen"** die
   gescheiterte Aktion noch einmal aus - erst deren Erfolg setzt den Bereich
   zurück.
-- Das Dashboard filtert mit **„Nur handlungsunfähige Server"** alle Server,
-  bei denen Paketverwaltung oder Verbindung ausgefallen sind oder der
-  Paketstand kritisch veraltet ist. Der Alarm **„Aktion fehlgeschlagen"**
+- Die Kachel **„LCM handlungsunfähig"** auf dem Dashboard führt zur
+  Serverliste mit allen Servern, bei denen Paketverwaltung oder Verbindung
+  ausgefallen sind oder der Paketstand kritisch veraltet ist. Der Alarm **„Aktion fehlgeschlagen"**
   meldet solche Wechsel sofort (siehe [Alarme](/guides/alerts/)).
 
 ## CVE-Gewichtung
@@ -103,12 +104,12 @@ die Sicherheits-Ansichten zeigen weiterhin die Roh-Bewertung:
 
 - **Docker-CVEs zählen standardmäßig gar nicht.** Container sind isoliert,
   ihre Pakete von außen nicht direkt erreichbar, und für Image-Inhalte ist
-  der Image-Anbieter verantwortlich. Nur Container, die im **Docker-Tab
-  ausdrücklich als „CVE-relevant" markiert** sind, fließen ein - dann mit
-  **voller Schwere**. Die Markierung hängt am Container-Namen und übersteht
+  der Image-Anbieter verantwortlich. Nur Container, die im Reiter *Container*
+  eines Servers in der Spalte *In der Ampel* **ausdrücklich eingeschaltet**
+  sind, fließen ein - dann mit **voller Schwere**. Die Markierung hängt am Container-Namen und übersteht
   Image-Updates und Inventar-Scans.
 - **CVEs exponierter Pakete eine Stufe höher** - Webserver, Reverse-Proxies,
-  Mail-/DNS-Server, Datenbanken (Liste unter *Einstellungen → Allgemein*)
+  Mail-/DNS-Server, Datenbanken (Liste unter *Einstellungen → Sicherheit*)
   sowie automatisch erkannte Pakete, die auf von außen erreichbaren Ports
   lauschen.
 

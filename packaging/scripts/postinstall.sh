@@ -1,7 +1,7 @@
 #!/bin/sh
 # postinstall - sets up the LCM service after package installation:
-# system user, directories, a production config with a stable JWT secret
-# (only on the very first install) and the enabled systemd service.
+# system user, directories, a production config (only on the very first
+# install) and the enabled systemd service.
 #
 # All output is plain ASCII on purpose: package messages end up in terminals,
 # log files and CI output whose encoding we do not control, and German
@@ -57,7 +57,7 @@ fi
 #    staging directory stayed behind, kept aborting on every following start.
 #    The systemd unit says the same (ReadWritePaths=/var/lib/lcm /etc/lcm);
 #    the permissions now match that intent. Owner stays root, and nobody
-#    outside the group can read the file - it holds the JWT secret.
+#    outside the group can read the file.
 #    The data directory holds the database, the master key and the TLS key:
 #    the service alone (0700). Nothing else on the host needs to read it,
 #    and LCM re-checks these permissions at start and every 15 minutes

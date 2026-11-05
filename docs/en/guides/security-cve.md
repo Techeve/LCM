@@ -6,7 +6,7 @@ description: SSH hardening, firewall, 2FA, and the central Trivy CVE scan of the
 ---
 
 LCM bundles several security features - for the managed servers and for
-the LCM instance itself. The deeper fundamentals (argon2id, JWT, RBAC,
+the LCM instance itself. The deeper fundamentals (argon2id, sessions, RBAC,
 encryption) are covered in the [Security Model](/en/reference/security-model/).
 
 ## CVE scan of the package inventory (Trivy)
@@ -17,8 +17,8 @@ per server, a CycloneDX SBOM is generated from the package records and scanned
 locally on the LCM host with `trivy sbom`. The managed servers are
 **not** contacted again for this.
 
-- **Schedule:** cron configurable (*Settings → General*), default
-  daily 04:00.
+- **Schedule:** cron configurable (*Settings → Security*, card
+  "CVE scan"), default daily 02:30.
 - **After package updates:** whenever LCM updates packages (all/security/targeted
   updates, manually or via a rule), the package inventory is re-read and the
   server's CVE assessment is **re-run immediately and automatically** - so no
@@ -26,13 +26,13 @@ locally on the LCM host with `trivy sbom`. The managed servers are
   (Only when the CVE scan is enabled and Trivy is available.)
 - **Status effect:** critical CVE → status 🔴, high CVE → 🟡, each with
   an insight explanation. Badges sit right on the affected package row.
-- **Views:** per server in the Security tab, globally on the Security page
-  (most critical first).
+- **Views:** per server in the *Security* tab, globally on the *Security* page
+  in the *CVE findings* tab (most critical first).
 - **Graceful degrade:** if Trivy is missing on the LCM host, the feature
   disables itself cleanly (notice in the UI and job log). Trivy is in no
   standard package source of Debian/Ubuntu and is therefore set up separately
   - see [Installation](/en/getting-started/installation/).
-- **Alerts:** the "Security/CVE" alert rule notifies from a
+- **Alerts:** the "Vulnerabilities (CVE)" alert rule notifies from a
   configurable minimum severity - see [Alerts](/en/guides/alerts/).
 
 Docker images are scanned by the same procedure, see
@@ -79,30 +79,32 @@ option: you would believe yourself protected without being so.
 ### Status weighting
 
 For **status and alerts**, the raw Trivy severity is weighted by context (the
-Security page still shows the **raw** rating):
+*Security* page still shows the **raw** rating):
 
 - **Docker CVEs do not count by default** - container isolation limits the
   blast radius, and the image vendor is responsible for image contents. Only
-  containers marked as **CVE-relevant** in the Docker tab count, at full
-  severity (see [Status calculation](/en/guides/status/)).
+  containers switched on in the *In the status* column of a server's
+  *Containers* tab count, at full severity (see
+  [Status calculation](/en/guides/status/)).
 - **CVEs of exposed packages one level higher** - web servers, reverse proxies,
   mail/DNS/file servers, databases, etc. The list is maintained under *Settings →
-  General* (`CVE high-weight packages`); LCM additionally detects packages
+  Security* (field *Higher weighted packages*); LCM additionally detects packages
   listening on externally reachable ports and weights them up automatically.
 
-### Security page: bulk update & Docker filter
+### Security page: bulk update & origin filter
 
-![Security page: all CVEs across all servers, with source, server and title](./img/security-page.png)
+![Security page: all CVEs across all servers, with severity, origin and server](./img/security-page.png)
 
-The **Security page** (global CVE overview) offers two tools:
+The **Security** page (global CVE overview) offers two tools:
 
-- **Update all VMs** - applies security updates on all reachable servers, one
-  after another. While running, the button is disabled and shows progress
-  (`x/N` servers done); afterwards it reports how many were updated or failed.
-  At most one bulk run happens at a time.
-- **Hide Docker CVEs** - a filter that shows only **natively installed** package
-  findings (container findings are hidden). Each row's origin is marked as an
-  **OS** or **Docker** badge (with image reference).
+- **Update all servers** - applies security updates on all reachable servers, one
+  after another. A dialog asks first (with the effects and a command
+  preview). While running, the button is disabled and the progress ("x of N
+  servers done") appears next to it; afterwards it reports how many were
+  updated or failed. At most one bulk run happens at a time.
+- **Origin** - a filter with *All*, *Operating system only* and *Container
+  images only*. Each row's origin is marked with a **System** or **Container**
+  badge.
 
 ### Operating system out of support (EOL)
 
@@ -217,6 +219,63 @@ Several kernels lying around is not an accident but a decision - and
 with a [package pin](/en/guides/monitoring/#package-pins-what-the-cleanup-must-not-touch).
 :::
 
+## Early warning (OSV)
+
+Next to the daily Trivy scan there is a **fast track**: early warning compares
+the package inventory of all servers every 15 minutes with the online source
+**OSV**. New advisories show up after minutes instead of with the next scan,
+and it also knows advisories about **malicious packages** that the Trivy
+database does not carry at all.
+
+Early warning is off by default and is switched on under *Settings → Security*
+(card "Early warning"):
+
+- **Early warning** - switches on the regular query. For the online query the
+  package inventory (names and versions, without server names) goes to the OSV
+  service.
+- **Local copy instead of online query** - LCM mirrors the OSV data (at night)
+  and checks against the copy. The package inventory then stays in-house, but
+  advisories arrive about a day later. *Update copy now* downloads the data
+  again right away (a few megabytes, a few minutes).
+- **Cache in minutes** - 0 turns it off, at most 30. While a result is valid,
+  LCM does not ask again for that package.
+
+Below that the card shows the state: off, online query or local copy, when it
+was last checked and - with a local copy - the date of the copy and which
+systems are mirrored.
+
+The findings are on the *Security* page in the **Early warning** tab (severity,
+known since, server, advisory, package, fixed in). Filters: *From severity* and
+*Include resolved findings*. *Check now* asks the source for all servers right
+away. Badges mark *Malicious package*, *Being exploited* and *no fix*. Clicking
+a row opens the description with three actions:
+
+- **Update package** - installs the fixed version.
+- **Freeze version** - holds the package at the installed version as long as no
+  fixed one exists, so that an update does not jump to an affected version.
+- **Acknowledge** - the finding stays visible but no longer raises an alert.
+
+Alerts for new findings come from the rule *"Early warning: new findings"*
+(*Settings → Alerts*, see [Alerts](/en/guides/alerts/)); malicious packages
+always fire.
+
+### Caches
+
+The **Caches** tab on the *Security* page shows how often a question was
+already answered instead of causing work again. There are two caches that
+measure different things:
+
+- **Scan results (Trivy)** - same package inventory with the same database
+  state means one Trivy run instead of many. The cache is bound to the state of
+  the database.
+- **Early warning queries (OSV)** - how many packages were answered from the
+  cache instead of asking the online source. Without a configured validity the
+  rate stays at zero; that is the setting, not a fault.
+
+The count lives in memory and starts over with every restart of the service. A
+low rate is not a flaw: with very different servers there is simply little to
+repeat.
+
 ## SSH hardening
 
 On the server detail page a server can be **hardened**: LCM writes an
@@ -233,10 +292,10 @@ on deviation.
 
 ## Two-factor authentication (2FA)
 
-Any user can set up a TOTP method under *My Account → Two-Factor*
+Any user can set up a TOTP method under *My account → Security*
 (QR code for authenticator apps). Optionally, 2FA can be **enforced** for
-certain roles (*Settings → General*,
-`Enforce 2FA for roles`).
+certain roles (*Settings → Security*, card "Sign-in", field *Two-factor
+required for*).
 
 ## Restricting network access to LCM (IP allowlist)
 

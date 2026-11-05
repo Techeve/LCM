@@ -11,7 +11,7 @@ Anwendungen sind aber von außen erreichbar, tragen Sicherheitslücken und
 wollen aktualisiert werden - und ohne eigenes Zutun steht keine von ihnen auf
 irgendeiner Liste.
 
-Der Reiter **Anwendungen** auf der Server-Detailseite schließt diese Lücke.
+Der Reiter **Apps** auf der Server-Detailseite schließt diese Lücke.
 Er besteht aus zwei Teilen mit unterschiedlichem Anspruch.
 
 ## Erkannte Anwendungen
@@ -40,7 +40,7 @@ Katalogeintrag an - Dienstname und Programmpfad stehen in der Zeile.
 
 ## Der Anwendungskatalog
 
-**Einstellungen → Anwendungen.** LCM liefert Einträge für gängige Software mit
+**Einstellungen → Apps.** LCM liefert Einträge für gängige Software mit
 (AdGuard Home, Nextcloud, mailcow, Seafile, MinIO, RustDesk, Odoo, Intrexx und
 die Techeve-Produkte); eigene lassen sich ergänzen. Ein Eintrag besteht aus:
 

@@ -131,7 +131,6 @@ func IsSelfAlert(alertType string) bool {
 const (
 	DefaultDiskCapacityPercent  = 90
 	DefaultForecastDays         = 10
-	DefaultMaxOutdated          = 0
 	DefaultHeartbeatHours       = 24
 	DefaultAlertCooldownMinutes = 360 // 6h - verhindert Alarm-Spam
 )
@@ -243,7 +242,7 @@ type AlertEvent struct {
 	CreatedAt time.Time `gorm:"index" json:"created_at"`
 
 	RuleID   uint  `gorm:"index:idx_alert_rule_server" json:"rule_id"`
-	ServerID *uint `gorm:"index:idx_alert_rule_server" json:"server_id"`
+	ServerID *uint `gorm:"index:idx_alert_rule_server;index" json:"server_id"` // der einfache Index trägt Filter und Sichtbereich
 
 	RuleName   string `json:"rule_name"`
 	ServerName string `json:"server_name"`

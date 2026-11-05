@@ -117,25 +117,9 @@ func (s *ServerService) ConfigureAptProxy(scope repositories.AccessScope, id uin
 	if err != nil {
 		return "", err
 	}
-	var script, cacheURL string
-	if enable {
-		if s.aptCacheURL == nil {
-			return "", ErrNoAptCacheURL
-		}
-		if cacheURL, err = s.aptCacheURL(cacheID); err != nil {
-			return "", err
-		}
-		script = aptProxyEnableScript(cacheURL)
-		// Eingeschränkter Modus: das Drop-in schreibt der LCM-Helper
-		// (validiert die URL, gleiche apt-update-Probe mit Rollback).
-		if server.RestrictedSudo {
-			script = helperCmd("apt-proxy", cacheURL)
-		}
-	} else {
-		script = aptProxyDisableScript()
-		if server.RestrictedSudo {
-			script = helperCmd("apt-proxy", "off")
-		}
+	script, cacheURL, err := s.planAptProxy(server, enable, cacheID)
+	if err != nil {
+		return "", err
 	}
 
 	conn, err := s.connectRec(server, "apt-proxy", actor)
@@ -163,6 +147,34 @@ func (s *ServerService) ConfigureAptProxy(scope repositories.AccessScope, id uin
 	}
 	s.audit.Log(actor, "server.apt-proxy", "server", id, server.Name+": "+verb)
 	return output, nil
+}
+
+// planAptProxy wählt den Cache und baut das Skript der Anbindung bzw.
+// Trennung - für den Lauf und die Befehlsvorschau gleich. Der zweite
+// Rückgabewert ist die Adresse des Caches (leer beim Trennen).
+func (s *ServerService) planAptProxy(server *domain.Server, enable bool, cacheID uint) (string, string, error) {
+	if err := ensureNotRouterOS(server); err != nil {
+		return "", "", err
+	}
+	if !enable {
+		if server.RestrictedSudo {
+			return helperCmd("apt-proxy", "off"), "", nil
+		}
+		return aptProxyDisableScript(), "", nil
+	}
+	if s.aptCacheURL == nil {
+		return "", "", ErrNoAptCacheURL
+	}
+	cacheURL, err := s.aptCacheURL(cacheID)
+	if err != nil {
+		return "", "", err
+	}
+	// Eingeschränkter Modus: das Drop-in schreibt der LCM-Helper
+	// (validiert die URL, gleiche apt-update-Probe mit Rollback).
+	if server.RestrictedSudo {
+		return helperCmd("apt-proxy", cacheURL), cacheURL, nil
+	}
+	return aptProxyEnableScript(cacheURL), cacheURL, nil
 }
 
 // aptProxyEnforceHint warnt beim Trennen, wenn eine aktive apt-proxy-

@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/inputcheck"
 	"LCM/internal/storage/repositories"
 )
 
@@ -224,7 +225,8 @@ func normalizeAllowlistEntries(raw string) ([]string, error) {
 			// „Bind-Adresse" meint im selben Produkt das GEGENTEIL (die
 			// lokale Lausch-Adresse einer Firewall-Regel) - ein
 			// Allowlist-Eintrag ist eine QUELL-IP (R2-074).
-			return nil, fmt.Errorf("%w: ungültige Quell-IP %q (eine IP-Adresse oder ein CIDR-Bereich je Zeile)", ErrIPAllowlistInvalid, line)
+			return nil, fmt.Errorf("%w: ungültige Quell-IP %q: %s (eine IP-Adresse oder ein CIDR-Bereich je Zeile)",
+				ErrIPAllowlistInvalid, line, inputcheck.Describe(inputcheck.AddressOrNetProblem(line)))
 		}
 		if !seen[canon] {
 			seen[canon] = true

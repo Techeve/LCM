@@ -7,10 +7,10 @@ description: Was LCM ist, welche Probleme es löst und wie es grob aufgebaut ist
 
 **LCM (Linux Centralized Management)** verwaltet beliebig viele Linux-Server
 zentral über SSH - ohne Agent auf den Zielsystemen. Backend (Go) und Frontend
-(Svelte 5) stecken in **einem einzigen Binary**, das seine Daten in einer
+(Lit) stecken in **einem einzigen Binary**, das seine Daten in einer
 lokalen SQLite-Datei hält.
 
-![Dashboard mit Server-Übersicht, Ampel-Status und Filtern](./img/dashboard.png)
+![Dashboard mit Ampel-Kacheln, Handlungsbedarf und letzten Jobs](./img/dashboard.png)
 
 ## Warum LCM?
 
@@ -37,7 +37,7 @@ lokalen SQLite-Datei hält.
 | **Docker** | Inventar von Containern/Images, zentraler Registry-Update-Check, Image-CVE-Scan |
 | **APT-Cache** | Anbindung an apt-cacher-ng per Ein-Klick-Aktion oder Gruppenregel |
 | **Firewall** | Multi-Backend (ufw/firewalld/nftables) je Distribution, detaillierte Regeln mit Quell-Einschränkung (Allowlists + eigene IPs) |
-| **Sicherheit-Tools** | fail2ban bzw. CrowdSec per Klick installieren; zentrale CrowdSec-LAPI auf dem LCM-Host |
+| **Sicherheits-Tools** | fail2ban bzw. CrowdSec per Klick installieren; zentrale CrowdSec-LAPI auf dem LCM-Host |
 | **IP-Allowlists** | Benannte, wiederverwendbare Quell-IP-Listen für Firewall, fail2ban und CrowdSec |
 | **Automatisierung** | Servergruppen mit zeitgesteuerten und Grundsatz-Regeln, interner Scheduler; Aktionen wie Neustart, Rechte einschränken |
 | **Benutzer** | Linux-Benutzer zentral verwalten und ihre SSH-Keys verteilen |
@@ -49,7 +49,7 @@ lokalen SQLite-Datei hält.
 
 ## Architektur in einem Satz
 
-Ein HTTP-Server (Fiber) liefert das eingebettete Svelte-Frontend aus und stellt
+Ein HTTP-Server (Fiber) liefert die eingebettete Oberfläche aus und stellt
 eine REST-API bereit; ein interner Cron-**Scheduler** stößt Jobs an, die ein
 **Executor** über kurzlebige SSH-Verbindungen auf den Zielservern ausführt und
 als **Jobs** samt Konsolen-Output protokolliert.

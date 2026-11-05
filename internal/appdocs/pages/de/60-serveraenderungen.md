@@ -30,7 +30,7 @@ Hauptdatei die Drop-ins noch nicht einliest, ergänzt LCM die `Include`-Zeile.
 Danach wird sshd neu geladen und **nachgemessen**: Meldet sshd weiterhin
 Passwort-Anmeldung, rollt LCM selbst zurück.
 
-Rückgängig - in der Oberfläche über *SSH gehärtet ✓ - aufheben*, von Hand:
+Rückgängig - in der Oberfläche über *Härtung aufheben*, von Hand:
 
 ```sh
 rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf

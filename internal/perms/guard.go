@@ -82,7 +82,7 @@ func (g *Guard) Check() []Finding {
 		out = append(out, g.checkTree(filepath.Join(g.dataDir, "backups"), 0o600)...)
 	}
 	// Konfiguration: gehört root oder dem Dienst, Gruppe darf lesen/schreiben
-	// (Restore), sonst niemand. Sie hält das JWT-Secret.
+	// (Restore), sonst niemand. Sie hält die Betriebsparameter.
 	if g.configPath != "" {
 		out = append(out, g.checkOtherBits(filepath.Dir(g.configPath))...)
 		out = append(out, g.checkOtherBits(g.configPath)...)

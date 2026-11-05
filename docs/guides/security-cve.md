@@ -6,7 +6,7 @@ description: SSH-Hardening, Firewall, 2FA und der zentrale Trivy-CVE-Scan des Pa
 ---
 
 LCM bündelt mehrere Sicherheitsfunktionen - für die verwalteten Server und für
-die LCM-Instanz selbst. Die tiefergehenden Grundlagen (argon2id, JWT, RBAC,
+die LCM-Instanz selbst. Die tiefergehenden Grundlagen (argon2id, Sitzungen, RBAC,
 Verschlüsselung) stehen im [Sicherheitsmodell](/reference/security-model/).
 
 ## CVE-Scan des Paketbestands (Trivy)
@@ -17,8 +17,8 @@ Pro Server wird aus den Paket-Records ein CycloneDX-SBOM erzeugt und lokal auf
 dem LCM-Host mit `trivy sbom` gescannt. Die verwalteten Server werden dafür
 **nicht** erneut kontaktiert.
 
-- **Zeitplan:** Cron einstellbar (*Einstellungen → Allgemein*), Standard
-  täglich 04:00.
+- **Zeitplan:** Cron einstellbar (*Einstellungen → Sicherheit*, Karte
+  „CVE-Scan“), Standard täglich 02:30.
 - **Nach Paket-Updates:** Sobald LCM Pakete aktualisiert (alle/Security/gezielte
   Updates, ob manuell oder per Regel), wird der Paketbestand neu eingelesen und
   die CVE-Bewertung des Servers **sofort automatisch neu erstellt** - so bleiben
@@ -26,13 +26,13 @@ dem LCM-Host mit `trivy sbom` gescannt. Die verwalteten Server werden dafür
   (Nur wenn der CVE-Scan aktiviert und Trivy verfügbar ist.)
 - **Status-Wirkung:** kritische CVE → Ampel 🔴, hohe CVE → 🟡, jeweils mit
   Insight-Begründung. Badges sitzen direkt an der betroffenen Paketzeile.
-- **Sichten:** pro Server im Sicherheit-Tab, global auf der Security-Seite
-  (kritischste zuerst).
+- **Sichten:** pro Server im Reiter *Sicherheit*, global auf der Seite
+  *Sicherheit* im Reiter *CVE-Funde* (kritischste zuerst).
 - **Graceful Degrade:** Fehlt Trivy auf dem LCM-Host, deaktiviert sich das
   Feature sauber (Hinweis in UI und Job-Log). Trivy liegt in keiner
   Standard-Paketquelle von Debian/Ubuntu und wird deshalb separat eingerichtet
   - siehe [Installation](/getting-started/installation/).
-- **Alarme:** Die Alarm-Regel „Security/CVE“ benachrichtigt ab einer
+- **Alarme:** Die Alarm-Regel „Sicherheitslücken (CVE)“ benachrichtigt ab einer
   konfigurierbaren Mindest-Schwere - siehe [Alarme](/guides/alerts/).
 
 Docker-Images werden im selben Verfahren gescannt, siehe
@@ -80,31 +80,33 @@ schlechteste Variante: Man hielte sich für geschützt, ohne es zu sein.
 ### Gewichtung der Ampel
 
 Für **Ampel und Alarme** wird die rohe Trivy-Schwere kontextabhängig gewichtet
-(die Security-Seite zeigt weiterhin die **Roh**-Bewertung):
+(die Seite *Sicherheit* zeigt weiterhin die **Roh**-Bewertung):
 
 - **Docker-CVEs zählen standardmäßig nicht** - Container-Isolation begrenzt
   den Blast-Radius, für Image-Inhalte ist der Image-Anbieter verantwortlich.
-  Nur Container, die im Docker-Tab als **CVE-relevant** markiert sind, fließen
-  mit voller Schwere ein (siehe [Status-Berechnung](/guides/status/)).
+  Nur Container, die im Reiter *Container* eines Servers in der Spalte
+  *In der Ampel* eingeschaltet sind, fließen mit voller Schwere ein (siehe
+  [Status-Berechnung](/guides/status/)).
 - **CVEs exponierter Pakete eine Stufe höher** - Webserver, Reverse-Proxies,
   Mail-/DNS-/Datei-Server, Datenbanken usw. Die Liste ist unter *Einstellungen →
-  Allgemein* pflegbar (`CVE-Hochgewichtung`); zusätzlich erkennt LCM automatisch
+  Sicherheit* pflegbar (Feld *Höher gewichtete Pakete*); zusätzlich erkennt LCM automatisch
   Pakete, die auf von außen erreichbaren Ports lauschen, und gewichtet sie hoch.
 
-### Security-Seite: Sammel-Update & Docker-Filter
+### Seite „Sicherheit“: Sammel-Update & Herkunfts-Filter
 
-![Security-Seite: alle CVEs über alle Server, mit Quelle, Server und Titel](./img/security-page.png)
+![Seite Sicherheit: alle CVEs über alle Server, mit Schwere, Herkunft und Server](./img/security-page.png)
 
-Auf der **Security-Seite** (globale CVE-Übersicht) gibt es zwei Werkzeuge:
+Auf der Seite **Sicherheit** (globale CVE-Übersicht) gibt es zwei Werkzeuge:
 
-- **Alle VMs aktualisieren** - spielt die Security-Updates auf allen
-  erreichbaren Servern nacheinander ein. Während des Laufs ist die Schaltfläche
-  deaktiviert und zeigt den Fortschritt (`x/N` Server abgeschlossen); danach
-  meldet sie, wie viele aktualisiert wurden bzw. fehlschlugen. Es läuft immer
-  höchstens ein Sammel-Lauf.
-- **Docker-CVEs ausblenden** - ein Filter, der nur **nativ installierte**
-  Paket-Lücken zeigt (Container-Funde werden ausgeblendet). Die Herkunft jeder
-  Zeile ist als Badge **OS** bzw. **Docker** (mit Image-Referenz) markiert.
+- **Alle Server aktualisieren** - spielt die Security-Updates auf allen
+  erreichbaren Servern nacheinander ein. Vor dem Start fragt ein Dialog nach
+  (mit Auswirkungen und der Befehlsvorschau). Während des Laufs ist die
+  Schaltfläche deaktiviert, daneben steht der Fortschritt („x von N Servern
+  fertig“); danach steht dort, wie viele aktualisiert wurden bzw.
+  fehlschlugen. Es läuft immer höchstens ein Sammel-Lauf.
+- **Herkunft** - ein Filter mit *Alle*, *Nur Betriebssystem* und *Nur
+  Container-Images*. Die Herkunft jeder Zeile ist als Badge **System** bzw.
+  **Container** markiert.
 
 ### Betriebssystem außerhalb des Supports (EOL)
 
@@ -224,6 +226,66 @@ will, schützt die Kernel-Pakete mit einem
 [Paket-Pin](/guides/monitoring/#paket-pins-was-das-aufräumen-nicht-anfassen-darf).
 :::
 
+## Frühwarnung (OSV)
+
+Neben dem täglichen Trivy-Scan gibt es eine **schnelle Spur**: Die Frühwarnung
+vergleicht den Paketbestand aller Server alle 15 Minuten mit der Online-Quelle
+**OSV**. Neue Meldungen erscheinen so nach Minuten statt erst mit dem nächsten
+Scan, und sie kennt auch Meldungen über **Schadpakete**, die die
+Trivy-Datenbank gar nicht führt.
+
+Die Frühwarnung ist ab Werk aus und wird unter *Einstellungen → Sicherheit*
+(Karte „Frühwarnung“) eingeschaltet:
+
+- **Frühwarnung** - schaltet die regelmäßige Abfrage ein. Für die
+  Online-Abfrage geht der Paketbestand (Namen und Versionen, ohne Servernamen)
+  an den Dienst OSV.
+- **Lokale Kopie statt Online-Abfrage** - LCM spiegelt die OSV-Daten (nachts)
+  und prüft gegen die Kopie. Der Paketbestand bleibt dann im Haus, Meldungen
+  kommen aber etwa einen Tag später. *Kopie jetzt aktualisieren* lädt die
+  Daten sofort neu (einige Megabyte, ein paar Minuten).
+- **Zwischenspeicher in Minuten** - 0 schaltet ihn ab, höchstens 30. Solange ein
+  Befund gilt, fragt LCM für dieses Paket nicht neu.
+
+Darunter zeigt die Karte den Zustand: aus, Online-Abfrage oder lokale Kopie,
+wann zuletzt geprüft wurde und - bei lokaler Kopie - von wann die Kopie ist und
+welche Systeme gespiegelt werden.
+
+Die Befunde stehen auf der Seite *Sicherheit* im Reiter **Frühwarnung**
+(Schwere, bekannt seit, Server, Meldung, Paket, behoben in). Filter: *Ab
+Schwere* und *Behobene Befunde mit anzeigen*. *Jetzt prüfen* fragt die Quelle
+sofort für alle Server ab. Badges markieren *Schadpaket*, *Wird ausgenutzt* und
+*kein Fix*. Ein Klick auf eine Zeile öffnet die Beschreibung mit drei
+Aktionen:
+
+- **Paket aktualisieren** - spielt die behebende Version ein.
+- **Version einfrieren** - hält das Paket auf der installierten Version, solange
+  es noch keine behobene gibt, damit ein Update nicht auf eine belastete
+  Version springt.
+- **Zur Kenntnis nehmen** - der Befund bleibt sichtbar, löst aber keinen Alarm
+  mehr aus.
+
+Alarme für neue Befunde meldet die Regel *„Frühwarnung: neue Befunde“*
+(*Einstellungen → Alarme*, siehe [Alarme](/guides/alerts/)); Schadpakete lösen
+immer aus.
+
+### Zwischenspeicher
+
+Der Reiter **Zwischenspeicher** auf der Seite *Sicherheit* zeigt, wie oft eine
+Frage schon beantwortet war, statt erneut Arbeit auszulösen. Es sind zwei
+Speicher, die Verschiedenes messen:
+
+- **Scan-Ergebnisse (Trivy)** - gleicher Paketbestand bei gleichem
+  Datenbankstand heißt: ein Trivy-Lauf statt vieler. Der Speicher ist an den
+  Stand der Datenbank gebunden.
+- **Frühwarn-Abfragen (OSV)** - wie viele Pakete aus dem Zwischenspeicher
+  beantwortet wurden, statt die Online-Quelle zu fragen. Ohne eingestellte
+  Gültigkeit bleibt die Quote bei null; das ist die Einstellung, kein Fehler.
+
+Die Zählung liegt im Arbeitsspeicher und beginnt bei jedem Neustart des Dienstes
+von vorn. Eine niedrige Quote ist kein Mangel: Bei sehr unterschiedlichen
+Servern gibt es schlicht wenig zu wiederholen.
+
 ## SSH-Hardening
 
 Auf der Server-Detailseite lässt sich ein Server **härten**: LCM schreibt ein
@@ -240,10 +302,10 @@ Abweichung wiederhergestellt.
 
 ## Zwei-Faktor-Authentifizierung (2FA)
 
-Jeder Benutzer kann unter *Mein Konto → Zwei-Faktor* ein TOTP-Verfahren
+Jeder Benutzer kann unter *Mein Konto → Sicherheit* ein TOTP-Verfahren
 einrichten (QR-Code für Authenticator-Apps). Optional lässt sich 2FA für
-bestimmte Rollen **erzwingen** (*Einstellungen → Allgemein*,
-`2FA erzwingen für Rollen`).
+bestimmte Rollen **erzwingen** (*Einstellungen → Sicherheit*, Karte
+„Anmeldung“, Feld *Zwei-Faktor-Pflicht für*).
 
 ## Netzwerk-Zugriff auf LCM einschränken (IP-Allowlist)
 

@@ -32,11 +32,11 @@ registry call). Result per image:
 - **not checkable (private)** - private registry, not queryable anonymously.
 - **built locally** - no registry digest, not checkable.
 
-The **global Docker page** lists every unique image across all visible
+The global **Containers** page (*Images* tab) lists every unique image across all visible
 servers, with a usage count and CVE badges - handy for spotting at a glance
 how many servers still run an outdated `nginx:1.25`:
 
-![Global Docker overview with update and CVE status per image](./img/docker-overview.png)
+![Containers page: images with update and CVE status](./img/docker-overview.png)
 
 ## Image CVE scan
 
@@ -44,34 +44,34 @@ In the same run LCM scans the **used** images with Trivy - addressed by
 `repo@digest` (exactly the running state) and deduplicated per (repository,
 digest). The findings land in the same vulnerability table as the package
 scan. By default they do **not** feed status/alerts - image CVEs only count,
-at full severity, for containers marked as **CVE-relevant** in the container
-table (critical → 🔴, high → 🟡; see
+at full severity, for containers switched on in the *In the status* column of a server's
+*Containers* tab (called **CVE-relevant** below) (critical → 🔴, high → 🟡; see
 [Status calculation](/en/guides/status/)). Outdated used images → 🟡.
 
 ## Actions
 
-The Docker tab of a server (screenshot below, server `web01`) shows a
+The *Containers* tab of a server (screenshot below, server `web01`) shows a
 Compose project with two services (`webshop`) and a standalone container
-(`uptime-kuma`), followed by the image inventory with the CVE-relevant
+(`uptime-kuma`), followed by the image inventory with the *In the status*
 toggle per container.
 
-![Docker tab of a server: Compose project, standalone container and images](./img/docker-tab.png)
+![Containers tab of a server: Compose project, standalone container and images](./img/docker-tab.png)
 
-- **Update Compose project** - `docker compose pull && up -d` in the
+- **Update project** - `docker compose pull && up -d` in the
   project's `working_dir`. A single service within the project can be
-  targeted individually via "Update service".
-- **Update standalone image** - `docker pull` (recreating the
+  targeted individually via "Update" on its row.
+- **Pull** (on the image) - `docker pull` (recreating the
   container is deliberately left to the operator, see the hint in the UI).
 - **Update all images** - pulls all in-use, tagged registry images of the
   server in one job (`docker pull` per image); locally built images are left
   untouched.
-- **Mark as CVE-relevant** - a toggle per container: by default, Docker CVEs
+- **In the status** (CVE-relevant) - a toggle per container: by default, Docker CVEs
   do **not** feed the traffic light/alerts (see
   [Status calculation](/en/guides/status/)); the toggle explicitly marks a
   container as relevant, e.g. when its image is directly reachable from
   outside.
-- **Delete unused image** - individually via button (`docker rmi`).
-- **Cleanup rule** - the group rule "Docker: clean up unused images"
+- **Delete** (on an unused image) - individually via button (`docker rmi`).
+- **Cleanup rule** - the group rule "Docker: prune unused images"
   (`docker-prune`) cleans up on a schedule via `docker image prune -af`.
 
 All actions run as a logged SSH job with a subsequent
@@ -87,9 +87,9 @@ other four images stay excluded unless someone marks them too.
 
 When you pull an image whose tag now points to a new digest (for example
 `nginx:latest`), the old copy loses its tag. As long as a container still uses
-it, it stays on the server. The **Images** tab of a server lists it as
+it, it stays on the server. The **Images** section in a server's *Containers* tab lists it as
 **superseded**; the tag shows "+N older", the count of all superseded copies of
-that repository. They disappear with **Prune unused** or the `docker-prune`
+that repository. They disappear with **Clean up unused** or the `docker-prune`
 rule, as soon as no container runs on them.
 
 Two rules do what Watchtower does:
@@ -116,7 +116,7 @@ removed only once the new one runs.
 
 ## Server switches: watch instead of intervene
 
-Under **Server → Settings → Docker** there are two switches that take a server
+Under **Server settings → Operation** (section *Docker*) there are two switches that take a server
 out of LCM's Docker operations. Both are **off** by default; nothing changes
 until someone turns them on.
 
@@ -140,7 +140,7 @@ simply not wanted.
 
 Findings from this server's container images stay out entirely: they do not
 count towards status or alerts, and they do not appear in the **security
-overview** - not even through its "Docker" source filter.
+overview** - not even through its *Origin* filter ("Container images only").
 
 :::caution[The switch overrides the exceptions]
 It also covers containers marked as **CVE-relevant** and those reachable from

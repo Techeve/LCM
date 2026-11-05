@@ -110,3 +110,13 @@ func TestShellSafe(t *testing.T) {
 		t.Fatalf("shellSafe = %q", got)
 	}
 }
+
+// Fehlt das Paket (auf Rocky liegt es in EPEL), darf der Job nicht „eingerichtet“ melden.
+func TestFail2banInstallFailsWithoutPackage(t *testing.T) {
+	script := fail2banInstallScript("dnf", "192.0.2.1", nil)
+	check := strings.Index(script, "command -v fail2ban-client")
+	write := strings.Index(script, "99-lcm.local")
+	if check < 0 || write < check || !strings.Contains(script, "exit 1") {
+		t.Fatalf("Die Prüfung muss vor dem Einrichten stehen und den Job beenden:\n%s", script)
+	}
+}

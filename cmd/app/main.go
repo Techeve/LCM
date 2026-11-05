@@ -26,10 +26,10 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"LCM/frontend"
 	"LCM/internal/api/router"
 	"LCM/internal/config"
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/core/services"
 	"LCM/internal/health"
 	"LCM/internal/i18n"
@@ -50,6 +50,7 @@ import (
 	"LCM/internal/storage"
 	"LCM/internal/storage/repositories"
 	"LCM/internal/version"
+	"LCM/ui"
 )
 
 // restoreRestartExitCode ist der Exit-Code, mit dem sich LCM nach einem
@@ -407,7 +408,10 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	userService := services.NewUserService(userRepo, roleRepo)
 	apiKeyService := services.NewAPIKeyService(apiKeyRepo)
 	systemService := services.NewSystemService().WithAgentPort(cfg.AgentPort)
-	jobService := services.NewJobService(jobRepo)
+	// Ereignisbus: Die Dienste melden darauf, was sich ändert; der WebSocket
+	// GET /api/v1/events reicht es an die Tabs weiter.
+	eventBus := events.NewBus()
+	jobService := services.NewJobService(jobRepo).WithEvents(eventBus)
 	// Betriebsfähigkeit der Server: jedes Jobende (und jeder Watchdog-Abbruch)
 	// schreibt den Zustand seiner Kategorie fort. Vor dem Watchdog verdrahten,
 	// damit dessen Goroutine den Hook nicht mitten im Setzen sieht.
@@ -484,7 +488,9 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		WithSettings(settingsRepo).
 		WithKnownRepos(knownRepoRepo).WithCVERescanEnabled(cveScanEnabled).
 		WithCVEWeightList(cveWeightList).WithDNSTestDomains(dnsTestDomains).
-		WithPackagePins(packagePinRepo).WithApps(appRepo).WithCapabilities(capabilityRepo)
+		WithPackagePins(packagePinRepo).WithApps(appRepo).WithCapabilities(capabilityRepo).
+		WithEvents(eventBus).
+		WithCustomActions(repositories.NewCustomActionRepository(db))
 	// Endet ein Job, kann sich die Ampel seines Servers geändert haben.
 	jobService.OnFinished(serverService.ForgetStatus)
 
@@ -548,6 +554,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		WithAudit(auditService).WithRecorder(sshRecorder).WithDNSTestDomains(dnsTestDomains).
 		WithPendingUserSyncs(repositories.NewPendingUserSyncRepository(db)).
 		WithSSHLog(sshLogRepo).WithProfiles(profileRepo)
+	serverService.WithServerUserPlans(provService) // Befehlsvorschau der Konten-Aktionen
 	sshLogService := services.NewSSHLogService(sshLogRepo, serverRepo, jobRepo)
 	linuxUserService := services.NewLinuxUserService(linuxRepo, groupRepo, auditService, cipher, provService).
 		WithProfiles(profileRepo)
@@ -567,7 +574,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	alertRepo := repositories.NewAlertRepository(db)
 	notificationService := services.NewNotificationService(notificationRepo, alertRepo, cipher, auditService)
 	alertService := services.NewAlertService(alertRepo, serverRepo, groupRepo, notificationService, auditService).
-		WithCVEWeightList(cveWeightList).WithCapabilities(capabilityRepo)
+		WithCVEWeightList(cveWeightList).WithCapabilities(capabilityRepo).WithEvents(eventBus)
 	// action_failed: Wechsel der Betriebsfähigkeit lösen den Alarm sofort aus,
 	// nicht erst im 30-Minuten-Lauf.
 	capabilityService.OnTransition(alertService.OnCapabilityTransition)
@@ -611,6 +618,12 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	}
 	if abs, err := filepath.Abs(defaultBackupDir); err == nil {
 		defaultBackupDir = abs
+	}
+	releaseNotes := services.NewReleaseNotesService(settingsRepo, userRepo)
+	if updateResult.Updated {
+		if err := releaseNotes.NoteUpdate(updateResult.PreviousVersion, version.Version); err != nil {
+			slog.Warn("could not note the update for the release notes", "error", err)
+		}
 	}
 	settingsService := services.NewSettingsService(settingsRepo, cipher, auditService, scheduler.Reload).
 		WithKnownRepos(knownRepoRepo).WithIPAllowlists(ipAllowlistRepo).
@@ -721,7 +734,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// LCM-Host-Selbst-Einrichtung: nach der Installation von Trivy/apt-cacher-ng
 	// den CVE-Scan aktivieren bzw. die lokale APT-Cache-URL eintragen.
 	serverService.WithLcmHostConfig(
-		func() error { return settingsService.SetCVEScanEnabled(true) },
+		// Die Datenbank zuerst: Der Scan lädt nichts nach und bricht ohne sie ab.
+		func() error {
+			executor.RefreshCVEDB("trivy-install")
+			return settingsService.SetCVEScanEnabled(true)
+		},
 		settingsService.AdoptHostAptCache,
 	)
 	// CrowdSec-LAPI auf dem LCM-Host: nach der Installation die erzeugten
@@ -789,7 +806,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 				return "", err
 			}
 			return b.FileName, nil
-		})
+		}).WithEvents(eventBus)
 	safego.Go("subscription-check:initial", subscriptionService.CheckOnStartupIfStale)
 
 	// Den eigenen Rechner in die Verwaltung aufnehmen, sofern das
@@ -867,7 +884,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	}
 	defer scheduler.Stop()
 
-	frontendFS, err := frontend.FS()
+	frontendFS, err := ui.FS()
 	if err != nil {
 		return err
 	}
@@ -941,6 +958,8 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		return nil
 	})
 
+	dashboardService := services.NewDashboardService(serverService, jobRepo, alertRepo, groupRepo, eventBus)
+
 	app = router.New(router.Deps{
 		LogFile:                  logFile,
 		Restart:                  restart,
@@ -980,6 +999,9 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		AccessLog:                cfg.AccessLog,
 		APIKeyRateLimitPerMinute: cfg.APIKeyRateLimitPerMinute,
 		AgentBinDirs:             []string{"/usr/share/lcm/agent", "bin"},
+		Events:                   eventBus,
+		Dashboard:                dashboardService,
+		ReleaseNotes:             releaseNotes,
 	})
 
 	// LCM Remote: Der Agent-WebSocket (MQTT) läuft auf einem EIGENEN,

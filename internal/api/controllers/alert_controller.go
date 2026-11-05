@@ -1,12 +1,11 @@
 package controllers
 
 import (
-	"LCM/internal/core/domain"
 	"errors"
-	"strconv"
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
 	"LCM/internal/storage/repositories"
 )
@@ -22,17 +21,10 @@ func NewAlertController(alerts *services.AlertService) *AlertController {
 }
 
 func mapAlertError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "alarmregel nicht gefunden")
-	case errors.Is(err, services.ErrAlertRuleNameRequired),
-		errors.Is(err, services.ErrAlertRuleTypeInvalid),
-		errors.Is(err, services.ErrAlertSeverityInvalid),
-		errors.Is(err, services.ErrAlertGroupUnknown):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errAlertNotFound
 	}
+	return mapSentinel(err, alertErrors)
 }
 
 // alertRuleRequest ist der Request einer Alarm-Regel.
@@ -73,10 +65,10 @@ func (ctrl *AlertController) List(c fiber.Ctx) error {
 // Create - POST /api/v1/alert-rules (alerts:manage)
 func (ctrl *AlertController) Create(c fiber.Ctx) error {
 	var req alertRuleRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
-	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"severity", req.Severity, maxNameLen}, lineField{"min_severity", req.MinSeverity, maxNameLen}); err != nil {
+	if err := checkAlertRequest(req); err != nil {
 		return err
 	}
 	rule, err := ctrl.alerts.Create(req.toInput(), actor(c))
@@ -93,10 +85,10 @@ func (ctrl *AlertController) Update(c fiber.Ctx) error {
 		return err
 	}
 	var req alertRuleRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
-	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"severity", req.Severity, maxNameLen}, lineField{"min_severity", req.MinSeverity, maxNameLen}); err != nil {
+	if err := checkAlertRequest(req); err != nil {
 		return err
 	}
 	rule, err := ctrl.alerts.Update(id, req.toInput(), actor(c))
@@ -119,40 +111,42 @@ func (ctrl *AlertController) Delete(c fiber.Ctx) error {
 }
 
 // Events - GET /api/v1/alert-events (alerts:manage)
-// Events - GET /api/v1/alert-events (alerts:manage)
-// Seitenweise mit Filtern: type, severity, server_id, page, page_size.
-// Antwort {items, total, page, page_size}. Vorher: fest die neuesten 200,
-// Paging und Filter wirkungslos - ältere Ereignisse unerreichbar (R2-023).
+// Seitenweise mit Filtern, neueste zuerst. Query: server_id, type, severity,
+// since (RFC 3339), limit (Vorgabe 100, höchstens 500), offset. Der Verlauf
+// enthält nur Ereignisse von Servern im Sichtbereich des Aufrufers; Ereignisse
+// ohne Server sehen nur Admins. Antwort: {items, total} (R2-023).
 func (ctrl *AlertController) Events(c fiber.Ctx) error {
-	if sev := c.Query("severity"); sev != "" && sev != domain.AlertSeverityInfo &&
-		sev != domain.AlertSeverityWarning && sev != domain.AlertSeverityCritical {
-		return fiber.NewError(fiber.StatusBadRequest,
-			"unbekannter severity-Filter (erlaubt: info, warning, critical)")
-	}
-	if raw := c.Query("server_id"); raw != "" {
-		if _, err := strconv.ParseUint(raw, 10, 64); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "server_id muss eine Zahl sein")
-		}
-	}
-	page := fiber.Query[int](c, "page")
-	if page < 1 {
-		page = 1
-	}
-	pageSize := fiber.Query[int](c, "page_size")
-	if pageSize <= 0 || pageSize > 500 {
-		pageSize = 100
-	}
-	events, total, err := ctrl.alerts.ListEventsFiltered(repositories.AlertEventFilter{
-		Type:     c.Query("type"),
-		Severity: c.Query("severity"),
-		ServerID: uint(fiber.Query[int](c, "server_id")),
-		Limit:    pageSize,
-		Offset:   (page - 1) * pageSize,
-	})
+	f, err := alertEventFilter(c)
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"items": events, "total": total, "page": page, "page_size": pageSize})
+	events, total, err := ctrl.alerts.ListEventsFiltered(scopeFor(c), f)
+	if err != nil {
+		return err
+	}
+	return c.JSON(newListResponse(events, int(total)))
+}
+
+// alertEventFilter liest und prüft die Query-Parameter der Alarm-Historie.
+func alertEventFilter(c fiber.Ctx) (repositories.AlertEventFilter, error) {
+	var f repositories.AlertEventFilter
+	if err := checkLines(lineField{"type", c.Query("type"), maxQueryLen}); err != nil {
+		return f, err
+	}
+	if sev := c.Query("severity"); sev != "" && sev != domain.AlertSeverityInfo &&
+		sev != domain.AlertSeverityWarning && sev != domain.AlertSeverityCritical {
+		return f, errInvalidFilter.With("filter", "severity").With("allowed", "info, warning, critical")
+	}
+	var err error
+	if f.ServerID, err = idQuery(c, "server_id"); err != nil {
+		return f, err
+	}
+	if f.Since, err = timeQuery(c, "since"); err != nil {
+		return f, err
+	}
+	f.Type, f.Severity = c.Query("type"), c.Query("severity")
+	f.Limit, f.Offset = pagingOf(c, 100, 500)
+	return f, nil
 }
 
 // Evaluate - POST /api/v1/alerts/evaluate (alerts:manage)
@@ -163,4 +157,31 @@ func (ctrl *AlertController) Evaluate(c fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(fiber.Map{"status": "evaluated", "summary": summary})
+}
+
+// checkAlertRequest prüft Namen, Texte und die Zahlenfelder einer Alarm-Regel.
+// 0 heißt bei den Schwellen „Vorgabe“ bzw. beim Cooldown „keine Sperre“.
+func checkAlertRequest(req alertRuleRequest) error {
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"severity", req.Severity, maxNameLen}, lineField{"min_severity", req.MinSeverity, maxNameLen}); err != nil {
+		return err
+	}
+	if err := checkCount("group_ids", len(req.GroupIDs), maxItems); err != nil {
+		return err
+	}
+	for _, r := range []struct {
+		field    string
+		value    int
+		min, max int
+	}{
+		{"threshold_percent", req.ThresholdPercent, 0, 100},
+		{"forecast_days", req.ForecastDays, 0, 3650},
+		{"max_outdated", req.MaxOutdated, 0, 100000},
+		{"heartbeat_hours", req.HeartbeatHours, 0, 8760},
+		{"cooldown_minutes", req.CooldownMinutes, 0, 525600},
+	} {
+		if err := checkRange(r.field, r.value, r.min, r.max); err != nil {
+			return err
+		}
+	}
+	return nil
 }

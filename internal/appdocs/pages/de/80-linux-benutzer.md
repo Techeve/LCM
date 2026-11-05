@@ -69,10 +69,10 @@ Soll eine Änderung bleiben, pflegt man sie in LCM.
 
 ## Sperren und Entfernen
 
-Im Reiter **Benutzer** eines Servers sperrt **Deaktivieren** das Konto auf diesem
-Server; **Aktivieren** hebt die Sperre wieder auf. **Entfernen** löscht das
+Im Reiter **Benutzer** eines Servers sperrt **Sperren** das Konto auf diesem
+Server; **Entsperren** hebt die Sperre wieder auf. **Entfernen** löscht das
 Konto samt Home-Verzeichnis. Die Sperre bleibt über den nächsten Abgleich
-erhalten. Mehr dazu auf der Seite [SSH-Schlüssel](/#/doku/ssh-schluessel) und in
+erhalten. Mehr dazu auf der Seite [SSH-Schlüssel](/docs/ssh-schluessel) und in
 der Anleitung zu den Servern.
 
 ## Selbst einrichten: Passwort und Schlüssel
@@ -80,4 +80,4 @@ der Anleitung zu den Servern.
 Der Benutzer kann auf der Aktivierungsseite beides auf einmal setzen: das
 Passwort und einen SSH-Schlüssel. Den Schlüssel kann LCM auch für ihn erzeugen;
 den privaten Teil lädt er dann einmalig herunter. Die Anleitung zum eigenen
-Schlüssel steht auf der Seite [SSH-Schlüssel einrichten](/#/doku/ssh-schluessel).
+Schlüssel steht auf der Seite [SSH-Schlüssel einrichten](/docs/ssh-schluessel).

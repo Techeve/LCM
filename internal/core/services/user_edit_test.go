@@ -30,7 +30,7 @@ func TestUpdateProfileAndResetPassword(t *testing.T) {
 	if err := env.Users.ResetPassword(user.ID, "Regen9-Amsel!Turmfalk", true, "test-admin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := env.Auth.Login("editme", "Regen9-Amsel!Turmfalk"); err != nil {
+	if _, err := env.Auth.VerifyPassword("editme", "Regen9-Amsel!Turmfalk"); err != nil {
 		t.Errorf("login mit neuem passwort fehlgeschlagen: %v", err)
 	}
 	// Schwaches Passwort abgelehnt.

@@ -53,22 +53,26 @@ func (s *ServerService) WithRetryRunner(r CapabilityRetryRunner) *ServerService 
 // Die fehlgeschlagene Aktion wird danach NICHT wiederholt, und die Reparatur
 // heilt keine Kategorie: Erst „Erneut versuchen" beweist, dass sie wieder läuft.
 func (s *ServerService) RepairPackages(scope repositories.AccessScope, id uint, action, actor string) (*domain.Job, error) {
+	return s.runPlanned(scope, id, actor, func(server *domain.Server) (packagePlan, error) {
+		return s.planRepair(server, action)
+	})
+}
+
+// planRepair baut das Skript der Reparatur-Aktion für die Paketverwaltung des
+// Servers.
+func (s *ServerService) planRepair(server *domain.Server, action string) (packagePlan, error) {
 	jobType, name, ok := repairJob(action)
 	if !ok {
-		return nil, ErrUnknownRepairAction
-	}
-	server, err := s.servers.FindByID(scope, id)
-	if err != nil {
-		return nil, err
+		return packagePlan{}, ErrUnknownRepairAction
 	}
 	if err := ensureNotRouterOS(server); err != nil {
-		return nil, err
+		return packagePlan{}, err
 	}
 	script := pkgRepairScript(server.PackageManager, action)
 	if script == "" {
-		return nil, ErrRepairUnsupported
+		return packagePlan{}, ErrRepairUnsupported
 	}
-	return s.startPackageJob(scope, id, jobType, name, func(string) string { return script }, actor)
+	return s.newPackagePlan(server, jobType, name, func(string) string { return script })
 }
 
 // repairJob liefert Job-Typ und Anzeigename einer Reparatur-Aktion.
@@ -180,10 +184,7 @@ func (s *ServerService) RetryCapability(scope repositories.AccessScope, id uint,
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Contains(domain.CapabilityCategories, category) {
-		return nil, ErrUnknownCapability
-	}
-	c, err := s.failedCapability(id, category)
+	c, err := s.retryTarget(id, category)
 	if err != nil {
 		return nil, err
 	}
@@ -197,6 +198,14 @@ func (s *ServerService) RetryCapability(scope repositories.AccessScope, id uint,
 	}
 	s.audit.Log(actor, "server.capability-retry", "server", id, category)
 	return job, nil
+}
+
+// retryTarget prüft die Kategorie und lädt ihre fehlgeschlagene Zeile.
+func (s *ServerService) retryTarget(serverID uint, category string) (*domain.ServerCapability, error) {
+	if !slices.Contains(domain.CapabilityCategories, category) {
+		return nil, ErrUnknownCapability
+	}
+	return s.failedCapability(serverID, category)
 }
 
 // failedCapability lädt die Zeile der Kategorie und verlangt, dass sie fehlgeschlagen ist.

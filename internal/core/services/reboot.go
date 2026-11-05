@@ -153,6 +153,16 @@ func pollRebootReturn(dial func() error, settle, interval, maxWait time.Duration
 	}
 }
 
+// ensureRebootable weist den Neustart ab, wo er per Shell-Kommando nicht geht:
+// RouterOS und DSM haben keine POSIX-Shell (und keine Geräte-API für den
+// Neustart in LCM), der eingeschränkte Service-User darf `reboot` nicht.
+func ensureRebootable(server *domain.Server) error {
+	if err := ensureNotRouterOS(server); err != nil {
+		return err
+	}
+	return ensureFullSudo(server)
+}
+
 // Reboot startet den Server neu (Ein-Klick-Aktion aus der Server-
 // Detailansicht). Braucht vollen Root-Zugriff - im eingeschränkten
 // Sudo-Modus gesperrt (reboot steht nicht auf der Whitelist).
@@ -161,7 +171,7 @@ func (s *ServerService) Reboot(scope repositories.AccessScope, id uint, actor st
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureFullSudo(server); err != nil {
+	if err := ensureRebootable(server); err != nil {
 		return nil, err
 	}
 	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeReboot, "Neustart @ "+server.Name, actor)

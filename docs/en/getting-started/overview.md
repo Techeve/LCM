@@ -7,10 +7,10 @@ description: What LCM is, the problems it solves and how it is roughly structure
 
 **LCM (Linux Centralized Management)** manages any number of Linux servers
 centrally over SSH - with no agent on the target systems. Backend (Go) and
-frontend (Svelte 5) ship as **a single binary** that keeps its data in a local
+frontend (Lit) ship as **a single binary** that keeps its data in a local
 SQLite file.
 
-![Dashboard with server overview, traffic-light status and filters](./img/dashboard.png)
+![Dashboard with status tiles, servers needing attention and recent jobs](./img/dashboard.png)
 
 ## Why LCM?
 
@@ -47,7 +47,7 @@ SQLite file.
 
 ## Architecture in one sentence
 
-An HTTP server (Fiber) serves the embedded Svelte frontend and exposes a REST
+An HTTP server (Fiber) serves the embedded web interface and exposes a REST
 API; an internal cron **scheduler** triggers jobs that an **executor** runs on
 the target servers over short-lived SSH connections and records as **jobs**
 including console output.

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/infrastructure/runtimeenv"
 	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
@@ -116,6 +118,9 @@ type SelfUpdateService struct {
 
 	mu    sync.Mutex
 	state SelfUpdateStatus
+	// bus meldet jeden Phasenwechsel an die Oberfläche (system.build); nil =
+	// keine Ereignisse.
+	bus *events.Bus
 }
 
 func NewSelfUpdateService(
@@ -136,6 +141,24 @@ func NewSelfUpdateService(
 func (s *SelfUpdateService) WithBackup(fn func(actor string) (string, error)) *SelfUpdateService {
 	s.backup = fn
 	return s
+}
+
+// WithEvents verdrahtet den Ereignisbus (optional).
+func (s *SelfUpdateService) WithEvents(bus *events.Bus) *SelfUpdateService {
+	s.bus = bus
+	return s
+}
+
+// publishState meldet den aktuellen Stand. Aufzurufen NACH dem Freigeben von
+// s.mu.
+func (s *SelfUpdateService) publishState() {
+	s.mu.Lock()
+	st := s.state
+	s.mu.Unlock()
+	s.bus.Publish(events.SystemBuild(events.SystemBuildData{
+		Phase: st.Phase, TargetVersion: st.TargetVersion, WaitingFor: st.WaitingFor,
+		JobID: st.JobID, Error: st.Error,
+	}))
 }
 
 // Status liefert den aktuellen Stand samt Machbarkeits-Prüfung.
@@ -176,6 +199,7 @@ func (s *SelfUpdateService) Start(actor string, withBackup bool) (SelfUpdateStat
 		RequestedBy: actor, RequestedAt: &now,
 	}
 	s.mu.Unlock()
+	s.publishState()
 
 	if s.audit != nil {
 		s.audit.Log(actor, "system.self-update", "settings", 1, "target="+target)
@@ -211,6 +235,7 @@ func (s *SelfUpdateService) waitAndRun(actor, target string, withBackup bool) {
 		s.mu.Lock()
 		s.state.Phase = SelfUpdateBackup
 		s.mu.Unlock()
+		s.publishState()
 		name, err := s.backup(actor)
 		if err != nil {
 			s.fail("Sicherung fehlgeschlagen: " + err.Error() +
@@ -239,6 +264,7 @@ func (s *SelfUpdateService) waitAndRun(actor, target string, withBackup bool) {
 	s.state.JobID = job.ID
 	s.state.WaitingFor = nil
 	s.mu.Unlock()
+	s.publishState()
 	slog.Info("self-update started", "job", job.ID, "target", target, "actor", actor)
 }
 
@@ -258,8 +284,12 @@ func (s *SelfUpdateService) runningJobNames() []string {
 
 func (s *SelfUpdateService) setWaitingFor(names []string) {
 	s.mu.Lock()
+	changed := !slices.Equal(s.state.WaitingFor, names)
 	s.state.WaitingFor = names
 	s.mu.Unlock()
+	if changed {
+		s.publishState()
+	}
 }
 
 func (s *SelfUpdateService) fail(msg string) {
@@ -268,6 +298,7 @@ func (s *SelfUpdateService) fail(msg string) {
 	s.state.WaitingFor = nil
 	s.state.Error = msg
 	s.mu.Unlock()
+	s.publishState()
 	slog.Warn("self-update not carried out", "reason", msg)
 }
 

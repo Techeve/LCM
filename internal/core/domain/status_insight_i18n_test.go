@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,25 +102,25 @@ func TestJederStatusBefundHatEinenUebersetzungsschluessel(t *testing.T) {
 }
 
 func TestJederStatusBefundStehtInBeidenSprachkatalogen(t *testing.T) {
-	catalogs := map[string]string{}
+	catalogs := map[string]map[string]any{}
 	for _, lang := range []string{"de", "en"} {
-		path := filepath.Join("..", "..", "..", "frontend", "src", "locales", lang+".js")
+		path := filepath.Join("..", "..", "..", "ui", "src", "locales", lang+".json")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("Sprachkatalog %s nicht lesbar: %v", lang, err)
 		}
 		// Nur der insights-Abschnitt zählt - ein gleichnamiger Schlüssel in
 		// einem anderen Abschnitt wäre sonst ein falscher Freispruch.
-		text := string(data)
-		start := strings.Index(text, "\n  insights: {")
-		if start < 0 {
+		var catalog struct {
+			Insights map[string]any `json:"insights"`
+		}
+		if err := json.Unmarshal(data, &catalog); err != nil {
+			t.Fatalf("Sprachkatalog %s: %v", lang, err)
+		}
+		if len(catalog.Insights) == 0 {
 			t.Fatalf("Sprachkatalog %s hat keinen insights-Abschnitt", lang)
 		}
-		end := strings.Index(text[start+1:], "\n  },")
-		if end < 0 {
-			t.Fatalf("insights-Abschnitt in %s nicht abgeschlossen", lang)
-		}
-		catalogs[lang] = text[start : start+1+end]
+		catalogs[lang] = catalog.Insights
 	}
 	seen := map[string]bool{}
 	for _, sc := range insightScenarios() {
@@ -130,8 +131,8 @@ func TestJederStatusBefundStehtInBeidenSprachkatalogen(t *testing.T) {
 				continue
 			}
 			seen[in.Key] = true
-			for lang, text := range catalogs {
-				if !catalogHasKey(text, in.Key) {
+			for lang, insights := range catalogs {
+				if !catalogHasKey(insights, in.Key) {
 					t.Errorf("Befund %q fehlt im Sprachkatalog %s (Szenario %s)", in.Key, lang, sc.name)
 				}
 			}
@@ -142,18 +143,16 @@ func TestJederStatusBefundStehtInBeidenSprachkatalogen(t *testing.T) {
 // catalogHasKey sucht einen Befund-Schlüssel im insights-Abschnitt. Ein Punkt
 // im Schlüssel (actionFailed.packages) bedeutet Verschachtelung: erst die
 // Gruppe auf der Ebene der Befunde, darin der Eintrag.
-func catalogHasKey(section, key string) bool {
+func catalogHasKey(insights map[string]any, key string) bool {
 	group, entry, nested := strings.Cut(key, ".")
 	if !nested {
-		return strings.Contains(section, "\n    "+key+":")
+		_, ok := insights[key]
+		return ok
 	}
-	start := strings.Index(section, "\n    "+group+": {")
-	if start < 0 {
+	entries, ok := insights[group].(map[string]any)
+	if !ok {
 		return false
 	}
-	body := section[start+1:]
-	if end := strings.Index(body, "\n    },"); end >= 0 {
-		body = body[:end]
-	}
-	return strings.Contains(body, "\n      "+entry+":")
+	_, ok = entries[entry]
+	return ok
 }

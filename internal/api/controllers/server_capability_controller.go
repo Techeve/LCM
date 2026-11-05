@@ -53,8 +53,8 @@ func (ctrl *ServerController) RepairPackages(c fiber.Ctx) error {
 	var req struct {
 		Action string `json:"action"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.RepairPackages(scopeFor(c), id, req.Action, actor(c))

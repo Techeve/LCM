@@ -12,14 +12,14 @@ colour modes.
 
 ## Keyboard shortcuts
 
-**`?`** opens the overview of all shortcuts at any time - also via the `?`
-button at the top right of the bar and the link in the footer. The overview
-additionally shows the shortcuts of the page currently open.
+**`?`** opens the overview of all shortcuts at any time - also via the account
+menu at the top right (entry *Keyboard shortcuts*). The overview additionally
+shows the shortcuts of the page currently open.
 
 Shortcuts apply in the signed-in interface while no input field has focus.
 Whoever types, types letters - only Save (`Ctrl+S` or `⌘S`) also works inside a
 field. On the sign-in screen the shortcuts are off: there is nothing to jump
-to, and the button for them appears only after signing in.
+to, and the account menu appears only after signing in.
 
 ### Jump
 
@@ -28,10 +28,11 @@ Two keys in a row: first `G`, then the letter of the page.
 | Shortcut | Target |
 |---|---|
 | `G` `D` | Dashboard |
+| `G` `V` | Servers |
 | `G` `G` | Groups |
 | `G` `U` | Linux users |
 | `G` `S` | Security |
-| `G` `C` | Docker |
+| `G` `C` | Containers |
 | `G` `J` | Jobs |
 | `G` `E` | Settings |
 | `G` `A` | My account |
@@ -44,6 +45,7 @@ not respond.
 
 | Shortcut | Effect |
 |---|---|
+| `Ctrl+K` / `⌘K` | Open the command palette |
 | `?` | Open or close the shortcut overview |
 | `/` | Jump to the search field of the page |
 | `Ctrl+S` / `⌘S` | Save the form |
@@ -55,16 +57,15 @@ not respond.
 
 ### On the page
 
-Buttons with a shortcut of their own carry it as a small badge right next to
-the name - **"+ Add server `N`"**. The badge shows the key that triggers the
-button; the overview (`?`) lists all shortcuts of the page under *On this
-page*. The badges can be switched off there; the browser remembers the choice.
+Commands with a shortcut of their own (such as **"Add server"**, `N`) are
+triggered directly by the key; the overview (`?`) lists all shortcuts of the
+page under *On this page*. The same commands are in the command palette.
 
 | Shortcut | Effect |
 |---|---|
-| `N` | Create new: server, group, Linux user, profile, rule, channel, application, repository, allowlist, custom action |
-| `U` | Security: update all VMs |
-| `/` | Search field: dashboard (name), jobs, packages of a server, rule blocks |
+| `N` | Create new: server, group, Linux user, profile, channel, alert rule, app, repository, APT cache, CrowdSec LAPI, allowlist, custom action |
+| `U` | Security: bulk update (update all servers) |
+| `/` | Search field of the page, where it has one: server list, jobs, packages of a server |
 
 ## Through the page without a mouse
 
@@ -90,6 +91,6 @@ and red tinted table rows of the security overview. Anyone who has set
 
 The test run checks the most important pages in both colour modes with
 [axe-core](https://github.com/dequelabs/axe-core) against WCAG 2.1 AA
-(`frontend/e2e/a11y.spec.js`) and keyboard operation with Playwright
-(`frontend/e2e/hotkeys.spec.js`). A new violation shows up in the test run,
+(`ui/e2e/a11y.spec.ts`) and keyboard operation with Playwright
+(`ui/e2e/hotkeys.spec.ts`). A new violation shows up in the test run,
 not first for the user.

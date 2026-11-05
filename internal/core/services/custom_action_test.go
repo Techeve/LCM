@@ -103,3 +103,24 @@ func TestCustomRuleRunsCommandsSequentially(t *testing.T) {
 		t.Errorf("custom-kommandos sollten als root (sudo) laufen:\n%s", all)
 	}
 }
+
+func TestCustomActionNameMustBeUnique(t *testing.T) {
+	env := newTestEnv(t)
+	first, err := env.CustomActions.Create("Wartung", "", "echo hi", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.CustomActions.Create("wartung", "", "echo hi", "admin"); !errors.Is(err, services.ErrCustomActionNameTaken) {
+		t.Errorf("doppelter name beim anlegen: %v", err)
+	}
+	other, err := env.CustomActions.Create("Backup", "", "echo hi", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.CustomActions.Update(other.ID, "Wartung", "", "echo hi", "admin"); !errors.Is(err, services.ErrCustomActionNameTaken) {
+		t.Errorf("umbenennen auf vorhandenen namen: %v", err)
+	}
+	if _, err := env.CustomActions.Update(first.ID, "Wartung", "neu", "echo hi", "admin"); err != nil {
+		t.Errorf("eigener name bleibt erlaubt: %v", err)
+	}
+}

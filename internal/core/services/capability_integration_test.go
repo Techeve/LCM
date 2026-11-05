@@ -33,10 +33,14 @@ func latestJob(t *testing.T, env *testEnv, serverID uint, jobType string) domain
 
 func requireCapability(t *testing.T, repo *repositories.CapabilityRepository, serverID uint, category string) *domain.ServerCapability {
 	t.Helper()
-	c, err := repo.Find(serverID, category)
-	if err != nil || c == nil {
-		t.Fatalf("Kategorie %s von Server %d: %v / %v", category, serverID, c, err)
-	}
+	// Der Job steht schon als beendet in der Datenbank, wenn OnOutcome die
+	// Kategorie schreibt: Wer direkt danach liest, kann dazwischenkommen.
+	var c *domain.ServerCapability
+	waitFor(t, func() bool {
+		found, err := repo.Find(serverID, category)
+		c = found
+		return err == nil && c != nil
+	})
 	return c
 }
 

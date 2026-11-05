@@ -41,3 +41,14 @@ func (s AccessScope) scopeGroups(db *gorm.DB) *gorm.DB {
 		"server_groups.id IN (SELECT server_group_id FROM server_group_managers WHERE user_id = ?)",
 		s.UserID)
 }
+
+// scopeByServerColumn beschränkt eine Query auf Zeilen, deren Spalte column auf
+// einen sichtbaren Server zeigt. Zeilen ohne Server (NULL) sehen nur Admins.
+func (s AccessScope) scopeByServerColumn(db *gorm.DB, column string) *gorm.DB {
+	if s.All {
+		return db
+	}
+	return db.Where(column+" IN (SELECT sgs.server_id FROM server_group_servers sgs"+
+		" JOIN server_group_managers sgm ON sgm.server_group_id = sgs.server_group_id"+
+		" WHERE sgm.user_id = ?)", s.UserID)
+}

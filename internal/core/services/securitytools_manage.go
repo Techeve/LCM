@@ -272,32 +272,8 @@ func (s *ServerService) ManageSecurityTool(scope repositories.AccessScope, id ui
 	if err != nil {
 		return nil, err
 	}
-	if in.Tool != SecurityToolFail2ban && in.Tool != SecurityToolCrowdSec {
-		return nil, ErrUnknownSecurityTool
-	}
-	if err := ensureNotRouterOS(server); err != nil {
+	if err := planManageSecurityTool(server, &in); err != nil {
 		return nil, err
-	}
-	// Alle Aktionen greifen in Dienste und Systemkonfiguration ein - im
-	// eingeschraenkten Modus ist das bewusst gesperrt, wie bei der Einrichtung.
-	if err := ensureFullSudo(server); err != nil {
-		return nil, err
-	}
-
-	switch in.Action {
-	case SecurityToolActionStart, SecurityToolActionStop, SecurityToolActionRestart,
-		SecurityToolActionEnable, SecurityToolActionDisable,
-		SecurityToolActionUninstall, SecurityToolActionAllowlist:
-	case SecurityToolActionUnban:
-		// Die IP landet woertlich in einem Kommando - hier wird sie streng
-		// kanonisiert, nicht nur oberflaechlich geprueft.
-		canon, _, err := canonicalAddr(strings.TrimSpace(in.UnbanIP))
-		if err != nil || canon == "" {
-			return nil, ErrUnbanIPMissing
-		}
-		in.UnbanIP = canon
-	default:
-		return nil, ErrSecurityToolAction
 	}
 
 	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeScript,
@@ -311,6 +287,40 @@ func (s *ServerService) ManageSecurityTool(scope repositories.AccessScope, id ui
 		s.runSecurityToolManageJob(job, server, in, actor)
 	})
 	return job, nil
+}
+
+// planManageSecurityTool prüft Server und Eingabe einer Verwaltungs-Aktion -
+// für den Lauf und die Befehlsvorschau gleich. Die IP zum Entsperren wird
+// dabei kanonisiert.
+func planManageSecurityTool(server *domain.Server, in *SecurityToolManageInput) error {
+	if in.Tool != SecurityToolFail2ban && in.Tool != SecurityToolCrowdSec {
+		return ErrUnknownSecurityTool
+	}
+	if err := ensureNotRouterOS(server); err != nil {
+		return err
+	}
+	// Alle Aktionen greifen in Dienste und Systemkonfiguration ein - im
+	// eingeschraenkten Modus ist das bewusst gesperrt, wie bei der Einrichtung.
+	if err := ensureFullSudo(server); err != nil {
+		return err
+	}
+
+	switch in.Action {
+	case SecurityToolActionStart, SecurityToolActionStop, SecurityToolActionRestart,
+		SecurityToolActionEnable, SecurityToolActionDisable,
+		SecurityToolActionUninstall, SecurityToolActionAllowlist:
+	case SecurityToolActionUnban:
+		// Die IP landet woertlich in einem Kommando - hier wird sie streng
+		// kanonisiert, nicht nur oberflaechlich geprueft.
+		canon, _, err := canonicalAddr(strings.TrimSpace(in.UnbanIP))
+		if err != nil || canon == "" {
+			return ErrUnbanIPMissing
+		}
+		in.UnbanIP = canon
+	default:
+		return ErrSecurityToolAction
+	}
+	return nil
 }
 
 func (s *ServerService) runSecurityToolManageJob(job *domain.Job, server *domain.Server, in SecurityToolManageInput, actor string) {
@@ -367,8 +377,19 @@ func (s *ServerService) runSecurityToolManageJob(job *domain.Job, server *domain
 	s.jobs.Complete(job, out+status, &code, nil)
 }
 
-// buildManageScript waehlt das Skript zur Aktion.
+// buildManageScript waehlt das Skript zur Aktion. Nur das Neuschreiben der
+// Allowlist braucht die LCM-Quell-IP vom Server.
 func (s *ServerService) buildManageScript(conn sshx.Conn, server *domain.Server, in SecurityToolManageInput) (string, error) {
+	srcIP := server.LCMSourceIP
+	if in.Action == SecurityToolActionAllowlist {
+		srcIP = readLCMSourceIP(conn, server)
+	}
+	return s.manageScript(server, in, srcIP)
+}
+
+// manageScript baut das Skript einer Verwaltungs-Aktion - der Lauf und die
+// Befehlsvorschau rufen es gleich auf.
+func (s *ServerService) manageScript(server *domain.Server, in SecurityToolManageInput, srcIP string) (string, error) {
 	unit := serviceUnit(in.Tool)
 	switch in.Action {
 	case SecurityToolActionStart, SecurityToolActionStop, SecurityToolActionRestart,
@@ -382,14 +403,6 @@ func (s *ServerService) buildManageScript(conn sshx.Conn, server *domain.Server,
 		return unbanScript(in.Tool, in.UnbanIP), nil
 
 	case SecurityToolActionAllowlist:
-		// Quell-IP wie bei der Einrichtung OHNE sudo lesen - sudo verwirft
-		// $SSH_CONNECTION.
-		srcIP := server.LCMSourceIP
-		if out, _, e := conn.Run(`echo "$SSH_CONNECTION" | awk '{print $1}'`); e == nil {
-			if ip := strings.TrimSpace(out); ip != "" {
-				srcIP = ip
-			}
-		}
 		extra := append([]string{}, in.AllowlistIPs...)
 		if len(in.AllowlistIDs) > 0 && s.ipAllowlistExpand != nil {
 			resolved, e := s.ipAllowlistExpand(in.AllowlistIDs)

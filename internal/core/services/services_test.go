@@ -142,7 +142,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	appRepo := repositories.NewAppRepository(db)
 	apps := services.NewAppService(appRepo, customActionRepo, audit)
 	executor.WithApps(apps)
-	servers.WithApps(appRepo)
+	servers.WithApps(appRepo).WithCustomActions(customActionRepo).WithServerUserPlans(prov)
 	linuxUsers := services.NewLinuxUserService(linuxRepo, groupRepo, audit, cipher, prov).WithProfiles(profileRepo)
 	activation := services.NewActivationService(repositories.NewActivationRepository(db), userRepo, audit)
 
@@ -178,12 +178,9 @@ func newTestEnv(t *testing.T) *testEnv {
 func TestLoginSuccess(t *testing.T) {
 	env := newTestEnv(t)
 
-	token, user, err := env.Auth.Login("admin", "test-admin-passwort")
+	user, err := env.Auth.VerifyPassword("admin", "test-admin-passwort")
 	if err != nil {
 		t.Fatalf("login fehlgeschlagen: %v", err)
-	}
-	if token == "" {
-		t.Fatal("kein Token erhalten")
 	}
 	if user.Username != domain.AdminUsername {
 		t.Errorf("falscher User: %s", user.Username)
@@ -196,7 +193,7 @@ func TestLoginSuccess(t *testing.T) {
 func TestLoginWrongPassword(t *testing.T) {
 	env := newTestEnv(t)
 
-	_, _, err := env.Auth.Login("admin", "falsches-passwort")
+	_, err := env.Auth.VerifyPassword("admin", "falsches-passwort")
 	if !errors.Is(err, services.ErrInvalidCredentials) {
 		t.Fatalf("erwartet ErrInvalidCredentials, bekam: %v", err)
 	}
@@ -207,7 +204,7 @@ func TestLoginUnknownUserSameError(t *testing.T) {
 
 	// Unbekannter User und falsches Passwort müssen denselben Fehler
 	// liefern (kein User-Enumeration-Leak).
-	_, _, err := env.Auth.Login("gibt-es-nicht", "egal")
+	_, err := env.Auth.VerifyPassword("gibt-es-nicht", "egal")
 	if !errors.Is(err, services.ErrInvalidCredentials) {
 		t.Fatalf("erwartet ErrInvalidCredentials, bekam: %v", err)
 	}
@@ -216,33 +213,9 @@ func TestLoginUnknownUserSameError(t *testing.T) {
 func TestSystemUserCannotLogin(t *testing.T) {
 	env := newTestEnv(t)
 
-	_, _, err := env.Auth.Login("system", "irgendwas")
+	_, err := env.Auth.VerifyPassword("system", "irgendwas")
 	if !errors.Is(err, services.ErrInvalidCredentials) {
 		t.Fatalf("system-User darf sich nicht einloggen, bekam: %v", err)
-	}
-}
-
-func TestTokenRoundtrip(t *testing.T) {
-	env := newTestEnv(t)
-
-	token, _, err := env.Auth.Login("admin", "test-admin-passwort")
-	if err != nil {
-		t.Fatal(err)
-	}
-	user, err := env.Auth.ValidateToken(token)
-	if err != nil {
-		t.Fatalf("gültiges Token abgelehnt: %v", err)
-	}
-	if user.Username != domain.AdminUsername {
-		t.Errorf("falscher User aus Token: %s", user.Username)
-	}
-}
-
-func TestInvalidTokenRejected(t *testing.T) {
-	env := newTestEnv(t)
-
-	if _, err := env.Auth.ValidateToken("kaputt.token.hier"); !errors.Is(err, services.ErrInvalidToken) {
-		t.Fatalf("erwartet ErrInvalidToken, bekam: %v", err)
 	}
 }
 
@@ -269,57 +242,87 @@ func authTestUser(t *testing.T) (*repositories.UserRepository, *domain.User) {
 	return repo, u
 }
 
-// TestSessionsInvalidatedOnRestart bildet den gemeldeten Angriff ab: gleiche
-// DB/User-ID, aber ein neuer Prozess (= neue AuthService-Instanz). Ein vor
-// dem "Neustart" ausgestelltes Token darf danach NICHT mehr akzeptiert werden,
-// weil der Signaturschlüssel an den Prozessstart gebunden ist.
+// TestSessionsInvalidatedOnRestart: gleiche DB/User-ID, aber ein neuer Prozess
+// (= neue AuthService-Instanz). Eine vor dem "Neustart" eröffnete Sitzung darf
+// danach NICHT mehr gelten - sie liegt nur im Speicher des alten Prozesses.
 func TestSessionsInvalidatedOnRestart(t *testing.T) {
 	repo, u := authTestUser(t)
 
 	first := services.NewAuthService(repo, time.Hour)
-	token, err := first.IssueToken(u)
+	token, _, _, err := first.StartSession(u, services.TransportHeader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Dieselbe Instanz akzeptiert das eigene Token.
-	if _, err := first.ValidateToken(token); err != nil {
-		t.Fatalf("gültiges Token in derselben Instanz abgelehnt: %v", err)
+	if _, _, err := first.ValidateSession(token, services.TransportHeader); err != nil {
+		t.Fatalf("gültige Sitzung in derselben Instanz abgelehnt: %v", err)
 	}
 
-	// "Neustart": neue Instanz, dieselbe DB.
 	second := services.NewAuthService(repo, time.Hour)
-	if _, err := second.ValidateToken(token); !errors.Is(err, services.ErrInvalidToken) {
-		t.Fatalf("Alt-Token muss nach Neustart abgelehnt werden, bekam: %v", err)
-	}
-	// Ein frisch ausgestelltes Token der neuen Instanz funktioniert normal.
-	fresh, err := second.IssueToken(u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := second.ValidateToken(fresh); err != nil {
-		t.Fatalf("frisches Token der neuen Instanz abgelehnt: %v", err)
+	if _, _, err := second.ValidateSession(token, services.TransportHeader); !errors.Is(err, services.ErrInvalidSession) {
+		t.Fatalf("Alt-Sitzung muss nach Neustart abgelehnt werden, bekam: %v", err)
 	}
 }
 
-// TestTokenRejectedBeforePasswordChangedAt sichert die zweite Verteidigungs-
-// linie: Tokens, die vor der als Basislinie gesetzten Passwortänderungszeit
-// ausgestellt wurden, werden auch innerhalb derselben Instanz abgelehnt.
-func TestTokenRejectedBeforePasswordChangedAt(t *testing.T) {
+// TestSessionRejectedAfterPasswordChange: eine Sitzung von vor der
+// Passwortänderung wird auch innerhalb derselben Instanz abgelehnt.
+func TestSessionRejectedAfterPasswordChange(t *testing.T) {
 	repo, u := authTestUser(t)
 	auth := services.NewAuthService(repo, time.Hour)
 
-	token, err := auth.IssueToken(u)
+	token, _, _, err := auth.StartSession(u, services.TransportCookie)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Passwortänderung NACH der Token-Ausstellung datieren.
 	if err := repo.UpdateFields(u.ID, map[string]any{
 		"password_changed_at": time.Now().Add(time.Minute),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := auth.ValidateToken(token); !errors.Is(err, services.ErrInvalidToken) {
-		t.Fatalf("Token von vor der Passwortänderung muss abgelehnt werden, bekam: %v", err)
+	if _, _, err := auth.ValidateSession(token, services.TransportCookie); !errors.Is(err, services.ErrInvalidSession) {
+		t.Fatalf("Sitzung von vor der Passwortänderung muss abgelehnt werden, bekam: %v", err)
+	}
+}
+
+// TestSessionOnlyValidOverItsTransport: ein Wert gilt nur über den Weg, für den
+// er ausgestellt wurde - und der Fehlversuch beendet die Sitzung nicht.
+func TestSessionOnlyValidOverItsTransport(t *testing.T) {
+	repo, u := authTestUser(t)
+	auth := services.NewAuthService(repo, time.Hour)
+
+	header, _, _, err := auth.StartSession(u, services.TransportHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := auth.ValidateSession(header, services.TransportCookie); !errors.Is(err, services.ErrInvalidSession) {
+		t.Errorf("Kopfzeilen-Sitzung galt als Cookie: %v", err)
+	}
+	if _, _, err := auth.ValidateSession(header, services.TransportHeader); err != nil {
+		t.Errorf("Kopfzeilen-Sitzung über ihren Weg abgelehnt: %v", err)
+	}
+
+	cookie, _, _, err := auth.StartSession(u, services.TransportCookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := auth.ValidateSession(cookie, services.TransportHeader); !errors.Is(err, services.ErrInvalidSession) {
+		t.Errorf("Cookie-Sitzung galt als Kopfzeile: %v", err)
+	}
+}
+
+// TestRevokeAllSessions: der Wechsel des Sitzungswegs beendet jede Sitzung.
+func TestRevokeAllSessions(t *testing.T) {
+	repo, u := authTestUser(t)
+	auth := services.NewAuthService(repo, time.Hour)
+
+	header, _, _, _ := auth.StartSession(u, services.TransportHeader)
+	cookie, _, _, _ := auth.StartSession(u, services.TransportCookie)
+	auth.RevokeAllSessions()
+
+	if _, _, err := auth.ValidateSession(header, services.TransportHeader); !errors.Is(err, services.ErrInvalidSession) {
+		t.Errorf("Kopfzeilen-Sitzung überlebte: %v", err)
+	}
+	if _, _, err := auth.ValidateSession(cookie, services.TransportCookie); !errors.Is(err, services.ErrInvalidSession) {
+		t.Errorf("Cookie-Sitzung überlebte: %v", err)
 	}
 }
 
@@ -338,7 +341,7 @@ func TestCreateUserHashesPassword(t *testing.T) {
 	}
 
 	// Login mit dem neuen User funktioniert, RBAC-Rechte stimmen.
-	_, logged, err := env.Auth.Login("neuer", "Anker5-Leuchtturm!Wind")
+	logged, err := env.Auth.VerifyPassword("neuer", "Anker5-Leuchtturm!Wind")
 	if err != nil {
 		t.Fatalf("login neuer User: %v", err)
 	}
@@ -404,7 +407,7 @@ func TestDeleteProtectedUsers(t *testing.T) {
 func TestAPIKeyLifecycle(t *testing.T) {
 	env := newTestEnv(t)
 
-	_, admin, err := env.Auth.Login("admin", "test-admin-passwort")
+	admin, err := env.Auth.VerifyPassword("admin", "test-admin-passwort")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +479,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 
 func TestAPIKeyScopes(t *testing.T) {
 	env := newTestEnv(t)
-	_, admin, _ := env.Auth.Login("admin", "test-admin-passwort")
+	admin, _ := env.Auth.VerifyPassword("admin", "test-admin-passwort")
 
 	// read-Scope wird gespeichert und erkannt.
 	_, readKey, err := env.APIKeys.Create("lesend", admin.ID, domain.APIKeyScopeRead, nil, "test-admin")
@@ -496,7 +499,7 @@ func TestAPIKeyScopes(t *testing.T) {
 func TestAPIKeyExpiry(t *testing.T) {
 	env := newTestEnv(t)
 
-	_, admin, _ := env.Auth.Login("admin", "test-admin-passwort")
+	admin, _ := env.Auth.VerifyPassword("admin", "test-admin-passwort")
 	past := time.Now().Add(-time.Hour)
 	plaintext, _, err := env.APIKeys.Create("abgelaufen", admin.ID, "", &past, "test-admin")
 	if err != nil {

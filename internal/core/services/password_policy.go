@@ -6,7 +6,7 @@ import (
 )
 
 // Passwort-Policy. Der Server ist die ALLEINIGE Autorität: die Prüfung in der
-// UI (frontend/src/lib/passwordPolicy.js) spiegelt diese Regeln nur für
+// UI (ui/src/pages/account/account-model.ts) spiegelt diese Regeln nur für
 // sofortiges Feedback beim Tippen - sie ist bewusst kein Sicherheitsmerkmal
 // und kann umgangen werden. Jede Stelle, die ein Passwort setzt, MUSS
 // CheckPasswordPolicy aufrufen.
@@ -85,6 +85,15 @@ func (e *PasswordPolicyError) Error() string {
 		return ErrWeakPassword.Error()
 	}
 	return "passwort zu schwach: " + strings.Join(msgs, "; ")
+}
+
+// Codes liefert die Codes der verletzten Regeln in der Reihenfolge der Prüfung.
+func (e *PasswordPolicyError) Codes() []string {
+	codes := make([]string, 0, len(e.Check.Problems))
+	for _, p := range e.Check.Problems {
+		codes = append(codes, p.Code)
+	}
+	return codes
 }
 
 // Is macht den typisierten Fehler zu einem ErrWeakPassword - so bleiben alle

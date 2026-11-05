@@ -165,6 +165,13 @@ func writeFileB64(content, path string) string {
 	return fmt.Sprintf("printf '%%s' %s | base64 -d > %s", b64, path)
 }
 
+// dropRequirettyOnSudoRs nimmt `!requiretty` aus der Datei, wenn das System
+// sudo-rs benutzt (Standard ab Ubuntu 25.10): dessen visudo verwirft die
+// Einstellung als unbekannt, und eine TTY verlangt sudo-rs ohnehin nie.
+func dropRequirettyOnSudoRs(path string) string {
+	return fmt.Sprintf("{ ! sudo --version 2>/dev/null | grep -q sudo-rs || sed -i '/ !requiretty$/d' %s; }", path)
+}
+
 // restrictedProvisionScript liefert die Shell-Schritte, die beim Onboarding im
 // eingeschränkten Modus zusätzlich zum User die sudoers-Whitelist und die
 // Shim-Wrapper anlegen. Ersetzt die NOPASSWD:ALL-Zeile des Voll-Modus.
@@ -186,6 +193,7 @@ func restrictedProvisionScript(svcUser string) []string {
 		// visudo prüfen, dann atomar an ihren Platz verschieben (nie eine
 		// kaputte sudoers-Datei hinterlassen).
 		writeFileB64(restrictedSudoersContent(svcUser), fmt.Sprintf("/etc/sudoers.d/%s.tmp", svcUser)),
+		dropRequirettyOnSudoRs(fmt.Sprintf("/etc/sudoers.d/%s.tmp", svcUser)),
 		fmt.Sprintf("visudo -cf /etc/sudoers.d/%s.tmp >/dev/null", svcUser),
 		fmt.Sprintf("chmod 440 /etc/sudoers.d/%s.tmp", svcUser),
 		fmt.Sprintf("mv /etc/sudoers.d/%s.tmp /etc/sudoers.d/%s", svcUser, svcUser),
@@ -255,6 +263,7 @@ func restrictedRollbackScript(svcUser string) string {
 	return strings.Join([]string{
 		fmt.Sprintf("printf '%%s ALL=(ALL) NOPASSWD:ALL\\n' %s > /etc/sudoers.d/%s", svcUser, svcUser),
 		fmt.Sprintf("chmod 440 /etc/sudoers.d/%s", svcUser),
+		fmt.Sprintf("rm -f /etc/sudoers.d/%s.tmp", svcUser),
 		fmt.Sprintf("rm -rf %s", sudoShimDir(svcUser)),
 	}, "; ")
 }

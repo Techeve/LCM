@@ -586,6 +586,43 @@ func TestDecommissionPurgesAllServerData(t *testing.T) {
 	}
 }
 
+// TestDecommissionPurgeRestrictedUsesHelper: Der eingeschränkte Service-User
+// darf weder userdel noch /etc/sudoers.d anfassen - die Bereinigung muss über
+// den Helper laufen, sonst bleiben Konto und sudoers stehen.
+func TestDecommissionPurgeRestrictedUsesHelper(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	setServerFields(t, env, id, map[string]any{"restricted_sudo": true})
+	env.Dialer.Commands = nil
+
+	if _, err := env.Servers.Decommission(repositories.ScopeAll(), id, "admin", services.DecommissionOptions{PurgeTarget: true}); err != nil {
+		t.Fatalf("decommission: %v", err)
+	}
+	all := strings.Join(env.Dialer.Commands, "\n")
+	if !strings.Contains(all, "lcm-helper self-remove") {
+		t.Errorf("bereinigung ohne helper: %s", all)
+	}
+	if strings.Contains(all, "userdel -rf") {
+		t.Errorf("userdel läuft eingeschränkt ins Leere: %s", all)
+	}
+}
+
+// TestDecommissionPurgeReportsRemainingAccount: Bleibt das Konto stehen, wird
+// kein Erfolg gemeldet und der Server bleibt in LCM.
+func TestDecommissionPurgeReportsRemainingAccount(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	env.Dialer.Responses["userdel -rf"] = sshx.FakeResponse{Output: "FEHLER: konto lcm-svc besteht weiterhin\n", ExitCode: 1}
+
+	_, err := env.Servers.Decommission(repositories.ScopeAll(), id, "admin", services.DecommissionOptions{PurgeTarget: true})
+	if err == nil || !strings.Contains(err.Error(), "besteht weiterhin") {
+		t.Fatalf("erwartet Fehler mit Ursache, bekam %v", err)
+	}
+	if _, err := env.Servers.Get(repositories.ScopeAll(), id); err != nil {
+		t.Errorf("server muss bestehen bleiben: %v", err)
+	}
+}
+
 // TestDecommissionPurgeTargetRemovesUsersAndCredentials: Mit PurgeTarget
 // werden auf dem Zielserver die provisionierten Benutzer und die LCM-Zugänge
 // entfernt (userdel + authorized_keys), bevor lokal gelöscht wird.

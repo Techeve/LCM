@@ -22,24 +22,10 @@ func NewLinuxUserController(linux *services.LinuxUserService) *LinuxUserControll
 }
 
 func mapLinuxUserError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "nicht gefunden")
-	case errors.Is(err, services.ErrInvalidLinuxUsername),
-		errors.Is(err, services.ErrReservedLinuxUsername),
-		errors.Is(err, services.ErrInvalidShell),
-		errors.Is(err, services.ErrLinuxUsernameTaken),
-		errors.Is(err, services.ErrInvalidSSHKey),
-		errors.Is(err, services.ErrWeakPassword),
-		errors.Is(err, services.ErrEmptyActivation):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, services.ErrActivationInvalid), errors.Is(err, services.ErrActivationExpired):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrLinuxUserStillOnServers):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errLinuxUserNotFound
 	}
+	return mapSentinel(err, linuxUserErrors)
 }
 
 // List - GET /api/v1/linux-users (linuxusers:read)
@@ -79,8 +65,8 @@ type linuxUserRequest struct {
 // Create - POST /api/v1/linux-users (linuxusers:write)
 func (ctrl *LinuxUserController) Create(c fiber.Ctx) error {
 	var req linuxUserRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLines(lineField{"username", req.Username, maxNameLen}, lineField{"full_name", req.FullName, maxPersonNameLen}, lineField{"shell", req.Shell, maxNameLen}); err != nil {
 		return err
@@ -115,8 +101,8 @@ func (ctrl *LinuxUserController) Update(c fiber.Ctx) error {
 		// Berechtigungsprofil; hat Vorrang vor dem alten sudo-Häkchen.
 		DefaultProfileID *uint `json:"default_profile_id"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkOptionalLines(lineField{"full_name", deref(req.FullName), maxPersonNameLen}, lineField{"shell", deref(req.Shell), maxNameLen}); err != nil {
 		return err
@@ -150,8 +136,11 @@ func (ctrl *LinuxUserController) GenerateActivation(c fiber.Ctx) error {
 		return err
 	}
 	var req genLinuxActivationRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkRange("ttl_hours", req.TTLHours, 0, maxTTLHours); err != nil {
+		return err
 	}
 	token, act, err := ctrl.linux.GenerateActivation(id, time.Duration(req.TTLHours)*time.Hour, actor(c))
 	if err != nil {
@@ -187,10 +176,10 @@ type consumeLinuxActivationRequest struct {
 // LCM das Schlüsselpaar und liefert den privaten Schlüssel einmalig zurück.
 func (ctrl *LinuxUserController) ConsumeActivation(c fiber.Ctx) error {
 	var req consumeLinuxActivationRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
-	if err := checkLines(lineField{"token", req.Token, maxNameLen * 4}, lineField{"password", req.Password, maxPasswordLen}, lineField{"key_name", req.KeyName, maxNameLen}); err != nil {
+	if err := checkLines(lineField{"token", req.Token, maxTokenLen}, lineField{"password", req.Password, maxPasswordLen}, lineField{"key_name", req.KeyName, maxNameLen}); err != nil {
 		return err
 	}
 	if err := checkText("public_key", req.PublicKey, maxScriptLen); err != nil {
@@ -259,8 +248,8 @@ func (ctrl *LinuxUserController) AddKey(c fiber.Ctx) error {
 		return err
 	}
 	var req sshKeyRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLine("name", req.Name, maxNameLen); err != nil {
 		return err
@@ -285,8 +274,8 @@ func (ctrl *LinuxUserController) GenerateKey(c fiber.Ctx) error {
 		return err
 	}
 	var req sshKeyRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLine("name", req.Name, maxNameLen); err != nil {
 		return err
@@ -322,8 +311,8 @@ func (ctrl *LinuxUserController) AssignGroup(c fiber.Ctx) error {
 		// Benutzers auch auf den Servern dieser Gruppe.
 		ProfileID *uint `json:"profile_id"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.linux.AssignToGroup(scopeFor(c), id, req.GroupID, req.ProfileID, actor(c)); err != nil {
 		return mapLinuxUserError(err)
@@ -341,8 +330,8 @@ func (ctrl *LinuxUserController) SetGroupProfile(c fiber.Ctx) error {
 		GroupID   uint  `json:"group_id"`
 		ProfileID *uint `json:"profile_id"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.linux.SetGroupProfile(scopeFor(c), id, req.GroupID, req.ProfileID, actor(c)); err != nil {
 		return mapLinuxUserError(err)
@@ -372,8 +361,8 @@ func (ctrl *LinuxUserController) RemoveGroup(c fiber.Ctx) error {
 	var req struct {
 		GroupID uint `json:"group_id"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.linux.RemoveFromGroup(scopeFor(c), id, req.GroupID, actor(c)); err != nil {
 		return mapLinuxUserError(err)

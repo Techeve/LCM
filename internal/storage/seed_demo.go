@@ -17,8 +17,9 @@ import (
 // nie per SSH kontaktiert. So lässt sich die komplette UI/UX ausprobieren,
 // ohne echte Linux-Server anzubinden.
 func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
-	// Referenzzeitpunkt (relativ, nicht Date.now - deterministischer Seed).
-	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	// Referenzzeitpunkt: gestern Mittag. Die Demo wird täglich neu aufgesetzt, so
+	// bleibt der Verlauf frisch, und nichts liegt in der Zukunft.
+	base := time.Now().UTC().AddDate(0, 0, -1).Truncate(24 * time.Hour).Add(12 * time.Hour)
 
 	// 1a. LCM-Verwaltungs-User (Manager) - Login-Benutzer.
 	managerRole, err := roleRepo.FindByName(domain.RoleManager)
@@ -67,7 +68,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			KexAlgorithm:       "curve25519-sha256",
 			HostKeyFingerprint: "SHA256:DEMOweb01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO web01",
 			OSName: "Debian GNU/Linux", OSVersion: "12 (bookworm)", OSID: "debian", OSVersionID: "12",
-			Virtualization: "kvm", PackageManager: "apt", HasDocker: true, HasCompose: true, KernelVersion: "6.1.0-13-amd64",
+			Virtualization: "kvm", PackageManager: "apt", HasDocker: true, HasCompose: true, KernelVersion: "6.1.0-13-amd64", HardwareModel: "QEMU Standard PC (Q35 + ICH9, 2009)",
 			// Debian-Fall: der laufende Kernel ist der neueste, ein aelterer
 			// bleibt als Rueckfallebene liegen.
 			InstalledKernels: `[{"name":"linux-image-6.1.0-13-amd64","release":"6.1.0-13-amd64","version":"6.1.55-1"},` +
@@ -86,7 +87,12 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			// Firewall-Dialog die Vorlage für die SSH-Quellen (und die
 			// Grundlage der Aussperr-Warnung).
 			LCMSourceIP: "10.10.0.2",
-			Reachable:   true, SSHHardened: true, FirewallActive: true, IsDemo: true,
+			// Netz und Zeit: so, wie die Erfassung sie liefert.
+			DNSCurrent: "10.10.0.1, 1.1.1.1", DNSTestStatus: "full", DNSTestAt: &base,
+			DNSTestDetail: "debian.org ok, github.com ok",
+			Timezone:      "Europe/Berlin", NTPService: "chrony", NTPSynchronized: true,
+			NTPServers: "0.debian.pool.ntp.org, 1.debian.pool.ntp.org", TimeCheckedAt: &base,
+			Reachable: true, SSHHardened: true, FirewallActive: true, IsDemo: true,
 			// Brute-Force-Schutz: web01 zeigt die fail2ban-Verwaltung im
 			// Sicherheit-Tab (db01 zeigt dieselbe Karte für CrowdSec).
 			Fail2banInstalled: true, Fail2banActive: true,
@@ -115,7 +121,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			Name: "cache01", Host: "10.10.0.13", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
 			HostKeyFingerprint: "SHA256:DEMOcache01cccccccccccccccccccccccccccc", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO cache01",
 			OSName: "Debian GNU/Linux", OSVersion: "11 (bullseye)", OSID: "debian", OSVersionID: "11",
-			Virtualization: "none", PackageManager: "apt", KernelVersion: "5.10.0-27-amd64",
+			Virtualization: "none", PackageManager: "apt", KernelVersion: "5.10.0-27-amd64", HardwareModel: "Dell Inc. PowerEdge R630",
 			CPUModel: "Intel Xeon E5-2670", CPUCores: 2, MemTotalMB: 4096, MemUsedMB: 1800,
 			DiskTotalMB: 20480, DiskUsedMB: 4000, IPAddresses: "10.10.0.13",
 			// Mehrere fehlgeschlagene Kontakte in Folge => Offline-Kennzeichen,
@@ -127,7 +133,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			Name: "rocky01", Host: "10.10.0.21", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
 			HostKeyFingerprint: "SHA256:DEMOrocky01dddddddddddddddddddddddddddd", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO rocky01",
 			OSName: "Rocky Linux", OSVersion: "9.3 (Blue Onyx)", OSID: "rocky", OSVersionID: "9.3",
-			Virtualization: "kvm", PackageManager: "dnf", KernelVersion: "5.14.0-362.el9",
+			Virtualization: "kvm", PackageManager: "dnf", KernelVersion: "5.14.0-362.el9", HardwareModel: "Microsoft Corporation Virtual Machine",
 			CPUModel: "AMD EPYC 7302", CPUCores: 4, MemTotalMB: 16384, MemUsedMB: 5200,
 			DiskTotalMB: 51200, DiskUsedMB: 15000, IPAddresses: "10.10.0.21",
 			Reachable: true, SSHHardened: true, FirewallActive: true, IsDemo: true,
@@ -149,7 +155,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			HostKeyFingerprint: "SHA256:DEMOpve01ffffffffffffffffffffffffffffff", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO pve01",
 			OSName: "Debian GNU/Linux", OSVersion: "12 (bookworm)", OSID: "debian", OSVersionID: "12",
 			ProxmoxType: domain.ProxmoxPVE, ProxmoxVersion: "8.2.4",
-			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.8.12-1-pve",
+			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.8.12-1-pve", HardwareModel: "Supermicro SYS-5019C-M",
 			// Proxmox behaelt mehrere Kernel als Rueckfallebene. Der laufende
 			// ist hier bewusst NICHT der neueste - genau die Lage, die man
 			// erkennen koennen muss (installiert != gebootet). Der aelteste
@@ -172,7 +178,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			Name: "edge01", Host: "10.20.0.9", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
 			HostKeyFingerprint: "SHA256:DEMOedge01eeeeeeeeeeeeeeeeeeeeeeeeeeeeee", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO edge01",
 			OSName: "Ubuntu", OSVersion: "24.04 LTS", OSID: "ubuntu", OSVersionID: "24.04",
-			Virtualization: "kvm", PackageManager: "apt", KernelVersion: "6.8.0-31-generic",
+			Virtualization: "kvm", PackageManager: "apt", KernelVersion: "6.8.0-31-generic", HardwareModel: "Hetzner vServer",
 			CPUModel: "Intel N100", CPUCores: 4, MemTotalMB: 8192, MemUsedMB: 2600,
 			DiskTotalMB: 61440, DiskUsedMB: 15000, IPAddresses: "10.20.0.9",
 			Reachable: false, FailedChecks: 12, LastSeenAt: &edgeSeen, LastError: "Zeitüberschreitung (Host offline)",
@@ -180,13 +186,16 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			UnreachableUncritical: true, UnreachableGraceDays: 365, IsDemo: true,
 		},
 		{
-			// lcm-self: der LCM-Host selbst (Host localhost). Zeigt das LCM-Logo
+			// lcm-host: der LCM-Host selbst (Host localhost). Zeigt das LCM-Logo
 			// statt eines OS-Logos und bietet in der Übersicht die Einrichtung
-			// von Trivy und apt-cacher-ng an.
-			Name: "lcm-self", Host: "localhost", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
-			HostKeyFingerprint: "SHA256:DEMOlcmselflllllllllllllllllllllllllll", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO lcm-self",
+			// von Trivy, apt-cacher-ng und der CrowdSec-LAPI an.
+			Name: "lcm-host", Host: "localhost", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
+			HostKeyFingerprint: "SHA256:DEMOlcmhostllllllllllllllllllllllllllll", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO lcm-host",
+			KexAlgorithm: "mlkem768x25519-sha256",
+			Timezone:     "Europe/Berlin", NTPService: "systemd-timesyncd", NTPSynchronized: true, NTPServers: "ptbtime1.ptb.de",
+			TimeCheckedAt: &base, DNSCurrent: "10.10.0.1", DNSTestStatus: "full", DNSTestAt: &base,
 			OSName: "Debian GNU/Linux", OSVersion: "12 (bookworm)", OSID: "debian", OSVersionID: "12",
-			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.1.0-13-amd64",
+			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.1.0-13-amd64", HardwareModel: "Intel(R) Client Systems NUC11TNHi5",
 			CPUModel: "Intel Core i5", CPUCores: 4, MemTotalMB: 16384, MemUsedMB: 5200,
 			DiskTotalMB: 81920, DiskUsedMB: 22000, IPAddresses: "127.0.0.1",
 			Reachable: true, SSHHardened: true, FirewallActive: true, IsDemo: true,
@@ -197,7 +206,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			Name: "mail01", Host: "10.10.0.14", SSHPort: 22, ServiceUser: domain.DefaultServiceUser,
 			HostKeyFingerprint: "SHA256:DEMOmail01gggggggggggggggggggggggggggggg", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO mail01",
 			OSName: "Debian GNU/Linux", OSVersion: "12 (bookworm)", OSID: "debian", OSVersionID: "12",
-			Virtualization: "kvm", PackageManager: "apt", KernelVersion: "6.1.0-13-amd64",
+			Virtualization: "kvm", PackageManager: "apt", KernelVersion: "6.1.0-13-amd64", HardwareModel: "QEMU Standard PC (i440FX + PIIX, 1996)",
 			CPUModel: "Intel Xeon E5-2670", CPUCores: 2, MemTotalMB: 8192, MemUsedMB: 4100,
 			DiskTotalMB: 61440, DiskUsedMB: 23000, IPAddresses: "10.10.0.14",
 			ListeningPackages: "postfix, dovecot-core, openssh-server",
@@ -211,7 +220,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			Name: "backup01", Host: "10.10.0.15", SSHPort: 2222, ServiceUser: domain.DefaultServiceUser,
 			HostKeyFingerprint: "SHA256:DEMObackup01hhhhhhhhhhhhhhhhhhhhhhhhhhhh", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO backup01",
 			OSName: "Ubuntu", OSVersion: "24.04 LTS", OSID: "ubuntu", OSVersionID: "24.04",
-			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.8.0-31-generic",
+			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.8.0-31-generic", HardwareModel: "HP ProLiant MicroServer Gen10 Plus",
 			CPUModel: "Intel Core i3-N305", CPUCores: 8, MemTotalMB: 16384, MemUsedMB: 3900,
 			DiskTotalMB: 2097152, DiskUsedMB: 1650000, IPAddresses: "10.10.0.15",
 			Reachable: true, SSHHardened: true, FirewallActive: true, IsDemo: true,
@@ -222,9 +231,26 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 			HostKeyFingerprint: "SHA256:DEMOpi01iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO pi01",
 			OSName: "Raspberry Pi OS", OSVersion: "12 (bookworm)", OSID: "raspbian", OSVersionID: "12",
 			Virtualization: "none", PackageManager: "apt", KernelVersion: "6.6.20+rpt-rpi-v8",
-			CPUModel: "ARM Cortex-A76 (Raspberry Pi 5)", CPUCores: 4, MemTotalMB: 8192, MemUsedMB: 1200,
+			HardwareModel: "Raspberry Pi 5 Model B Rev 1.0",
+			CPUModel:      "ARM Cortex-A76 (Raspberry Pi 5)", CPUCores: 4, MemTotalMB: 8192, MemUsedMB: 1200,
 			DiskTotalMB: 61440, DiskUsedMB: 8000, IPAddresses: "10.10.0.40",
+			// Ohne RTC und mit nur einem erreichbaren Resolver: die Uhr läuft
+			// nach, der DNS-Test löst nur einen Teil der Namen auf.
+			DNSCurrent: "10.10.0.1", DNSTestStatus: "partial", DNSTestAt: &base, DNSTestDetail: "debian.org ok, github.com fehlgeschlagen",
+			Timezone: "Europe/Berlin", NTPService: "systemd-timesyncd", NTPSynchronized: false, ClockOffsetSeconds: -94, TimeCheckedAt: &base,
 			Reachable: true, SSHHardened: false, FirewallActive: false, IsDemo: true,
+		},
+		{
+			// gw01: MikroTik-Router (RouterOS). LCM überwacht dort nur, was die
+			// Geräte-API hergibt: Modell, Ressourcen und den Versionsstand.
+			Name: "gw01", Host: "10.10.0.1", SSHPort: 22, ServiceUser: "lcm",
+			HostKeyFingerprint: "SHA256:DEMOgw01rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", PrivateKeyEnc: "demo", PublicKey: "ssh-ed25519 DEMO gw01",
+			OSName: "RouterOS", OSVersion: "7.15.3", OSID: domain.OSIDRouterOS,
+			RouterBoardModel: "RB5009UG+S+", RouterOSChannel: "stable",
+			RouterOSLatestVersion: "7.16.1", RouterOSUpdateAvailable: true,
+			CPUModel: "ARM64", CPUCores: 4, MemTotalMB: 1024, MemUsedMB: 236,
+			DiskTotalMB: 1024, DiskUsedMB: 118,
+			Reachable: true, IsDemo: true,
 		},
 	}
 	for i := range demoServers {
@@ -250,7 +276,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		// Auch die übrigen Demo-Server brauchen einen Bestand: ein Server ohne
 		// erfasste Pakete gilt seit BUG-020 zu Recht als unbewertbar (rot),
 		// weil sich Updates, CVEs und Support-Ende daraus ableiten. Ohne diese
-		// Einträge wären cache01, pve01, edge01 und lcm-self dauerhaft rot und
+		// Einträge wären cache01, pve01, edge01 und lcm-host dauerhaft rot und
 		// die Demo würde einen Fehlerzustand statt eines Normalbetriebs zeigen.
 		{ServerRef: domain.ServerRef(demoServers[2].ID), Name: "redis-server", Version: "7.0.15-1"},
 		{ServerRef: domain.ServerRef(demoServers[2].ID), Name: "openssh-server", Version: "9.2p1-2"},
@@ -260,6 +286,9 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		{ServerRef: domain.ServerRef(demoServers[6].ID), Name: "openssh-server", Version: "9.6p1-3"},
 		{ServerRef: domain.ServerRef(demoServers[7].ID), Name: "lcm", Version: "1.6.0"},
 		{ServerRef: domain.ServerRef(demoServers[7].ID), Name: "openssh-server", Version: "9.2p1-2"},
+		// lcm-host: apt-cacher-ng ist eingerichtet, die CrowdSec-LAPI noch nicht -
+		// so zeigt die LCM-Host-Karte beide Zustände.
+		{ServerRef: domain.ServerRef(demoServers[7].ID), Name: "apt-cacher-ng", Version: "3.7.4-1"},
 		// mail01: Security-Update für postfix steht aus.
 		{ServerRef: domain.ServerRef(demoServers[8].ID), Name: "postfix", Version: "3.7.9-0", CandidateVersion: "3.7.11-0", Security: true},
 		{ServerRef: domain.ServerRef(demoServers[8].ID), Name: "dovecot-core", Version: "2.3.19.1-2"},
@@ -471,7 +500,7 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 		{ServerID: &cache01, Type: "health", Name: "Health-Check (Ping) @ cache01", Status: domain.JobStatusFailed,
 			TriggeredBy: "scheduler", Output: "FEHLER: Verbindung abgelehnt (Host offline)",
 			StartedAt: ptrTime(base.Add(time.Hour)), FinishedAt: ptrTime(base.Add(time.Hour + 5*time.Second))},
-		{ServerID: &web01, Type: "harden-ssh", Name: "SSH-Härtung @ web01", Status: domain.JobStatusSuccess,
+		{ServerID: &web01, Type: domain.JobTypeHardenSSH, Name: "SSH-Härtung @ web01", Status: domain.JobStatusSuccess,
 			TriggeredBy: "admin", Output: "sshd_config.d/60-lcm-hardening.conf geschrieben, sshd neu geladen.\n", ExitCode: ptrInt(0),
 			StartedAt: ptrTime(base.Add(2 * time.Hour)), FinishedAt: ptrTime(base.Add(2*time.Hour + 3*time.Second))},
 	}

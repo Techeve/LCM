@@ -10,7 +10,7 @@ ein zentrales Management-Werkzeug: Monitoring (Pakete, Updates, Hardware,
 Ampel-Status je Server), CVE-Scan über Trivy ohne Agenten, Docker-Überwachung
 samt Update-Aktionen, Benutzer- und Rechteverwaltung mit Berechtigungsprofilen,
 Automatisierung über Gruppen-Regeln und Zeitpläne - und ein lückenloses Audit-Log
-mit manipulationssicherer Hash-Kette. Backend in Go, Oberfläche in Svelte,
+mit manipulationssicherer Hash-Kette. Backend in Go, Oberfläche in Lit,
 alles in **einem Binary**; die Zielserver brauchen nichts außer SSH.
 
 Dieses Image ist das offizielle Container-Release der **Community Edition**

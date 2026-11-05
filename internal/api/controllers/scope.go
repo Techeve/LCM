@@ -12,7 +12,13 @@ import (
 // ab (Tenant Isolation): Admins sehen alles, alle anderen nur die Server
 // und Gruppen ihrer zugewiesenen Servergruppen.
 func scopeFor(c fiber.Ctx) repositories.AccessScope {
-	user := middlewares.CurrentUser(c)
+	return scopeOfUser(middlewares.CurrentUser(c))
+}
+
+// scopeOfUser ist scopeFor für einen User ohne Request - etwa für die
+// langlebigen Verbindungen des Ereigniskanals, die ihre Rechte regelmäßig
+// neu bestimmen.
+func scopeOfUser(user *domain.User) repositories.AccessScope {
 	if user == nil {
 		return repositories.ScopeManager(0) // sieht nichts
 	}

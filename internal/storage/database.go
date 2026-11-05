@@ -90,6 +90,9 @@ func Migrate(db *gorm.DB) error {
 	if err := autoMigrateSchema(db); err != nil {
 		return err
 	}
+	if err := ensureJobTimeIndex(db); err != nil {
+		return err
+	}
 	if err := migrateEncryptUserFields(db); err != nil {
 		return err
 	}

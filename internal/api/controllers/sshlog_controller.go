@@ -20,14 +20,10 @@ func NewSSHLogController(logs *services.SSHLogService) *SSHLogController {
 }
 
 func mapLogError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "nicht gefunden")
-	case errors.Is(err, services.ErrLogForbidden):
-		return fiber.NewError(fiber.StatusForbidden, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errSSHLogNotFound
 	}
+	return mapSentinel(err, sshLogErrors)
 }
 
 // ServerSessions - GET /api/v1/servers/:id/ssh-sessions (jobs:read)

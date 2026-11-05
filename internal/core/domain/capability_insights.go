@@ -8,7 +8,7 @@ import (
 // Befunde der Betriebsfähigkeit für die Ampel (siehe TrafficLight).
 //
 // Die Oberfläche setzt Dauer und Ursache aus den Parametern selbst in ihrer
-// Sprache zusammen (frontend/src/lib/capability.js). Die deutschen Sätze hier
+// Sprache zusammen (ui/src/pages/servers/tab-overview.ts). Die deutschen Sätze hier
 // sind für alles ohne Sprachkatalog: Benachrichtigungen, API-Antworten, Logs.
 
 // Paketstand-Stufen für TrafficLightInput.PackagesStale.

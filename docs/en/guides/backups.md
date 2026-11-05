@@ -19,7 +19,7 @@ An `.lcmbak` is an encrypted ZIP. It bundles:
 - the **configuration** (`config.json`),
 - the **TLS certificate**.
 
-It is encrypted in one of two ways - the *Encryption* column of the backup
+It is encrypted in one of two ways - the *Encrypted with* column of the backup
 list shows which:
 
 | Mode | How | Needed to restore |
@@ -38,9 +38,9 @@ backup cannot be restored - keep it somewhere that outlives the backup
 ## Create a backup now
 
 Under *Settings → Backups*, **"Back up now"** immediately produces an archive.
-If the passphrase field next to it stays empty, the same order applies as for
-scheduled backups (recipient keys, otherwise the stored passphrase); a typed
-passphrase wins and encrypts exactly this archive with it. LCM takes a
+The passphrase field is in the confirmation dialog. If it stays empty, the same
+order applies as for scheduled backups (recipient keys, otherwise the stored
+passphrase); a typed passphrase wins and encrypts exactly this archive with it. LCM takes a
 **consistent** snapshot of the database (`VACUUM INTO`) for this - so a backup
 can be created while running.
 
@@ -81,7 +81,7 @@ archives, however, can be read by every newer version.
 For automatic backups to run, **exactly two things** are required - both are
 shown directly on the *Settings → Backups* page:
 
-1. **"Automatic backups enabled"** is switched on (default: on, every
+1. **"Automatic backups"** is switched on (default: on, every
    24 hours).
 2. **A key is configured**: recipient keys (see above) or a passphrase - in
    the "Passphrase for scheduled backups" field (stored encrypted), as the
@@ -120,7 +120,7 @@ services:
 :::caution
 Without recipient keys and without a passphrase, a scheduled backup fails with
 a key error - an unencrypted archive is **never** created. Manual backups keep
-working (passphrase in the form).
+working (passphrase in the confirmation dialog).
 :::
 
 Further settings:
@@ -132,7 +132,7 @@ Further settings:
   backups run at fixed times derived from it - e.g. interval 12&nbsp;h and
   time 03:30 → runs at 03:30 and 15:30. Other intervals run relatively; the
   catch-up watchdog keeps them on track.
-- **Target directory** - always set and pre-filled with the default
+- **Directory** - always set and pre-filled with the default
   (`backup_dir` from config.json, otherwise `<data-dir>/backups`). It can be
   changed freely - handy for a persistent/external volume; clearing the field
   restores the default on save.

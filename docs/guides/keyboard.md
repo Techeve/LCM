@@ -12,15 +12,14 @@ Kontraste nach WCAG 2.1 AA in beiden Farbmodi.
 
 ## Tastenkürzel
 
-**`?`** öffnet jederzeit die Übersicht aller Kürzel - auch über die
-Schaltfläche `?` oben rechts in der Leiste und den Link in der Fußzeile. Die
-Übersicht zeigt zusätzlich die Kürzel der gerade geöffneten Seite.
+**`?`** öffnet jederzeit die Übersicht aller Kürzel - auch über das Kontomenü
+oben rechts (Eintrag *Tastenkürzel*). Die Übersicht zeigt zusätzlich die Kürzel
+der gerade geöffneten Seite.
 
 Kürzel gelten in der angemeldeten Oberfläche, solange kein Eingabefeld den
 Fokus hat. Wer tippt, tippt Buchstaben - nur Speichern (`Strg+S` bzw. `⌘S`)
 greift auch im Feld. Auf dem Anmeldebildschirm sind die Kürzel aus: Dort gibt
-es nichts anzuspringen, und die Schaltfläche dafür erscheint ebenfalls erst
-nach der Anmeldung.
+es nichts anzuspringen, und das Kontomenü erscheint erst nach der Anmeldung.
 
 ### Springen
 
@@ -29,10 +28,11 @@ Zwei Tasten nacheinander: erst `G`, dann der Buchstabe der Seite.
 | Kürzel | Ziel |
 |---|---|
 | `G` `D` | Dashboard |
+| `G` `V` | Server |
 | `G` `G` | Gruppen |
 | `G` `U` | Linux-Benutzer |
 | `G` `S` | Sicherheit |
-| `G` `C` | Docker |
+| `G` `C` | Container |
 | `G` `J` | Jobs |
 | `G` `E` | Einstellungen |
 | `G` `A` | Mein Konto |
@@ -45,6 +45,7 @@ reagieren nicht.
 
 | Kürzel | Wirkung |
 |---|---|
+| `Strg+K` / `⌘K` | Befehlspalette öffnen |
 | `?` | Kürzel-Übersicht öffnen oder schließen |
 | `/` | In das Suchfeld der Seite springen |
 | `Strg+S` / `⌘S` | Formular speichern |
@@ -56,17 +57,15 @@ reagieren nicht.
 
 ### Auf der Seite
 
-Schaltflächen mit eigenem Kürzel tragen es als kleines Abzeichen direkt am
-Namen - **„+ Server hinzufügen `N`"**. Das Abzeichen zeigt die Taste, die die
-Schaltfläche auslöst; die Übersicht (`?`) listet alle Kürzel der Seite unter
-*Auf dieser Seite*. Die Abzeichen lassen sich dort abschalten; die Wahl
-merkt sich der Browser.
+Befehle mit eigenem Kürzel (etwa **„Server hinzufügen“**, `N`) löst die Taste
+direkt aus; die Übersicht (`?`) listet alle Kürzel der Seite unter
+*Auf dieser Seite*. Dieselben Befehle stehen in der Befehlspalette.
 
 | Kürzel | Wirkung |
 |---|---|
-| `N` | Neu anlegen: Server, Gruppe, Linux-Benutzer, Profil, Regel, Kanal, Anwendung, Repository, Allowlist, Custom-Aktion |
-| `U` | Sicherheit: alle VMs aktualisieren |
-| `/` | Suchfeld: Dashboard (Name), Jobs, Pakete eines Servers, Regelbausteine |
+| `N` | Neu anlegen: Server, Gruppe, Linux-Benutzer, Profil, Kanal, Alarmregel, App, Repository, APT-Cache, CrowdSec-LAPI, Allowlist, Eigene Aktion |
+| `U` | Sicherheit: Sammel-Update (alle Server aktualisieren) |
+| `/` | Suchfeld der Seite, sofern sie eines hat: Serverliste, Jobs, Pakete eines Servers |
 
 ## Ohne Maus durch die Seite
 
@@ -94,6 +93,6 @@ Einblend- und Schwebe-Animationen.
 
 Der Testlauf prüft die wichtigsten Seiten in beiden Farbmodi mit
 [axe-core](https://github.com/dequelabs/axe-core) gegen WCAG 2.1 AA
-(`frontend/e2e/a11y.spec.js`) und die Tastaturbedienung mit Playwright
-(`frontend/e2e/hotkeys.spec.js`). Ein neuer Verstoß fällt im Testlauf auf,
+(`ui/e2e/a11y.spec.ts`) und die Tastaturbedienung mit Playwright
+(`ui/e2e/hotkeys.spec.ts`). Ein neuer Verstoß fällt im Testlauf auf,
 nicht erst beim Anwender.

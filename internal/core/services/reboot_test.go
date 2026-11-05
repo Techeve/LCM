@@ -164,3 +164,29 @@ func TestRebootRuleSkippedOnRestrictedServer(t *testing.T) {
 		}
 	}
 }
+
+// TestRebootRefusedOnAPIDevices: RouterOS und DSM haben keine POSIX-Shell, ein
+// Shell-Neustart darf dort nie abgesetzt werden.
+func TestRebootRefusedOnAPIDevices(t *testing.T) {
+	for osID, want := range map[string]error{
+		domain.OSIDRouterOS:    services.ErrRouterOSUnsupported,
+		domain.OSIDSynologyDSM: services.ErrDSMUnsupported,
+	} {
+		env := newTestEnv(t)
+		id := joinTestServer(t, env, "gerät")
+		// os_id liegt verschlüsselt: über das Modell schreiben.
+		repo := repositories.NewServerRepository(env.DB())
+		srv, _ := repo.FindByIDUnscoped(id)
+		srv.OSID = osID
+		if err := repo.Update(srv); err != nil {
+			t.Fatal(err)
+		}
+		env.Dialer.Commands = nil
+		if _, err := env.Servers.Reboot(repositories.ScopeAll(), id, "admin"); err != want {
+			t.Errorf("%s: erwartet %v, bekam %v", osID, want, err)
+		}
+		if len(env.Dialer.Commands) != 0 {
+			t.Errorf("%s: es wurden Kommandos abgesetzt: %v", osID, env.Dialer.Commands)
+		}
+	}
+}

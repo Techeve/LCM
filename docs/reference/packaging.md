@@ -45,7 +45,7 @@ Die Architektur ermittelst du mit `dpkg --print-architecture`
 |------|--------|
 | `/usr/bin/lcm` | die Programmdatei (einzelne Binary, Web-UI eingebettet) |
 | `/lib/systemd/system/lcm.service` | die gehärtete systemd-Unit |
-| `/etc/lcm/config.json` | Konfiguration (beim ersten Mal mit zufälligem JWT-Secret erzeugt) |
+| `/etc/lcm/config.json` | Konfiguration (beim ersten Mal mit sicheren Standardwerten erzeugt, ohne Geheimnis) |
 | `/var/lib/lcm/` | Zustand: verschlüsselte SQLite-DB, Master-Key (`lcm.key`, sofern nicht als systemd-Credential hinterlegt), TLS-Zertifikat, Backups |
 
 Der Dienst läuft unter dem eigens angelegten System-Benutzer **`lcm`** ohne
@@ -84,7 +84,7 @@ Dienst neu starten (`systemctl restart lcm`). Wichtige Werte:
   Betrieb `host` auf `127.0.0.1` setzen.
 - `port` (Default `9310`).
 - Ein Geheimnis steht nicht in der Datei: Der Signaturschlüssel der
-  Sitzungen entsteht bei jedem Start neu im Speicher. Ein `jwt_secret` aus
+  2FA-Challenge entsteht bei jedem Start neu im Speicher. Ein `jwt_secret` aus
   älteren Fassungen wird ignoriert und beim nächsten Schreiben entfernt.
 
 ### Aktualisieren
@@ -95,7 +95,7 @@ Neues Paket über das alte installieren:
 sudo apt install ./lcm_<neue-version>_amd64.deb
 ```
 
-Konfiguration, Datenbank und das JWT-Secret bleiben erhalten; ausstehende
+Konfiguration und Datenbank bleiben erhalten; ausstehende
 Datenbank-Migrationen laufen beim Start automatisch.
 
 ### Entfernen
@@ -265,7 +265,7 @@ Danach läuft die App auf <http://localhost:9310>. Beim ersten Start entstehen i
 
 ```
 data/
-├── config.json    Konfiguration (inkl. generiertem JWT-Secret)
+├── config.json    Konfiguration (ohne Geheimnis)
 ├── app.db         SQLite-Datenbank (+ -wal/-shm im Betrieb)
 └── version.json   installierte Version (Update-Erkennung)
 ```

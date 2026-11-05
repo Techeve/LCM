@@ -14,10 +14,6 @@ const (
 	// binnen Minuten, während die Trivy-Datenbank erst alle 6 Stunden gebaut
 	// und beim Betreiber eingespielt wird.
 	AdvisorySourceOSV = "osv"
-	// AdvisorySourceEUVD ist die EU-Schwachstellendatenbank der ENISA. Sie
-	// erzeugt keine eigenen Befunde, sondern reichert vorhandene um das
-	// Signal „wird aktiv ausgenutzt" an (Etappe C).
-	AdvisorySourceEUVD = "euvd"
 )
 
 // Art eines Befunds. Die Unterscheidung ist keine Kosmetik: Eine

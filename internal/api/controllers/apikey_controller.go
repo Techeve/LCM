@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/apierr"
 	"LCM/internal/api/middlewares"
 	"LCM/internal/core/services"
 )
@@ -50,21 +51,22 @@ func (ctrl *APIKeyController) Create(c fiber.Ctx) error {
 	dec := json.NewDecoder(bytes.NewReader(c.Body()))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest,
-			"ungültiger Request-Body (erlaubte Felder: name, scope, expires_in_days): "+err.Error())
+		return apierr.InvalidBody.With("detail", err.Error())
 	}
 	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"scope", req.Scope, maxNameLen}); err != nil {
 		return err
 	}
 	if req.Name == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
+		return missingFields("name")
 	}
 
 	var expiresAt *time.Time
 	if req.ExpiresInDays != nil {
 		if *req.ExpiresInDays <= 0 {
-			return fiber.NewError(fiber.StatusBadRequest,
-				"expires_in_days muss positiv sein - für einen unbefristeten Key das Feld weglassen")
+			return errInvalidExpiry
+		}
+		if err := checkRange("expires_in_days", *req.ExpiresInDays, 1, maxAPIKeyDays); err != nil {
+			return err
 		}
 		t := time.Now().AddDate(0, 0, *req.ExpiresInDays)
 		expiresAt = &t

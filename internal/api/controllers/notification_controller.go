@@ -7,7 +7,6 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"LCM/internal/core/services"
-	"LCM/internal/infrastructure/notify"
 	"LCM/internal/storage/repositories"
 )
 
@@ -22,20 +21,10 @@ func NewNotificationController(channels *services.NotificationService) *Notifica
 }
 
 func mapNotificationError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "benachrichtigungskanal nicht gefunden")
-	case errors.Is(err, services.ErrChannelNameRequired),
-		errors.Is(err, services.ErrChannelTypeInvalid),
-		errors.Is(err, services.ErrChannelConfigInvalid),
-		errors.Is(err, notify.ErrUnknownChannelType):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, services.ErrChannelInUse),
-		errors.Is(err, services.ErrChannelManaged):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errChannelNotFound
 	}
+	return mapSentinel(err, notificationErrors)
 }
 
 // GetSystemChannel - GET /api/v1/settings/mail-channel (settings:manage)
@@ -55,8 +44,8 @@ func (ctrl *NotificationController) SetSystemChannel(c fiber.Ctx) error {
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.channels.EnsureSystemChannel(req.Enabled, actor(c)); err != nil {
 		return err
@@ -97,8 +86,8 @@ func (ctrl *NotificationController) List(c fiber.Ctx) error {
 // Create - POST /api/v1/notification-channels (notifications:manage)
 func (ctrl *NotificationController) Create(c fiber.Ctx) error {
 	var req channelRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"secret", req.Secret, maxPasswordLen}); err != nil {
 		return err
@@ -120,8 +109,8 @@ func (ctrl *NotificationController) Update(c fiber.Ctx) error {
 		return err
 	}
 	var req channelRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"type", req.Type, maxNameLen}, lineField{"secret", req.Secret, maxPasswordLen}); err != nil {
 		return err
@@ -158,7 +147,7 @@ func (ctrl *NotificationController) Test(c fiber.Ctx) error {
 		if mapped := mapNotificationError(err); mapped != err {
 			return mapped
 		}
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+		return errChannelTest.With("detail", err.Error())
 	}
 	return c.JSON(fiber.Map{"status": "sent"})
 }

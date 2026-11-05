@@ -83,11 +83,11 @@ import { Steps } from '@astrojs/starlight/components';
 
 <Steps>
 
-1. **Caches hinterlegen.** *Einstellungen → APT-Cache* → **„+ Cache
+1. **Caches hinterlegen.** *Einstellungen → APT-Cache* → **„Cache
    hinzufügen“**: Bezeichnung (z.&nbsp;B. „Standort Berlin“) und URL (z.&nbsp;B.
    `http://192.168.1.10:3142`). Es können **mehrere** Caches nebeneinander
-   stehen, etwa einer je Standort. **„Verbindung prüfen“** je Zeile - grünes
-   Badge „läuft“ = bereit. Auf derselben Seite liegen die Transfer-Statistiken
+   stehen, etwa einer je Standort. **„Prüfen“** je Zeile - Zustand „läuft“
+   = bereit. Auf derselben Seite liegen die Transfer-Statistiken
    (je gewähltem Cache), der Dienst-Neustart, das permanente Caching und der
    Status der Überwachung. Bis LCM 1.46 gab es nur eine Cache-URL; sie wird
    beim Update als **„Standard-Cache“** übernommen.
@@ -103,7 +103,7 @@ import { Steps } from '@astrojs/starlight/components';
    trennen“** macht es rückgängig.
 
 3. **Ganze Gruppe anbinden.** Gruppen-Regel „**APT-Cache anbinden**“ (am
-   Schedule) oder „**APT-Cache erzwingen**“ (Grundsatz-Regel); in der Regel
+   Schedule oder als Grundsatz-Regel); in der Regel
    wird der Cache gewählt (ohne Wahl gilt der einzige, wenn es genau einen
    gibt). Die Grundsatz-Regel prüft bei jeder Verbindung, ob das Drop-in auf
    die URL dieses Caches zeigt, und schreibt es bei Abweichung neu - so wirkt
@@ -111,8 +111,8 @@ import { Steps } from '@astrojs/starlight/components';
 
 </Steps>
 
-Der Anbindungs-Status ist im Repositories-Tab sichtbar (Badge „APT-Cache
-aktiv: *Name*“) und wird bei **„Alles aktualisieren“** live aus dem Drop-in
+Der Anbindungs-Status ist im Reiter *Repositories* sichtbar („Über den
+APT-Cache *Name*“) und wird bei **„Alles aktualisieren“** live aus dem Drop-in
 ausgelesen - samt der Adresse, auf die es zeigt.
 
 ## Anbindung wieder lösen (deaktivieren)
@@ -128,7 +128,7 @@ Zwei Wege führen zurück zu direkten Repository-Anfragen:
   einzeln aufsuchen.
 
 :::caution[Grundsatz-Regel gewinnt]
-Ist in einer Gruppe die Grundsatz-Regel **„APT-Cache erzwingen“** aktiv,
+Ist in einer Gruppe **„APT-Cache anbinden“** als Grundsatz-Regel aktiv,
 bindet der nächste Health-Check (alle 15&nbsp;Minuten) getrennte Server
 **automatisch wieder an** - die Trennung hält dann nur wenige Minuten. LCM
 weist beim Trennen im Konsolen-Output ausdrücklich darauf hin. Für eine
@@ -143,15 +143,15 @@ Die Seite *Einstellungen → APT-Cache* bündelt den Betrieb des Caches:
 - **Transfer-Statistiken** - wie viel aus dem Internet geladen und wie viel aus
   dem Cache ausgeliefert wurde (seit Dienst-Start und in jüngster Zeit). Die
   Differenz ist die eingesparte Bandbreite.
-- **Erweiterte Einstellungen** - **Dienst neu starten** und **permanentes
-  Caching** (schaltet den nächtlichen Ablauf-Job ab, `NO_CRON_RUN`). Diese
-  Aktionen stehen nur zur Verfügung, wenn apt-cacher-ng auf dem LCM-Host selbst
-  läuft; Statistik und Erreichbarkeit gelten für jede konfigurierte Cache-URL.
+- **Dienst auf dem LCM-Host** - **Dienst neu starten** und der Schalter
+  **Pakete dauerhaft aufbewahren** (schaltet den nächtlichen Ablauf-Job ab,
+  `NO_CRON_RUN`). Diese Aktionen stehen nur zur Verfügung, wenn apt-cacher-ng
+  auf dem LCM-Host selbst läuft; Statistik und Erreichbarkeit gelten für jede konfigurierte Cache-URL.
 - **Überwachung** - LCM prüft jeden Cache im Rahmen der Alarm-Auswertung (alle
   30&nbsp;Minuten). Die Prüfung akzeptiert nicht schon jede HTTP-200-Antwort,
   sondern nur eine echte apt-cacher-ng-Report-Seite - so fällt auch ein fremder
   Dienst auf dem Port oder ein stiller Fehlstart auf. Den Alarm richtest du als
-  Regel vom Typ **„apt-cacher-ng nicht erreichbar“** unter *Einstellungen →
+  Regel vom Typ **„APT-Cache nicht erreichbar“** unter *Einstellungen →
   Alarme* ein und weist ihr einen Benachrichtigungskanal zu.
 
 ## Wenn apt belegt ist
@@ -179,6 +179,6 @@ Schedule](/guides/groups-rules/#zeitfenster-statt-fester-startzeit).
 |---|---|
 | Job meldet „nur HTTP - der Cache erlaubt keine HTTPS-Tunnel" | `PassThroughPattern: .*` fehlt. Kein Fehler: LCM leitet https direkt (ungecacht), alle Quellen bleiben erreichbar. Für gecachtes https die Zeile setzen und den Dienst neu starten |
 | Anbindung schlägt fehl, `Err:`-Zeilen im Output | Eine Paketquelle antwortet über den Cache nicht → LCM entfernt das Drop-in wieder, der Server bleibt arbeitsfähig. Die genannten Quellen prüfen |
-| „Verbindung prüfen“ rot | Dienst läuft nicht / Port 3142 gefiltert → `systemctl status apt-cacher-ng`, Firewall prüfen |
-| „erreichbar, aber unerwartete Antwort“ | Unter der URL antwortet ein anderer Dienst - Port/Host prüfen |
+| „Prüfen“ zeigt „nicht erreichbar“ | Dienst läuft nicht / Port 3142 gefiltert → `systemctl status apt-cacher-ng`, Firewall prüfen |
+| „erreichbar, aber kein apt-cacher-ng“ | Unter der URL antwortet ein anderer Dienst - Port/Host prüfen |
 | Server hängt nach Cache-Ausfall | „APT-Cache trennen“ (oder Drop-in löschen) - APT spricht wieder direkt |

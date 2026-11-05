@@ -24,7 +24,7 @@ var (
 	// falsch" bewusst gemeinsam ab (kein User-Enumeration-Leak).
 	ErrInvalidCredentials = errors.New("ungültiger Benutzername oder ungültiges Passwort")
 	ErrUserInactive       = errors.New("benutzer ist deaktiviert")
-	ErrInvalidToken       = errors.New("ungültiges oder abgelaufenes Token")
+	ErrInvalidToken       = errors.New("ungültiges oder abgelaufenes Token") // 2FA-Challenge
 )
 
 // argon2Params: OWASP-empfohlene Parameter für argon2id
@@ -39,55 +39,59 @@ var argon2Params = &argon2id.Params{
 	KeyLength:   32,
 }
 
-// Claims sind die JWT-Claims dieses Templates. Permissions werden NICHT
-// ins Token geschrieben - die Rechteauflösung passiert pro Request gegen
-// die DB, damit Rollenänderungen sofort greifen.
+// Claims sind die JWT-Claims der 2FA-Challenge. Ein JWT als Anmeldung gibt es
+// nicht mehr: Der Browser meldet sich über eine Server-Sitzung an (auth_session.go),
+// Skripte über X-API-Key.
 //
-// TwoFAPending markiert ein Challenge-Token zwischen den beiden
-// Login-Schritten: Es autorisiert AUSSCHLIESSLICH den 2FA-Verify-Schritt,
-// nie reguläre API-Zugriffe.
+// TwoFAPending markiert die Challenge zwischen den beiden Login-Schritten:
+// Sie autorisiert AUSSCHLIESSLICH den 2FA-Verify-Schritt, nie API-Zugriffe.
 type Claims struct {
 	Username     string `json:"username"`
 	TwoFAPending bool   `json:"twofa_pending,omitempty"`
 	jwt.RegisteredClaims
 }
 
-// AuthService verantwortet Login, Passwort-Hashing und JWT-Lifecycle.
+// AuthService verantwortet Login, Passwort-Hashing, Browser-Sitzungen und die 2FA-Challenge.
 type AuthService struct {
 	users *repositories.UserRepository
 	// signingKey ist das HS256-Signaturmaterial dieses Prozesses - bei jedem
 	// Start neu aus crypto/rand (siehe newSigningKey). Es gibt kein
-	// gespeichertes Geheimnis dahinter: Eine Sitzung überlebt keinen Neustart,
-	// also braucht auch nichts den Neustart zu überleben.
+	// gespeichertes Geheimnis dahinter: Eine Challenge überlebt keinen Neustart,
+	// also braucht auch nichts den Neustart zu überleben. Daraus leitet sich
+	// auch das CSRF-Geheimnis ab.
 	signingKey []byte
-	// tokenTTL liefert die aktuelle Session-Lebensdauer. Als Funktion, damit die
-	// UI-Einstellung (GlobalSettings.SessionTTLMinutes) zur Login-Zeit greift.
-	tokenTTL func() time.Duration
-	// revoked hält die SHA-256-Hashes ausgeloggter Tokens bis zu deren
-	// regulärem Ablauf. Vorher war POST /auth/logout ein No-Op - der Token
-	// blieb serverseitig gültig, ein „Abmelden" beendete die Sitzung nicht
-	// (R2-059). In-Memory reicht: ein Neustart entwertet ohnehin ALLE
-	// Sessions (prozessgebundener Signaturschlüssel).
+	// sessionIdle liefert die aktuelle Leerlauf-Frist einer Sitzung. Als Funktion,
+	// damit die UI-Einstellung (GlobalSettings.SessionTTLMinutes) greift.
+	sessionIdle func() time.Duration
+	// revoked hält die SHA-256-Hashes eingelöster 2FA-Challenges bis zu deren
+	// regulärem Ablauf: Eine Challenge eröffnet nur eine Sitzung.
 	revokedMu sync.Mutex
 	revoked   map[string]time.Time // Token-Hash -> Ablauf
+
+	// Browser-Sitzungen (siehe auth_session.go).
+	sessionsMu sync.Mutex
+	sessions   map[string]*session // Sitzungs-ID -> Zustand
+	// now ist die Uhr der Sitzungen; Tests ersetzen sie (WithClock).
+	now func() time.Time
 }
 
-func NewAuthService(users *repositories.UserRepository, tokenTTL time.Duration) *AuthService {
+func NewAuthService(users *repositories.UserRepository, sessionIdle time.Duration) *AuthService {
 	return &AuthService{users: users, signingKey: newSigningKey(),
-		tokenTTL: func() time.Duration { return tokenTTL }, revoked: map[string]time.Time{}}
+		sessionIdle: func() time.Duration { return sessionIdle }, revoked: map[string]time.Time{},
+		sessions: map[string]*session{}, now: time.Now}
 }
 
-// WithSessionTTL verdrahtet eine dynamische Session-Lebensdauer (z.B. aus den
-// globalen Einstellungen). Die Funktion wird bei jeder Token-Ausstellung
-// ausgewertet; sie sollte selbst auf die config-Vorgabe zurückfallen.
+// WithSessionTTL verdrahtet eine dynamische Leerlauf-Frist (z.B. aus den
+// globalen Einstellungen). Die Funktion wird bei jeder Prüfung ausgewertet;
+// sie sollte selbst auf die config-Vorgabe zurückfallen.
 func (s *AuthService) WithSessionTTL(fn func() time.Duration) *AuthService {
 	if fn != nil {
-		s.tokenTTL = fn
+		s.sessionIdle = fn
 	}
 	return s
 }
 
-// newSigningKey zieht das JWT-Signaturmaterial für DIESEN Prozessstart aus
+// newSigningKey zieht das Signaturmaterial der 2FA-Challenge für DIESEN Prozessstart aus
 // crypto/rand. Es lebt ausschließlich im Arbeitsspeicher.
 //
 // Folge: Bei jedem (Neu-)Start entsteht ein anderer Signaturschlüssel, wodurch
@@ -157,37 +161,10 @@ func (s *AuthService) VerifyPassword(username, password string) (*domain.User, e
 	return user, nil
 }
 
-// Login prüft Credentials und liefert bei Erfolg ein signiertes JWT
-// samt User (Ein-Schritt-Login ohne 2FA).
-func (s *AuthService) Login(username, password string) (string, *domain.User, error) {
-	user, err := s.VerifyPassword(username, password)
-	if err != nil {
-		return "", nil, err
-	}
-	token, err := s.CompleteLogin(user)
-	if err != nil {
-		return "", nil, err
-	}
-	return token, user, nil
-}
-
-// CompleteLogin gibt das finale JWT aus und aktualisiert den
-// Login-Zeitstempel. Nach erfolgreicher Passwort- (und ggf. 2FA-)Prüfung.
-func (s *AuthService) CompleteLogin(user *domain.User) (string, error) {
-	token, err := s.IssueToken(user)
-	if err != nil {
-		return "", err
-	}
-	now := time.Now()
-	if err := s.users.UpdateFields(user.ID, map[string]any{"last_login_at": now}); err != nil {
-		return "", err
-	}
-	return token, nil
-}
-
-// IssueToken erzeugt das reguläre Access-Token für einen User.
-func (s *AuthService) IssueToken(user *domain.User) (string, error) {
-	return s.sign(Claims{Username: user.Username}, user.ID, s.tokenTTL())
+// CompleteLogin hält den Login-Zeitstempel fest. Nach erfolgreicher Passwort-
+// (und ggf. 2FA-)Prüfung; die Sitzung eröffnet StartSession.
+func (s *AuthService) CompleteLogin(user *domain.User) error {
+	return s.users.UpdateFields(user.ID, map[string]any{"last_login_at": time.Now()})
 }
 
 // IssueChallenge erzeugt ein kurzlebiges Token für den 2FA-Zwischenschritt.
@@ -222,18 +199,14 @@ func (s *AuthService) sign(claims Claims, userID uint, ttl time.Duration) (strin
 	return token.SignedString(s.signingKey)
 }
 
-// ValidateToken parst und validiert ein reguläres JWT und lädt den User
-// frisch aus der DB (inkl. Rollen/Permissions für RBAC). 2FA-Challenge-
-// Tokens (TwoFAPending) werden hier abgelehnt - sie dürfen keine
-// regulären API-Zugriffe autorisieren.
 // tokenHash ist der Schlüssel der Widerrufsliste (nie der Token selbst).
 func tokenHash(tokenString string) string {
 	sum := sha256.Sum256([]byte(tokenString))
 	return hex.EncodeToString(sum[:])
 }
 
-// RevokeToken entwertet GENAU dieses Token bis zu seinem regulären Ablauf
-// (Logout, R2-059). Abgelaufene Einträge werden bei jedem Aufruf
+// RevokeToken entwertet GENAU diese Challenge bis zu ihrem regulären Ablauf
+// (eingelöst, R2-059). Abgelaufene Einträge werden bei jedem Aufruf
 // mitbereinigt - die Liste bleibt so höchstens sitzungsgroß.
 func (s *AuthService) RevokeToken(tokenString string) {
 	claims, err := s.parse(tokenString)
@@ -261,20 +234,6 @@ func (s *AuthService) tokenRevoked(tokenString string) bool {
 	defer s.revokedMu.Unlock()
 	exp, ok := s.revoked[tokenHash(tokenString)]
 	return ok && time.Now().Before(exp)
-}
-
-func (s *AuthService) ValidateToken(tokenString string) (*domain.User, error) {
-	claims, err := s.parse(tokenString)
-	if err != nil {
-		return nil, ErrInvalidToken
-	}
-	if s.tokenRevoked(tokenString) {
-		return nil, ErrInvalidToken
-	}
-	if claims.TwoFAPending {
-		return nil, ErrInvalidToken
-	}
-	return s.userFromClaims(claims)
 }
 
 // parse validiert Signatur und Ablauf eines Tokens und liefert die Claims.

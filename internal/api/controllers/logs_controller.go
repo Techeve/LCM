@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -46,7 +47,7 @@ const defaultLines = 300
 // Liefert das Ende der Logdatei, gefiltert nach Schwere und Text.
 func (ctrl *LogsController) List(c fiber.Ctx) error {
 	if ctrl.path == "" {
-		return fiber.NewError(fiber.StatusNotFound, "kein Dateiprotokoll konfiguriert")
+		return errLogsNotConfigure
 	}
 	lines := defaultLines
 	if v := c.Query("lines"); v != "" {
@@ -56,7 +57,8 @@ func (ctrl *LogsController) List(c fiber.Ctx) error {
 	}
 	entries, err := logging.Tail(ctrl.path, lines, c.Query("level"), c.Query("q"))
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "logdatei nicht lesbar: "+err.Error())
+		slog.Warn("log file unreadable", "error", err)
+		return errLogsUnreadable
 	}
 	return c.JSON(fiber.Map{"entries": entries, "level": logging.Level()})
 }
@@ -70,7 +72,7 @@ func (ctrl *LogsController) List(c fiber.Ctx) error {
 // Maschinerie für weniger.
 func (ctrl *LogsController) Stream(c fiber.Ctx) error {
 	if ctrl.path == "" {
-		return fiber.NewError(fiber.StatusNotFound, "kein Dateiprotokoll konfiguriert")
+		return errLogsNotConfigure
 	}
 	level, query := c.Query("level"), c.Query("q")
 
@@ -164,8 +166,8 @@ func (ctrl *LogsController) SetLevel(c fiber.Ctx) error {
 	var req struct {
 		Debug bool `json:"debug"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Debug {
 		logging.EnableDebugFor(debugWindow)

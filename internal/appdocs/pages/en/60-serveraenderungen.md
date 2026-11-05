@@ -28,7 +28,7 @@ file does not read drop-ins yet, LCM adds the `Include` line. sshd is then
 reloaded and **measured**: if sshd still reports password authentication, LCM
 rolls back on its own.
 
-To undo - in the interface via *SSH hardened ✓ - lift*, by hand:
+To undo - in the interface via *Undo hardening*, by hand:
 
 ```sh
 rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf

@@ -2,7 +2,7 @@
 #
 # Wichtigste Targets:
 #   make build          Vollständiger, sicherheitsgeprüfter Build (aktuelle Plattform)
-#   make dev            Backend (:9310) + Vite-Dev-Server (:5173) parallel
+#   make dev            Backend (:9310) + Vite-Dev-Server (:5174) parallel
 #   make test           Go-Tests (In-Memory SQLite)
 #   make test-e2e       Playwright End-to-End-Tests gegen das echte Binary
 #   make audit          npm audit + govulncheck
@@ -15,7 +15,7 @@
 
 BINARY      := lcm
 BUILD_DIR   := bin
-FRONTEND    := frontend
+FRONTEND    := ui
 
 VERSION_PKG := LCM/internal/version
 APP_VERSION := $(shell cat VERSION)
@@ -231,7 +231,7 @@ lint:
 	@find . -name '*.go' -not -path './.cache/*' -exec gofmt -l {} + | (! grep .) \
 		|| (echo "Nicht gofmt-formatiert (siehe oben) - 'gofmt -w .' ausführen." && false)
 	go vet ./...
-	cd $(FRONTEND) && npx svelte-check --no-tsconfig 2>/dev/null || true
+	cd $(FRONTEND) && npm run -s typecheck
 
 ## ---- Wartung -----------------------------------------------------------------
 

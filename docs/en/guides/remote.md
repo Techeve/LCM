@@ -231,8 +231,12 @@ serversTransports:
 
 ### The web interface behind the proxy
 
-The UI port is an ordinary HTTPS service and needs no WebSocket handling. Two
-things still have to be set:
+The UI port is an ordinary HTTPS service, but it needs WebSocket forwarding on
+two paths: for the web console (`/api/v1/servers/<id>/terminal`) and for the
+event channel (`/api/v1/events`) that keeps the interface live. Without the
+forwarding the console and the live display are missing (the nginx examples are
+in [Reverse proxy & external hardening](/en/guides/reverse-proxy/#nginx)). Two
+more things have to be set:
 
 - **`public_base_url`** under *Settings → General*. Activation and reset links
   are built from it - without it they point at the internal address nobody can
@@ -263,15 +267,17 @@ burying it in the service log.
 ## Web console
 
 An interactive shell on a server, in the browser - reachable via the
-**Console** button on the far left of the action bar on the server detail page.
+**Terminal** button on the far left of the action bar on the server detail page.
 
-The console is limited at three levels, each of which applies independently:
+The console is limited at two levels, each of which applies independently:
 
 | Level | Effect |
 |---|---|
-| **Settings → Security** | global switch - removes the capability entirely |
 | **Permission `servers:console`** | governs WHO may use it; by default `admin` only |
-| **Server settings → Web console** | disables it for ONE server |
+| **Server settings → Access → "Disable console"** | disables it for ONE server |
+
+A third, global switch exists only in the stored settings (`terminal_enabled`,
+on by default): neither the interface nor the REST API offers it.
 
 The permission is deliberately separate from `servers:write`: whoever may
 configure servers should not automatically get a root shell on all of them.
@@ -286,14 +292,14 @@ transport carries no stream) and servers in maintenance.
 
 ### Sessions
 
-- **Open consoles are visible**: server detail and dashboard show the label
+- **Open consoles are visible**: the server list and server detail show the label
   **"Console open"** with user and start time - everyone knows someone is
   working on the server by hand.
 - **LCM keeps working**: a console has its own connection slots (two per
   server) and does not block schedules, updates or actions. If apt runs
   collide, LCM waits for the package manager (see
   [APT cache](/en/guides/apt-cache/#when-apt-is-busy)).
-- **End**: *Close*, closing the window, `exit` in the shell or **15 minutes
+- **End**: *End*, closing the window, `exit` in the shell or **15 minutes
   without input** end the session including the SSH connection. The console
   then has to be reopened. Opening and closing are in the audit log, the
   session itself in the SSH log.
@@ -353,9 +359,9 @@ starts automatically (once the agent has subscribed to its command topic). If th
 agent disconnects, the server goes offline and in-flight commands fail immediately
 (instead of running into a timeout).
 
-## Regenerate token
+## Renew agent token
 
-**Regenerate token** replaces the credential (e.g. on loss or suspected
+**Renew agent token** replaces the credential (e.g. on loss or suspected
 compromise): the old secret is invalidated **immediately**, the active session is
 dropped, and the agent must re-enroll with the new token. The new plaintext is
 again shown only once.

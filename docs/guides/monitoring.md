@@ -9,7 +9,7 @@ LCM erfasst für jeden angebundenen Server regelmäßig den Ist-Zustand und
 verdichtet ihn zu einem Ampel-Status. Der Kontakt läuft über kurzlebige
 SSH-Verbindungen; die verwalteten Server brauchen keinen Agent.
 
-![Server-Detailseite: Hardware, System & Security, Status-Badge](./img/server-detail.png)
+![Server-Detailseite: Betriebsfähigkeit, Hardware, System & Sicherheit](./img/server-detail.png)
 
 ## Was erfasst wird
 
@@ -67,8 +67,9 @@ Jeder Server hat einen Status 🟢 **Sehr gut** (sattes Grün), 🟢 **OK** (hel
 Grün), 🟡 (Warnung) oder 🔴 (Kritisch). Der Status ergibt sich aus mehreren
 Signalen - u.&nbsp;a. Erreichbarkeit, CVE-Funden (kritisch → rot, hoch → gelb),
 überfälligen Updates, knappem Speicher, angefordertem Neustart und OS-Support.
-Über das **ⓘ** am Status öffnet sich ein Popover, das die konkreten Gründe
-(„Insights“) auflistet - du musst nie raten, warum ein Server nicht grün ist.
+Fährst du in der Serverliste mit der Maus über den Status (in der
+Server-Detailansicht klickst du darauf), erscheinen die konkreten Gründe
+(„Insights“) - du musst nie raten, warum ein Server nicht grün ist.
 
 ### Red Hat: Registrierung zählt mit
 
@@ -96,10 +97,11 @@ Proxmox-Systeme bringen ihre eigene Firewall mit und zählen als abgedeckt.
 (einschließlich Security-Updates) eingespielt sind.
 
 Für Ampel und Alarme werden CVEs **gewichtet**: Funde aus Docker-Images zählen
-standardmäßig **gar nicht** - nur für Container, die im Docker-Tab als
-**CVE-relevant** markiert sind, fließen sie mit voller Schwere ein. Funde
-exponierter Pakete - Webserver, Proxys, SSH-/Mail-/DNS-Server, Datenbanken
-(Liste unter *Einstellungen → Allgemein*, plus automatisch erkannte Dienste,
+standardmäßig **gar nicht** - nur für Container, die im Reiter *Container*
+in der Spalte *In der Ampel* eingeschaltet sind, fließen sie mit voller
+Schwere ein. Funde exponierter Pakete - Webserver, Proxys,
+SSH-/Mail-/DNS-Server, Datenbanken (Liste unter *Einstellungen → Sicherheit*,
+plus automatisch erkannte Dienste,
 die auf von außen erreichbaren Ports lauschen) - zählen eine Stufe höher. Die
 angezeigte Schwere in den Sicherheits-Ansichten bleibt die Roh-Bewertung.
 
@@ -108,7 +110,8 @@ Alle Faktoren, Schwellwerte und Sonderfälle im Detail:
 
 ## Server umbenennen
 
-Server-Detail → **Einstellungen** (Zahnrad) → Abschnitt *Name*. Der Anzeigename
+Server-Detail → **Einstellungen** (Zahnrad) → *Servereinstellungen* →
+Abschnitt *Allgemein*, Feld *Name*. Der Anzeigename
 ist frei wählbar und unabhängig davon, wie der Server im Netz heißt; er muss
 aber **eindeutig** sein - ein bereits vergebener Name wird mit einer Meldung
 abgewiesen.
@@ -118,10 +121,10 @@ lässt sich mit einem Klick übernehmen.
 
 ## Festplatten, Verlauf & Prognose
 
-Der **Festplatten-Tab** (englisch *Disks*) der Detailseite listet alle
+Der Reiter **Speicher** (englisch *Storage*) der Detailseite listet alle
 eingehängten **Volumes** (durchgereichte Dateisysteme, keine physischen Platten)
 mit Gerät, Typ und Belegungsbalken. Das **Root-Volume `/`** ist mit „System“
-markiert und bleibt maßgeblich für Dashboard-Ampel, Verlauf und Prognose - es
+markiert und bleibt maßgeblich für Ampel, Verlauf und Prognose - es
 ist der kritische Faktor, wenn es voll läuft.
 
 Der Health-Check misst die Belegung des Root-Dateisystems **stündlich**
@@ -141,7 +144,8 @@ Messfehler, kann aber überraschen, wenn man beide Werte vergleicht.
 ### Weitere Volumes überwachen
 
 Überwacht wird von sich aus nur `/`. Jedes weitere Volume lässt sich im
-Festplatten-Tab **einzeln dazuschalten** - mit eigener Warngrenze in Prozent.
+Reiter *Speicher* **einzeln dazuschalten** (*Überwachen*) - mit eigener
+Warngrenze in Prozent.
 
 Warum nicht alle: Ein Datenträger darf voll sein. Ein Archiv **soll** voll
 werden, und eine Sicherungsplatte bei 95 % ist kein Mangel, sondern
@@ -181,7 +185,7 @@ ohne Redundanz. Einen LVM-Thin-Pool, dessen Metadaten volllaufen.
 
 Keines dieser Systeme meldet sich von selbst - man muss nachsehen, und genau
 das tut im Alltag niemand regelmäßig. LCM erhebt diese Zustände bei jedem Scan
-mit und zeigt sie im Festplatten-Tab.
+mit und zeigt sie im Reiter *Speicher*.
 
 | Technik | Erhoben wird | Beanstandet wird |
 |---|---|---|
@@ -215,8 +219,8 @@ kostet den Pool endgültig. Wer hier erst bei 95 % aufwacht, kommt zu spät.
 ## Offline-Kennzeichen
 
 Ein Server bekommt das Kennzeichen **Offline**, sobald er bei **zwei
-aufeinanderfolgenden** Kontaktversuchen nicht erreichbar war - im Dashboard
-wie in der Server-Detailansicht.
+aufeinanderfolgenden** Kontaktversuchen nicht erreichbar war - in der
+Serverliste wie in der Server-Detailansicht.
 
 Warum erst beim zweiten: Ein einzelner Fehlschlag ist im Betrieb Alltag
 (Paketverlust, ein gerade laufender Neustart, ein kurzer Netz-Aussetzer) und
@@ -242,11 +246,11 @@ nicht.
 
 Standardmäßig gilt ein nicht erreichbarer Server sofort als **🔴 Kritisch**. Für
 Server, die planmäßig zeitweise offline sind (Außenstellen, Roaming-Geräte),
-lässt sich das pro Server über *Einstellungen → Verfügbarkeit* umstellen:
+lässt sich das pro Server unter *Servereinstellungen → Betrieb* umstellen:
 
 - Ist **Nichterreichbarkeit unkritisch** aktiviert, wird ein Offline-Server
   **nicht** sofort kritisch. Er **behält seinen zuletzt bekannten Status** und
-  wird im Dashboard nur **ausgegraut** (weiterhin anklickbar).
+  wird in der Serverliste nur **ausgegraut** (weiterhin anklickbar).
 - Erst nach Ablauf der **Frist bis kritisch** (Tage, Standard **28**, einstellbar
   1-365) ununterbrochener Nichterreichbarkeit springt er wegen
   Nichterreichbarkeit auf Rot.
@@ -257,7 +261,7 @@ lässt sich das pro Server über *Einstellungen → Verfügbarkeit* umstellen:
 erreichbar sein **soll**. **Wartung** sagt etwas anderes: dass er es gerade
 nicht soll.
 
-Der Schalter unter *Einstellungen → Wartung* nimmt einen Server vorübergehend
+Der Schalter *In Wartung* unter *Servereinstellungen → Betrieb* nimmt einen Server vorübergehend
 ganz aus dem Betrieb:
 
 - keine Zeitplan-Läufe (Health-Check, System-Sync, Updates, Grundsatz-Regeln),
@@ -295,8 +299,9 @@ nicht-löschbaren Zeitplänen, die auf **allen** Servern laufen:
 Ein erfolgreicher Job **ist** das Lebenszeichen eines Servers. Hat innerhalb des
 Health-Takts schon etwas anderes mit ihm gesprochen - ein Sync, ein Update, ein
 Neustart -, entfällt der Ping: Er erführe nichts Neues. Maßgeblich ist der Takt
-des Zeitplans selbst, nicht eine feste Zahl; stellst du ihn auf fünf Minuten,
-schrumpft das Fenster mit.
+des Zeitplans selbst, nicht eine feste Zahl; das Fenster ist so groß wie
+der Takt. (Die Basis-Zeitpläne lassen sich in der Oberfläche nicht bearbeiten,
+nur ein- und ausschalten und von Hand ausführen.)
 
 Der planmäßige Ping wird dadurch nie verschluckt (beim nächsten Lauf ist der
 vorige Kontakt genau einen Takt alt), und bleibt der Kontakt aus, läuft er
@@ -364,20 +369,20 @@ zypper, pacman, apk) - LCM wählt automatisch das passende Kommando.
 
 | Aktion | Was sie tut | Kommando (Beispiel apt) |
 |---|---|---|
-| **Alle aktualisieren** | alle verfügbaren Updates einspielen | `apt-get -y upgrade` |
-| **Nur Security/Bugfix** | nur Sicherheits-/Bugfix-Updates (soweit die Distribution einen eigenen Kanal hat; pacman/apk kennen keinen → volles Update) | `apt-get install --only-upgrade …` |
-| **Aufräumen** (autoremove) | nicht mehr benötigte Pakete / verwaiste Abhängigkeiten entfernen | `apt-get -y autoremove` |
+| **Alle Updates einspielen** | alle verfügbaren Updates einspielen | `apt-get -y upgrade` |
+| **Nur Sicherheitsupdates** | nur Sicherheits-/Bugfix-Updates (soweit die Distribution einen eigenen Kanal hat; pacman/apk kennen keinen → volles Update) | `apt-get install --only-upgrade …` |
+| **Nicht benötigte Pakete entfernen** (autoremove) | nicht mehr benötigte Pakete / verwaiste Abhängigkeiten entfernen | `apt-get -y autoremove` |
 | **Version…** (je Paket) | eine bestimmte installierbare Version wählen (Downgrade erlaubt) | `apt-get install -y --allow-downgrades name=version` |
 | **Entfernen** (je Paket) | ein Paket gezielt deinstallieren | `apt-get -y remove name` |
 
-Das **Aufräumen** ist das Gegenstück zum ewig anwachsenden Paketbestand: nach
+Das **Entfernen nicht benötigter Pakete** ist das Gegenstück zum ewig anwachsenden Paketbestand: nach
 vielen Updates bleiben alte Kernel-Metapakete, ersetzte Bibliotheken und
 verwaiste Abhängigkeiten liegen. Pro Paketverwaltung nutzt LCM das jeweils
 richtige Mittel - `apt/dnf autoremove`, zypper `packages --unneeded` +
 `remove --clean-deps`, pacman-Orphans (`pacman -Qdtq | pacman -Rns`). apk
 räumt Abhängigkeiten schon beim Deinstallieren selbst ab und meldet das ehrlich.
 
-Als **geplante Gruppen-Regel** gibt es „Aufräumen (autoremove)" ebenfalls -
+Als **geplante Gruppen-Regel** gibt es „Nicht mehr benötigte Pakete entfernen" ebenfalls -
 so hält ein Zeitplan den Paketbestand ganzer Servergruppen dauerhaft schlank
 (siehe [Automatisierung](/guides/monitoring/#basis-zeitpläne-system-gruppe)).
 
@@ -482,6 +487,22 @@ nicht mit einem kaputten Server.
 
 Jede Aktion - ob geplant oder manuell - läuft als **Job** und wird mit exaktem
 SSH-Konsolen-Output gespeichert (Secrets werden vor dem Speichern
-unkenntlich gemacht). Die *Jobs*-Seite bietet Filter (Typ, Auslöser) und blendet
+unkenntlich gemacht). Die *Jobs*-Seite bietet Filter (Status, Art, Server, Auslöser, Zeitraum) und blendet
 Health-Checks standardmäßig aus. Ein **Concurrency-Lock** pro Server verhindert
 überlappende Jobs.
+
+## Log des LCM-Dienstes (Einstellungen → Ereignisse)
+
+Unter *Einstellungen → Ereignisse* steht das Log des LCM-Dienstes selbst: was
+LCM gerade tut und woran es scheitert. Dieselben Zeilen gibt es sonst nur über
+`journalctl` auf dem LCM-Host. Die Seite braucht das Recht für Einstellungen.
+
+- **Log durchsuchen** - Filter *Ab Stufe* (alle, debug, info, warn, error) und
+  eine Textsuche; *Neu laden* liest die Zeilen erneut.
+- **Live verfolgen** - hängt neue Zeilen laufend an; *Anhalten* beendet den
+  Strom. Reißt er ab, steht ein Hinweis da, und du startest ihn wieder.
+- **Debug-Protokollierung (30 Minuten)** - schaltet für 30 Minuten das
+  Debug-Log ein: LCM schreibt jedes SSH-Kommando samt Ausgabe mit und stellt
+  danach von selbst zurück. Erneutes Einschalten verlängert die Frist. Dauerhaft
+  auf `debug` zu stehen füllt das Log einer kleinen Maschine schneller, als die
+  Rotation es wegräumt.

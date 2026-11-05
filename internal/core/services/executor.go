@@ -593,10 +593,7 @@ func (e *Executor) runStarted(job *domain.Job, server *domain.Server, rule *doma
 	// Paket-Update-Rules (update/packages/security) laufen als root über die
 	// erkannte Paketverwaltung (apt/dnf/zypper) und frischen danach den
 	// Paketbestand auf.
-	if script, ok := scriptForRule(server.PackageManager, rule.Type, rule.Command); ok {
-		if rule.Type == domain.RuleTypeUpdate {
-			script = aptUpgradeEnv(e.settings, e.servers, server) + script
-		}
+	if script, ok := ruleScript(e.settings, e.servers, server, rule); ok {
 		e.runAptRule(job, server, rule, script, triggeredBy)
 		return
 	}
@@ -1267,12 +1264,12 @@ func (e *Executor) runCustomRule(job *domain.Job, server *domain.Server, rule *d
 		e.jobs.Complete(job, "", nil, fmt.Errorf("custom-aktionen nicht verfügbar"))
 		return
 	}
-	actionID, err := strconv.ParseUint(strings.TrimSpace(rule.Command), 10, 64)
+	actionID, err := parseCustomActionID(rule.Command)
 	if err != nil {
 		e.jobs.Complete(job, "", nil, fmt.Errorf("custom-aktion nicht referenziert (command=%q)", rule.Command))
 		return
 	}
-	action, err := e.customActions.FindByID(uint(actionID))
+	action, err := e.customActions.FindByID(actionID)
 	if err != nil {
 		e.jobs.Complete(job, "", nil, fmt.Errorf("custom-aktion %d nicht gefunden: %w", actionID, err))
 		return

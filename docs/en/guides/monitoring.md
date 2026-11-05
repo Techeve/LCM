@@ -9,7 +9,7 @@ For every connected server, LCM regularly captures the current state and
 condenses it into a traffic-light status. Contact happens over short-lived
 SSH connections; the managed servers need no agent.
 
-![Server detail page: hardware, system & security, status badge](./img/server-detail.png)
+![Server detail page: operability, hardware, system & security](./img/server-detail.png)
 
 ## What gets captured
 
@@ -62,9 +62,9 @@ SSH connections; the managed servers need no agent.
 Every server has a status of 🟢 **Excellent** (rich green), 🟢 **OK** (light
 green), 🟡 (Warning), or 🔴 (Critical). The status derives from several
 signals - among them reachability, CVE findings (critical → red, high →
-yellow), and OS support. The **ⓘ** next to the status opens a popover that
-lists the concrete reasons ("insights") - you never have to guess why a server
-isn't green.
+yellow), and OS support. Hover over the status in the server list (in the
+server detail view, click it) to see the concrete reasons ("insights") - you
+never have to guess why a server isn't green.
 
 ### Red Hat: registration counts
 
@@ -93,9 +93,9 @@ installed.
 
 For the traffic light and alerts, CVEs are **weighted**: findings from Docker
 images do **not count at all** by default - they only count, at full severity,
-for containers marked as **CVE-relevant** in the Docker tab. Findings of
-exposed packages - web servers, proxies, SSH/mail/DNS servers, databases (list
-under *Settings → General*, plus automatically detected services listening on
+for containers switched on in the *In the status* column of the *Containers*
+tab. Findings of exposed packages - web servers, proxies, SSH/mail/DNS
+servers, databases (list under *Settings → Security*, plus automatically detected services listening on
 externally reachable ports) - count one level higher. The severity displayed
 in the security views remains the raw rating.
 
@@ -104,7 +104,8 @@ All factors, thresholds and special cases in detail:
 
 ## Renaming a server
 
-Server detail → **Settings** (gear) → section *Name*. The display name is
+Server detail → **Settings** (gear) → *Server settings* → section *General*,
+field *Name*. The display name is
 freely chosen and independent of what the server calls itself on the network,
 but it must be **unique** - an already taken name is rejected with a message.
 
@@ -113,10 +114,10 @@ field and can be adopted with one click.
 
 ## Disks, history & forecast
 
-The **Disks** tab of the detail page lists all mounted **volumes**
+The **Storage** tab of the detail page lists all mounted **volumes**
 (passed-through filesystems, not physical disks) with device, type and a usage
 bar. The **root volume `/`** is marked "System" and stays authoritative for the
-dashboard traffic light, history and forecast - it is the critical factor when
+traffic light, history and forecast - it is the critical factor when
 it fills up.
 
 The health check measures the root filesystem's usage **hourly** (throttled) and
@@ -136,7 +137,7 @@ surprise when comparing both values.
 ### Monitoring further volumes
 
 Only `/` is monitored by default. Every other volume can be **added
-individually** in the disks tab, with its own warning threshold in percent.
+individually** in the *Storage* tab (*Monitor*), with its own warning threshold in percent.
 
 Why not all of them: a disk is allowed to be full. An archive is **supposed**
 to fill up, and a backup disk at 95 % is not a defect but working as intended.
@@ -176,7 +177,7 @@ An LVM thin pool whose metadata is filling up.
 
 None of these systems report on their own - you have to look, and in practice
 nobody does so regularly. LCM collects these states with every scan and shows
-them in the disks tab.
+them in the *Storage* tab.
 
 | Technology | Collected from | Reported when |
 |---|---|---|
@@ -208,7 +209,7 @@ up at 95 % here is too late.
 ## Offline marker
 
 A server is marked **Offline** as soon as it was unreachable on **two
-consecutive** contact attempts - on the dashboard as well as in the server
+consecutive** contact attempts - in the server list as well as in the server
 detail view.
 
 Why only on the second: a single failure is everyday business (a lost packet, a
@@ -233,11 +234,11 @@ on servers that had plainly failed.
 
 By default an unreachable server is immediately **🔴 Critical**. For servers that
 are offline by design at times (branch offices, roaming devices) this can be
-changed per server under *Settings → Availability*:
+changed per server under *Server settings → Operation*:
 
 - When **Unreachability non-critical** is enabled, an offline server does **not**
   become critical immediately. It **keeps its last known status** and is only
-  **greyed out** on the dashboard (still clickable).
+  **greyed out** in the server list (still clickable).
 - Only after the **grace period until critical** (days, default **28**,
   configurable 1-365) of continuous unreachability does it turn red for being
   unreachable.
@@ -248,7 +249,7 @@ changed per server under *Settings → Availability*:
 reachable. **Maintenance** says something different: that right now it should
 not be.
 
-The switch under *Settings → Maintenance* takes a server out of service for a
+The *In maintenance* switch under *Server settings → Operation* takes a server out of service for a
 while:
 
 - no scheduled runs (health check, system sync, updates, baseline rules),
@@ -286,8 +287,9 @@ non-deletable schedules that run on **all** servers:
 A successful job **is** a server's sign of life. If something else already
 talked to it within the health interval - a sync, an update, a reboot - the ping
 is skipped: it would learn nothing new. The measure is the schedule's own
-interval, not a fixed number; set it to five minutes and the window shrinks with
-it.
+interval, not a fixed number; the window is as large as the interval. (The
+baseline schedules cannot be edited in the interface, only switched on and off
+and run by hand.)
 
 The scheduled ping is therefore never swallowed (at the next run the previous
 contact is exactly one interval old), and if contact stops coming, it runs again
@@ -353,20 +355,20 @@ apk) - LCM picks the right command automatically.
 
 | Action | What it does | Command (apt example) |
 |---|---|---|
-| **Upgrade all** | install all available updates | `apt-get -y upgrade` |
-| **Security/bugfix only** | security/bugfix updates only (where the distro has a dedicated channel; pacman/apk have none → full update) | `apt-get install --only-upgrade …` |
-| **Clean up** (autoremove) | remove no-longer-needed packages / orphaned dependencies | `apt-get -y autoremove` |
+| **Install all updates** | install all available updates | `apt-get -y upgrade` |
+| **Security updates only** | security/bugfix updates only (where the distro has a dedicated channel; pacman/apk have none → full update) | `apt-get install --only-upgrade …` |
+| **Remove unneeded packages** (autoremove) | remove no-longer-needed packages / orphaned dependencies | `apt-get -y autoremove` |
 | **Version…** (per package) | pick a specific installable version (downgrade allowed) | `apt-get install -y --allow-downgrades name=version` |
 | **Remove** (per package) | uninstall a package specifically | `apt-get -y remove name` |
 
-**Clean up** is the antidote to an ever-growing package set: after many
+**Remove unneeded packages** is the antidote to an ever-growing package set: after many
 updates, old kernel meta-packages, superseded libraries and orphaned
 dependencies pile up. Per package manager LCM uses the right tool - `apt/dnf
 autoremove`, zypper `packages --unneeded` + `remove --clean-deps`, pacman
 orphans (`pacman -Qdtq | pacman -Rns`). apk already drops dependencies when
 uninstalling and reports that honestly.
 
-“Clean up (autoremove)” is also available as a **scheduled group rule** - so a
+“Remove unneeded packages” is also available as a **scheduled group rule** - so a
 schedule keeps the package set of entire server groups lean over time (see
 [Automation](/en/guides/monitoring/#baseline-schedules-system-group)).
 
@@ -471,6 +473,21 @@ server.
 
 Every action - whether scheduled or manual - runs as a **job** and is stored
 with the exact SSH console output (secrets are redacted before
-storage). The *Jobs* page offers filters (type, trigger) and hides
+storage). The *Jobs* page offers filters (status, type, server, triggered by, period) and hides
 health checks by default. A **concurrency lock** per server prevents
 overlapping jobs.
+
+## Log of the LCM service (Settings → Events)
+
+*Settings → Events* shows the log of the LCM service itself: what LCM is doing
+right now and where it fails. These lines are otherwise only available through
+`journalctl` on the LCM host. The page needs the settings permission.
+
+- **Search the log** - the filter *From level* (all, debug, info, warn, error)
+  and a text search; *Reload* reads the lines again.
+- **Follow live** - keeps appending new lines; *Stop* ends the stream. If it
+  drops, a notice appears and you start it again.
+- **Debug logging (30 minutes)** - switches debug logging on for 30 minutes: LCM
+  logs every SSH command with its output and then switches back by itself.
+  Switching it on again extends the period. Staying on `debug` permanently
+  fills the log of a small machine faster than rotation clears it.

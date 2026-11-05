@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/core/services"
 	"LCM/internal/storage/repositories"
 )
@@ -226,5 +227,37 @@ func TestSelfUpdateBrichtOhneSicherungAb(t *testing.T) {
 	}
 	if !strings.Contains(st.Error, "NICHT eingespielt") {
 		t.Errorf("die Meldung sagt nicht, dass nicht aktualisiert wurde: %q", st.Error)
+	}
+}
+
+// Jeder Phasenwechsel geht als system.build auf den Bus - damit die Oberfläche
+// den Fortschritt nicht alle fünf Sekunden abfragen muss.
+func TestSelfUpdateMeldetPhasenwechsel(t *testing.T) {
+	env := newTestEnv(t)
+	svc, _ := selfUpdateEnv(t, env, "1.27.0")
+	bus := events.NewBus()
+	svc.WithEvents(bus)
+	sub := bus.Subscribe()
+	defer sub.Close()
+
+	if _, err := svc.Start("admin", false); err != nil {
+		t.Fatal(err)
+	}
+
+	var phases []string
+	deadline := time.After(2 * time.Second)
+	for len(phases) == 0 || phases[len(phases)-1] != services.SelfUpdateRunning {
+		select {
+		case e := <-sub.Events():
+			if e.Type != events.TypeSystemBuild {
+				t.Fatalf("unerwartetes Ereignis %s", e.Type)
+			}
+			phases = append(phases, e.Data.(events.SystemBuildData).Phase)
+		case <-deadline:
+			t.Fatalf("Phasen bisher: %v", phases)
+		}
+	}
+	if phases[0] != services.SelfUpdateWaiting {
+		t.Errorf("erste Phase = %s, erwartet waiting (alle: %v)", phases[0], phases)
 	}
 }

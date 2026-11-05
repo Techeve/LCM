@@ -42,8 +42,22 @@ func (s *ServerService) RemoveOldKernels(scope repositories.AccessScope, id uint
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureNotRouterOS(server); err != nil {
+	plan, releases, err := s.planKernelCleanup(server)
+	if err != nil {
 		return nil, err
+	}
+	job, err := s.startPlan(server, plan, actor)
+	if err != nil {
+		return nil, err
+	}
+	s.audit.Log(actor, "server.kernel-cleanup", "server", id, strings.Join(releases, ", "))
+	return job, nil
+}
+
+// planKernelCleanup waehlt die zu entfernenden Kernel und baut den Lauf.
+func (s *ServerService) planKernelCleanup(server *domain.Server) (packagePlan, []string, error) {
+	if err := ensureNotRouterOS(server); err != nil {
+		return packagePlan{}, nil, err
 	}
 	// Kernel-Pakete stehen auf der Schutzliste der Paketverwaltung
 	// (protectedPackagePrefixes) - mit gutem Grund: Ein von Hand entferntes
@@ -51,28 +65,23 @@ func (s *ServerService) RemoveOldKernels(scope repositories.AccessScope, id uint
 	// anfassen, weil SIE die Auswahl trifft und den laufenden Kernel niemals
 	// enthaelt. Volles sudo ist dafuer Voraussetzung.
 	if err := ensureFullSudo(server); err != nil {
-		return nil, err
+		return packagePlan{}, nil, err
 	}
 	if pkgFamily(server.PackageManager) != pkgApt {
-		return nil, ErrKernelCleanupUnsupported
+		return packagePlan{}, nil, ErrKernelCleanupUnsupported
 	}
 
 	info := domain.BuildKernelInfoFor(server.KernelVersion, server.Virtualization,
 		domain.ParseKernelPackages(server.InstalledKernels), !server.IsAPIDevice())
 	releases, err := cleanupReleases(info)
 	if err != nil {
-		return nil, err
+		return packagePlan{}, nil, err
 	}
 
-	script := removeKernelsScript(releases)
-	name := fmt.Sprintf("Alte Kernel entfernen (%d)", len(releases))
-	job, err := s.startPackageJob(scope, id, domain.RuleTypePackages, name,
-		func(string) string { return script }, actor)
-	if err != nil {
-		return nil, err
-	}
-	s.audit.Log(actor, "server.kernel-cleanup", "server", id, strings.Join(releases, ", "))
-	return job, nil
+	plan, err := s.newPackagePlan(server, domain.RuleTypePackages,
+		fmt.Sprintf("Alte Kernel entfernen (%d)", len(releases)),
+		func(string) string { return removeKernelsScript(releases) })
+	return plan, releases, err
 }
 
 // cleanupReleases zieht die zu entfernenden Kernel-Fassungen aus dem Inventar

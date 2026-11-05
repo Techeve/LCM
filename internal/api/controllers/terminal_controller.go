@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"time"
 
@@ -46,8 +45,8 @@ func (ctrl *TerminalController) SetEnabled(c fiber.Ctx) error {
 	var req struct {
 		Disabled bool `json:"disabled"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültige Anfrage")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.servers.SetConsoleDisabled(scopeFor(c), id, req.Disabled, actor(c)); err != nil {
 		return mapServerError(err)
@@ -72,7 +71,7 @@ func (ctrl *TerminalController) Ticket(c fiber.Ctx) error {
 	}
 	token, err := ctrl.tickets.Issue(actor(c), id, middlewares.ClientIP(c))
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "fahrkarte konnte nicht erzeugt werden")
+		return errTerminalTicketFailed
 	}
 	middlewares.SecurityEvent(c, "terminal.ticket.ok", "user", actor(c), "server", server.Name)
 	return c.JSON(fiber.Map{"ticket": token, "expires_in_seconds": 30})
@@ -101,7 +100,7 @@ func (ctrl *TerminalController) Connect(c fiber.Ctx) error {
 	who, ok := ctrl.tickets.Redeem(c.Query("ticket"), id, middlewares.ClientIP(c))
 	if !ok {
 		middlewares.SecurityEvent(c, "terminal.ticket.rejected")
-		return fiber.NewError(fiber.StatusUnauthorized, "ungültige oder abgelaufene fahrkarte")
+		return errTerminalTicketInvalid
 	}
 
 	term, err := ctrl.servers.OpenTerminal(repositories.ScopeAll(), id, who,
@@ -122,7 +121,7 @@ func (ctrl *TerminalController) Connect(c fiber.Ctx) error {
 	})
 	if upErr != nil {
 		term.Close()
-		return fiber.NewError(fiber.StatusBadRequest, "websocket-upgrade fehlgeschlagen")
+		return errTerminalUpgradeFailed
 	}
 	return nil
 }
@@ -216,17 +215,8 @@ func copyInput(ws wsConn, term sshx.Terminal) {
 // mapTerminalError übersetzt die Absagen der Konsole in HTTP-Antworten, die
 // den Grund benennen - „geht nicht" allein hilft niemandem weiter.
 func mapTerminalError(err error) error {
-	switch {
-	case errors.Is(err, services.ErrTerminalDisabled):
-		return fiber.NewError(fiber.StatusForbidden, err.Error())
-	case errors.Is(err, services.ErrTerminalNotPossible),
-		errors.Is(err, services.ErrTerminalUnsupported):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrTooManyConsoles):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	case errors.Is(err, services.ErrTooManyConnections):
-		return fiber.NewError(fiber.StatusConflict,
-			"auf diesem Server läuft gerade etwas anderes - bitte kurz warten")
+	if mapped := matchSentinel(err, terminalErrors); mapped != nil {
+		return mapped
 	}
 	return mapServerError(err)
 }

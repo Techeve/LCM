@@ -5,11 +5,11 @@ package controllers
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/apierr"
 	"LCM/internal/api/middlewares"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
@@ -26,6 +26,14 @@ type AuthController struct {
 	// wirkt auch bei über viele IPs verteilten Angriffen). App-weiter
 	// Singleton, da der Controller einmal pro App gebaut wird.
 	guard *loginGuard
+	// events schließt beim Abmelden die Ereignis-Verbindungen. Optional.
+	events *EventHub
+}
+
+// WithEvents verdrahtet den Ereigniskanal (optional).
+func (ctrl *AuthController) WithEvents(hub *EventHub) *AuthController {
+	ctrl.events = hub
+	return ctrl
 }
 
 func NewAuthController(auth *services.AuthService, totp *services.TOTPService, settings *services.SettingsService, activation *services.ActivationService, guard *loginGuard) *AuthController {
@@ -56,15 +64,17 @@ func (ctrl *AuthController) RequestPasswordReset(c fiber.Ctx) error {
 	var req struct {
 		Email string `json:"email"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkEmail("email", req.Email); err != nil {
+		return err
 	}
 	// Prüfen und Zählen in einem Schritt (kein Race zwischen beidem).
 	key := "pwreset:" + ctrl.clientIP(c)
 	if locked, retry := ctrl.guard.beginAttempt(key, maxLoginFails); locked {
 		c.Set("Retry-After", retryAfterSeconds(retry))
-		return fiber.NewError(fiber.StatusTooManyRequests,
-			"zu viele Anfragen - bitte später erneut versuchen")
+		return apierr.TooManyRequests
 	}
 	if err := ctrl.activation.RequestPasswordReset(req.Email); err != nil {
 		return err
@@ -80,9 +90,27 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// errLanguageInvalid: die Sprachkennung ist kein BCP-47-Tag (2-10 Zeichen).
+var errLanguageInvalid = apierr.Define(fiber.StatusBadRequest, "auth.language_invalid", "invalid language tag")
+
+// loginResponse ist die Antwort des abgeschlossenen Logins. In der Arbeitsspeicher-
+// Variante steht der Sitzungswert in session_token (und es gibt kein Cookie),
+// in der Cookie-Variante in csrf_token das Token für ändernde Anfragen.
+// must_setup_2fa steht auch am Nutzer (profile).
 type loginResponse struct {
-	Token string       `json:"token"`
-	User  *userProfile `json:"user"`
+	SessionToken string       `json:"session_token,omitempty"`
+	User         *userProfile `json:"user"`
+	MustSetup2FA bool         `json:"must_setup_2fa"`
+	CSRFToken    string       `json:"csrf_token,omitempty"`
+}
+
+// meResponse ist die Antwort von GET /auth/me: das Profil flach, dazu der Weg
+// der Browser-Sitzung (memory/cookie) und bei der Cookie-Sitzung das CSRF-Token.
+// Bei API-Key fehlen beide.
+type meResponse struct {
+	*userProfile
+	SessionMode string `json:"session_mode,omitempty"`
+	CSRFToken   string `json:"csrf_token,omitempty"`
 }
 
 // userProfile ist die API-Sicht auf einen User (ohne interne Felder).
@@ -97,6 +125,22 @@ type userProfile struct {
 	Permissions        []string `json:"permissions"`
 	TOTPEnabled        bool     `json:"totp_enabled"`
 	MustChangePassword bool     `json:"must_change_password"`
+	// MustSetup2FA: 2FA ist für die Rollen Pflicht, aber noch nicht eingerichtet.
+	MustSetup2FA bool `json:"must_setup_2fa"`
+	// Language: gewählte Oberflächensprache, "" = noch nicht gewählt.
+	Language string `json:"language"`
+}
+
+// profile bildet die API-Sicht auf einen User, einschließlich des Zustands
+// "muss 2FA einrichten", den die Rollen-Policy bestimmt.
+func (ctrl *AuthController) profile(u *domain.User) *userProfile {
+	p := toProfile(u)
+	if !u.TOTPEnabled {
+		if settings, err := ctrl.settings.Get(); err == nil {
+			p.MustSetup2FA = settings.Requires2FA(u.RoleNames())
+		}
+	}
+	return p
 }
 
 func toProfile(u *domain.User) *userProfile {
@@ -108,23 +152,31 @@ func toProfile(u *domain.User) *userProfile {
 		LastName:           u.LastName,
 		DisplayName:        u.FullName(),
 		Roles:              u.RoleNames(),
-		Permissions:        u.PermissionCodes(),
+		Permissions:        append([]string{}, u.PermissionCodes()...),
 		TOTPEnabled:        u.TOTPEnabled,
 		MustChangePassword: u.MustChangePassword,
+		Language:           u.Language,
 	}
 }
 
 // Login - POST /api/v1/auth/login
 // Erster Schritt: Prüft Credentials. Hat der User 2FA aktiviert, wird
-// KEIN reguläres Token ausgegeben, sondern eine Challenge - der zweite
+// KEINE Sitzung eröffnet, sondern eine Challenge ausgegeben - der zweite
 // Schritt (/auth/login/2fa) verifiziert den TOTP-Code.
 func (ctrl *AuthController) Login(c fiber.Ctx) error {
 	var req loginRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Username == "" || req.Password == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "username und password sind erforderlich")
+		return missingFields("username", "password")
+	}
+	// Vor dem Sperrzähler: der Benutzername wird dort als Schlüssel gemerkt,
+	// ein beliebig langer Wert bliebe sonst im Speicher liegen. Das Passwort
+	// deckelt der Service (MaxLoginPasswordBytes) und antwortet wie bei jeder
+	// falschen Anmeldung mit 401.
+	if err := checkLine("username", req.Username, maxNameLen); err != nil {
+		return err
 	}
 
 	// Brute-Force-Schutz auf ZWEI Schlüsseln gleichzeitig:
@@ -152,7 +204,7 @@ func (ctrl *AuthController) Login(c fiber.Ctx) error {
 		// Der Versuch ist durch beginAttempt bereits verbucht.
 		if errors.Is(err, services.ErrInvalidCredentials) || errors.Is(err, services.ErrUserInactive) {
 			middlewares.SecurityEvent(c, "login.failed", "user", req.Username)
-			return fiber.NewError(fiber.StatusUnauthorized, "ungültige Anmeldedaten")
+			return errInvalidCredentials
 		}
 		return err
 	}
@@ -168,29 +220,86 @@ func (ctrl *AuthController) Login(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"twofa_required": true, "challenge": challenge})
 	}
 
-	// 2FA-Enforcement: Wird für die Rollen des Users 2FA erzwungen, hat er
-	// es aber noch nicht eingerichtet, bekommt er trotzdem ein Token, muss
-	// aber sofort die Einrichtung durchlaufen (must_setup_2fa signalisiert
-	// das dem Frontend).
-	mustSetup := false
-	if settings, err := ctrl.settings.Get(); err == nil {
-		mustSetup = settings.Requires2FA(user.RoleNames())
-	}
+	return ctrl.finishLogin(c, user)
+}
 
-	token, err := ctrl.auth.CompleteLogin(user)
+// finishLogin schließt den Login nach Passwort (und ggf. zweitem Faktor) ab und
+// eröffnet die Browser-Sitzung. Welchen Weg sie nimmt, bestimmt die Einstellung
+// browser_session_mode (siehe sessionTransport). Eine noch gültige frühere
+// Sitzung dieses Browsers wird dabei beendet.
+//
+// 2FA-Enforcement: Wird für die Rollen des Users 2FA erzwungen, hat er es aber
+// noch nicht eingerichtet, bekommt er trotzdem eine Sitzung, muss aber sofort
+// die Einrichtung durchlaufen (must_setup_2fa signalisiert das dem Frontend).
+func (ctrl *AuthController) finishLogin(c fiber.Ctx, user *domain.User, eventAttrs ...any) error {
+	if err := ctrl.auth.CompleteLogin(user); err != nil {
+		return err
+	}
+	out, err := ctrl.openSession(c, user)
 	if err != nil {
 		return err
 	}
-	middlewares.SecurityEvent(c, "login.ok", "user", user.Username)
-	return c.JSON(fiber.Map{"token": token, "user": toProfile(user), "must_setup_2fa": mustSetup})
+	middlewares.SecurityEvent(c, "login.ok", append([]any{"user", user.Username}, eventAttrs...)...)
+	out.User = ctrl.profile(user)
+	out.MustSetup2FA = out.User.MustSetup2FA
+	return c.JSON(out)
+}
+
+// sessionTransport bestimmt, wie diese Anmeldung getragen wird. Die Cookie-Variante
+// gilt nur, wenn sie eingestellt ist UND die Anfrage über HTTPS kam: Wurde HTTPS
+// nachträglich abgebaut, läuft der Login als Arbeitsspeicher-Sitzung weiter, statt
+// den Betreiber auszusperren.
+func (ctrl *AuthController) sessionTransport(c fiber.Ctx) (services.Transport, error) {
+	settings, err := ctrl.settings.Get()
+	if err != nil {
+		return "", err
+	}
+	if settings.SessionMode() == domain.BrowserSessionCookie && middlewares.RequestIsHTTPS(c) {
+		return services.TransportCookie, nil
+	}
+	return services.TransportHeader, nil
+}
+
+// openSession legt die Sitzung an. Cookie-Weg: Sitzungs- und CSRF-Cookie; die
+// Antwort trägt csrf_token. Kopfzeilen-Weg: kein Cookie, die Antwort trägt
+// session_token - nur Rest-Cookies früherer Cookie-Sitzungen werden dabei
+// gelöscht, und nur wenn welche mitkamen.
+func (ctrl *AuthController) openSession(c fiber.Ctx, user *domain.User) (loginResponse, error) {
+	transport, err := ctrl.sessionTransport(c)
+	if err != nil {
+		return loginResponse{}, err
+	}
+	ctrl.revokePreviousSession(c)
+	token, sessionID, lifetime, err := ctrl.auth.StartSession(user, transport)
+	if err != nil {
+		return loginResponse{}, err
+	}
+	if transport == services.TransportCookie {
+		csrf := ctrl.auth.CSRFToken(sessionID)
+		middlewares.SetSessionCookies(c, token, csrf, lifetime)
+		return loginResponse{CSRFToken: csrf}, nil
+	}
+	if middlewares.HasSessionCookies(c) {
+		middlewares.ClearSessionCookies(c)
+	}
+	return loginResponse{SessionToken: token}, nil
+}
+
+// revokePreviousSession beendet eine noch gültige Sitzung, mit der dieser
+// Browser den Login schickt.
+func (ctrl *AuthController) revokePreviousSession(c fiber.Ctx) {
+	for _, old := range []string{c.Get(middlewares.SessionHeader), c.Cookies(middlewares.SessionCookieName)} {
+		if old != "" {
+			ctrl.auth.RevokeSession(old)
+		}
+	}
 }
 
 // loginLocked beantwortet einen Anmeldeversuch in laufender Sperre.
 func (ctrl *AuthController) loginLocked(c fiber.Ctx, retry time.Duration, username string) error {
 	c.Set("Retry-After", retryAfterSeconds(retry))
 	middlewares.SecurityEvent(c, "login.locked", "user", username)
-	return fiber.NewError(fiber.StatusTooManyRequests,
-		"zu viele fehlgeschlagene Anmeldeversuche - bitte später erneut versuchen")
+	return errLoginLocked
 }
 
 type verify2FARequest struct {
@@ -200,37 +309,37 @@ type verify2FARequest struct {
 
 // LoginTOTP - POST /api/v1/auth/login/2fa
 // Zweiter Schritt: Verifiziert den TOTP-Code gegen die Challenge und
-// liefert das finale JWT.
+// eröffnet die Sitzung.
 func (ctrl *AuthController) LoginTOTP(c fiber.Ctx) error {
 	var req verify2FARequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"challenge", req.Challenge, maxPathLen}, lineField{"code", req.Code, maxNameLen}); err != nil {
+		return err
 	}
 	user, err := ctrl.auth.ValidateChallenge(req.Challenge)
 	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "ungültige oder abgelaufene Anmeldung")
+		return errChallengeInvalid
 	}
 	if locked, retry := ctrl.guard.beginAttempt(totpGuardKey(user.ID), maxLoginFails); locked {
 		c.Set("Retry-After", retryAfterSeconds(retry))
 		middlewares.SecurityEvent(c, "login.2fa.locked", "user", user.Username)
-		return fiber.NewError(fiber.StatusTooManyRequests,
-			"zu viele fehlgeschlagene 2FA-Versuche - bitte später erneut versuchen")
+		return errTOTPLocked
 	}
 	if err := ctrl.totp.Verify(user.ID, req.Code); err != nil {
 		middlewares.SecurityEvent(c, "login.2fa.failed", "user", user.Username)
-		return fiber.NewError(fiber.StatusUnauthorized, "ungültiger 2FA-Code")
+		if errors.Is(err, services.ErrTOTPReused) {
+			return errTOTPReused
+		}
+		return errTOTPInvalid
 	}
 	ctrl.guard.reset(totpGuardKey(user.ID))
 	// Die Challenge ist mit diesem Schritt verbraucht. Ohne Widerruf bliebe
 	// sie bis zu ihrem Ablauf gültig - wer sie mitgelesen hat, könnte mit dem
 	// nächsten Code eine zweite Sitzung eröffnen.
 	ctrl.auth.RevokeToken(req.Challenge)
-	token, err := ctrl.auth.CompleteLogin(user)
-	if err != nil {
-		return err
-	}
-	middlewares.SecurityEvent(c, "login.ok", "user", user.Username, "second_factor", "totp")
-	return c.JSON(loginResponse{Token: token, User: toProfile(user)})
+	return ctrl.finishLogin(c, user, "second_factor", "totp")
 }
 
 // SetupTOTP - POST /api/v1/auth/2fa/setup (RequireAuth)
@@ -239,7 +348,7 @@ func (ctrl *AuthController) SetupTOTP(c fiber.Ctx) error {
 	res, err := ctrl.totp.Setup(user.ID)
 	if err != nil {
 		if errors.Is(err, services.ErrTOTPAlreadyOn) {
-			return fiber.NewError(fiber.StatusConflict, err.Error())
+			return errTOTPAlreadyOn
 		}
 		return err
 	}
@@ -254,8 +363,11 @@ type totpCodeRequest struct {
 func (ctrl *AuthController) EnableTOTP(c fiber.Ctx) error {
 	user := middlewares.CurrentUser(c)
 	var req totpCodeRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("code", req.Code, maxNameLen); err != nil {
+		return err
 	}
 	if err := ctrl.totp.Enable(user.ID, req.Code); err != nil {
 		return map2FAError(err)
@@ -273,13 +385,15 @@ func (ctrl *AuthController) EnableTOTP(c fiber.Ctx) error {
 func (ctrl *AuthController) DisableTOTP(c fiber.Ctx) error {
 	user := middlewares.CurrentUser(c)
 	var req totpCodeRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("code", req.Code, maxNameLen); err != nil {
+		return err
 	}
 	if locked, retry := ctrl.guard.beginAttempt(totpGuardKey(user.ID), maxLoginFails); locked {
 		c.Set("Retry-After", retryAfterSeconds(retry))
-		return fiber.NewError(fiber.StatusTooManyRequests,
-			"zu viele fehlgeschlagene 2FA-Versuche - bitte später erneut versuchen")
+		return errTOTPLocked
 	}
 	if err := ctrl.totp.Disable(user.ID, req.Code); err != nil {
 		if errors.Is(err, services.ErrTOTPInvalid) {
@@ -293,28 +407,53 @@ func (ctrl *AuthController) DisableTOTP(c fiber.Ctx) error {
 }
 
 // Logout - POST /api/v1/auth/logout (RequireAuth)
-// Entwertet das verwendete Token SERVERSEITIG bis zu seinem regulären
-// Ablauf. Vorher war der Endpunkt ein No-Op - der Client verwarf sein
-// Token, aber wer es abgefangen hatte, konnte es weiterbenutzen (R2-059).
+// Beendet die Browser-Sitzung serverseitig und schließt ihre Ereignis-
+// Verbindungen. Ein Cookie wird nur gelöscht, wenn der Browser eins mitschickt.
 func (ctrl *AuthController) Logout(c fiber.Ctx) error {
-	if token, ok := strings.CutPrefix(c.Get("Authorization"), "Bearer "); ok {
-		ctrl.auth.RevokeToken(strings.TrimSpace(token))
+	if id := middlewares.CurrentSessionID(c); id != "" {
+		ctrl.auth.RevokeSessionID(id)
+		ctrl.events.CloseSession(id)
+	}
+	if middlewares.HasSessionCookies(c) {
+		middlewares.ClearSessionCookies(c)
 	}
 	return c.JSON(fiber.Map{"status": "logged_out"})
 }
 
 // Me - GET /api/v1/auth/me (RequireAuth)
+// Alles, was die Oberfläche für Menüs und Pflichtschritte braucht: Profil,
+// Rollen, Rechte, 2FA- und Remediation-Zustand, Sprache, Sitzungsweg, CSRF-Token.
 func (ctrl *AuthController) Me(c fiber.Ctx) error {
-	return c.JSON(toProfile(middlewares.CurrentUser(c)))
+	out := meResponse{userProfile: ctrl.profile(middlewares.CurrentUser(c))}
+	switch middlewares.CurrentSessionTransport(c) {
+	case services.TransportCookie:
+		out.SessionMode = domain.BrowserSessionCookie
+		out.CSRFToken = ctrl.auth.CSRFToken(middlewares.CurrentSessionID(c))
+	case services.TransportHeader:
+		out.SessionMode = domain.BrowserSessionMemory
+	}
+	return c.JSON(out)
+}
+
+// UpdatePreferences - PATCH /api/v1/auth/me/preferences (RequireAuth)
+// Speichert Einstellungen am Konto, derzeit die Sprache; gilt auf allen Geräten.
+func (ctrl *AuthController) UpdatePreferences(c fiber.Ctx) error {
+	var req struct {
+		Language string `json:"language"`
+	}
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	user := middlewares.CurrentUser(c)
+	if err := ctrl.auth.SetLanguage(user.ID, req.Language); err != nil {
+		if errors.Is(err, services.ErrInvalidLanguage) {
+			return errLanguageInvalid
+		}
+		return err
+	}
+	return c.JSON(fiber.Map{"language": req.Language})
 }
 
 func map2FAError(err error) error {
-	switch {
-	case errors.Is(err, services.ErrTOTPInvalid):
-		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
-	case errors.Is(err, services.ErrTOTPNotSetup), errors.Is(err, services.ErrTOTPAlreadyOn):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	default:
-		return err
-	}
+	return mapSentinel(err, twoFactorErrors)
 }

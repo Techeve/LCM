@@ -22,9 +22,9 @@ var (
 	// (SSH-Server, sudo, Paketverwaltung, Kernel, libc …) wurde abgelehnt, weil
 	// es den Server oder den LCM-Zugang unbrauchbar machen würde.
 	ErrProtectedPackage = errors.New("dieses paket ist geschützt und kann nicht über LCM entfernt werden (kritisch für system oder LCM-zugang)")
-	// Paketnamen: apt (klein) wie auch RPM (auch "_"); alle Zeichen sind
+	// Paketnamen: apt (klein) wie auch RPM (auch "_" und Großbuchstaben); alle Zeichen sind
 	// shell-sicher (kein Whitespace/Metazeichen) - Schutz vor Injection.
-	rePackageName      = regexp.MustCompile(`^[a-z0-9][a-z0-9+._-]*$`)
+	rePackageName      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+._-]*$`)
 	rePackageVersion   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9+.:~_-]*$`)
 	reUpgradableSecure = "grep -iE '/[^ ]*(security|-security)'"
 )
@@ -39,7 +39,9 @@ func parsePackageNames(s string) ([]string, error) {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(fields))
 	for _, f := range fields {
-		name := strings.ToLower(strings.TrimSpace(f))
+		// Groß- und Kleinschreibung bleibt: RPM-Namen sind davon abhängig
+		// (Leap-release, NetworkManager).
+		name := strings.TrimSpace(f)
 		if name == "" {
 			continue
 		}

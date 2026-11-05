@@ -16,7 +16,7 @@ Regeln zur Cron-Zeit nacheinander auf allen Servern der Gruppe aus.
 | Art | Wann sie läuft | Beispiele |
 |---|---|---|
 | **Geplante Regel** | zur Cron-Zeit ihres Schedules | tägliche Updates, Sync, Skripte, APT-Cache anbinden |
-| **Grundsatz-Regel (Enforce)** | bei **jeder** Verbindung (mind. beim Health-Ping) | Firewall, APT-Cache erzwingen - mit Drift-Check |
+| **Grundsatz-Regel (Enforce)** | bei **jeder** Verbindung (mind. beim Health-Ping) | Firewall, APT-Cache anbinden - mit Drift-Check |
 
 Eine Grundsatz-Regel prüft zuerst den Ist-Zustand und greift **nur bei
 Abweichung** ein. Beispiel Firewall: Ist die erwartete Port-Konfiguration schon
@@ -26,8 +26,8 @@ tatsächliche Eingriff erscheint als Audit-Eintrag und im Protokoll - eine
 stehen.
 
 Möglich sind Grundsatz-Regeln deshalb nur für Typen, die überhaupt einen
-Soll-Zustand tragen: **Firewall**, **APT-Cache**, **ACL einrichten** und
-**Rechte-Soll halten**.
+Soll-Zustand tragen: **Firewall**, **APT-Cache anbinden**, **ACL einrichten**
+und **Rechte-Soll halten**.
 
 Die letzten beiden gehören zu den [Berechtigungsprofilen](/guides/linux-users/):
 „ACL einrichten" rüstet fehlende ACL-Unterstützung nach, damit die
@@ -85,8 +85,9 @@ ist das mit der leeren Liste `[]` ausdrücklich anzugeben.
 
 ## Regel-Typen
 
-- **Update / Paket-Updates / Security** - Paketaktualisierung über die erkannte
-  Paketverwaltung; „benannt“ aktualisiert gezielt einzelne Pakete. Alle drei
+- **Alle Pakete aktualisieren / Sicherheitsupdates / Bestimmte Pakete
+  aktualisieren** - Paketaktualisierung über die erkannte Paketverwaltung;
+  „Bestimmte Pakete“ aktualisiert gezielt einzelne Pakete. Alle drei
   frischen die Paketliste vorher selbst auf - ein Lauf gegen veraltete
   Metadaten meldet sonst „erfolgreich" und lässt ein gerade veröffentlichtes
   Paket liegen. Einzige Ausnahme ist **pacman mit benannten Paketen**: Dort
@@ -98,17 +99,32 @@ ist das mit der leeren Liste `[]` ausdrücklich anzugeben.
   Pakete, verfügbare Updates), von der Dashboard, Ampel und CVE-Bewertung
   leben. Läuft ohnehin täglich im System-Zeitplan für alle Server; eine eigene
   Regel lohnt nur, wenn eine Gruppe häufiger aufgefrischt werden soll.
-- **Skript** - beliebiges Shell-Kommando.
-- **Custom-Aktion** - eine unter *Einstellungen → Custom-Aktionen* hinterlegte
+- **Nicht mehr benötigte Pakete entfernen** - räumt Pakete weg, die nichts
+  mehr braucht (`apt autoremove` und die Entsprechungen der anderen
+  Paketverwaltungen).
+- **Skript ausführen** - beliebiges Shell-Kommando.
+- **Custom-Aktion** - eine unter *Einstellungen → Eigene Aktionen* hinterlegte
   Kommando-Liste, die sequenziell läuft.
-- **Sync / Health / Paketliste** - die Bausteine der Basis-Zeitpläne.
+- **Benutzer und Hardware abgleichen / Erreichbarkeit prüfen / Paketliste
+  aktualisieren** - die Bausteine der Basis-Zeitpläne.
 - **Firewall** - die Firewall aktivieren und die angegebenen Ports freigeben
-  (auch als Grundsatz-Regel; dort ist der Soll-Zustand Pflicht, siehe oben).
-- **Docker-Prune** - ungenutzte Docker-Images aufräumen.
+  (nur als Grundsatz-Regel; dort ist der Soll-Zustand Pflicht, siehe oben).
+- **Docker: ungenutzte Images aufräumen** - ungenutzte Docker-Images löschen.
+- **Docker: Compose-Projekte aktualisieren / Docker: einzelne Container
+  aktualisieren** - zieht neue Images und erstellt die Container neu (siehe
+  [Docker-Monitoring](/guides/docker/)).
 - **Docker: ungenutzte Images aktualisieren** - zieht neue Versionen
   ungenutzter Images (z. B. um Basis-Images für den nächsten Build
   vorzuhalten, ohne laufende Container anzufassen).
-- **APT-Cache anbinden / erzwingen** - siehe [APT-Cache](/guides/apt-cache/).
+- **Tiefenprüfung** - prüft Kernel-Neustart, Kernel-Lücken und Härtung, liest
+  nur (siehe [Deep Scan](/guides/deep-scan/)).
+- **DNS-Test** - prüft, ob die angegebenen Test-Domains auf dem Server
+  aufgelöst werden, liest nur.
+- **APT-Cache anbinden** - auch als Grundsatz-Regel, siehe
+  [APT-Cache](/guides/apt-cache/).
+- **ACL einrichten / Rechte-Soll halten** - die beiden Grundsatz-Regeln der
+  [Berechtigungsprofile](/guides/linux-users/), auch an einen Zeitplan
+  hängbar (siehe oben).
 - **Neustart** - startet den Server neu (`systemctl reboot`); nur als
   geplante Regel sinnvoll, nicht als Grundsatz-Regel. Der Job bleibt offen,
   bis der Server wieder antwortet (siehe unten).
@@ -123,7 +139,8 @@ ist das mit der leeren Liste `[]` ausdrücklich anzugeben.
 
 :::note[Nicht jeder Regel-Typ ist gruppenseitig wählbar]
 Im Domain-Modell und in der OpenAPI-Referenz tauchen weitere Typen auf -
-`cve-scan`, `alert-check`, `backup` und `docker-check`. Diese laufen
+`backup`, `cleanup`, `cve-scan`, `docker-check`, `app-check` und
+`alert-check`. Diese laufen
 **ausschließlich als System-Zeitpläne** mit festem Intervall und lassen sich
 nicht als Gruppenregel anlegen; ein entsprechender Versuch wird mit
 „ungültiger rule-typ" abgelehnt. Die obige Liste ist also abschließend für
@@ -196,7 +213,7 @@ Ein Schedule startet standardmäßig alle Server seiner Gruppe zur Cron-Zeit
 **denselben APT-Cache** aktualisieren, trifft das den Cache auf einen Schlag -
 er wird zum Engpass, `apt-get update` hängt.
 
-Mit einem **Zeitfenster** (Feld *Zeitfenster (Minuten)* am Schedule) wird aus
+Mit einem **Zeitfenster** (Feld *Zeitfenster in Minuten* am Schedule) wird aus
 der Startzeit ein Zeitraum: `0 2 * * *` mit 120 Minuten heißt „zwischen 02:00
 und 04:00". Die Server beginnen gleichmäßig über das Fenster verteilt, jeder
 arbeitet dort **alle Regeln des Schedules nacheinander** ab (z.&nbsp;B. erst
@@ -207,8 +224,8 @@ jede Nacht etwa zur selben Zeit bearbeitet.
   der nächste Lauf den vorigen.
 - Zentrale Regeln (Docker-Check, Anwendungs-Check) laufen einmal, wenn alle
   Server durch sind.
-- **„Jetzt“** ignoriert das Fenster: Wer von Hand auslöst, will das Ergebnis
-  sofort.
+- **„Jetzt ausführen“** (am Zeitplan) ignoriert das Fenster: Wer von Hand
+  auslöst, will das Ergebnis sofort.
 
 ## Eine Regel anlegen
 
@@ -216,30 +233,45 @@ import { Steps } from '@astrojs/starlight/components';
 
 <Steps>
 
-1. Unter *Gruppen* die Gruppe wählen (oder neu anlegen) und ihr Server
-   zuweisen - der Abschnitt **Server** (wie auch **Verwaltungs-User**) ist
-   zugeklappt und zeigt die Anzahl; ein Klick öffnet ihn.
-2. Für eine geplante Regel zuerst einen **Zeitplan** anlegen
-   (**„+ Zeitplan“**: Name + Cron-Ausdruck, z.&nbsp;B. `0 2 * * *`). Jeder
-   Zeitplan erscheint als eigene Karte; die Grundsatz-Regeln haben ihre
-   eigene Karte darunter.
-3. An der Karte des Auslösers **„+ Regel“**: Typ und ggf. Konfiguration
-   (Ports, Paketnamen, Aktion) setzen. Der Auslöser steht damit fest.
+1. Unter *Gruppen* die Gruppe wählen (oder neu anlegen). Die Gruppe hat die
+   Reiter **Übersicht** (mit den **Verwaltern**), **Server**, **Zeitpläne**
+   und **Regeln**; im Reiter *Server* weist du ihr Server zu.
+2. Für eine geplante Regel zuerst im Reiter *Zeitpläne* einen **Zeitplan**
+   anlegen (**„Zeitplan anlegen“**: Name + Cron-Ausdruck,
+   z.&nbsp;B. `0 2 * * *`).
+3. Im Reiter *Regeln* erscheint jeder Zeitplan als eigene Karte; die
+   Grundsatz-Regeln haben ihre eigene Karte darunter. An der Karte des
+   Auslösers **„Regel hinzufügen“**: Typ und ggf. Konfiguration (Ports,
+   Paketnamen, Aktion) setzen. Der Auslöser steht damit fest.
 4. **Reihenfolge**: Innerhalb einer Karte laufen die Regeln von oben nach
    unten (Nummer links). Umsortieren per **Ziehen** am Griff oder mit den
    **Pfeilen** - etwa erst „Update“, dann „Neustart bei Bedarf“. Neue Regeln
    reihen sich hinten an.
-5. Mit **„Jetzt“** lässt sich eine Regel oder ein ganzer Zeitplan sofort
-   auslösen.
+5. Mit **„Jetzt ausführen“** am Zeitplan (Reiter *Zeitpläne*) läuft der ganze
+   Zeitplan sofort, mit **„Ausführen“** an einer Regel (Reiter *Regeln*) nur
+   diese Regel.
 
 </Steps>
 
 ## Die System-Gruppe
 
 Die geschützte System-Gruppe bringt die Basis-Zeitpläne (Health-Check,
-System-Sync) mit; ihre Regeln und Zeitpläne sind nicht löschbar. Ihre Schedules
+System-Sync) mit; ihre Regeln und Zeitpläne sind nicht löschbar, die
+Zeitpläne lassen sich nur ein- und ausschalten und von Hand ausführen. Ihre Schedules
 laufen auf **allen** Servern - unabhängig von der Gruppenzugehörigkeit. Details
 siehe [Monitoring](/guides/monitoring/).
+
+## Alle Zeitpläne an einem Ort
+
+*Einstellungen → Zeitpläne* listet die Zeitpläne aller Gruppen **und** des Systems
+in einer Tabelle (Name mit Gruppe bzw. *System*, Regeln, Wann mit nächstem
+Lauf), sortiert nach dem nächsten Lauf. Zeitpläne der Gruppen gehören zu einer Gruppe
+und lassen sich dort bearbeiten; System-Zeitpläne entstehen aus den
+Einstellungen (Backup, Log-Bereinigung, CVE-Scan) oder sind fest eingebaut
+(Alarm-Auswertung, Update-Prüfung). **„Ausführen“** startet einen Lauf sofort,
+der reguläre Termin bleibt bestehen; das Ergebnis steht danach unter *Jobs*.
+Wer das nötige Recht nicht hat, sieht stattdessen einen Hinweis und findet die
+Zeitpläne seiner Gruppen in den Gruppen.
 
 ## Gut zu wissen
 

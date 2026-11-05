@@ -45,11 +45,9 @@
         "github.com/golang-jwt/**",
         "github.com/eclipse/**",
         "gorm.io/**",
-        "svelte",
+        "lit",
         "vite",
-        "@sveltejs/**",
-        "@playwright/**",
-        "bootstrap"
+        "@playwright/**"
       ],
       "matchUpdateTypes": ["patch", "pin", "digest"],
       "groupName": "Vertrauenswürdige Patch-Updates",

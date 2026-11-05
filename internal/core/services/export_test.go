@@ -59,3 +59,10 @@ func (s *JobService) SetLastActivityForTest(jobID string, at time.Time) {
 	}
 	s.activityMu.Unlock()
 }
+
+// ExpectedCommandsForTest liefert die Kommandos einer Vorschau so, wie der Lauf
+// sie an die SSH-Verbindung übergibt - zum Abgleich mit dem Mitschnitt des
+// FakeDialers.
+func (p *ActionPreview) ExpectedCommandsForTest(server *domain.Server) []string {
+	return p.commandsFor(server)
+}

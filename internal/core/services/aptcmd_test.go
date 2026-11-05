@@ -107,3 +107,14 @@ func TestAptRetry(t *testing.T) {
 		}
 	}
 }
+
+// RPM-Namen hängen von der Schreibweise ab; klein geschrieben findet zypper sie nicht.
+func TestParsePackageNamesKeepsCase(t *testing.T) {
+	got, err := parsePackageNames("Leap-release, NetworkManager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "Leap-release" || got[1] != "NetworkManager" {
+		t.Fatalf("Schreibweise verändert: %v", got)
+	}
+}

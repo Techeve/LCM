@@ -316,6 +316,7 @@ var protectedPackagePrefixes = []string{
 // isProtectedPackage meldet, ob ein Paket geschützt ist (siehe die beiden
 // Listen). Der Name ist bereits kleingeschrieben und validiert.
 func isProtectedPackage(name string) bool {
+	name = strings.ToLower(name)
 	if protectedPackageExact[name] {
 		return true
 	}

@@ -10,11 +10,11 @@
 bin/
 !bin/lcm-linux-*
 !bin/lcm-trivyd-linux-*
-frontend/node_modules/
-frontend/dist/
-frontend/e2e/.run/
-frontend/test-results/
-frontend/playwright-report/
+ui/node_modules/
+ui/dist/
+ui/e2e/.run/
+ui/test-results/
+ui/playwright-report/
 config.json
 config.dev.json
 version.json
