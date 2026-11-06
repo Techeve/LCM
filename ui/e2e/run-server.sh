@@ -48,7 +48,10 @@ CONFIG
 # http://127.0.0.1:8090; produktiv läuft LCM per HTTPS).
 # --demo: die Tests laufen gegen die Demo-Daten (demo_mode ist bewusst kein
 # config.json-Feld, nur ein CLI-Flag).
+# LCM_E2E_TLS=1: ohne --dev, der Server spricht dann wie im Betrieb HTTPS (für WebKit).
 # PATH ohne lokale Werkzeuge: Die CI hat kein Trivy. Liegt es auf dem Rechner des
 # Entwicklers im Pfad, zeigt die Oberfläche anderes, und Fehler fallen erst oben auf.
+DEV=--dev
+[ "${LCM_E2E_TLS:-}" = 1 ] && DEV=
 cd "$E2E_DIR"
-exec env PATH=/usr/bin:/bin ./app -config config.json --dev --demo
+exec env PATH=/usr/bin:/bin ./app -config config.json $DEV --demo

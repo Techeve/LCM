@@ -18,6 +18,10 @@ const PORT = Number(process.env.LCM_E2E_PORT || 8090);
 // Über LCM_E2E_WORKERS umstellbar.
 const WORKERS = Number(process.env.LCM_E2E_WORKERS || 2);
 
+// WebKit nimmt Secure-Cookies nur über echtes HTTPS an. LCM_E2E_TLS=1 startet den
+// Testserver deshalb wie im Betrieb mit HTTPS und eigenem Zertifikat.
+const SCHEMA = process.env.LCM_E2E_TLS === '1' ? 'https' : 'http';
+
 export default defineConfig({
   testDir: './e2e',
   // Die Tests einer Datei dürfen auf verschiedene Worker verteilt werden,
@@ -33,7 +37,10 @@ export default defineConfig({
   // Entwickler-Rechner, 5 s Assertion-Frist war dort zu knapp.
   expect: { timeout: 10_000 },
   use: {
-    baseURL: `http://127.0.0.1:${PORT}`,
+    baseURL: `${SCHEMA}://127.0.0.1:${PORT}`,
+    ignoreHTTPSErrors: true,
+    // Über HTTPS läuft der Service Worker, und in WebKit gehen Anfragen dann an `page.route` vorbei.
+    serviceWorkers: SCHEMA === 'https' ? 'block' : 'allow',
     // Die Texte der Tests sind deutsch; ohne Vorgabe richtet sich die Oberfläche nach dem Browser.
     locale: 'de-DE',
     // Die Suite nutzt die Cookie-Variante der Anmeldung, und die gibt es nur über HTTPS. Der Testserver
@@ -48,7 +55,8 @@ export default defineConfig({
     // Auf einem kalten CI-Cache dauert der Erst-Build des Binarys (inkl.
     // modernc.org/sqlite) mehrere Minuten, daher das großzügige Timeout.
     command: `LCM_E2E_PORT=${PORT + index} sh e2e/run-server.sh`,
-    url: `http://127.0.0.1:${PORT + index}/api/v1/health`,
+    url: `${SCHEMA}://127.0.0.1:${PORT + index}/api/v1/health`,
+    ignoreHTTPSErrors: true,
     reuseExistingServer: false,
     timeout: 300_000,
   })),

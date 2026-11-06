@@ -127,7 +127,10 @@ export class CtrServersMore extends LitElement {
     else if (event.key === 'End') move(links.length - 1);
   }
 
-  /** Verlässt der Fokus das Feld mit Tab, schließt es; sonst bliebe es offen stehen. */
+  /**
+   * Verlässt der Fokus das Feld mit Tab, schließt es; sonst bliebe es offen stehen. Die Maus darf den Fokus nicht
+   * bewegen (`mousedown`): Safari fokussiert angeklickte Links nicht, das Feld schlösse sich vor dem Klick.
+   */
   #onFocusOut(event: FocusEvent): void {
     const next = event.relatedTarget as Node | null;
     if (next && this.renderRoot.querySelector('.list')?.contains(next)) return;
@@ -137,7 +140,17 @@ export class CtrServersMore extends LitElement {
 
   override render() {
     return html`<button class="trigger" type="button" popovertarget=${this.#listId} aria-haspopup="true">${this.label}</button>
-      <div id=${this.#listId} class="list" popover="auto" role="group" aria-label=${this.heading} @toggle=${this.#onToggle} @keydown=${this.#onKeyDown} @focusout=${this.#onFocusOut}>
+      <div
+        id=${this.#listId}
+        class="list"
+        popover="auto"
+        role="group"
+        aria-label=${this.heading}
+        @toggle=${this.#onToggle}
+        @keydown=${this.#onKeyDown}
+        @focusout=${this.#onFocusOut}
+        @mousedown=${(event: Event) => event.preventDefault()}
+      >
         <div class="heading">${this.heading}</div>
         <ul>
           ${this.servers.map((server) => html`<li><a href=${`/servers/${server.id}`} @click=${() => this.#close()}>${server.name}</a></li>`)}

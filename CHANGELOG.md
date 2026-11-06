@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.0.0-beta.2 - 2026-11-06
+
+### 🐛 Bugfixes
+
+- **api**: abgebrochene Verbindungen stehen nicht mehr als 502 im Protokoll (d4aa19c8)
+- **remote**: Dienst-Stopp wartet nicht mehr auf offene Agent-Verbindungen (ed5a9e69)
+- **ui**: Einstellungen zeigen beim Wechsel keinen alten Abschnitt mehr (54f3d932)
+- **ui**: Klick im Feld „+2 weitere“ führt auch in Safari zum Server (fe3423c3)
+- **ui**: Rücksprung bleibt beim Wechsel der Anmeldung im Browser erhalten (0d641297)
+
+### 🔧 Sonstiges
+
+- **e2e**: Suite läuft auch in Firefox und WebKit (07e367c4)
+
 ## v2.0.0-beta.1 - 2026-11-05
 
 ### 💥 Breaking Changes

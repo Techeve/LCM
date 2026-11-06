@@ -199,6 +199,13 @@ test.describe('Wahl der Variante', () => {
     await expect(karte).toContainText('Beim Wechsel werden alle Benutzer abgemeldet.');
     await expect(karte).not.toContainText('Nur verfügbar, wenn LCM über HTTPS aufgerufen wird.');
 
+    // Die Antwort kommt zuletzt: Der Ereigniskanal meldet das Ende der Sitzung vorher, die Rücksprungadresse muss trotzdem stimmen.
+    await page.route('**/api/v1/settings/global', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fallback();
+      const antwort = await route.fetch();
+      await new Promise((fertig) => setTimeout(fertig, 1000));
+      await route.fulfill({ response: antwort });
+    });
     await cookie.check({ force: true });
     await page.getByRole('region', { name: 'Änderungen speichern' }).getByRole('button', { name: 'Speichern' }).click();
 
@@ -212,6 +219,7 @@ test.describe('Wahl der Variante', () => {
   });
 
   test('über HTTP ist die Cookie-Option gesperrt und sagt warum', async ({ browser, baseURL }) => {
+    test.skip(process.env.LCM_E2E_TLS === '1', 'Der Server spricht hier echtes HTTPS.');
     const kontext = await browser.newContext({ baseURL, locale: 'de-DE', extraHTTPHeaders: { 'X-Forwarded-Proto': 'http' } });
     const seite = await kontext.newPage();
     await oeffneUndMeldeAn(seite, '/');

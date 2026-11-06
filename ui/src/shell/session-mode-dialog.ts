@@ -75,6 +75,8 @@ export class LcmSessionModeDialog extends LitElement {
   async #apply(): Promise<void> {
     const saved = this.#saved;
     const mode = this._choice ?? saved;
+    // Jetzt merken: Meldet der Ereigniskanal das Ende der Sitzung vor der Antwort, steht der Router schon auf der Anmeldung.
+    const returnTo = router.state.path;
     this._busy = true;
     this._error = '';
     try {
@@ -86,7 +88,7 @@ export class LcmSessionModeDialog extends LitElement {
       this._busy = false;
     }
     // Der Server hat bei einem Wechsel alle Sitzungen beendet, auch diese.
-    if (mode !== saved) await auth.leaveAfterSessionModeChange(router.state.path);
+    if (mode !== saved) await auth.leaveAfterSessionModeChange(returnTo);
   }
 
   override render() {

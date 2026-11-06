@@ -25,7 +25,8 @@ export const ADMIN_PASSWORD = 'e2e-admin-passwort';
 // (siehe webServer in playwright.config.ts). Die Adresse hängt deshalb am
 // Worker-Index und nicht an der globalen baseURL.
 const BASIS_PORT = Number(process.env.LCM_E2E_PORT || 8090);
-export const adresseFuer = (index: number): string => `http://127.0.0.1:${BASIS_PORT + index}`;
+const SCHEMA = process.env.LCM_E2E_TLS === '1' ? 'https' : 'http';
+export const adresseFuer = (index: number): string => `${SCHEMA}://127.0.0.1:${BASIS_PORT + index}`;
 
 interface Optionen {
   /** `false` für Tests des Anmeldewegs: der Browser kommt ohne Sitzung. */
@@ -37,7 +38,7 @@ export const ALS_HTTPS = { 'X-Forwarded-Proto': 'https' };
 
 /** Ein API-Zugang ohne Browser; `https: false` lässt den Kopf weg. */
 export function apiKontext(playwright: Playwright, baseURL: string, https = true): Promise<APIRequestContext> {
-  return playwright.request.newContext({ baseURL, extraHTTPHeaders: https ? ALS_HTTPS : {} });
+  return playwright.request.newContext({ baseURL, ignoreHTTPSErrors: true, extraHTTPHeaders: https ? ALS_HTTPS : {} });
 }
 
 /** Meldet als Admin an. Die Antwort trägt `session_token` (Arbeitsspeicher) oder `csrf_token` (Cookie). */
@@ -81,7 +82,7 @@ async function cookieSitzung(playwright: Playwright, baseURL: string): Promise<C
 
 /** Lebt die Sitzung dieser Cookies noch? */
 async function lebt(playwright: Playwright, baseURL: string, cookies: Cookie[]): Promise<boolean> {
-  const api = await playwright.request.newContext({ baseURL, extraHTTPHeaders: ALS_HTTPS, storageState: { cookies, origins: [] } });
+  const api = await playwright.request.newContext({ baseURL, ignoreHTTPSErrors: true, extraHTTPHeaders: ALS_HTTPS, storageState: { cookies, origins: [] } });
   const antwort = await api.get('/api/v1/auth/me');
   await api.dispose();
   return antwort.ok();

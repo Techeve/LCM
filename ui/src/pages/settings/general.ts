@@ -54,19 +54,23 @@ export class SettingsGeneral extends SettingsForm {
     this._testing = false;
   }
 
-  /** Mit dem Weg der Anmeldung wechselt der Server alle Sitzungen aus, auch diese: danach geht es zur Anmeldung. */
-  #switchedSessionMode = false;
+  /**
+   * Mit dem Weg der Anmeldung wechselt der Server alle Sitzungen aus, auch diese: danach geht es zur Anmeldung und von dort
+   * hierher zurück. Die Adresse steht vor dem Speichern fest: Meldet der Ereigniskanal das Ende der Sitzung vor der Antwort,
+   * steht der Router schon auf der Anmeldung.
+   */
+  #returnAfterSwitch: string | undefined;
 
   protected override async request(body: Record<string, unknown>, draft: Draft, base: Draft): Promise<GlobalSettings | void> {
-    this.#switchedSessionMode = 'browser_session_mode' in body;
+    const switched = 'browser_session_mode' in body;
+    this.#returnAfterSwitch = switched ? router.state.path : undefined;
     // Wer den Weg hier bewusst wählt, muss die einmalige Frage nach den Pflichtschritten nicht mehr beantworten.
-    return super.request(this.#switchedSessionMode ? { ...body, browser_session_mode_confirmed: true } : body, draft, base);
+    return super.request(switched ? { ...body, browser_session_mode_confirmed: true } : body, draft, base);
   }
 
   protected override async afterSave(updated: GlobalSettings | void): Promise<void> {
-    if (this.#switchedSessionMode) {
-      this.#switchedSessionMode = false;
-      await auth.leaveAfterSessionModeChange(router.state.path);
+    if (this.#returnAfterSwitch) {
+      await auth.leaveAfterSessionModeChange(this.#returnAfterSwitch);
       return;
     }
     // Ohne E-Mail-Versand kann es auch keinen E-Mail-Kanal geben.

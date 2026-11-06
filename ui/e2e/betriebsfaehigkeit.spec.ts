@@ -77,10 +77,8 @@ test.describe('Betriebsfähigkeit', () => {
     await expect(bestaetigung.getByText('dpkg --configure -a')).toBeVisible();
     expect(anfrage).toBeNull();
 
-    const gesendet = page.waitForRequest('**/api/v1/servers/1/packages/repair');
     await bestaetigung.getByRole('button', { name: 'Reparieren' }).click();
-    await gesendet;
-    expect(anfrage).toEqual({ action: 'dpkg_configure' });
+    await expect.poll(() => anfrage).toEqual({ action: 'dpkg_configure' });
   });
 
   test('der Job zum Fehlschlag ist nur mit jobs:read verlinkt', async ({ page }) => {

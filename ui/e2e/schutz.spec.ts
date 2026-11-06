@@ -99,6 +99,32 @@ test.describe('Eingabeprüfung der API', () => {
   });
 });
 
+test.describe('Ungespeicherte Änderungen, während der nächste Abschnitt lädt', () => {
+  // Der Service Worker hält die Module vor; das Laden soll hier aber dauern.
+  test.use({ serviceWorkers: 'block' });
+
+  test('nach „Verwerfen“ ist der alte Abschnitt sofort weg, auch solange der neue noch lädt', async ({ page }) => {
+    let freigeben = (): void => undefined;
+    const freigegeben = new Promise<void>((fertig) => (freigeben = fertig));
+    await page.route('**/assets/time-*.js', async (route) => {
+      await freigegeben;
+      await route.continue();
+    });
+    await page.goto('/settings/dns');
+    const vorher = await nameserver(page).inputValue();
+    await nameserver(page).fill('Test = 192.0.2.53');
+    await page.getByRole('link', { name: 'Zeit', exact: true }).click();
+    await fenster(page, 'Änderungen verwerfen?').getByRole('button', { name: 'Verwerfen' }).click();
+    await expect(nameserver(page)).toHaveCount(0);
+
+    // Noch während des Ladens: keine zweite Rückfrage, und die verworfene Eingabe kommt nicht zurück.
+    await page.getByRole('link', { name: 'DNS', exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\/dns$/);
+    await expect(nameserver(page)).toHaveValue(vorher);
+    freigeben();
+  });
+});
+
 test.describe('Content-Security-Policy', () => {
   const SEITEN = ['/', '/servers', '/servers/1', '/servers/1/security', '/servers/1/storage', '/groups/2', '/linux-users', '/security', '/containers', '/jobs', '/account/security', '/settings/general', '/settings/alerts', '/docs'];
 
@@ -112,11 +138,13 @@ test.describe('Content-Security-Policy', () => {
     expect(richtlinie).not.toContain("'unsafe-eval'");
   });
 
-  test('Seitenbesuche und offene Fenster lösen keine CSP-Verletzung aus', async ({ page }) => {
+  test('Seitenbesuche und offene Fenster lösen keine CSP-Verletzung aus', async ({ page, browserName }) => {
     test.slow(); // geht viele Seiten durch und reißt unter Last sonst die Zeitgrenze
+    // WebKit meldet jedes <select> als `style-src-attr`, auch auf einer leeren Seite.
+    const zaehlt = (text: string) => browserName !== 'webkit' || !/style-src-attr|apply a stylesheet/.test(text);
     const meldungen: string[] = [];
     page.on('console', (nachricht) => {
-      if (/content security policy|trusted type|refused to/i.test(nachricht.text())) meldungen.push(nachricht.text());
+      if (/content security policy|trusted type|refused to/i.test(nachricht.text()) && zaehlt(nachricht.text())) meldungen.push(nachricht.text());
     });
     page.on('pageerror', (fehler) => meldungen.push(fehler.message));
     await page.addInitScript(() => {
@@ -131,7 +159,7 @@ test.describe('Content-Security-Policy', () => {
       await expect(page.getByRole('main')).toBeVisible();
       await page.waitForLoadState('networkidle').catch(() => undefined);
       const verletzungen = await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? []);
-      expect(verletzungen, `Verletzung auf ${pfad}`).toEqual([]);
+      expect(verletzungen.filter(zaehlt), `Verletzung auf ${pfad}`).toEqual([]);
     }
 
     // Fenster, Auswahlen und Menüs sind die Stellen, an denen Stile gern inline entstehen.
@@ -146,7 +174,7 @@ test.describe('Content-Security-Policy', () => {
     await page.keyboard.press('ControlOrMeta+k');
     await expect(page.getByRole('dialog', { name: 'Befehlspalette' })).toBeVisible();
     await page.keyboard.press('Escape');
-    expect(await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])).toEqual([]);
+    expect((await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])).filter(zaehlt)).toEqual([]);
     expect(meldungen).toEqual([]);
   });
 });

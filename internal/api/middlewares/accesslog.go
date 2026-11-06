@@ -26,6 +26,9 @@ func AccessLog(logger *slog.Logger) fiber.Handler {
 		if err != nil {
 			status = apierr.StatusOf(err)
 		}
+		if connectionAborted(c, status) {
+			return err
+		}
 
 		attrs := []any{
 			"method", c.Method(),
@@ -63,6 +66,13 @@ func AccessLog(logger *slog.Logger) fiber.Handler {
 		logger.LogAttrs(c.Context(), levelFor(status), "request", toAttrs(attrs)...)
 		return err
 	}
+}
+
+// connectionAborted erkennt den Durchlauf ohne Anfrage: Verwirft ein Browser eine
+// vorab geöffnete Verbindung, führt Fiber die Kette mit leerem Request und Status
+// 502 aus. Jede echte Anfrage trägt einen Host.
+func connectionAborted(c fiber.Ctx, status int) bool {
+	return status == fiber.StatusBadGateway && len(c.Request().Header.Host()) == 0
 }
 
 // redactQuery schwärzt den Wert von ticket: Einmal-Fahrkarten für WebSockets

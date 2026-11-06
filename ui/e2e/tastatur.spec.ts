@@ -11,10 +11,11 @@ const fokus = (page: Page) =>
   });
 
 test.describe('Tastatur', () => {
-  test('der Sprunglink ist das erste Element und führt in den Inhalt', async ({ page }) => {
+  test('der Sprunglink ist das erste Element und führt in den Inhalt', async ({ page, browserName }) => {
     await page.goto('/servers');
     await expect(page.getByRole('heading', { level: 1, name: 'Server' })).toBeVisible();
-    await page.keyboard.press('Tab');
+    // Safari springt mit Tab allein nur in Eingabefelder, Links und Knöpfe erreicht Wahl+Tab.
+    await page.keyboard.press(browserName === 'webkit' ? 'Alt+Tab' : 'Tab');
     expect((await fokus(page)).name).toBe('Zum Inhalt springen');
     await page.keyboard.press('Enter');
     expect((await fokus(page)).id).toBe('main');

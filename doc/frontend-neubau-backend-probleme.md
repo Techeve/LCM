@@ -381,3 +381,45 @@ Entscheidung des Inhabers: Die Anmeldung im Browser ist einstellbar
 - **Eigener Passwortwechsel:** beendet weiter die eigene Sitzung (in beiden
   Wegen); die Oberfläche meldet danach ab und führt zur Anmeldung, es braucht
   kein neues Token für den Tab.
+
+## Browser-Prüfung Firefox und WebKit (06.11.2026)
+
+E2E-Suite, Rundgang über 80 Seiten (hell, dunkel, schmal) und Klick-Rundgang durch
+alle Fenster in Firefox 157 und WebKit 27.2 über Playwright. Echtes Safari (macOS
+und iOS) lief nicht: WebKit über Playwright teilt die Engine, nicht die App.
+
+WebKit nimmt `Secure`-Cookies nur über echtes HTTPS an, deshalb gibt es
+`LCM_E2E_TLS=1`: Der Testserver läuft ohne `--dev` mit eigenem Zertifikat, der
+Service Worker ist gesperrt, weil Anfragen in WebKit sonst an `page.route`
+vorbeigehen.
+
+```sh
+LCM_E2E_TLS=1 LCM_E2E_PORT=18190 npx playwright test --browser=webkit
+```
+
+- **Behoben, nur Safari:** Im Feld „+2 weitere“ führte ein Klick auf einen Server
+  ins Leere. Safari fokussiert angeklickte Links nicht; der Fokusverlust schloss
+  das Feld vor dem Klick.
+- **Behoben, alle Browser:** Beim Wechsel des Einstellungsabschnitts blieb der alte
+  Abschnitt stehen, bis das neue Modul geladen war: unter der neuen Überschrift und
+  mit verworfenen Eingaben im Register. Der nächste Klick fragte ein zweites Mal.
+- **Behoben, alle Browser:** Meldete der Ereigniskanal das Ende der Sitzung vor der
+  Antwort auf das Speichern, ging beim Wechsel des Anmeldewegs die Rücksprungadresse
+  verloren.
+- **Behoben, Backend:** `Hub.Close` trennte verbundene Agents nicht. Sie hängen an
+  keinem Listener des Brokers, dessen `Close` wartet aber auf sie: Mit verbundenem
+  Agent hing jeder Dienst-Stopp 30 s und endete mit SIGKILL. Dasselbe galt für eine
+  Verbindung, die nach dem Upgrade kein CONNECT schickt.
+- **Behoben, Backend:** Verwirft ein Browser eine vorab geöffnete Verbindung, führt
+  Fiber die Kette ohne Anfrage mit Status 502 aus. Das stand als
+  `ERROR GET / status=502` im Protokoll und auf der Ereignisseite.
+- **Kein Fehler von LCM:** WebKit meldet jedes `<select>` als `style-src-attr`, auch
+  auf einer leeren Seite. Mit Wahl+Tab statt Tab erreicht man in Safari Links und
+  Knöpfe, das ist dort die Vorgabe. `Fetch API cannot load … access control checks`
+  ist WebKits Wortlaut für eine abgebrochene Anfrage beim Seitenwechsel.
+- **Offen:** `/mqtt` setzt vor dem CONNECT keine Lesefrist. Eine schweigende
+  Verbindung bleibt offen, bis der Dienst stoppt; die Sperre je Adresse (10 pro
+  Minute) begrenzt das nur, verhindert es nicht.
+- **Offen:** `e2e/gruppen.spec.ts:76` (Auswahlliste am Fensterrand) scheiterte unter
+  Volllast selten in Chromium und Firefox, einzeln 8 von 8, unter Last 60 von 60.
+  Ursache ungeklärt; `place()` in `lcm-combobox.updated()` war es nicht.

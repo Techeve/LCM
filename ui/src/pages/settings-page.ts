@@ -80,10 +80,13 @@ export class SettingsPage extends LitElement {
     const id = this.#currentId;
     if (id === this.#section) return;
     this.#section = id;
+    // Der alte Abschnitt geht sofort: Er stünde sonst unter der neuen Überschrift und hielte verworfene Eingaben im Register.
+    this._tag = '';
+    this.#element = undefined;
     void this.#load(id);
   }
 
-  /** Lädt das Modul des Abschnitts; bis dahin bleibt der bisherige Inhalt stehen. */
+  /** Lädt das Modul des Abschnitts. */
   async #load(id: string | undefined): Promise<void> {
     const loader = id ? sectionModules[`./settings/${id}.ts`] : undefined;
     try {
