@@ -152,7 +152,7 @@ export class SrvMore extends LitElement {
       !device
         ? { id: 'security-tools', label: t('serverDetail.more.securityTools'), icon: 'shield', run: async () => void router.navigate(`${serverPath(s.id, 'security')}?modal=security-tool`) }
         : null,
-      !device && !s.restricted_sudo
+      !device
         ? {
             id: 'reboot',
             label: t('servers.reboot.label'),

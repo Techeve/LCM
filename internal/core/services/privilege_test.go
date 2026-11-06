@@ -61,18 +61,18 @@ func TestEnsureFullSudo(t *testing.T) {
 }
 
 // TestRestrictedAllowsRule: Paketverwaltung/Docker/Firewall/Health sowie
-// Sync und apt-proxy (beide über den LCM-Helper) sind erlaubt; beliebige
-// Skripte, Custom-Aktionen und Reboot nicht.
+// Sync, apt-proxy und Neustart (alle über den LCM-Helper) sind erlaubt; beliebige
+// Skripte und Custom-Aktionen nicht.
 func TestRestrictedAllowsRule(t *testing.T) {
 	allowed := []string{domain.RuleTypeUpdate, domain.RuleTypePackages, domain.RuleTypeSecurity,
 		domain.RuleTypeDockerPrune, domain.RuleTypeFirewall, domain.RuleTypeHealth,
-		domain.RuleTypeSync, domain.RuleTypeAptProxy}
+		domain.RuleTypeSync, domain.RuleTypeAptProxy, domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded}
 	for _, rt := range allowed {
 		if !restrictedAllowsRule(rt) {
 			t.Errorf("%q sollte im eingeschränkten modus erlaubt sein", rt)
 		}
 	}
-	blocked := []string{domain.RuleTypeScript, domain.RuleTypeCustom, domain.RuleTypeReboot}
+	blocked := []string{domain.RuleTypeScript, domain.RuleTypeCustom}
 	for _, rt := range blocked {
 		if restrictedAllowsRule(rt) {
 			t.Errorf("%q sollte im eingeschränkten modus gesperrt sein", rt)

@@ -554,7 +554,7 @@ func (e *Executor) runStarted(job *domain.Job, server *domain.Server, rule *doma
 	}
 
 	// Eingeschränkter Service-User: Aktionstypen außerhalb der Whitelist
-	// (script/custom/reboot) sauber überspringen, statt mit einem
+	// (script/custom) sauber überspringen, statt mit einem
 	// kryptischen sudo-Fehler zu enden - so bleibt ein gemischter Schedule grün.
 	if server.RestrictedSudo && !restrictedAllowsRule(rule.Type) {
 		e.jobs.CompleteSkipped(job, "im eingeschränkten Modus übersprungen - der Management-Benutzer dieses Servers hat keine Rechte für den Aktionstyp „"+rule.Type+"“")

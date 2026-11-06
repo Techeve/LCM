@@ -4666,7 +4666,7 @@
       "restricted": {
         "label": "Eingeschränkte Rechte (empfohlen)",
         "description": "Der LCM-Benutzer darf nur Pakete, Docker, Firewall und Sicherheits-Tools steuern, die von LCM verwalteten Einstellungen schreiben und das System auslesen.",
-        "on": "An: kein Shell- und Dateisystemzugriff für LCM. Dafür sind eigene Skripte, eigene Aktionen, SSH-2FA und der Neustart für diesen Server gesperrt.",
+        "on": "An: kein Shell- und Dateisystemzugriff für LCM. Dafür sind eigene Skripte, eigene Aktionen und SSH-2FA für diesen Server gesperrt.",
         "off": "Aus: LCM bekommt sudo ohne Passwort für alles und kann alle Funktionen nutzen."
       },
       "duplicate": "Diese Adresse mit diesem Port ist schon angelegt:",
@@ -5911,7 +5911,7 @@
         "allowedLabel": "Danach erlaubt",
         "allowed": "Über sudo nur noch Paketverwaltung (apt/dnf/zypper, snap), Docker und die ufw-Firewall steuern und das System auslesen, dazu über den mitinstallierten, streng prüfenden LCM-Helper: Repositories einrichten, den APT-Cache anbinden, SSH konfigurieren (Härtung, Root-Login, Port), Linux-Benutzer abgleichen, firewalld und nftables steuern, fail2ban und CrowdSec einrichten und bedienen, Paket-Pins schreiben und Dienste der LCM-Werkzeuge steuern.",
         "blockedLabel": "Gesperrt",
-        "blocked": "Keine beliebigen Kommandos über LCM: Eigene Skripte, eigene Aktionen, SSH-2FA und der Neustart sind für diesen Server gesperrt, ebenso der direkte Aufruf einer Root-Shell.",
+        "blocked": "Keine beliebigen Kommandos über LCM: Eigene Skripte, eigene Aktionen und SSH-2FA sind für diesen Server gesperrt, ebenso der direkte Aufruf einer Root-Shell.",
         "scopeLabel": "Wogegen das schützt, und wogegen nicht",
         "scope": "Der Modus verkleinert die Angriffsfläche gegen Bedienfehler und versehentliche Eingriffe. Er schützt nicht vor jemandem, der den Service-Schlüssel erlangt: Paketverwaltung und Docker führen prinzipbedingt Code als root aus (etwa über apt-Hooks oder Container mit Host-Einbindung), und sudo kann ihre Argumente nicht zuverlässig filtern. Ohne diese Programme wäre der Modus funktionslos, weil Updates und Docker gerade weiterlaufen sollen.",
         "irreversibleLabel": "Nicht per Klick rückgängig machbar",

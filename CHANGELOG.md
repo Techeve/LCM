@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.0-beta.4 - 2026-11-06
+
+### 🚀 Features
+
+- **restricted**: Neustart läuft auch im eingeschränkten Modus (4924eae3)
+
 ## v2.0.0-beta.3 - 2026-11-06
 
 ### 🚀 Features

@@ -26,8 +26,8 @@ const restrictSelfTestExit = 9
 // Binaries ausführen (Paketverwaltung, Docker, ufw und den validierenden
 // LCM-Helper) - KEINE Root-Shell und keinen beliebigen Befehl. Was darüber
 // hinaus root braucht (Dienste, Dateien unter /etc, fail2ban, CrowdSec,
-// firewalld, nftables), geht über Helper-Unterkommandos; gesperrt bleiben
-// eigene Skripte, Custom-Aktionen, SSH-2FA und der Neustart.
+// firewalld, nftables, Neustart), geht über Helper-Unterkommandos; gesperrt
+// bleiben eigene Skripte, Custom-Aktionen und SSH-2FA.
 //
 // Damit die bestehenden (mehrschrittigen) Skript-Generatoren unverändert
 // bleiben, nutzt der eingeschränkte Modus einen PATH-Shim: LCM legt im Home
@@ -321,10 +321,9 @@ func privRun(server *domain.Server, cmd string) string {
 // restrictedAllowsRule meldet, ob ein Rule-Typ mit dem eingeschränkten
 // Service-User ausführbar ist: Paketverwaltung, Docker-Prune, Firewall (ufw
 // direkt, firewalld und nftables über den Helper),
-// Benutzer-Sync und apt-Cache-Anbindung (beide über den validierenden
+// Benutzer-Sync, apt-Cache-Anbindung und Neustart (alle über den validierenden
 // LCM-Helper) sowie der reine Verfügbarkeits-Check. Gesperrt bleiben
-// script/custom (beliebige Kommandos) und reboot - sie brauchen eine
-// Root-Shell bzw. volle Systemrechte.
+// script/custom (beliebige Kommandos) - sie brauchen eine Root-Shell.
 func restrictedAllowsRule(ruleType string) bool {
 	switch ruleType {
 	case domain.RuleTypeUpdate, domain.RuleTypePackages, domain.RuleTypeSecurity,
@@ -332,6 +331,7 @@ func restrictedAllowsRule(ruleType string) bool {
 		domain.RuleTypeDockerUpdateUnused,
 		domain.RuleTypeFirewall, domain.RuleTypeHealth,
 		domain.RuleTypeSync, domain.RuleTypeAptProxy,
+		domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
 		domain.RuleTypeDNSTest, domain.RuleTypeDeepScan,
 		// ACL-Einrichtung laeuft ueber die Paketverwaltung (Whitelist), der
 		// Rechte-Abgleich ueber setfacl/chmod auf von LCM verwalteten Pfaden.

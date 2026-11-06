@@ -283,8 +283,8 @@ func TestPreviewUnsupportedAndRejected(t *testing.T) {
 	if err := env.DB().Model(&domain.Server{}).Where("id = ?", id).Update("restricted_sudo", true).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := preview(services.PreviewReboot, services.PreviewArgs{}); !errors.Is(err, services.ErrRestrictedSudo) {
-		t.Errorf("Neustart im eingeschränkten Modus: %v", err)
+	if rb := previewOf(t, env, id, services.PreviewReboot, services.PreviewArgs{}); !strings.Contains(rb.Commands[0].Run, "lcm-helper reboot") {
+		t.Errorf("Neustart im eingeschränkten Modus geht nicht über den Helper: %+v", rb.Commands)
 	}
 	// Eine Vorschau ist auch im eingeschränkten Modus möglich - für Aktionen, die dort laufen.
 	p := previewOf(t, env, id, services.PreviewUpgradeAll, services.PreviewArgs{})

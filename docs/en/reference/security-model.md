@@ -264,12 +264,11 @@ The package inventory of all servers, centrally recorded in the DB, is checked d
 During onboarding (or later via *restrict privileges*) the LCM user can be
 moved from `NOPASSWD:ALL` to a sudoers whitelist: package management (apt,
 dnf/yum, zypper, pacman, apk), Docker, ufw and the strictly validating
-`lcm-helper`. Free-form scripts, custom actions, SSH 2FA and reboot are then
-blocked.
+`lcm-helper`. Free-form scripts, custom actions and SSH 2FA are then blocked.
 
 The helper is the only place for everything that needs root and is not on the
 whitelist: package channel of the LCM host, repositories, APT cache, SSH, users,
-firewalld and nftables, fail2ban and CrowdSec, package pins. Every subcommand
+firewalld and nftables, fail2ban and CrowdSec, package pins, reboot. Every subcommand
 has fixed parameters (enumerations, IPs, ports, URLs, package names; free text
 only base64-encoded) and writes only paths LCM manages. It runs the same script
 parts as full mode so the two cannot drift apart. A subcommand that took a

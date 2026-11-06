@@ -270,12 +270,12 @@ Der zentral in der DB erfasste Paketbestand aller Server wird täglich (Cron ein
 Beim Onboarding (oder nachträglich über *Rechte einschränken*) lässt sich der
 LCM-Benutzer von `NOPASSWD:ALL` auf eine sudoers-Whitelist umstellen:
 Paketverwaltung (apt, dnf/yum, zypper, pacman, apk), Docker, ufw und der streng
-validierende `lcm-helper`. Gesperrt sind damit freie Skripte, Custom-Aktionen,
-SSH-2FA und der Neustart.
+validierende `lcm-helper`. Gesperrt sind damit freie Skripte, Custom-Aktionen
+und SSH-2FA.
 
 Der Helper ist die einzige Stelle für alles, was root braucht und nicht auf der
 Whitelist steht: Paketkanal des LCM-Hosts, Repositories, APT-Cache, SSH,
-Benutzer, firewalld und nftables, fail2ban und CrowdSec, Paket-Pins. Jedes
+Benutzer, firewalld und nftables, fail2ban und CrowdSec, Paket-Pins, Neustart. Jedes
 Unterkommando hat feste Parameter (Aufzählungen, IPs, Ports, URLs, Paketnamen;
 Freitext nur base64-kodiert) und schreibt nur Pfade, die LCM verwaltet. Er
 führt dieselben Skriptteile aus wie der Voll-Modus, damit beide Wege nicht

@@ -24,6 +24,12 @@ func rebootScript() string {
 	return fmt.Sprintf("nohup sh -c 'sleep %d; reboot' >/dev/null 2>&1 &", rebootDelaySeconds)
 }
 
+// rebootStep ist der Neustart für diesen Server: das Skript im Voll-Modus, der
+// Helper im eingeschränkten (dort steht `reboot` nicht auf der Whitelist).
+func rebootStep(server *domain.Server) string {
+	return hostScript(server, rebootScript(), "reboot")
+}
+
 // Rückkehr-Überwachung nach einem Neustart. Bewusst exportierte Variablen
 // statt Konstanten: Tests setzen sie herunter, statt in Echtzeit zu warten
 // (dasselbe Muster wie RepoBaseURL in update_check.go).
@@ -155,17 +161,13 @@ func pollRebootReturn(dial func() error, settle, interval, maxWait time.Duration
 
 // ensureRebootable weist den Neustart ab, wo er per Shell-Kommando nicht geht:
 // RouterOS und DSM haben keine POSIX-Shell (und keine Geräte-API für den
-// Neustart in LCM), der eingeschränkte Service-User darf `reboot` nicht.
+// Neustart in LCM).
 func ensureRebootable(server *domain.Server) error {
-	if err := ensureNotRouterOS(server); err != nil {
-		return err
-	}
-	return ensureFullSudo(server)
+	return ensureNotRouterOS(server)
 }
 
 // Reboot startet den Server neu (Ein-Klick-Aktion aus der Server-
-// Detailansicht). Braucht vollen Root-Zugriff - im eingeschränkten
-// Sudo-Modus gesperrt (reboot steht nicht auf der Whitelist).
+// Detailansicht).
 func (s *ServerService) Reboot(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
 	server, err := s.servers.FindByID(scope, id)
 	if err != nil {
@@ -201,7 +203,7 @@ func (s *ServerService) runRebootJob(job *domain.Job, server *domain.Server, act
 		Purpose: "reboot", Host: server.Host, User: server.ServiceUser,
 	})
 
-	output, code, runErr := conn.Run(privRun(server, rebootScript()))
+	output, code, runErr := conn.Run(privRun(server, rebootStep(server)))
 	// Diese Verbindung MUSS vor der Warteschleife weg - und zwar sofort, nicht
 	// per defer: Sie zeigt auf den herunterfahrenden Server und belegt den
 	// einen ausführenden Verbindungs-Slot des Servers (ConnLimiter). Bliebe
@@ -231,9 +233,7 @@ func (s *ServerService) runRebootJob(job *domain.Job, server *domain.Server, act
 }
 
 // runRebootRule ist das Gegenstück für die geplante Gruppen-Regel
-// (RuleTypeReboot). Der eingeschränkte Sudo-Modus wird bereits vom
-// generischen Gate in runOnServer abgefangen (reboot steht nicht in
-// restrictedAllowsRule) - hier also kein zusätzlicher Check nötig.
+// (RuleTypeReboot).
 func (e *Executor) runRebootRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
 	conn, err := e.connect(server)
 	if err != nil {
@@ -257,7 +257,7 @@ func (e *Executor) runRebootRule(job *domain.Job, server *domain.Server, rule *d
 		return
 	}
 
-	output, code, runErr := conn.Run(privRun(server, rebootScript()))
+	output, code, runErr := conn.Run(privRun(server, rebootStep(server)))
 	// Vor der Warteschleife schließen - siehe runRebootJob: sonst hält diese
 	// Verbindung den Slot, auf den die Überwachung wartet.
 	_ = conn.Close()

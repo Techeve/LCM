@@ -21,7 +21,7 @@ import (
 // von LCM verwalteten Pfade - der eingeschränkte Management-Benutzer bekommt
 // damit alles, was LCM selbst verwaltet (Repositories, Paketkanal, apt-Cache,
 // SSH-Konfiguration, SSH-Port, Benutzer-Sync, firewalld und nftables, fail2ban
-// und CrowdSec, Paket-Pins, LCM-Host-Aktionen), zurück, ohne je eine Root-Shell
+// und CrowdSec, Paket-Pins, Neustart, LCM-Host-Aktionen), zurück, ohne je eine Root-Shell
 // oder freien Dateisystemzugriff zu erhalten.
 //
 // Die Regeln für jedes Unterkommando - sie sind die Sicherheitsgrenze:
@@ -100,6 +100,7 @@ func helperEmbeds() []string {
 		"@@SEC_UNBAN_CROWDSEC@@", unbanCrowdSecBody,
 		"@@SEC_BANS_FAIL2BAN@@", banListFail2banBody,
 		"@@SEC_BANS_CROWDSEC@@", banListCrowdSecBody,
+		"@@REBOOT@@", rebootScript(),
 		"@@HTTPS_BACKUP_DIR@@", httpsBackupDir,
 	}
 }
@@ -1113,6 +1114,12 @@ security_bans() {
     esac
 }
 
+# reboot: den Server neu starten, vom SSH-Kanal abgekoppelt. Eigener Name, eine
+# Shell-Funktion reboot verdeckte sonst den Befehl.
+reboot_host() {
+    @@REBOOT@@
+}
+
 cmd="${1:-}"
 [ $# -ge 1 ] && shift
 case "$cmd" in
@@ -1135,6 +1142,7 @@ case "$cmd" in
     security-purge)    [ $# -eq 1 ] || die "security-purge fail2ban|crowdsec"; security_purge "$@" ;;
     security-unban)    [ $# -eq 2 ] || die "security-unban fail2ban|crowdsec <ip>"; security_unban "$@" ;;
     security-bans)     [ $# -eq 1 ] || die "security-bans fail2ban|crowdsec"; security_bans "$@" ;;
+    reboot)            [ $# -eq 0 ] || die "reboot"; reboot_host ;;
     repo-add)    [ $# -eq 3 ] || die "repo-add <key> <keyurl_b64> <line_b64>"; repo_add "$@" ;;
     repos-https) repos_https ;;
     repos-http)  [ $# -ge 1 ] || die "repos-http <https-url>..."; repos_http "$@" ;;

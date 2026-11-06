@@ -4666,7 +4666,7 @@
       "restricted": {
         "label": "Restricted rights (recommended)",
         "description": "The LCM user may only manage packages, Docker, the firewall and security tools, write the settings LCM manages and read the system.",
-        "on": "On: no shell or file system access for LCM. In return custom scripts, custom actions, SSH 2FA and reboot are locked for this server.",
+        "on": "On: no shell or file system access for LCM. In return custom scripts, custom actions and SSH 2FA are locked for this server.",
         "off": "Off: LCM gets passwordless sudo for everything and can use all features."
       },
       "duplicate": "This address with this port already exists:",
@@ -5911,7 +5911,7 @@
         "allowedLabel": "Allowed afterwards",
         "allowed": "Via sudo only: manage packages (apt/dnf/zypper, snap), Docker and the ufw firewall and read the system, plus, through the bundled, strictly validating LCM helper: set up repositories, connect the APT cache, configure SSH (hardening, root login, port), synchronize Linux users, manage firewalld and nftables, set up and operate fail2ban and CrowdSec, write package pins and control the services of the LCM tools.",
         "blockedLabel": "Blocked",
-        "blocked": "No arbitrary commands via LCM: custom scripts, custom actions, SSH 2FA and reboot are disabled for this server, as is invoking a root shell directly.",
+        "blocked": "No arbitrary commands via LCM: custom scripts, custom actions and SSH 2FA are disabled for this server, as is invoking a root shell directly.",
         "scopeLabel": "What this protects against, and what it does not",
         "scope": "The mode reduces the attack surface against operating mistakes and accidental changes. It does not protect against someone who obtains the service key: package management and Docker run code as root by design (for example through apt hooks or containers mounting the host), and sudo cannot reliably filter their arguments. Without those programs the mode would be pointless, because updates and Docker are exactly what should keep working.",
         "irreversibleLabel": "Cannot be undone with a click",

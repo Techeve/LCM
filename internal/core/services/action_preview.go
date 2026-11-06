@@ -545,7 +545,7 @@ func previewReboot(server *domain.Server) (*ActionPreview, error) {
 		return nil, err
 	}
 	p := newActionPreview(PreviewReboot, server)
-	p.addRoot(rebootScript())
+	p.addRoot(rebootStep(server))
 	p.Reboot = RebootYes
 	maxWait := rebootMaxWait(server)
 	p.Duration = PreviewDuration{MinSeconds: 20, MaxSeconds: int(maxWait.Seconds())}

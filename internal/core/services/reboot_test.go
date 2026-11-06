@@ -56,15 +56,23 @@ func TestRebootAdHocSuccess(t *testing.T) {
 	}
 }
 
-// TestRebootRestrictedBlocked: im eingeschränkten Sudo-Modus ist reboot
-// gesperrt - braucht vollen Root-Zugriff.
-func TestRebootRestrictedBlocked(t *testing.T) {
+// TestRebootRestrictedUsesHelper: Im eingeschränkten Modus steht `reboot` nicht
+// auf der Whitelist, der Neustart läuft über den LCM-Helper.
+func TestRebootRestrictedUsesHelper(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
 	env.DB().Model(&domain.Server{}).Where("id = ?", id).Update("restricted_sudo", true)
 
-	if _, err := env.Servers.Reboot(repositories.ScopeAll(), id, "admin"); err != services.ErrRestrictedSudo {
-		t.Errorf("erwartet ErrRestrictedSudo, bekam %v", err)
+	env.Dialer.Commands = nil
+	if _, err := env.Servers.Reboot(repositories.ScopeAll(), id, "admin"); err != nil {
+		t.Fatalf("reboot fehlgeschlagen: %v", err)
+	}
+	if done := waitServerJob(t, env, id, domain.RuleTypeReboot); done.Status != domain.JobStatusSuccess {
+		t.Fatalf("job nicht erfolgreich: %+v", done)
+	}
+	all := strings.Join(env.Dialer.Commands, "\n")
+	if !strings.Contains(all, "lcm-helper reboot") || strings.Contains(all, "nohup") {
+		t.Errorf("neustart läuft nicht über den helper:\n%s", all)
 	}
 }
 
@@ -126,9 +134,9 @@ func TestRebootScheduledRule(t *testing.T) {
 	}
 }
 
-// TestRebootRuleSkippedOnRestrictedServer: das generische Restricted-Gate
-// im Executor überspringt reboot bereits vor dem Dispatch.
-func TestRebootRuleSkippedOnRestrictedServer(t *testing.T) {
+// TestRebootRuleRunsOnRestrictedServer: Eine geplante Neustart-Regel läuft auch
+// auf einem eingeschränkten Server, über den LCM-Helper.
+func TestRebootRuleRunsOnRestrictedServer(t *testing.T) {
 	env := newTestEnv(t)
 	serverID := joinTestServer(t, env, "web01")
 	env.DB().Model(&domain.Server{}).Where("id = ?", serverID).Update("restricted_sudo", true)
@@ -151,17 +159,11 @@ func TestRebootRuleSkippedOnRestrictedServer(t *testing.T) {
 	env.Dialer.Commands = nil
 	env.Executor.RunRule(rule, "admin")
 
-	// Geprüft wird, dass KEIN Neustart ausgeführt wurde - nicht, dass die
-	// Verbindung überhaupt ungenutzt blieb. Der Unterschied ist nicht
-	// akademisch: Das Aufnehmen des Servers stößt im Hintergrund einen
-	// Benutzer-Sync an, dessen Kommandos hier je nach Maschinenlast noch
-	// eintrudeln. Ein "gar keine Kommandos" wäre deshalb ein Test, der auf
-	// einem ausgelasteten Runner grundlos rot wird - und genau das ist auf
-	// dem CI-Runner passiert, während dieselbe Fassung lokal grün lief.
-	for _, cmd := range env.Dialer.Commands {
-		if strings.Contains(cmd, "reboot") {
-			t.Errorf("eingeschränkter server wurde neu gestartet: %q", cmd)
-		}
+	if done := waitServerJob(t, env, serverID, domain.RuleTypeReboot); done.Status != domain.JobStatusSuccess {
+		t.Fatalf("job nicht erfolgreich: %+v", done)
+	}
+	if all := strings.Join(env.Dialer.Commands, "\n"); !strings.Contains(all, "lcm-helper reboot") {
+		t.Errorf("neustart läuft nicht über den helper:\n%s", all)
 	}
 }
 
