@@ -8,6 +8,7 @@ import '../components/lcm-shortcut-help';
 import '../components/lcm-toaster';
 import '../pages/not-found-page';
 import './leave-dialog';
+import './job-window';
 import './session-mode-dialog';
 import { SYSTEM_INFO_URL, normaliseSystemInfo, type SystemInfo } from '../api/system';
 import { toast } from '../components/lcm-toaster';
@@ -348,7 +349,7 @@ export class LcmApp extends LitElement {
       </nav>
       ${bare ? nothing : this.#renderNav()} ${this.#renderReloading()} ${bare ? nothing : this.#renderNotices()}
       <main id="main" class=${bare ? 'bare' : 'page'} tabindex="-1">${this.#renderPage()}</main>
-      ${bare ? nothing : this.#renderOverlays()} ${bare ? nothing : html`<lcm-session-mode-dialog></lcm-session-mode-dialog>`}
+      ${bare ? nothing : this.#renderOverlays()} ${bare ? nothing : html`<lcm-session-mode-dialog></lcm-session-mode-dialog><lcm-job-window></lcm-job-window>`}
       <lcm-about-dialog ?open=${this._aboutOpen} @lcm-close=${() => (this._aboutOpen = false)}></lcm-about-dialog>
       <lcm-leave-dialog></lcm-leave-dialog>
       <lcm-toaster

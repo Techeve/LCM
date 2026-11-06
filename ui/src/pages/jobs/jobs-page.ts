@@ -2,11 +2,11 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import '../../components/lcm-button';
 import '../../components/lcm-card';
 import '../../components/lcm-data-table';
-import '../../components/lcm-dialog';
 import '../../components/lcm-empty-state';
 import '../../components/lcm-list-pager';
 import '../../components/lcm-skeleton';
 import '../../components/lcm-status';
+import './jobs-abort';
 import './jobs-active';
 import './jobs-detail';
 import './jobs-filters';
@@ -14,7 +14,6 @@ import {
   JOB_FILTER_OPTIONS_URL,
   PAGE_SIZE,
   SERVERS_URL,
-  abortJob,
   jobsUrl,
   normaliseFilterOptions,
   normaliseJobs,
@@ -25,13 +24,11 @@ import {
   type ServerRef,
 } from '../../api/jobs';
 import type { Column, SortState, TableLabels } from '../../components/lcm-data-table';
-import type { Impact } from '../../components/lcm-dialog';
-import { toast } from '../../components/lcm-toaster';
 import { baseStyles, utilStyles } from '../../components/shared';
 import { auth } from '../../lib/auth';
 import { I18nController, SubscribeController } from '../../lib/controllers';
 import { formatDateTime, formatDuration, formatRelative } from '../../lib/format';
-import { errorText, t } from '../../lib/i18n';
+import { t } from '../../lib/i18n';
 import { LiveData } from '../../lib/live-data';
 import { FadeOnChange } from '../../lib/motion';
 import { palette } from '../../lib/palette';
@@ -51,7 +48,7 @@ import {
 
 /** Jobs: laufende und wartende oben, darunter der Verlauf mit Filtern; ein Job öffnet sich als Fenster (`/jobs/:id`). */
 export class JobsPageElement extends LitElement {
-  static override properties = { _dialogError: { state: true }, _abort: { state: true }, _aborting: { state: true } };
+  static override properties = { _abort: { state: true } };
   static override styles = [
     baseStyles,
     utilStyles,
@@ -81,9 +78,7 @@ export class JobsPageElement extends LitElement {
   ];
 
   /** Fehler der bestätigten Aktion; steht im Dialog über dem Fuß. */
-  declare _dialogError: string;
   declare _abort: JobItem | undefined;
-  declare _aborting: boolean;
 
   #queryKey = '';
   #filters: JobFilters = filtersFromQuery(new URLSearchParams());
@@ -95,9 +90,7 @@ export class JobsPageElement extends LitElement {
 
   constructor() {
     super();
-    this._dialogError = '';
     this._abort = undefined;
-    this._aborting = false;
     new I18nController(this);
     new SubscribeController(this, (listener) => router.onChange(listener));
     new SubscribeController(this, (listener) => auth.onChange(listener));
@@ -231,47 +224,6 @@ export class JobsPageElement extends LitElement {
     return html`<div class="history ${loading ? 'stale' : ''}">${this.#renderEmptyOrTable(data, filters)}</div>`;
   }
 
-  #abortImpacts(job: JobItem): Impact[] {
-    const running = job.status === 'running';
-    return [
-      ...(job.server_name ? [{ label: t('jobs.abort.impact.server'), value: job.server_name }] : []),
-      { label: t('jobs.abort.impact.effect'), value: t(running ? 'jobs.abort.impact.effectRunning' : 'jobs.abort.impact.effectPending') },
-      { label: t('jobs.abort.impact.reversible'), value: t(running ? 'jobs.abort.impact.reversibleRunning' : 'jobs.abort.impact.reversiblePending'), tone: 'warn' },
-    ];
-  }
-
-  async #confirmAbort(): Promise<void> {
-    const job = this._abort;
-    if (!job) return;
-    this._aborting = true;
-    this._dialogError = '';
-    try {
-      await abortJob(job.id);
-      toast({ tone: 'ok', title: t('jobs.abort.done', { name: job.name }) });
-      this._abort = undefined;
-    } catch (error) {
-      this._dialogError = errorText(error);
-    } finally {
-      this._aborting = false;
-    }
-  }
-
-  #renderAbortDialog(): TemplateResult {
-    const job = this._abort;
-    return html`<lcm-dialog
-      ?open=${job !== undefined}
-      tone="danger"
-      heading=${t('jobs.abort.confirm', { name: job?.name ?? '' })}
-      confirm-label=${t('jobs.abort.action')}
-      cancel-label=${t('jobs.abort.cancel')}
-      .impacts=${job ? this.#abortImpacts(job) : []}
-      error=${this._dialogError}
-      ?busy=${this._aborting}
-      @lcm-cancel=${() => (this._abort = undefined)}
-      @lcm-confirm=${() => void this.#confirmAbort()}
-    ></lcm-dialog>`;
-  }
-
   override render() {
     const filters = this.#current();
     const canAbort = auth.can('servers:write');
@@ -293,7 +245,7 @@ export class JobsPageElement extends LitElement {
         ${this.#renderHistory(filters)}
       </div>
       <lcm-jobs-detail job-id=${id} .job=${listed} ?can-abort=${canAbort} @lcm-close=${() => this.#close()} @lcm-job-abort=${(e: CustomEvent<{ job: JobItem }>) => (this._abort = e.detail.job)}></lcm-jobs-detail>
-      ${this.#renderAbortDialog()}`;
+      <lcm-job-abort-dialog .job=${this._abort} @lcm-close=${() => (this._abort = undefined)}></lcm-job-abort-dialog>`;
   }
 }
 customElements.define('lcm-page-jobs', JobsPageElement);

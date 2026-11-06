@@ -1722,10 +1722,13 @@ func (s *ServerService) HardenSSH(scope repositories.AccessScope, id uint, actor
 // (R2-015). Fehlt die Include-Zeile in einer /usr/etc-Vorgabe, entsteht die
 // Ergänzung als neue Datei unter /etc - das ist bei stateless /etc der
 // vorgesehene Weg, die Vorgabe zu überschreiben.
+// Geprüft wird die erste wirksame Zeile, nicht bloß, ob irgendwo ein Include
+// steht: Hinter einem „PasswordAuthentication yes" aus der Hauptdatei bliebe
+// jedes Drop-in wirkungslos. Ein zweites Include schadet nicht.
 const sshdEnsureIncludeScript = `SSHDCONF=/etc/ssh/sshd_config; ` +
 	`[ -f "$SSHDCONF" ] || SSHDCONF=/usr/etc/ssh/sshd_config; ` +
 	`[ -f "$SSHDCONF" ] || { echo "sshd_config weder unter /etc/ssh noch unter /usr/etc/ssh gefunden" >&2; exit 1; }; ` +
-	`if ! grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$SSHDCONF"; then ` +
+	`if ! grep -vE '^[[:space:]]*(#|$)' "$SSHDCONF" | head -n1 | grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/'; then ` +
 	`cp -f "$SSHDCONF" /etc/ssh/sshd_config.lcm-backup && ` +
 	`{ echo '# von LCM ergänzt: Drop-ins einlesen (muss oben stehen)'; ` +
 	`echo 'Include /etc/ssh/sshd_config.d/*.conf'; cat /etc/ssh/sshd_config.lcm-backup; } > /etc/ssh/sshd_config; fi`
@@ -1775,6 +1778,20 @@ const sshdReloadScript = "{ if " + sshdSocketActiveScript + "; then " +
 	"rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || " +
 	"service ssh reload 2>/dev/null || service sshd reload; fi; }"
 
+// sshHardeningDropin trägt die Härtung. Es liegt bewusst hinten: LCMs eigene
+// Drop-ins für Root-Login (10-) und 2FA (55-) sollen sich dagegen durchsetzen.
+const sshHardeningDropin = "/etc/ssh/sshd_config.d/60-lcm-hardening.conf"
+
+// sshKeysOnlyDropin liegt vor allen anderen Drop-ins: OpenSSH nimmt je Option
+// den zuerst gefundenen Wert, und ein fremdes Drop-in wie 50-cloud-init.conf
+// (cloud-init auf Ubuntu) ließ die Passwort-Anmeldung sonst offen. Es enthält
+// nur, was keinem anderen LCM-Drop-in widerspricht. Pubkey steht mit darin,
+// damit ein fremdes „PubkeyAuthentication no" nicht zum Aussperren führt.
+const (
+	sshKeysOnlyDropin = "/etc/ssh/sshd_config.d/00-lcm-hardening.conf"
+	sshKeysOnlyLines  = "PasswordAuthentication no\\nPubkeyAuthentication yes\\n"
+)
+
 // planHardenSSH prüft den Server und baut das Skript der SSH-Härtung - für
 // den Lauf und die Befehlsvorschau gleich.
 func planHardenSSH(server *domain.Server) (string, error) {
@@ -1794,7 +1811,8 @@ func planHardenSSH(server *domain.Server) (string, error) {
 	return strings.Join([]string{
 		sshdEnsureIncludeScript,
 		"install -d -m 755 /etc/ssh/sshd_config.d",
-		fmt.Sprintf("printf '%s' > /etc/ssh/sshd_config.d/60-lcm-hardening.conf", dropin),
+		fmt.Sprintf("printf '%s' > %s", dropin, sshHardeningDropin),
+		fmt.Sprintf("printf '%s' > %s", sshKeysOnlyLines, sshKeysOnlyDropin),
 		// Konfiguration prüfen, bevor der Dienst neu geladen wird.
 		"sshd -t",
 		sshdReloadScript,
@@ -1813,7 +1831,7 @@ func planUnhardenSSH(server *domain.Server) (string, error) {
 		return helperCmd("ssh-harden", "off"), nil
 	}
 	return strings.Join([]string{
-		"rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf",
+		fmt.Sprintf("rm -f %s %s", sshHardeningDropin, sshKeysOnlyDropin),
 		// Konfiguration prüfen, bevor der Dienst neu geladen wird.
 		"sshd -t",
 		sshdReloadScript,
@@ -1857,8 +1875,8 @@ func (s *ServerService) verifyPasswordAuthDisabled(conn sshx.Conn, server *domai
 		return nil
 	default:
 		return fmt.Errorf("die SSH-Härtung wurde geschrieben, wirkt aber nicht: der Dienst meldet weiterhin %q. "+
-			"Prüfe, ob /etc/ssh/sshd_config oder ein früheres Drop-in in /etc/ssh/sshd_config.d eigene Einträge "+
-			"für PasswordAuthentication enthält - OpenSSH nimmt jeweils den zuerst gefundenen Wert", value)
+			"Prüfe mit `sshd -T | grep -i passwordauth`, woher der Wert kommt, etwa aus einem Match-Block "+
+			"oder einer eigenen Startoption des Dienstes", value)
 	}
 }
 

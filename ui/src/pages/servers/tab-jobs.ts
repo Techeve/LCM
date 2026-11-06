@@ -13,6 +13,7 @@ import { ACTIVE_STATUSES, PROBLEM_STATUSES, jobsUrl, normaliseJobs, type JobItem
 import { SubscribeController } from '../../lib/controllers';
 import { formatDateTime, formatDuration, formatRelative } from '../../lib/format';
 import { t } from '../../lib/i18n';
+import { jobWindow } from '../../lib/job-window';
 import { LiveData } from '../../lib/live-data';
 import { router } from '../../lib/router';
 import { kindLabel, statusLabel, statusLevel } from '../jobs/job-labels';
@@ -142,7 +143,7 @@ export class SrvJobs extends SrvTab {
           .columns=${this.#columns}
           .rows=${data.items}
           .labels=${this.#labels}
-          @lcm-row-activate=${(e: CustomEvent<{ id: string }>) => void router.navigate(`/jobs/${encodeURIComponent(e.detail.id)}`)}
+          @lcm-row-activate=${(e: CustomEvent<{ id: string }>) => jobWindow.open(e.detail.id)}
         ></lcm-data-table>
         ${this.#renderPager(data.total)}
       </div>`;

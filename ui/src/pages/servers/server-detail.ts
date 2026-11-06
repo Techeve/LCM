@@ -39,6 +39,7 @@ import {
 import { CONSOLES_URL, detailApi, distinctHostname, normaliseConsoles, type OpenConsole } from '../../api/server-detail';
 import { abortJob } from '../../api/jobs';
 import { actionFor } from '../dashboard/attention-actions';
+import { openJobOnClick } from '../../lib/job-window';
 import { kindLabel } from '../jobs/job-labels';
 import { auth } from '../../lib/auth';
 import { I18nController, SubscribeController } from '../../lib/controllers';
@@ -467,7 +468,7 @@ export class ServerDetail extends LitElement {
     if (!job) return nothing;
     const what = kindLabel(job.type) || job.name;
     return html`<lcm-notice variant="band" tone="warn" heading=${t('servers.busy', { name: server.name, job: what })}>
-      ${job.id && auth.can('jobs:read') ? html`<a href=${`/jobs/${job.id}`}>${t('servers.action.showJob')}</a>` : nothing}
+      ${job.id && auth.can('jobs:read') ? html`<a href=${`/jobs/${job.id}`} @click=${openJobOnClick(job.id)}>${t('servers.action.showJob')}</a>` : nothing}
       <lcm-job-progress class="busy-progress" state="running" indeterminate label=${what} state-label=${t('servers.busyState')}></lcm-job-progress>
       ${job.id && auth.can('servers:write') ? html`<lcm-button slot="action" size="small" variant="outline" icon="x" @click=${() => (this._abort = true)}>${t('serverDetail.abort.label')}</lcm-button>` : nothing}
       </lcm-notice>

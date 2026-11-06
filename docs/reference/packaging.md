@@ -115,7 +115,7 @@ sudo apt purge  lcm     # alles, was LCM angelegt hat, entfernen
 - das Verwaltungskonto `lcm-svc` (nur wenn sein Schlüssel den LCM-Kommentar
   trägt)
 - die Host-Einstellungen: apt-Cache-Drop-in, die SSH-Drop-ins
-  `10-lcm-ssh`, `55-lcm-2fa`, `60-lcm-hardening`, die nftables-Tabelle `lcm`
+  `00-lcm-hardening`, `10-lcm-ssh`, `55-lcm-2fa`, `60-lcm-hardening`, die nftables-Tabelle `lcm`
   samt `/etc/nftables.d/lcm.nft`
 - den Include in der `sshd_config`: die Originaldatei wird aus
   `sshd_config.lcm-backup` zurückgespielt, der sshd danach neu gestartet

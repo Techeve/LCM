@@ -26,14 +26,17 @@ Alle Befehle unten laufen als `root` (oder mit `sudo` davor).
 Legt `/etc/ssh/sshd_config.d/60-lcm-hardening.conf` an mit
 `PasswordAuthentication no`, `ChallengeResponseAuthentication no`,
 `PubkeyAuthentication yes`, `PermitRootLogin prohibit-password`. Falls die
-Hauptdatei die Drop-ins noch nicht einliest, ergänzt LCM die `Include`-Zeile.
-Danach wird sshd neu geladen und **nachgemessen**: Meldet sshd weiterhin
+Hauptdatei die Drop-ins nicht vor ihren eigenen Einstellungen einliest, ergänzt
+LCM die `Include`-Zeile ganz oben. `00-lcm-hardening.conf` schaltet die
+Passwort-Anmeldung zusätzlich vor allen anderen Drop-ins ab: OpenSSH nimmt den
+zuerst gefundenen Wert, und Dateien wie `50-cloud-init.conf` ließen sie sonst
+offen. Danach wird sshd neu geladen und **nachgemessen**: Meldet sshd weiterhin
 Passwort-Anmeldung, rollt LCM selbst zurück.
 
 Rückgängig - in der Oberfläche über *Härtung aufheben*, von Hand:
 
 ```sh
-rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf
+rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf /etc/ssh/sshd_config.d/00-lcm-hardening.conf
 systemctl reload sshd
 ```
 

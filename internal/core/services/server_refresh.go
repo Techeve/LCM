@@ -32,7 +32,7 @@ const (
 // effektive sshd-Konfiguration die Passwort-Anmeldung abschaltet.
 // `mkdir -p /run/sshd` wie in verifyPasswordAuthDisabled: ohne das Verzeichnis
 // bricht `sshd -T` auf socket-aktiviertem sshd ab.
-const sshHardenedProbe = "if test -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf && " +
+const sshHardenedProbe = "if test -f " + sshHardeningDropin + " && " +
 	"{ mkdir -p /run/sshd 2>/dev/null; sshd -T 2>/dev/null | grep -qi '^passwordauthentication no'; }; " +
 	"then echo yes; else echo no; fi"
 

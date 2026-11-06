@@ -363,14 +363,14 @@ Rechte zurückgeben, die der Modus verhindern soll.
 
 ## SSH-Härtung: belegt, nicht behauptet
 
-Die Härtung schreibt ein eigenes Drop-in (`60-lcm-hardening.conf`) und liest
+Die Härtung schreibt eigene Drop-ins (`60-lcm-hardening.conf` und, vor allen
+fremden Drop-ins, `00-lcm-hardening.conf`) und liest
 danach die **effektive** Konfiguration zurück (`sshd -T` wertet Includes und
 Match-Blöcke aus). Als gehärtet gilt ein Server nur, wenn `sshd` die
 Passwort-Anmeldung nachweislich als `no` meldet:
 
-- meldet er weiterhin `yes` - etwa wegen einer lexikalisch früheren Drop-in-
-  Datei, die gewinnt -, wird das Drop-in zurückgerollt und der Fehlschlag
-  gemeldet;
+- meldet er weiterhin `yes` - etwa wegen einer eigenen Startoption des Dienstes -,
+  wird das Drop-in zurückgerollt und der Fehlschlag gemeldet;
 - liefert die Prüfung **gar kein Ergebnis**, gilt das ebenfalls nicht als
   Erfolg: `ssh_hardened` bleibt aus und die Antwort benennt den fehlenden
   Nachweis. Bei einer Sicherheitsfunktion ist eine unbelegte Erfolgsmeldung
@@ -379,9 +379,10 @@ Passwort-Anmeldung nachweislich als `no` meldet:
 
 Dieselbe Messung gilt beim **Aktualisieren** des Servers: Das vorhandene
 Drop-in allein reicht nicht, `ssh_hardened` bleibt nur an, solange `sshd -T`
-weiterhin `passwordauthentication no` meldet. Eine nachträglich angelegte,
-lexikalisch frühere Datei - auf Ubuntu-Cloud-Images etwa `50-cloud-init.conf`
-mit `PasswordAuthentication yes` - fällt so beim nächsten Abgleich auf.
+weiterhin `passwordauthentication no` meldet. Drop-ins wie `50-cloud-init.conf`
+auf Ubuntu-Cloud-Images setzen sich nicht mehr gegen `00-lcm-hardening.conf`
+durch; eine später über dem `Include` der Hauptdatei ergänzte Zeile fällt beim
+nächsten Abgleich auf.
 
 Die Konfigurationsdatei wird dabei nicht unter `/etc/ssh` vorausgesetzt:
 openSUSE Leap 16 hat ein stateless `/etc` und liefert sie unter

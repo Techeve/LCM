@@ -47,6 +47,7 @@ remove_host_settings() {
 	rm -f /etc/apt/apt.conf.d/02lcm-apt-cache
 	rm -f /etc/ssh/sshd_config.d/10-lcm-ssh.conf \
 		/etc/ssh/sshd_config.d/55-lcm-2fa.conf \
+		/etc/ssh/sshd_config.d/00-lcm-hardening.conf \
 		/etc/ssh/sshd_config.d/60-lcm-hardening.conf
 	restore_sshd_config
 	if command -v nft >/dev/null 2>&1; then

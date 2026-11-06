@@ -352,13 +352,14 @@ that the mode is meant to prevent.
 
 ## SSH hardening: proven, not claimed
 
-Hardening writes its own drop-in (`60-lcm-hardening.conf`) and then reads back
+Hardening writes its own drop-ins (`60-lcm-hardening.conf` and, ahead of all
+foreign drop-ins, `00-lcm-hardening.conf`) and then reads back
 the **effective** configuration (`sshd -T` evaluates includes and match
 blocks). A server counts as hardened only if `sshd` demonstrably reports
 password authentication as `no`:
 
-- if it still reports `yes` - for instance because a lexically earlier drop-in
-  file wins - the drop-in is rolled back and the failure reported;
+- if it still reports `yes` - for instance because of a start option of the
+  service - the drop-in is rolled back and the failure reported;
 - if the check yields **no result at all**, that does not count as success
   either: `ssh_hardened` stays off and the response names the missing proof.
   For a security function an unproven success message is more harmful than an
@@ -366,9 +367,9 @@ password authentication as `no`:
 
 The same measurement applies when the server is **refreshed**: the drop-in
 being present is not enough, `ssh_hardened` stays on only while `sshd -T`
-still reports `passwordauthentication no`. A lexically earlier file added
-later - on Ubuntu cloud images for instance `50-cloud-init.conf` with
-`PasswordAuthentication yes` - is caught at the next sync.
+still reports `passwordauthentication no`. Drop-ins like `50-cloud-init.conf`
+on Ubuntu cloud images no longer win against `00-lcm-hardening.conf`; a line
+added later above the `Include` of the main file is caught at the next sync.
 
 The configuration file is not assumed to live under `/etc/ssh`: openSUSE Leap
 16 has a stateless `/etc` and ships it as `/usr/etc/ssh/sshd_config`.

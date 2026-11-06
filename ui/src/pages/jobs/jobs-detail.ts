@@ -51,7 +51,7 @@ function elapsedSeconds(job: JobItem): number | null {
 }
 
 /**
- * <lcm-jobs-detail job-id="…" .job=${…} can-abort> – Seitenschublade zu einem Job: Angaben, Ausgabe
+ * <lcm-jobs-detail job-id="…" .job=${…} can-abort> – Fenster zu einem Job: Angaben, Ausgabe
  * (läuft der Job, wächst sie live mit) und SSH-Sitzungen. Meldet `lcm-close` und `lcm-job-abort` { job }.
  */
 export class JobsDetail extends LitElement {

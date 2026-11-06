@@ -14,6 +14,7 @@ import { auth } from '../../lib/auth';
 import { formatDuration, formatRelative } from '../../lib/format';
 import { i18n, t } from '../../lib/i18n';
 import { insightText } from '../../lib/insight-text';
+import { openJobOnClick } from '../../lib/job-window';
 import { kindLabel, statusLabel, statusLevel } from '../jobs/job-labels';
 import { actionFor, serverHref } from './attention-actions';
 
@@ -62,7 +63,7 @@ function jobItem(job: DashboardJob, fresh: Fresh): TemplateResult {
   return html`<li ?data-fresh=${fresh.has(itemKey.job(job))}>
     <lcm-ampel level=${statusLevel(job.status)} size="m" label=${statusLabel(job.status)}></lcm-ampel>
     <div>
-      <div class="title">${job.server_name ? html`${serverLink(job.server_id, job.server_name)} · ` : nothing}${auth.can('jobs:read') ? html`<a href=${`/jobs/${job.id}`}>${label}</a>` : label}</div>
+      <div class="title">${job.server_name ? html`${serverLink(job.server_id, job.server_name)} · ` : nothing}${auth.can('jobs:read') ? html`<a href=${`/jobs/${job.id}`} @click=${openJobOnClick(job.id)}>${label}</a>` : label}</div>
       <p class="sub">${t('dashboard.jobs.result', { status: statusLabel(job.status), when: formatRelative(when) })}</p>
     </div>
     <span class="meta">${job.duration_seconds === null ? '' : formatDuration(job.duration_seconds)}</span>

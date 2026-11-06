@@ -149,6 +149,17 @@ test.describe('Serverdetail: Apps, Jobs und SSH-Sitzungen', () => {
     await setzeSchalter(page.getByRole('switch', { name: 'Verbindungsprüfungen zeigen' }), true);
   });
 
+  test('ein Job öffnet sich als Fenster über dem Server, Schließen führt nicht weg', async ({ page }) => {
+    await page.goto('/servers/1/jobs');
+    await page.getByRole('grid', { name: 'Jobs dieses Servers' }).getByRole('row', { name: /SSH härten/ }).first().click();
+    await expect(page.getByRole('heading', { name: 'Ausgabe' })).toBeVisible();
+    await expect(page).toHaveURL(/\/servers\/1\/jobs$/);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('heading', { name: 'Ausgabe' })).toHaveCount(0);
+    await expect(page).toHaveURL(/\/servers\/1\/jobs$/);
+    await expect(page.getByRole('grid', { name: 'Jobs dieses Servers' })).toBeVisible();
+  });
+
   test('der Reiter SSH-Sitzungen erklärt die Aufzeichnung; Demo-Server haben keine', async ({ page }) => {
     await page.goto('/servers/1/ssh');
     // Demo-Server werden nie per SSH kontaktiert, also gibt es keine Aufzeichnung.

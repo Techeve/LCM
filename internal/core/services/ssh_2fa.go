@@ -32,7 +32,8 @@ import (
 
 // ssh2faDropinPath: alphabetisch VOR 60-lcm-hardening.conf - OpenSSH nimmt
 // je Option den ZUERST gefundenen Wert, und das Härtungs-Drop-in setzt
-// ChallengeResponseAuthentication no.
+// ChallengeResponseAuthentication no. Deshalb steht diese Option auch nicht in
+// 00-lcm-hardening.conf.
 const ssh2faDropinPath = "/etc/ssh/sshd_config.d/55-lcm-2fa.conf"
 
 const pamSSHDPath = "/etc/pam.d/sshd"

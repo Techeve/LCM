@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.0-beta.6 - 2026-11-06
+
+### 🚀 Features
+
+- **jobs**: Job ansehen öffnet das Fenster auf der aktuellen Seite (2b6bcaa7)
+
+### 🐛 Bugfixes
+
+- **ssh**: Härtung setzt sich gegen fremde Einstellungen wie cloud-init durch (4c90b6ae)
+
 ## v2.0.0-beta.5 - 2026-11-06
 
 ### 🚀 Features

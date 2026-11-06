@@ -199,7 +199,7 @@ sshd_conf_path() {
 
 sshd_ensure_include() {
     conf=$(sshd_conf_path) || die "sshd_config weder unter /etc/ssh noch unter /usr/etc/ssh gefunden"
-    grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$conf" && return 0
+    grep -vE '^[[:space:]]*(#|$)' "$conf" | head -n1 | grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' && return 0
     cp -f "$conf" /etc/ssh/sshd_config.lcm-backup || return 1
     { echo '# von LCM ergaenzt: Drop-ins einlesen (muss oben stehen)'
       echo 'Include /etc/ssh/sshd_config.d/*.conf'
@@ -468,24 +468,27 @@ dns() {
     fi
 }
 
-# ssh-harden on|off: das LCM-Haertungs-Drop-in schreiben/entfernen und sshd
-# neu laden (bei Fehlschlag zurueckrollen).
+# ssh-harden on|off: die LCM-Haertungs-Drop-ins schreiben/entfernen und sshd
+# neu laden (bei Fehlschlag zurueckrollen). 00- setzt sich gegen fremde
+# Drop-ins wie 50-cloud-init.conf durch, siehe sshKeysOnlyDropin.
 ssh_harden() {
     dropin=/etc/ssh/sshd_config.d/60-lcm-hardening.conf
+    first=/etc/ssh/sshd_config.d/00-lcm-hardening.conf
     case "$1" in
         on)
             sshd_ensure_include || die "sshd_config konnte nicht um die Include-Zeile ergaenzt werden"
             install -d -m 755 /etc/ssh/sshd_config.d
             printf 'PasswordAuthentication no\nChallengeResponseAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin prohibit-password\n' > "$dropin"
+            printf 'PasswordAuthentication no\nPubkeyAuthentication yes\n' > "$first"
             if ! sshd_reload; then
-                rm -f "$dropin"; sshd_reload
+                rm -f "$dropin" "$first"; sshd_reload
                 die "sshd-haertung fehlgeschlagen - zurueckgerollt"
             fi
             # Nachweis statt Annahme: wirkt die Haertung nicht, ist eine
             # Erfolgsmeldung schaedlicher als ein ehrlicher Fehlschlag.
             sshd_password_auth_off; rc=$?
             if [ "$rc" -eq 1 ]; then
-                rm -f "$dropin"; sshd_reload
+                rm -f "$dropin" "$first"; sshd_reload
                 die "sshd meldet weiterhin passwordauthentication yes - haertung wirkungslos, zurueckgerollt"
             fi
             # Unbelegt ist kein Erfolg (R2-014). Das Drop-in bleibt liegen -
@@ -497,7 +500,7 @@ ssh_harden() {
             fi
             ;;
         off)
-            rm -f "$dropin"
+            rm -f "$dropin" "$first"
             sshd_reload || die "sshd-reload fehlgeschlagen"
             ;;
         *) die "ssh-harden on|off" ;;

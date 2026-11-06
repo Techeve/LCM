@@ -365,8 +365,14 @@ func TestHardenAndUnhardenSSH(t *testing.T) {
 	if srv, _ := env.Servers.Get(repositories.ScopeAll(), id); !srv.SSHHardened {
 		t.Error("ssh_hardened nach härten nicht gesetzt")
 	}
-	if !strings.Contains(strings.Join(env.Dialer.Commands, "\n"), "60-lcm-hardening.conf") {
+	written := strings.Join(env.Dialer.Commands, "\n")
+	if !strings.Contains(written, "60-lcm-hardening.conf") {
 		t.Errorf("härtungs-drop-in nicht geschrieben: %v", env.Dialer.Commands)
+	}
+	// OpenSSH nimmt den zuerst gefundenen Wert: Das vorderste Drop-in schlägt
+	// fremde wie 50-cloud-init.conf, ohne 2FA oder Root-Login zu überstimmen.
+	if !strings.Contains(written, `PasswordAuthentication no\nPubkeyAuthentication yes\n'\'' > /etc/ssh/sshd_config.d/00-lcm-hardening.conf`) {
+		t.Errorf("vorderes drop-in fehlt oder enthält mehr als nötig: %s", written)
 	}
 
 	env.Dialer.Commands = nil
@@ -377,8 +383,8 @@ func TestHardenAndUnhardenSSH(t *testing.T) {
 		t.Error("ssh_hardened nach aufheben noch gesetzt")
 	}
 	all := strings.Join(env.Dialer.Commands, "\n")
-	if !strings.Contains(all, "rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf") {
-		t.Errorf("drop-in nicht entfernt: %s", all)
+	if !strings.Contains(all, "rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf /etc/ssh/sshd_config.d/00-lcm-hardening.conf") {
+		t.Errorf("drop-ins nicht entfernt: %s", all)
 	}
 }
 

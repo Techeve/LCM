@@ -11,6 +11,7 @@ import { auth } from '../../lib/auth';
 import { formatRelative } from '../../lib/format';
 import { errorText, t } from '../../lib/i18n';
 import { causeText, durationSince } from '../../lib/insight-text';
+import { openJobOnClick } from '../../lib/job-window';
 import { LiveData } from '../../lib/live-data';
 import './ov-facts';
 import './ov-kernels';
@@ -188,7 +189,7 @@ export class SrvOverview extends SrvTab {
     if (!capability.last_job_id || !auth.can('jobs:read')) return nothing;
     const output = this._outputs[capability.category];
     return html`<p class="hint">
-        <a href=${`/jobs/${capability.last_job_id}`}>${t('servers.capability.job', { name: capability.last_job_name || capability.last_job_id })}</a>
+        <a href=${`/jobs/${capability.last_job_id}`} @click=${openJobOnClick(capability.last_job_id)}>${t('servers.capability.job', { name: capability.last_job_name || capability.last_job_id })}</a>
         <lcm-button size="small" variant="ghost" @click=${() => void this.#toggleOutput(capability)}
           >${output === undefined ? t('servers.capability.output.show') : t('servers.capability.output.hide')}</lcm-button
         >
