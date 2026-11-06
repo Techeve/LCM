@@ -45,10 +45,12 @@ Server-Detail → **Aktionen → „Sicherheits-Tools"**. Im Modal das Tool wäh
     CrowdSec* hinterlegten Zugangsdaten.
   - **Allowlist-IPs** (LCM-IP vorbelegt).
 
-Die Aktion braucht **vollen Sudo-Zugriff**; auf Servern im eingeschränkten
-Sudo-Modus ist sie gesperrt. Sie läuft als **asynchroner, protokollierter Job**;
-danach liest LCM den Ist-Zustand (installiert + aktiv) frisch nach und speichert
-ihn.
+Pakete installiert LCM über die Paketverwaltung; Herstellerrepo, Konfiguration
+und Dienststart brauchen root. Im Voll-Modus laufen sie als Skript, auf Servern
+im eingeschränkten Sudo-Modus über den validierenden `lcm-helper` (mit
+denselben Skriptteilen, Parameter streng geprüft). Die Aktion läuft als
+**asynchroner, protokollierter Job**; danach liest LCM den Ist-Zustand
+(installiert + aktiv) frisch nach und speichert ihn.
 
 ### Was fail2ban schreibt
 
@@ -227,12 +229,13 @@ gerade erreicht - auch wenn das Feld leer bleibt. Die Quell-IP wird dafür ohne
 `sudo` gelesen (`$SSH_CONNECTION`), weil `sudo` diese Variable verwirft.
 :::
 
-:::warning[Nicht im eingeschränkten Modus]
-Alle Verwaltungs-Aktionen greifen in Dienste und Systemkonfiguration ein und
-sind deshalb im [eingeschränkten Sudo-Modus](/reference/security-model) gesperrt - die
-Karte weist darauf hin, statt in einen Fehler zu laufen. Ist das Werkzeug auf
-dem Server gar nicht (mehr) installiert, endet der Job mit einem Fehler statt
-mit einer irreführenden Erfolgsmeldung.
+:::note[Eingeschränkter Sudo-Modus]
+Auch im [eingeschränkten Sudo-Modus](/reference/security-model) stehen alle
+Verwaltungs-Aktionen zur Verfügung: Dienststeuerung, Allowlist, Entsperren, die
+Sperrliste und das Entfernen laufen über den `lcm-helper`. Gesperrt bleibt nur
+die SSH-2FA (Eingriff in PAM und sshd). Ist das Werkzeug auf dem Server gar nicht
+(mehr) installiert, endet der Job mit einem Fehler statt mit einer
+irreführenden Erfolgsmeldung.
 :::
 
 ## Anzeige & Erkennung

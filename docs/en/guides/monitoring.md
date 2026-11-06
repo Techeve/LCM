@@ -411,7 +411,8 @@ Everything below that is removed together with its companion packages
 (modules, headers, tools). The package names are not guessed but looked up on
 the target; the running kernel is excluded a second time inside the script, in
 case the machine rebooted since the last inventory. Currently apt systems only
-(Debian, Ubuntu, Proxmox) and full sudo only.
+(Debian, Ubuntu, Proxmox); restricted sudo mode is enough, because the script
+only reads and runs `apt-get purge`.
 
 :::note[The kernel list used to be too short]
 Up to 1.26 the kernel inventory was only refreshed by a **full** server scan.

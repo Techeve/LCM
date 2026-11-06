@@ -85,7 +85,7 @@ func TestFail2banRepoStep(t *testing.T) {
 	if got := fail2banRepoStep(pkgApt); got != ":" {
 		t.Errorf("apt braucht keine Quelle: %q", got)
 	}
-	script := fail2banInstallScript(pkgDnf, "192.0.2.1", nil)
+	script := fail2banInstallScript(false, pkgDnf, "192.0.2.1", nil)
 	repo := strings.Index(script, "epel-release")
 	install := strings.Index(script, "LCM: $p installiert")
 	if repo < 0 || install < 0 || repo > install {

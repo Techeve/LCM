@@ -1,7 +1,7 @@
-// Was der Update-Balken unter dem Hauptmenü zeigt. Ein Balken, drei Lagen:
+// Was der Update-Balken unter dem Hauptmenü zeigt. Ein Balken, zwei Lagen:
 // Läuft ein Selbst-Update, hat dessen Fortschritt Vorrang. Sonst die neue Version,
-// solange sie nicht weggeklickt ist (je Version gemerkt). Und wenn es keine gibt,
-// aber gerade jemand von Hand geprüft hat, die Entwarnung: „alles aktuell“ ist eine Antwort.
+// solange sie nicht weggeklickt ist (je Version gemerkt). Die Antwort auf „Jetzt prüfen“
+// gehört nicht hierher: Sie steht im Info-Fenster neben dem Knopf.
 
 import { selfUpdateBusy, type SelfUpdate, type UpdateInfo } from '../api/system';
 import { safeStorage } from '../components/shared';
@@ -9,40 +9,32 @@ import { safeStorage } from '../components/shared';
 export type UpdateBanner =
   | { kind: 'busy'; status: SelfUpdate }
   | { kind: 'available'; info: UpdateInfo; self: SelfUpdate | null }
-  | { kind: 'current'; info: UpdateInfo }
   | null;
 
-export function updateBanner(info: UpdateInfo | undefined, self: SelfUpdate | null | undefined, dismissed: string, checkedNow: boolean): UpdateBanner {
+export function updateBanner(info: UpdateInfo | undefined, self: SelfUpdate | null | undefined, dismissed: string): UpdateBanner {
   if (self && selfUpdateBusy(self)) return { kind: 'busy', status: self };
   if (!info) return null;
   if (info.update_available && info.latest_version !== dismissed) return { kind: 'available', info, self: self ?? null };
-  return checkedNow ? { kind: 'current', info } : null;
+  return null;
 }
 
 const DISMISSED_KEY = 'lcm.update.dismissed';
 
-/** Gemeinsamer Stand von Balken und Info-Fenster: weggeklickte Version und „gerade von Hand geprüft“. */
+/** Gemeinsamer Stand von Balken und Info-Fenster: die weggeklickte Version. */
 export class UpdateState {
   #dismissed = safeStorage.get(DISMISSED_KEY) ?? '';
-  #checkedNow = false;
   #listeners = new Set<() => void>();
 
   get dismissed(): string {
     return this.#dismissed;
   }
 
-  get checkedNow(): boolean {
-    return this.#checkedNow;
-  }
-
-  /** Nach „Jetzt prüfen“: Das Ergebnis gehört in den Balken, auch eine früher weggeklickte Version. */
-  markChecked(): void {
-    this.#checkedNow = true;
+  /** Nach „Jetzt prüfen“: Auch eine früher weggeklickte Version kommt zurück, im Balken liegt „Jetzt installieren“. */
+  restoreDismissed(): void {
     this.#setDismissed('');
   }
 
   dismiss(version: string): void {
-    this.#checkedNow = false;
     this.#setDismissed(version);
   }
 

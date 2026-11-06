@@ -119,7 +119,7 @@ statt dessen das Image getauscht.
 
 Der Dialog *Über LCM* (Kontomenü oben rechts) hat außerdem
 **Jetzt prüfen**: Das fragt den Paketkanal sofort ab und zeigt das Ergebnis
-im Balken an - auch dann, wenn LCM bereits aktuell ist.
+direkt neben dem Knopf an - auch dann, wenn LCM bereits aktuell ist.
 
 **Neu in dieser Version.** Nach einem Update zeigt LCM jedem Administrator
 einmal ein Fenster *Neu in Version …* mit den Neuerungen. Die Hinweise holt

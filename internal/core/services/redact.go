@@ -25,14 +25,23 @@ var (
 	// Basic-Auth in URLs: https://user:pass@host -> pass unkenntlich.
 	reURLBasicAuth = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^:/@\s]+:)([^@/\s]+)(@)`)
 
-	// apt auth.conf im netrc-Format ("password <secret>", Leerzeichen statt
-	// '='): geschrieben von der Enterprise-Kanal-Umstellung via
-	// "printf 'machine %s\nlogin %s\npassword %s\n' URL LOGIN SECRET".
-	// Gezielt am Format-String verankert (robust auch bei shell-escapten
-	// Quotes '\'' durch die sudo-Verpackung) - das dritte Argument ist der
-	// Zugangsschlüssel.
-	reAptAuthSecret = regexp.MustCompile(`(printf\s+(?:'\\''|')machine %s\\nlogin %s\\npassword %s\\n(?:'\\''|')\s+(?:'\\''|')[^']*(?:'\\''|')\s+(?:'\\''|')[^']*(?:'\\''|')\s+(?:'\\''|'))([^']*)((?:'\\''|'))`)
+	// Geheimnisse, die LCM einem Skript-Rumpf als Shell-Variable mitgibt
+	// (shellVars): Zugangsschlüssel des Enterprise-Kanals, LAPI-Passwort und
+	// Console-Key von CrowdSec. Auch in der Form '\'' der sudo-Verpackung.
+	reShellVarSecret = regexp.MustCompile(`\b(SECRET|LAPI_PW_B64|CONSOLE_KEY)=(?:'\\''|')[^']*(?:'\\''|')`)
+
+	// Dieselben Geheimnisse als Parameter des LCM-Helpers im eingeschränkten
+	// Modus: host-apt-channel enterprise <url> <id> <schlüssel_b64> und
+	// crowdsec-configure <modus> <url> <login> <passwort_b64> <console-key> ….
+	reHelperChannelSecret = regexp.MustCompile(`(lcm-helper host-apt-channel ` + reQ + `enterprise` + reQ + ` ` + reQ + `[^']*` + reQ +
+		` ` + reQ + `[^']*` + reQ + ` ` + reQ + `)[^']*(` + reQ + `)`)
+	reHelperCrowdSecSecret = regexp.MustCompile(`(lcm-helper crowdsec-configure ` + reQ + `[a-z]+` + reQ + ` ` + reQ + `[^']*` + reQ +
+		` ` + reQ + `[^']*` + reQ + ` ` + reQ + `)[^']*(` + reQ + ` ` + reQ + `)[^']*(` + reQ + `)`)
 )
+
+// reQ ist ein einfaches Anführungszeichen, auch in der Form '\” der
+// sudo-Verpackung.
+const reQ = `(?:'\\''|')`
 
 // redactSecrets entfernt bekannte Geheimnisse aus einer Kommandozeile oder
 // deren Ausgabe. Idempotent und robust gegenüber mehreren Fundstellen.
@@ -42,9 +51,13 @@ func redactSecrets(s string) string {
 	}
 	s = reChpasswd.ReplaceAllString(s, "printf '%s:%s' "+redactPlaceholder+" | chpasswd")
 	s = reCurlUser.ReplaceAllString(s, "${1}"+redactPlaceholder)
+	// Vor dem allgemeinen Schlüssel=Wert-Muster: das kennt die Form '\'' der
+	// sudo-Verpackung nicht und ließe von SECRET='\''abc'\'' den Wert stehen.
+	s = reShellVarSecret.ReplaceAllString(s, "${1}="+redactPlaceholder)
+	s = reHelperChannelSecret.ReplaceAllString(s, "${1}"+redactPlaceholder+"${2}")
+	s = reHelperCrowdSecSecret.ReplaceAllString(s, "${1}"+redactPlaceholder+"${2}"+redactPlaceholder+"${3}")
 	s = reKeyValueSecret.ReplaceAllString(s, "${1}${2}"+redactPlaceholder)
 	s = reURLBasicAuth.ReplaceAllString(s, "${1}"+redactPlaceholder+"${3}")
-	s = reAptAuthSecret.ReplaceAllString(s, "${1}"+redactPlaceholder+"${3}")
 	return s
 }
 

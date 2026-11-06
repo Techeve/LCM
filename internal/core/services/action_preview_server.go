@@ -93,7 +93,7 @@ func (s *ServerService) previewFirewall(server *domain.Server, enable bool, args
 	p := newActionPreview(action, server)
 	p.addRoot(firewallDetectCmd)
 	backend := firewallBackendFor(server)
-	be := firewallBackendByName(backend)
+	be := firewallBackendOf(server, backend)
 	p.Reversible = true
 	p.note("preview.firewall_backend", "backend", backend)
 	if !enable {

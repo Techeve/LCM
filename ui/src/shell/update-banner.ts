@@ -14,7 +14,7 @@ import { updateBanner, updateState, type UpdateBanner } from './update-model';
 
 /**
  * <lcm-update-banner> – Band unter dem Hauptmenü (`lcm-notice variant="bar"`): neue LCM-Version mit „Jetzt installieren“, Fortschritt des
- * Selbst-Updates (Warten auf Jobs, Sicherung, Installation) und nach „Jetzt prüfen“ die Entwarnung.
+ * Selbst-Updates (Warten auf Jobs, Sicherung, Installation).
  * Den Fortschritt meldet das Ereignis `system.build` (Thema `system`), kein Abfragen im Takt.
  */
 export class LcmUpdateBanner extends LitElement {
@@ -106,12 +106,6 @@ export class LcmUpdateBanner extends LitElement {
     </lcm-notice>`;
   }
 
-  #current(info: UpdateInfo): TemplateResult {
-    return html`<lcm-notice variant="bar" tone=${info.error ? 'warn' : 'ok'} dismissible close-label=${t('update.dismiss')} @lcm-dismiss=${() => updateState.dismiss('')}>
-      ${t('update.current', { current: info.current_version })} ${info.error ? html`<span class="muted">${info.error}</span>` : nothing}
-    </lcm-notice>`;
-  }
-
   #impacts(banner: UpdateBanner): Impact[] {
     if (banner?.kind !== 'available') return [];
     return [
@@ -125,12 +119,11 @@ export class LcmUpdateBanner extends LitElement {
   #render(banner: UpdateBanner): TemplateResult | typeof nothing {
     if (!banner) return nothing;
     if (banner.kind === 'busy') return this.#busy(banner.status);
-    if (banner.kind === 'available') return this.#available(banner.info, banner.self);
-    return this.#current(banner.info);
+    return this.#available(banner.info, banner.self);
   }
 
   override render() {
-    const banner = auth.isAuthenticated ? updateBanner(this.#info.data, this.#self.data, updateState.dismissed, updateState.checkedNow) : null;
+    const banner = auth.isAuthenticated ? updateBanner(this.#info.data, this.#self.data, updateState.dismissed) : null;
     return html`${this.#render(banner)}
       <lcm-dialog
         ?open=${this._confirm && banner?.kind === 'available'}

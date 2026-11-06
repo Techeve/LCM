@@ -11,12 +11,6 @@ import (
 	"LCM/internal/storage/repositories"
 )
 
-// ErrFirewallNeedsFullSudo: die Backends firewalld und nftables brauchen
-// systemctl/rc-update und Datei-Schreibzugriffe unter /etc - das gibt die
-// sudo-Whitelist des eingeschränkten Modus bewusst nicht her. Nur ufw ist
-// dort verwaltbar (ufw steht auf der Whitelist).
-var ErrFirewallNeedsFullSudo = errors.New("dieses Firewall-Backend braucht volle Sudo-Rechte - im eingeschränkten Modus ist nur ufw verwaltbar")
-
 // ErrInvalidFirewallRules kennzeichnet Validierungsfehler der Regel-Eingabe
 // (Portbereich, Protokoll, Bind-Adresse, IP-Version) für das 400-Mapping.
 var ErrInvalidFirewallRules = errors.New("ungültige Firewall-Regeln")
@@ -115,9 +109,6 @@ func (s *ServerService) planFirewall(server *domain.Server, enable bool, rulesSp
 			}
 		}
 	}
-	if server.RestrictedSudo && firewallBackendFor(server) != domain.FirewallToolUfw {
-		return nil, ErrFirewallNeedsFullSudo
-	}
 	return rules, nil
 }
 
@@ -196,7 +187,7 @@ func (s *ServerService) runFirewallDisable(job *domain.Job, conn sshx.Conn, serv
 	if backend == "" {
 		backend = firewallBackendFor(server)
 	}
-	be := firewallBackendByName(backend)
+	be := firewallBackendOf(server, backend)
 	output, code, runErr := conn.Run(privRun(server, be.disableScript()))
 	if strings.Contains(output, firewallToolMissingPrefix) {
 		// Kein Werkzeug installiert → es gibt nichts zu deaktivieren; der
@@ -252,7 +243,7 @@ func applyFirewallRules(conn sshx.Conn, server *domain.Server, ssh domain.Firewa
 		}
 	}
 
-	be := firewallBackendByName(backend)
+	be := firewallBackendOf(server, backend)
 	out, code, err := conn.Run(privRun(server, be.enableScript(ssh, rules)))
 	log.WriteString(out)
 	if strings.Contains(out, firewallToolMissingPrefix) {

@@ -516,8 +516,8 @@ func TestFirewalldEnableScript(t *testing.T) {
 		`--remove-rich-rule="$r"`,
 		`--add-port=22/tcp`,
 		`--add-port=443/tcp`,
-		`--add-rich-rule='rule family="ipv6" port port="8080" protocol="udp" accept'`,
-		`--add-rich-rule='rule family="ipv4" source address="10.0.0.0/24" port port="5432" protocol="tcp" accept'`,
+		`'--add-rich-rule=rule family="ipv6" port port="8080" protocol="udp" accept'`,
+		`'--add-rich-rule=rule family="ipv4" source address="10.0.0.0/24" port port="5432" protocol="tcp" accept'`,
 		"firewall-cmd --reload",
 	} {
 		if !strings.Contains(script, want) {

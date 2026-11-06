@@ -95,7 +95,7 @@ func (s *ServerService) planAutoremove(server *domain.Server) (packagePlan, erro
 		}
 		// Erst schützen, dann aufräumen - in dieser Reihenfolge, sonst ist die
 		// Schutzdatei beim Lauf noch nicht da.
-		return pkgPinScript(mgr, pins) + "\n" + pkgAutoremoveScriptWithPins(mgr, pins)
+		return pkgPinScript(server.RestrictedSudo, mgr, pins) + "\n" + pkgAutoremoveScriptWithPins(mgr, pins)
 	}
 	return s.newPackagePlan(server, domain.RuleTypeAutoremove,
 		"Nicht mehr benötigte Pakete entfernen", build)

@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.0.0-beta.3 - 2026-11-06
+
+### 🚀 Features
+
+- **ui**: Info-Fenster kompakter, „Jetzt prüfen“ antwortet neben dem Knopf (bf7794bd)
+- **update**: Fenster nach dem Update beginnt mit einem handgeschriebenen Text (50fe048e)
+
+### 🐛 Bugfixes
+
+- **restricted**: Fehlermeldung landet nicht mehr als LAPI-URL, Einrichtung prüft vorher den Helper (8d71f8a6)
+- **restricted**: Helper prüft Werte als Ganzes und den Regelsatz vollständig (22f41117)
+- **restricted**: Helper und Whitelist des LCM-Hosts werden beim Paket-Update erneuert (3d2f1fdd)
+- **restricted**: Paketkanal, Sicherheits-Tools, Firewall, Pins und alte Kernel laufen im eingeschränkten Modus (4352d1cb)
+
+### 🔧 Sonstiges
+
+- **release**: Text für LCM 2.0 im Update-Fenster (251b29a7)
+- **restricted**: Dokumentation zum eingeschränkten Modus nachgezogen (cd8e0012)
+
 ## v2.0.0-beta.2 - 2026-11-06
 
 ### 🐛 Bugfixes

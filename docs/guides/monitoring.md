@@ -425,7 +425,8 @@ Alles darunter wird samt Begleitpaketen entfernt (Module, Header, Tools). Die
 Paketnamen werden nicht geraten, sondern auf dem Zielsystem gesucht; der
 laufende Kernel wird im Skript ein zweites Mal ausgeschlossen, falls seit der
 letzten Erfassung neu gestartet wurde. Derzeit nur auf apt-Systemen
-(Debian, Ubuntu, Proxmox) und nur mit vollem sudo.
+(Debian, Ubuntu, Proxmox); der eingeschränkte Sudo-Modus genügt, weil das Skript
+nur liest und `apt-get purge` ausführt.
 
 :::note[Die Kernel-Liste war früher zu kurz]
 Bis 1.26 wurde das Kernel-Inventar nur beim **vollen** Server-Scan

@@ -49,7 +49,6 @@ export class SrvTool extends LitElement {
     lcmIp: { type: String, attribute: 'lcm-ip' },
     active: { type: Boolean },
     canWrite: { type: Boolean, attribute: 'can-write' },
-    restricted: { type: Boolean },
     allowlists: { attribute: false },
     _ips: { state: true },
     _ids: { state: true },
@@ -84,7 +83,6 @@ export class SrvTool extends LitElement {
   declare lcmIp: string;
   declare active: boolean;
   declare canWrite: boolean;
-  declare restricted: boolean;
   declare allowlists: IpAllowlist[];
   declare _ips: string | undefined;
   declare _ids: number[];
@@ -104,7 +102,6 @@ export class SrvTool extends LitElement {
     this.lcmIp = '';
     this.active = false;
     this.canWrite = false;
-    this.restricted = false;
     this.allowlists = [];
     this._ips = undefined;
     this._ids = [];
@@ -233,7 +230,7 @@ export class SrvTool extends LitElement {
       { key: 'ip', label: t('serverSecurity.tool.bans.ip'), kind: 'mono', sortable: true },
       { key: 'scope', label: this.tool === 'crowdsec' ? t('serverSecurity.tool.bans.scenario') : t('serverSecurity.tool.bans.jail'), sortable: true, render: (r) => html`${r.scope || '–'}${r.cause ? html` <span class="muted">· ${r.cause}</span>` : nothing}` },
       ...(this.tool === 'crowdsec' ? [{ key: 'since', label: t('serverSecurity.tool.bans.remaining'), render: (r: SecurityBan) => r.since || '–' }] : []),
-      ...(this.canWrite && !this.restricted
+      ...(this.canWrite
         ? [
             {
               key: 'unban',
@@ -295,7 +292,6 @@ export class SrvTool extends LitElement {
 
   #renderBody(): TemplateResult {
     if (!this.canWrite) return this.#renderBans();
-    if (this.restricted) return html`<lcm-notice tone="warn">${t('serverSecurity.restricted')}</lcm-notice>${this.#renderBans()}`;
     return html`${this.#renderService()} ${this.#renderAllowlist()} ${this.#renderBans()} ${this.#renderUninstall()}`;
   }
 

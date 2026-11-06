@@ -5921,7 +5921,7 @@ paths:
         '202':
           description: Job gestartet ({status, job_id, job_name}).
         '400':
-          description: Ungültige Regeln oder Backend im eingeschränkten Modus nicht verwaltbar.
+          description: Ungültige Regeln.
         '401':
           description: Nicht angemeldet.
         '403':
@@ -6447,7 +6447,7 @@ paths:
         (202 {status, job_id, job_name}).
 
 
-        Braucht vollen Sudo-Zugriff (schreibt unter /etc).
+        Im eingeschränkten Modus schreibt der LCM-Helper die Schutzdateien.
 
 
         Benötigte Berechtigung: `servers:write`.'
@@ -6468,7 +6468,7 @@ paths:
         '403':
           description: Keine Berechtigung.
         '409':
-          description: Auf Proxmox-Systemen ausgenommen oder eingeschränkter Modus.
+          description: Auf Proxmox-Systemen ausgenommen.
   /api/v1/servers/{id}/packages/pins/kernel:
     post:
       tags:
@@ -7003,9 +7003,9 @@ paths:
         Job-Output - niemand soll Schutz vermuten, den es nicht gibt.
 
 
-        Die Einrichtung greift in Dienste und Systemkonfiguration ein und ist
-        deshalb im eingeschränkten Modus (sudo-Whitelist) gesperrt. Für die
-        Bedienung eines bereits installierten Werkzeugs siehe
+        Die Einrichtung greift in Dienste und Systemkonfiguration ein; im
+        eingeschränkten Modus (sudo-Whitelist) läuft sie über den LCM-Helper.
+        Für die Bedienung eines bereits installierten Werkzeugs siehe
         /security-tool/manage.
 
 
@@ -7086,7 +7086,6 @@ paths:
           description: Keine Berechtigung.
         '409':
           description: >-
-            Eingeschränkter Modus (die Einrichtung braucht vollen Sudo-Zugriff),
             RouterOS-Gerät, oder CrowdSec ist auf dieser Distribution nicht
             verfügbar (pacman).
   /api/v1/servers/{id}/security-tool/bans:
@@ -7165,10 +7164,10 @@ paths:
         Asynchroner Job (202 {status, job_id, job_name}).
 
 
-        Die Aktionen greifen in Dienste und Systemkonfiguration ein und sind
-        deshalb im eingeschränkten Modus (sudo-Whitelist) gesperrt. Ist das
-        Werkzeug auf dem Server nicht installiert, endet der Job mit einem
-        Fehler statt einer irreführenden Erfolgsmeldung.
+        Die Aktionen greifen in Dienste und Systemkonfiguration ein; im
+        eingeschränkten Modus (sudo-Whitelist) laufen sie über den LCM-Helper.
+        Ist das Werkzeug auf dem Server nicht installiert, endet der Job mit
+        einem Fehler statt einer irreführenden Erfolgsmeldung.
 
 
         Benötigte Berechtigung: `servers:write`.'
@@ -7226,7 +7225,7 @@ paths:
         '401':
           description: Nicht angemeldet.
         '403':
-          description: Keine Berechtigung (im eingeschränkten Modus gesperrt).
+          description: Keine Berechtigung.
         '422':
           description: Unbekanntes Werkzeug, unbekannte Aktion oder fehlende/ungültige IP.
   /api/v1/servers/{id}/settings:

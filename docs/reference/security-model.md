@@ -270,8 +270,28 @@ Der zentral in der DB erfasste Paketbestand aller Server wird täglich (Cron ein
 Beim Onboarding (oder nachträglich über *Rechte einschränken*) lässt sich der
 LCM-Benutzer von `NOPASSWD:ALL` auf eine sudoers-Whitelist umstellen:
 Paketverwaltung (apt, dnf/yum, zypper, pacman, apk), Docker, ufw und der streng
-validierende `lcm-helper`. Gesperrt sind damit freie Skripte, Custom-Aktionen
-und der Neustart.
+validierende `lcm-helper`. Gesperrt sind damit freie Skripte, Custom-Aktionen,
+SSH-2FA und der Neustart.
+
+Der Helper ist die einzige Stelle für alles, was root braucht und nicht auf der
+Whitelist steht: Paketkanal des LCM-Hosts, Repositories, APT-Cache, SSH,
+Benutzer, firewalld und nftables, fail2ban und CrowdSec, Paket-Pins. Jedes
+Unterkommando hat feste Parameter (Aufzählungen, IPs, Ports, URLs, Paketnamen;
+Freitext nur base64-kodiert) und schreibt nur Pfade, die LCM verwaltet. Er
+führt dieselben Skriptteile aus wie der Voll-Modus, damit beide Wege nicht
+auseinanderlaufen. Ein Unterkommando, das ein Skript oder einen frei gewählten
+Pfad entgegennähme, gibt es bewusst nicht - es wäre eine Root-Shell. Eine
+bewusste Ausnahme von „keine fremden Skripte“: `crowdsec-repo` führt das
+Einrichtungsskript des Herstellers von packagecloud.io als root aus, wie im
+Voll-Modus. Die Adresse steht fest, der Aufrufer wählt nur `deb` oder `rpm`;
+das Vertrauen liegt bei packagecloud und TLS.
+
+**Helper-Stand.** Der Helper wird beim Einschränken geschrieben. Auf dem
+LCM-Host erneuert ihn `postinstall.sh` bei jedem Paket-Update (`lcm
+restricted-provision`, nur wenn der Host eingeschränkt ist); ein Fehlschlag
+dabei warnt nur. Entfernte eingeschränkte Server erneuert **Neu verbinden**
+mit einem Admin-Login - ein sich selbst aktualisierender Helper wäre ein freier
+Root-Weg. Solange das nicht geschehen ist, zeigt die Ampel „Helper veraltet“.
 
 **Wirkungsprobe statt Annahme.** Nach dem Umschalten prüft LCM als
 eingeschränkter Benutzer, ob der Helper und die Paketverwaltung des Systems
@@ -380,7 +400,8 @@ manuellem Onboarding erreichbar.
 einen SSH-Schlüssel darauf. **Beim ersten Start beschränkt LCM das Konto auf
 die sudoers-Whitelist** - Paketverwaltung, Docker, ufw und den validierenden
 `lcm-helper`, dessen Unterkommandos `host-install`, `host-apt-cacher`,
-`host-crowdsec-lapi` und `host-self-update` die Host-Funktionen tragen. Eine
+`host-crowdsec-lapi`, `host-self-update` und `host-apt-channel` die
+Host-Funktionen tragen. Eine
 Root-Shell hat das Konto danach nicht mehr; die Wirkungsprobe und der Rückfall
 in den Voll-Modus sind dieselben wie beim Einschränken eines beliebigen Servers.
 Volle Rechte behält das Konto nur mit `LCM_SELF_MANAGE_FULL=1` bei der
@@ -388,7 +409,9 @@ Installation.
 
 **Bestehende Installationen bleiben, wie sie sind.** Ein Upgrade fasst ein
 vorhandenes `lcm-svc` nicht mehr an - weder die sudoers-Regel noch die
-`authorized_keys`. Das ist Absicht: Früher schrieb jedes Paket-Update die
+`authorized_keys`. Einzige Ausnahme: Ist der Host bereits eingeschränkt, erneuert
+`postinstall.sh` Helper, Whitelist und Shims über `lcm restricted-provision` -
+die Whitelist wird dabei nie durch `NOPASSWD:ALL` ersetzt. Das ist Absicht: Früher schrieb jedes Paket-Update die
 Zeile `NOPASSWD:ALL` neu und hätte damit eine eingeschränkte Whitelist still
 wieder aufgehoben. Wer den eigenen Host umstellen will, nutzt die
 Server-Aktion **Rechte einschränken**; beim Start sagt LCM im Protokoll an,

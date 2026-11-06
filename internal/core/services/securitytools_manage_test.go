@@ -29,7 +29,7 @@ func TestServiceCommandCoversInitSystems(t *testing.T) {
 // Entfernen zurueck, sperrt er weiter nach Regeln, die niemand mehr pflegt -
 // im schlimmsten Fall sperrt er dauerhaft aus.
 func TestUninstallRemovesBouncer(t *testing.T) {
-	script := uninstallScript("apt", SecurityToolCrowdSec)
+	script := uninstallScript(false, "apt", SecurityToolCrowdSec)
 	for _, want := range []string{"crowdsec-firewall-bouncer-iptables", "crowdsec-firewall-bouncer-nftables", "/etc/crowdsec"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("uninstall-skript enthaelt %q nicht:\n%s", want, script)
@@ -44,7 +44,7 @@ func TestUninstallRemovesBouncer(t *testing.T) {
 // TestUninstallFail2banKeepsCrowdSecUntouched: ein Werkzeug entfernen darf das
 // andere nicht mitnehmen.
 func TestUninstallFail2banKeepsCrowdSecUntouched(t *testing.T) {
-	script := uninstallScript("apt", SecurityToolFail2ban)
+	script := uninstallScript(false, "apt", SecurityToolFail2ban)
 	if strings.Contains(script, "crowdsec") {
 		t.Errorf("fail2ban-deinstallation fasst crowdsec an:\n%s", script)
 	}
@@ -58,7 +58,7 @@ func TestUninstallFail2banKeepsCrowdSecUntouched(t *testing.T) {
 // die nachtraegliche Aenderung muss dieselbe Zusage halten.
 func TestAllowlistUpdateKeepsLoopback(t *testing.T) {
 	for _, tool := range []string{SecurityToolFail2ban, SecurityToolCrowdSec} {
-		script := allowlistUpdateScript(tool, "10.0.0.5", []string{"192.168.1.0/24"})
+		script := allowlistUpdateScript(false, tool, "10.0.0.5", []string{"192.168.1.0/24"})
 		for _, want := range []string{"127.0.0.1/8", "::1", "10.0.0.5", "192.168.1.0/24"} {
 			if !strings.Contains(script, want) {
 				t.Errorf("%s: %q fehlt in der neuen allowlist:\n%s", tool, want, script)
@@ -70,11 +70,11 @@ func TestAllowlistUpdateKeepsLoopback(t *testing.T) {
 // TestAllowlistUpdateReloads: Eine geschriebene Datei ohne Nachladen waere
 // wirkungslos, bis jemand den Dienst zufaellig neu startet.
 func TestAllowlistUpdateReloads(t *testing.T) {
-	f2b := allowlistUpdateScript(SecurityToolFail2ban, "10.0.0.5", nil)
+	f2b := allowlistUpdateScript(false, SecurityToolFail2ban, "10.0.0.5", nil)
 	if !strings.Contains(f2b, "fail2ban-client reload") {
 		t.Errorf("fail2ban laedt die allowlist nicht nach:\n%s", f2b)
 	}
-	cs := allowlistUpdateScript(SecurityToolCrowdSec, "10.0.0.5", nil)
+	cs := allowlistUpdateScript(false, SecurityToolCrowdSec, "10.0.0.5", nil)
 	if !strings.Contains(cs, "systemctl restart crowdsec") {
 		t.Errorf("crowdsec laedt die allowlist nicht nach:\n%s", cs)
 	}
@@ -84,15 +84,15 @@ func TestAllowlistUpdateReloads(t *testing.T) {
 // laesst die IP in allen anderen Jails gesperrt - der Anwender haelt sich fuer
 // entsperrt und kommt trotzdem nicht rein.
 func TestUnbanCoversAllJails(t *testing.T) {
-	script := unbanScript(SecurityToolFail2ban, "203.0.113.7")
+	script := unbanScript(false, SecurityToolFail2ban, "203.0.113.7")
 	if !strings.Contains(script, "Jail list") {
 		t.Errorf("unban geht nicht ueber alle jails:\n%s", script)
 	}
 	if !strings.Contains(script, "203.0.113.7") {
 		t.Error("ip fehlt im unban-kommando")
 	}
-	cs := unbanScript(SecurityToolCrowdSec, "203.0.113.7")
-	if !strings.Contains(cs, "cscli decisions delete --ip 203.0.113.7") {
+	cs := unbanScript(false, SecurityToolCrowdSec, "203.0.113.7")
+	if !strings.Contains(cs, `cscli decisions delete --ip "$IP"`) || !strings.Contains(cs, "IP='203.0.113.7'") {
 		t.Errorf("crowdsec-unban falsch:\n%s", cs)
 	}
 }

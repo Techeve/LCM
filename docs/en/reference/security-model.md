@@ -264,7 +264,26 @@ The package inventory of all servers, centrally recorded in the DB, is checked d
 During onboarding (or later via *restrict privileges*) the LCM user can be
 moved from `NOPASSWD:ALL` to a sudoers whitelist: package management (apt,
 dnf/yum, zypper, pacman, apk), Docker, ufw and the strictly validating
-`lcm-helper`. Free-form scripts, custom actions and reboot are then blocked.
+`lcm-helper`. Free-form scripts, custom actions, SSH 2FA and reboot are then
+blocked.
+
+The helper is the only place for everything that needs root and is not on the
+whitelist: package channel of the LCM host, repositories, APT cache, SSH, users,
+firewalld and nftables, fail2ban and CrowdSec, package pins. Every subcommand
+has fixed parameters (enumerations, IPs, ports, URLs, package names; free text
+only base64-encoded) and writes only paths LCM manages. It runs the same script
+parts as full mode so the two cannot drift apart. A subcommand that took a
+script or a freely chosen path does not exist on purpose - it would be a root
+shell. One deliberate exception to "no foreign scripts": `crowdsec-repo` runs
+the vendor's setup script from packagecloud.io as root, as in full mode. The
+address is fixed and the caller only picks `deb` or `rpm`; trust rests on
+packagecloud and TLS.
+
+**Helper version.** The helper is written when restricting. On the LCM host
+`postinstall.sh` renews it on every package update (`lcm restricted-provision`,
+only if the host is restricted); a failure there only warns. Remote restricted
+servers are renewed by **Reconnect** with an admin login - a self-updating helper
+would be a free root path. Until then the status shows "helper outdated".
 
 **Proof instead of assumption.** After switching, LCM checks - as the
 restricted user - whether the helper and the system's package manager really
@@ -367,14 +386,17 @@ onboarded the host by hand.
 `NOPASSWD:ALL` (`/etc/sudoers.d/lcm-svc`, mode 0440), and stores an SSH key
 for it. **On its first start LCM limits the account to the sudoers whitelist**
 - package management, docker, ufw and the validating `lcm-helper`, whose
-subcommands `host-install`, `host-apt-cacher`, `host-crowdsec-lapi` and
-`host-self-update` carry the host functions. The account has no root shell
+subcommands `host-install`, `host-apt-cacher`, `host-crowdsec-lapi`,
+`host-self-update` and `host-apt-channel` carry the host functions. The account has no root shell
 afterwards; the effect check and the fallback to full mode are the same as
 when restricting any other server. It keeps full rights only with
 `LCM_SELF_MANAGE_FULL=1` at install time.
 
 **Existing installations stay as they are.** An upgrade no longer touches an
-existing `lcm-svc` - neither the sudoers rule nor its `authorized_keys`. That
+existing `lcm-svc` - neither the sudoers rule nor its `authorized_keys`. The one
+exception: if the host is already restricted, `postinstall.sh` renews helper,
+whitelist and shims through `lcm restricted-provision` - the whitelist is never
+replaced by `NOPASSWD:ALL`. That
 is deliberate: previously every package update rewrote the `NOPASSWD:ALL` line
 and would silently have undone a restricted whitelist. To switch your own host,
 use the server action **restrict privileges**; at start LCM states where you

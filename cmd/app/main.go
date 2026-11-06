@@ -100,6 +100,17 @@ func main() {
 		}
 		return
 	}
+	// Subcommand: lcm restricted-provision <benutzer> - gibt das Skript aus, das
+	// Helper, sudoers-Whitelist und Shims des eingeschränkten Modus schreibt.
+	// Versteckt (nicht in der Hilfe): nur das Paket (postinstall.sh) ruft es auf.
+	if flag.Arg(0) == "restricted-provision" {
+		script, err := services.RestrictedProvisionScript(flag.Arg(1))
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(script)
+		return
+	}
 	// Subcommand: lcm credentials init - Master-Key in ein systemd-Credential
 	// überführen (kein Klartext-Schlüssel mehr auf der Platte).
 	if flag.Arg(0) == "credentials" {

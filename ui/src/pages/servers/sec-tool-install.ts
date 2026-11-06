@@ -162,7 +162,14 @@ export class SrvToolInstall extends LitElement {
     return [
       { id: 'fail2ban', label: TOOL_NAMES.fail2ban, icon: 'shield', description: security.installed.fail2ban ? already : t('serverSecurity.install.fail2ban'), disabled: security.installed.fail2ban },
       { id: 'crowdsec', label: TOOL_NAMES.crowdsec, icon: 'shield', description: security.installed.crowdsec ? already : t('serverSecurity.install.crowdsec'), disabled: security.installed.crowdsec },
-      { id: 'ssh-2fa', label: t('serverSecurity.twoFactor.title'), icon: 'key', description: security.twoFactor ? already : t('serverSecurity.install.twoFactor'), disabled: security.twoFactor },
+      // SSH-2FA greift in PAM und sshd ein und braucht eine Root-Shell: im eingeschränkten Modus gesperrt.
+      {
+        id: 'ssh-2fa',
+        label: t('serverSecurity.twoFactor.title'),
+        icon: 'key',
+        description: security.twoFactor ? already : security.restrictedSudo ? t('serverSecurity.restricted') : t('serverSecurity.install.twoFactor'),
+        disabled: security.twoFactor || security.restrictedSudo,
+      },
     ];
   }
 
@@ -244,7 +251,6 @@ export class SrvToolInstall extends LitElement {
   }
 
   #renderBody(security: ServerSecurity, form: InstallForm): TemplateResult {
-    if (security.restrictedSudo) return html`<lcm-notice tone="warn">${t('serverSecurity.restricted')}</lcm-notice>`;
     return html`<div class="fields">
       <p class="lead">${t('serverSecurity.install.lead')}</p>
       <lcm-choice label=${t('serverSecurity.install.tool')} variant="cards" .options=${this.#toolOptions(security)} value=${form.tool} @lcm-change=${(e: CustomEvent<{ value: string }>) => this.#patch({ tool: e.detail.value as Choice })}></lcm-choice>
@@ -260,7 +266,7 @@ export class SrvToolInstall extends LitElement {
     const security = this.security;
     const form = this._form;
     const errors = form ? installErrors(form) : undefined;
-    const ready = !!form && form.tool !== '' && !!security && !security.restrictedSudo && errors?.allowlistIps.length === 0 && errors.collections.length === 0;
+    const ready = !!form && form.tool !== '' && !!security && errors?.allowlistIps.length === 0 && errors.collections.length === 0;
     return html`<lcm-modal ?open=${this.open} size="m" heading=${t('serverSecurity.install.title')} close-label=${t('servers.confirm.cancel')} @lcm-close=${() => this.#close()}>
       ${security && form ? this.#renderBody(security, form) : nothing}
       <lcm-button slot="footer" variant="ghost" @click=${() => this.#close()}>${t('servers.confirm.cancel')}</lcm-button>

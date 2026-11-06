@@ -7,22 +7,21 @@ const self = (phase: string, extra: Record<string, unknown> = {}) => normaliseSe
 
 describe('updateBanner', () => {
   it('shows a running self-update before anything else', () => {
-    expect(updateBanner(info('1.1.0', true), self('waiting', { waiting_for: ['Backup'] }), '', false)?.kind).toBe('busy');
-    expect(updateBanner(undefined, self('backup'), '', false)?.kind).toBe('busy');
-    expect(updateBanner(undefined, self('running'), '', false)?.kind).toBe('busy');
+    expect(updateBanner(info('1.1.0', true), self('waiting', { waiting_for: ['Backup'] }), '')?.kind).toBe('busy');
+    expect(updateBanner(undefined, self('backup'), '')?.kind).toBe('busy');
+    expect(updateBanner(undefined, self('running'), '')?.kind).toBe('busy');
   });
 
   it('offers a new version until it is dismissed', () => {
-    expect(updateBanner(info('1.1.0', true), self('idle'), '', false)?.kind).toBe('available');
-    expect(updateBanner(info('1.1.0', true), self('failed'), '', false)?.kind).toBe('available');
-    expect(updateBanner(info('1.1.0', true), self('idle'), '1.1.0', false)).toBeNull();
-    expect(updateBanner(info('1.2.0', true), null, '1.1.0', false)?.kind).toBe('available');
+    expect(updateBanner(info('1.1.0', true), self('idle'), '')?.kind).toBe('available');
+    expect(updateBanner(info('1.1.0', true), self('failed'), '')?.kind).toBe('available');
+    expect(updateBanner(info('1.1.0', true), self('idle'), '1.1.0')).toBeNull();
+    expect(updateBanner(info('1.2.0', true), null, '1.1.0')?.kind).toBe('available');
   });
 
-  it('answers a manual check with "up to date", otherwise stays silent', () => {
-    expect(updateBanner(info('1.0.0', false), null, '', false)).toBeNull();
-    expect(updateBanner(info('1.0.0', false), null, '', true)?.kind).toBe('current');
-    expect(updateBanner(undefined, null, '', true)).toBeNull();
+  it('stays silent without a new version', () => {
+    expect(updateBanner(info('1.0.0', false), null, '')).toBeNull();
+    expect(updateBanner(undefined, null, '')).toBeNull();
   });
 });
 

@@ -68,7 +68,9 @@ func validPinName(name string) (string, error) {
 		return "", ErrPackagePinName
 	}
 	base := strings.TrimSuffix(n, "*")
-	if base == "" {
+	// Das erste Zeichen ist ein Buchstabe oder eine Ziffer, wie bei jedem
+	// Paketnamen - ein Name mit fuehrendem '-' ginge sonst als Option durch.
+	if base == "" || strings.ContainsRune(".-_+", rune(base[0])) {
 		return "", ErrPackagePinName
 	}
 	for _, r := range base {
@@ -267,12 +269,7 @@ func (s *ServerService) planApplyPins(server *domain.Server) (packagePlan, error
 	if err := s.ensurePinsAvailable(server); err != nil {
 		return packagePlan{}, err
 	}
-	// Schutzdateien liegen unter /etc - das geht ueber die sudo-Whitelist des
-	// eingeschraenkten Modus hinaus.
-	if err := ensureFullSudo(server); err != nil {
-		return packagePlan{}, err
-	}
 	pins := s.effectivePins(server)
-	build := func(mgr string) string { return pkgPinScript(mgr, pins) }
+	build := func(mgr string) string { return pkgPinScript(server.RestrictedSudo, mgr, pins) }
 	return s.newPackagePlan(server, domain.RuleTypePackageScan, "Paket-Pins anwenden", build)
 }

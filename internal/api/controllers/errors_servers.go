@@ -57,7 +57,6 @@ var (
 	errTooManyDNSServers      = apierr.Define(400, "dns.too_many_servers", "too many DNS servers")
 	errNoAptCache             = apierr.Define(400, "apt_cache.not_selected", "no APT cache selected or configured")
 	errInvalidFirewallRules   = apierr.Define(400, "firewall.invalid_rules", "invalid firewall rules")
-	errFirewallNeedsFullSudo  = apierr.Define(400, "firewall.needs_full_sudo", "this firewall backend needs full sudo rights")
 	errUnknownSecurityTool    = apierr.Define(400, "security_tool.unknown", "unknown security tool")
 	errInvalidAllowlistIP     = apierr.Define(400, "security_tool.invalid_allowlist_ip", "invalid allowlist IP")
 	errCrowdSecLapiMissing    = apierr.Define(400, "security_tool.lapi_missing", "no CrowdSec LAPI selected or configured")
@@ -138,7 +137,6 @@ var serverErrors = []sentinelCode{
 	{services.ErrUnbanIPMissing, errUnbanIPInvalid},
 	{services.ErrCrowdSecUnsupported, errCrowdSecUnsupported},
 	{services.ErrInvalidFirewallRules, errInvalidFirewallRules},
-	{services.ErrFirewallNeedsFullSudo, errFirewallNeedsFullSudo},
 	{services.ErrNoAptCacheURL, errNoAptCache},
 	{services.ErrTooManyDNSServers, errTooManyDNSServers.With("limit", domain.MaxDNSServers)},
 	{services.ErrInvalidDNSServer, errInvalidDNSServer},

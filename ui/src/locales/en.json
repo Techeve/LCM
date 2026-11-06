@@ -1839,8 +1839,7 @@
       "upgrade_failed": "The event channel could not be opened"
     },
     "firewall": {
-      "invalid_rules": "Invalid firewall rules",
-      "needs_full_sudo": "This firewall backend needs full sudo rights – in restricted mode only ufw can be managed"
+      "invalid_rules": "Invalid firewall rules"
     },
     "group": {
       "custom_action_not_selected": "A custom rule needs a valid custom action",
@@ -4666,8 +4665,8 @@
       "keyWhere": "Users who may manage settings find the public key under Settings → General.",
       "restricted": {
         "label": "Restricted rights (recommended)",
-        "description": "The LCM user may only manage packages, Docker and the firewall and read the system.",
-        "on": "On: no shell or file system access for LCM. In return SSH hardening, custom repositories, APT cache and custom scripts are locked for this server.",
+        "description": "The LCM user may only manage packages, Docker, the firewall and security tools, write the settings LCM manages and read the system.",
+        "on": "On: no shell or file system access for LCM. In return custom scripts, custom actions, SSH 2FA and reboot are locked for this server.",
         "off": "Off: LCM gets passwordless sudo for everything and can use all features."
       },
       "duplicate": "This address with this port already exists:",
@@ -4681,7 +4680,7 @@
         "user": "Creates the service user lcm-svc and installs a key LCM generates for this server only.",
         "reuser": "Recreates the service user lcm-svc and installs a new key generated for this server only.",
         "sudoFull": "Gives lcm-svc passwordless sudo (/etc/sudoers.d/lcm-svc).",
-        "sudoRestricted": "Gives lcm-svc only the rights for package management, Docker, firewall and reading the system.",
+        "sudoRestricted": "Gives lcm-svc only the rights for package management, Docker, firewall, security tools and reading the system.",
         "verify": "Checks the sign-in with the new key and reads the system: packages, sources, users, containers, storage.",
         "group": "Adds the server to the system group – so health checks and sync run right away.",
         "keep": "The server's groups and user assignments stay, the old credentials are replaced."
@@ -4984,7 +4983,6 @@
     "versionTitle": "Version",
     "version": "Version",
     "buildLabel": "Build",
-    "commit": "Commit",
     "dirty": "Dirty build",
     "dirtyHelp": "Built from a working tree with uncommitted changes. It matches no commit and is not a release.",
     "platform": "Platform",
@@ -4996,12 +4994,12 @@
     "checkedAt": "Last checked",
     "checkError": "Check failed",
     "checkNow": "Check now",
+    "upToDate": "Up to date",
+    "newVersion": "{latest} is available",
     "checkFailed": "The check could not be started",
     "imprintTitle": "Imprint",
     "owner": "Owner: {name}",
-    "country": "Germany",
-    "email": "Email",
-    "web": "Web"
+    "country": "Germany"
   },
   "console": {
     "stop": "STOP!",
@@ -5017,7 +5015,6 @@
     "install": "Install now",
     "cancel": "Cancel",
     "dismiss": "Hide notice",
-    "current": "LCM {current} is up to date.",
     "waiting": "LCM {version} will be installed once these jobs are done: {jobs}",
     "backup": "Backup running, then LCM {version} will be installed.",
     "installing": "Installing LCM {version}. The page reloads afterwards.",
@@ -5912,9 +5909,9 @@
       "restrictInfo": {
         "intro": "The LCM user on this server currently has full root rights. This action restricts it to a fixed whitelist, exactly like the “Restricted rights” option during onboarding.",
         "allowedLabel": "Allowed afterwards",
-        "allowed": "Via sudo only: manage packages (apt/dnf/zypper, snap), Docker and the ufw firewall and read the system, plus, through the bundled, strictly validating LCM helper: set up repositories, connect the APT cache, configure SSH (hardening, root login, port) and synchronize Linux users.",
+        "allowed": "Via sudo only: manage packages (apt/dnf/zypper, snap), Docker and the ufw firewall and read the system, plus, through the bundled, strictly validating LCM helper: set up repositories, connect the APT cache, configure SSH (hardening, root login, port), synchronize Linux users, manage firewalld and nftables, set up and operate fail2ban and CrowdSec, write package pins and control the services of the LCM tools.",
         "blockedLabel": "Blocked",
-        "blocked": "No arbitrary commands via LCM: custom scripts, custom actions and reboot are disabled for this server, as is invoking a root shell directly.",
+        "blocked": "No arbitrary commands via LCM: custom scripts, custom actions, SSH 2FA and reboot are disabled for this server, as is invoking a root shell directly.",
         "scopeLabel": "What this protects against, and what it does not",
         "scope": "The mode reduces the attack surface against operating mistakes and accidental changes. It does not protect against someone who obtains the service key: package management and Docker run code as root by design (for example through apt hooks or containers mounting the host), and sudo cannot reliably filter their arguments. Without those programs the mode would be pointless, because updates and Docker are exactly what should keep working.",
         "irreversibleLabel": "Cannot be undone with a click",
@@ -5965,7 +5962,7 @@
     }
   },
   "serverSecurity": {
-    "restricted": "This server runs with restricted sudo. LCM needs full sudo access for these settings.",
+    "restricted": "This server runs with restricted sudo. SSH 2FA needs full sudo access.",
     "protection": {
       "firewall": "Edit firewall",
       "install": "Set up security tools"

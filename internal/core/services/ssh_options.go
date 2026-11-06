@@ -525,7 +525,7 @@ func (p sshPortPlan) unchanged() bool { return p.newPort == p.oldPort }
 func (p sshPortPlan) firewallNarrow(server *domain.Server, expand func([]uint) ([]string, error)) (string, []string) {
 	sshRule := sshFirewallRule(p.newPort, parseSSHSources(server.FirewallSSHSources))
 	sshRule, applied, warnings, _ := expandSSHAndRules(sshRule, firewallRulesFromServer(server), expand)
-	return firewallBackendByName(firewallBackendFor(server)).enableScript(sshRule, applied), warnings
+	return firewallBackendOf(server, firewallBackendFor(server)).enableScript(sshRule, applied), warnings
 }
 
 // planSSHPort prüft Server und Port und baut die Skripte des Wechsels.
@@ -556,7 +556,7 @@ func planSSHPort(server *domain.Server, newPort int) (sshPortPlan, error) {
 	if plan.firewallActive {
 		// Firewall-Backend des Servers (ufw/firewalld/nftables) - die Kommandos
 		// je Backend sind gegen ein fehlendes Werkzeug abgesichert (|| true).
-		fw := firewallBackendByName(firewallBackendFor(server))
+		fw := firewallBackendOf(server, firewallBackendFor(server))
 		plan.firewallOpen = fw.allowPortCmd(newPort)
 		plan.firewallClose = fw.removePortCmd(newPort)
 	}

@@ -126,6 +126,22 @@ test.describe('Konsole und Version', () => {
     // Version UND Kanal stehen da: Die Zahl allein wäre nicht einzuordnen.
     await expect(info).toContainText('99.9.9-beta.1');
     await expect(info).toContainText('beta');
+    await expect(info.getByRole('status')).toHaveText('99.9.9-beta.1 ist verfügbar');
+  });
+
+  test('„Jetzt prüfen“ antwortet neben dem Knopf, nicht im Band dahinter', async ({ page }) => {
+    await page.goto('/');
+    const aktuell = { current_version: '1.0.0', latest_version: '1.0.0', update_available: false, channel: 'stable', checked_at: new Date().toISOString() };
+    await page.route('**/api/v1/system/update-check', (route) => route.fulfill({ json: aktuell }));
+    await page.route('**/api/v1/system/update-info', (route) => route.fulfill({ json: aktuell }));
+    await page.getByRole('button', { name: 'Konto von Administrator' }).click();
+    await page.getByRole('menuitem', { name: /Über LCM/ }).click();
+    const info = fenster(page, 'Über LCM');
+    await expect(info.getByText('Commit')).toHaveCount(0);
+
+    await info.getByRole('button', { name: 'Jetzt prüfen' }).click();
+    await expect(info.getByRole('status')).toHaveText('Aktuell');
+    await expect(page.locator('lcm-update-banner lcm-notice')).toHaveCount(0);
   });
 });
 

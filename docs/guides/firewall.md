@@ -93,10 +93,13 @@ Container-Veröffentlichung (`127.0.0.1:8080:80` statt `8080:80`).
   oder OpenRC/Alpine). Deaktivieren entfernt nur die LCM-Tabelle.
 
 :::note[Eingeschränkter Sudo-Modus]
-Im eingeschränkten Modus ist nur **ufw** verwaltbar (es steht auf der
-sudo-Whitelist). firewalld und nftables brauchen vollen Root-Zugriff
-(Dienststeuerung, Dateien unter `/etc`) - LCM meldet das ehrlich statt halb
-zu konfigurieren.
+Auch im eingeschränkten Modus sind alle drei Werkzeuge verwaltbar. **ufw** steht
+auf der sudo-Whitelist; für **firewalld** und **nftables** (Dienststeuerung,
+Dateien unter `/etc`) übernimmt der validierende `lcm-helper`. Er führt
+dasselbe Skript wie der Voll-Modus aus, prüft aber jeden Parameter: bei
+firewalld nur Port- und Rich-Rule-Freigaben in der erzeugten Form, bei nftables
+nur Zeilen, wie LCM sie für die eigene Tabelle `inet lcm` erzeugt - fremde
+Tabellen, `include` oder `flush` weist er ab.
 :::
 
 ## Gruppen-Regel

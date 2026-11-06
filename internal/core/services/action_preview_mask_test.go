@@ -46,7 +46,7 @@ func TestMaskPreviewSecrets(t *testing.T) {
 // TestMaskPreviewSecretsKeepsRedactionOfLog: Auch was das SSH-Protokoll schwärzt,
 // zeigt die Vorschau nicht (apt auth.conf der Enterprise-Umstellung).
 func TestMaskPreviewSecretsKeepsRedactionOfLog(t *testing.T) {
-	in := "printf 'machine %s\\nlogin %s\\npassword %s\\n' 'https://repo.test' 'user' 'geheim' > /etc/apt/auth.conf"
+	in := "REPO='https://repo.test'\nLOGIN='user'\nSECRET='geheim'\n"
 	got := maskPreviewSecrets(in)
 	if strings.Contains(got, "geheim") {
 		t.Errorf("Zugangsschlüssel sichtbar: %s", got)

@@ -86,7 +86,9 @@ apt-get remove sudo
 Statt voller Rechte bekommt der Management-Benutzer eine Positivliste:
 `/etc/sudoers.d/<service-user>` mit `Cmnd_Alias LCM_ALLOWED = …` und genau
 diesen Kommandos ohne Passwort. Zusätzlich liegt der LCM-Helper auf dem
-Server, über den die erlaubten privilegierten Schritte laufen.
+Server, über den die erlaubten privilegierten Schritte laufen: Paketquellen,
+Paketkanal, APT-Cache, SSH, Benutzer, firewalld und nftables, fail2ban und
+CrowdSec sowie Paket-Pins. Die Dateien sind dieselben wie im Voll-Modus.
 
 ```sh
 rm -f /etc/sudoers.d/<service-user>

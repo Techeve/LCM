@@ -43,9 +43,12 @@ Server detail → **Actions → "Security tools"**. Choose the tool in the modal
     CrowdSec*.
   - **Allowlist IPs** (LCM IP prefilled).
 
-The action requires **full sudo**; on servers in restricted-sudo mode it is
-disabled. It runs as an **asynchronous, logged job**; afterwards LCM re-reads the
-actual state (installed + active) and stores it.
+LCM installs packages through the package manager; vendor repository,
+configuration and service start need root. In full mode they run as a script, on
+servers in restricted sudo mode through the validating `lcm-helper` (with the
+same script parts, every parameter strictly checked). The action runs as an
+**asynchronous, logged job**; afterwards LCM re-reads the actual state
+(installed + active) and stores it.
 
 ### What fail2ban writes
 
@@ -221,11 +224,12 @@ server from - even if the field is left empty. That source IP is read without
 `sudo` (`$SSH_CONNECTION`), because `sudo` discards this variable.
 :::
 
-:::warning[Not in restricted mode]
-All management actions touch services and system configuration and are therefore
-blocked in [restricted sudo mode](/en/reference/security-model) - the card says so
-instead of running into an error. If the tool is not (or no longer) installed on
-the server, the job ends with an error rather than a misleading success message.
+:::note[Restricted sudo mode]
+All management actions are available in [restricted sudo mode](/en/reference/security-model)
+too: service control, allowlist, unban, the ban list and removal run through
+the `lcm-helper`. Only SSH 2FA stays blocked (it changes PAM and sshd). If the
+tool is not (or no longer) installed on the server, the job ends with an error
+rather than a misleading success message.
 :::
 
 ## Display & detection

@@ -82,7 +82,9 @@ apt-get remove sudo
 Instead of full rights the management user gets an allowlist:
 `/etc/sudoers.d/<service-user>` with `Cmnd_Alias LCM_ALLOWED = …` and exactly
 those commands without a password. In addition the LCM helper sits on the
-server; the permitted privileged steps run through it.
+server; the permitted privileged steps run through it: package sources,
+package channel, APT cache, SSH, users, firewalld and nftables, fail2ban and
+CrowdSec, and package pins. The files are the same as in full mode.
 
 ```sh
 rm -f /etc/sudoers.d/<service-user>

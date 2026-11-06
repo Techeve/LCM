@@ -831,9 +831,9 @@ func (e *Executor) enforceOnConn(conn sshx.Conn, server *domain.Server) (string,
 // enforceRule setzt eine einzelne Grundsatz-Regel um (prüfen → nur bei
 // Abweichung anwenden).
 func (e *Executor) enforceRule(conn sshx.Conn, server *domain.Server, rule *domain.Rule) (string, error) {
-	// Eingeschränkter Modus: script- und apt-proxy-Grundsatzregeln brauchen
-	// Root-Shell-/Dateisystemzugriff - sauber überspringen statt fehlzuschlagen.
-	if server.RestrictedSudo && (rule.Type == domain.RuleTypeScript || rule.Type == domain.RuleTypeAptProxy) {
+	// Eingeschränkter Modus: script-Grundsatzregeln brauchen eine Root-Shell -
+	// sauber überspringen statt fehlzuschlagen.
+	if server.RestrictedSudo && rule.Type == domain.RuleTypeScript {
 		return fmt.Sprintf("  [%s] im eingeschränkten modus übersprungen", rule.Name), nil
 	}
 	switch rule.Type {
@@ -862,10 +862,7 @@ func (e *Executor) enforceRule(conn sshx.Conn, server *domain.Server, rule *doma
 				"Freizugebende Ports in der Regel hinterlegen; für „nur SSH offen\" ausdrücklich [] eintragen.", rule.Name), nil
 		}
 		backend := firewallBackendFor(server)
-		if server.RestrictedSudo && backend != domain.FirewallToolUfw {
-			return fmt.Sprintf("  [%s] firewall-backend %s braucht volle sudo-rechte - im eingeschränkten modus übersprungen", rule.Name, backend), nil
-		}
-		be := firewallBackendByName(backend)
+		be := firewallBackendOf(server, backend)
 		// Benannte Allowlists auflösen (angewendet werden die Quellen, der
 		// Hash erfasst sie → Änderungen an Listen lösen ein Neu-Anwenden aus).
 		ssh, applied, fwWarnings, err := expandSSHAndRules(serverSSHRule(server), rules, e.ipAllowlistExpand)
@@ -934,7 +931,7 @@ func (e *Executor) enforceRule(conn sshx.Conn, server *domain.Server, rule *doma
 			_ = e.servers.UpdateFields(server.ID, map[string]any{"apt_proxy_active": true, "apt_proxy_url": cacheURL})
 			return fmt.Sprintf("  [%s] apt-cache ok - regel umgesetzt (%s)", rule.Name, cacheURL), nil
 		}
-		out, code, err := conn.Run(privRun(server, aptProxyEnableScript(cacheURL)))
+		out, code, err := conn.Run(privRun(server, aptProxyEnableCmd(server, cacheURL)))
 		if err == nil && code != 0 {
 			err = fmt.Errorf("exit-code %d: %s", code, summarize(out))
 		}
@@ -987,7 +984,7 @@ func (e *Executor) runAptProxyRule(job *domain.Job, server *domain.Server, rule 
 	})
 	defer conn.Close()
 
-	output, code, runErr := conn.Run(privRun(server, aptProxyEnableScript(cacheURL)))
+	output, code, runErr := conn.Run(privRun(server, aptProxyEnableCmd(server, cacheURL)))
 	if runErr == nil && code != 0 {
 		runErr = fmt.Errorf("apt-cache-anbindung endete mit exit-code %d", code)
 	}
@@ -1090,11 +1087,6 @@ func (e *Executor) runFirewallRule(job *domain.Job, server *domain.Server, rule 
 	rules, err := parseFirewallRuleSpec(rule.Command)
 	if err != nil {
 		e.jobs.Complete(job, "", nil, fmt.Errorf("ungültige firewall-regel: %w", err))
-		return
-	}
-	backend := firewallBackendFor(server)
-	if server.RestrictedSudo && backend != domain.FirewallToolUfw {
-		e.jobs.CompleteSkipped(job, fmt.Sprintf("firewall-backend %s braucht volle sudo-rechte - im eingeschränkten modus übersprungen", backend))
 		return
 	}
 	conn, err := e.connect(server)

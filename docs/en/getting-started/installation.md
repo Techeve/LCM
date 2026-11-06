@@ -115,7 +115,7 @@ reason. In a container you replace the image instead.
 
 The *About LCM* dialog (account menu at the top right) also offers
 **Check now**: it queries the package channel right away and shows the result
-in the banner - including when LCM is already up to date.
+right next to the button - including when LCM is already up to date.
 
 **New in this version.** After an update LCM shows each administrator, once, a
 window *New in version …* with what changed. LCM fetches the notes from the

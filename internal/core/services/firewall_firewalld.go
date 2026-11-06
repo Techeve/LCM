@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"LCM/internal/core/domain"
@@ -59,8 +60,39 @@ func firewalldRuleIsSimple(r domain.FirewallRule) bool {
 // aktivieren, vorhandene Ports + Rich-Rules der Zone entfernen, SSH und die
 // Regeln freigeben, ein einziges --reload macht alles zugleich wirksam
 // (die bestehende SSH-Sitzung überlebt als etablierte Verbindung).
+//
+// Die Freigaben stehen als firewall-cmd-Argumente in $@ (firewalldApplyArgs):
+// im Voll-Modus setzt `set --` sie vor den Rumpf, im eingeschränkten Modus
+// übergibt LCM sie dem Helper (firewall-apply), der jedes einzelne gegen die
+// zwei erzeugten Formen prüft und denselben Rumpf ausführt.
 func firewalldEnableScript(ssh domain.FirewallRule, rules []domain.FirewallRule) string {
-	lines := []string{
+	args := firewalldApplyArgs(ssh, rules)
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = shellQuote(a)
+	}
+	return "set -- " + strings.Join(quoted, " ") + "\n" + firewalldApplyBody()
+}
+
+// firewalldApplyArgs rendert SSH-Freigabe und Regeln als firewall-cmd-Argumente
+// (--add-port=… bzw. --add-rich-rule=…) über denselben Renderer.
+func firewalldApplyArgs(ssh domain.FirewallRule, rules []domain.FirewallRule) []string {
+	var args []string
+	for _, r := range append([]domain.FirewallRule{ssh}, rules...) {
+		if firewalldRuleIsSimple(r) {
+			args = append(args, fmt.Sprintf("--add-port=%d/%s", r.Port, r.Proto))
+			continue
+		}
+		for _, rr := range firewalldRichRules(r) {
+			args = append(args, "--add-rich-rule="+rr)
+		}
+	}
+	return args
+}
+
+// firewalldApplyBody erwartet die Freigaben als Argumente ($@).
+func firewalldApplyBody() string {
+	return strings.Join([]string{
 		"set -e",
 		"command -v firewall-cmd >/dev/null 2>&1 || { echo '" + firewallToolMissingMarker(domain.FirewallToolFirewalld) + "'; exit 1; }",
 		"systemctl enable --now firewalld >/dev/null 2>&1 || true",
@@ -76,26 +108,14 @@ func firewalldEnableScript(ssh domain.FirewallRule, rules []domain.FirewallRule)
 		// SSH bleibt offen: der explizite Port wird unten VOR dem einen
 		// --reload wieder freigegeben.
 		`for s in $(firewall-cmd --permanent --zone="$Z" --list-services); do firewall-cmd --permanent --zone="$Z" --remove-service="$s" >/dev/null || true; done`,
-	}
-	// SSH-Freigabe (bind-fähig) und alle Regeln über denselben Renderer.
-	for _, r := range append([]domain.FirewallRule{ssh}, rules...) {
-		if firewalldRuleIsSimple(r) {
-			lines = append(lines, fmt.Sprintf(`firewall-cmd --permanent --zone="$Z" --add-port=%d/%s >/dev/null`, r.Port, r.Proto))
-		} else {
-			for _, rr := range firewalldRichRules(r) {
-				lines = append(lines, `firewall-cmd --permanent --zone="$Z" --add-rich-rule='`+rr+`' >/dev/null`)
-			}
-		}
-	}
-	lines = append(lines,
+		`for a in "$@"; do firewall-cmd --permanent --zone="$Z" "$a" >/dev/null; done`,
 		"firewall-cmd --reload >/dev/null",
 		`echo "LCM-ZONE: $Z"`,
 		"firewall-cmd --state",
 		`firewall-cmd --zone="$Z" --list-ports`,
 		`firewall-cmd --zone="$Z" --list-rich-rules`,
 		`echo "LCM-SERVICES: $(firewall-cmd --zone="$Z" --list-services)"`,
-	)
-	return strings.Join(lines, "\n")
+	}, "\n")
 }
 
 // firewalldDisableScript stoppt und deaktiviert den firewalld-Dienst.
@@ -188,9 +208,15 @@ func firewalldInSync(statusOutput string, ssh domain.FirewallRule, rules []domai
 // firewalldAllowPortCmd/firewalldRemovePortCmd: Laufzeit-Einzelfreigabe für
 // den SSH-Portwechsel; die abschließende Voll-Anwendung persistiert.
 func firewalldAllowPortCmd(port int) string {
-	return fmt.Sprintf("command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --add-port=%d/tcp >/dev/null 2>&1 || true", port)
+	return "PORT=" + strconv.Itoa(port) + "\n" + firewalldAllowPortBody
 }
 
 func firewalldRemovePortCmd(port int) string {
-	return fmt.Sprintf("command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --remove-port=%d/tcp >/dev/null 2>&1 || true", port)
+	return "PORT=" + strconv.Itoa(port) + "\n" + firewalldRemovePortBody
 }
+
+// Rümpfe der Einzelfreigabe; sie erwarten $PORT (Helper: firewall-port).
+const (
+	firewalldAllowPortBody  = `command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --add-port="$PORT"/tcp >/dev/null 2>&1 || true`
+	firewalldRemovePortBody = `command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --remove-port="$PORT"/tcp >/dev/null 2>&1 || true`
+)

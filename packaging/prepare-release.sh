@@ -133,6 +133,15 @@ git commit -m "release: v${NEXT_VERSION} - Version & Changelog vorbereitet"
 
 echo
 echo ">> Vorbereitet und committet: release: v${NEXT_VERSION}"
+# Größere Releases bekommen einen Text für das Fenster nach dem Update, ihre
+# Betas zeigen ihn ebenfalls.
+SERIES=${NEXT_VERSION%%-*}
+case "$SERIES" in
+  *.0)
+    [ -f "release-info/$SERIES.md" ] ||
+      echo ">> HINWEIS: release-info/$SERIES.md fehlt - das Fenster nach dem Update zeigt nur den Changelog-Auszug."
+    ;;
+esac
 if [ "${PUSH:-0}" = "1" ]; then
   echo ">> Push nach origin/${BRANCH}"
   git push origin "$BRANCH"

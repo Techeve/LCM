@@ -218,7 +218,7 @@ func readServerLiveStatus(conn sshx.Conn, server *domain.Server) map[string]any 
 			fields["firewall_allowed_ports"] = ""
 		}
 		if tool != "" {
-			be := firewallBackendByName(tool)
+			be := firewallBackendOf(server, tool)
 			if out, c, e := conn.Run(privRun(server, be.statusCmd)); e == nil && c == 0 {
 				active := be.activeFrom(out)
 				fields["firewall_active"] = active

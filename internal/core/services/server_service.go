@@ -36,12 +36,13 @@ var (
 	// den Fehlschlag sichtbar machen (BUG-024).
 	ErrFirewallToolMissing = errors.New("das vorgesehene Firewall-Werkzeug (ufw, firewalld oder nftables - je nach Distribution) ist auf diesem System nicht installiert")
 	// ErrRestrictedSudo: Der Server wurde mit einem eingeschränkten
-	// Management-Benutzer angelegt (sudoers-Whitelist + LCM-Helper). Die
-	// Kernfunktionen (Updates, Speicher, CVE-Scan, Repositories, apt-Cache,
-	// Firewall, SSH-Konfiguration/-Port, Benutzer-Sync) laufen weiter;
-	// gesperrt bleiben nur Aktionen mit freier Root-Shell (eigene Skripte,
-	// Custom-Aktionen) und der Neustart.
-	ErrRestrictedSudo = errors.New("im eingeschränkten Modus nicht verfügbar - diese Aktion braucht eine Root-Shell (frei definierte Kommandos/Neustart), die der Management-Benutzer dieses Servers nicht mehr hat")
+	// Management-Benutzer angelegt (sudoers-Whitelist + LCM-Helper). Alles, was
+	// LCM selbst verwaltet, läuft weiter (Updates, Speicher, CVE-Scan,
+	// Repositories, apt-Cache, Firewall, Sicherheits-Tools, Paket-Pins, alte
+	// Kernel, SSH-Konfiguration/-Port, Benutzer-Sync, LCM-Host-Aktionen);
+	// gesperrt bleiben nur Aktionen mit freier Root-Shell: eigene Skripte,
+	// Custom-Aktionen, SSH-2FA und der Neustart.
+	ErrRestrictedSudo = errors.New("im eingeschränkten Modus nicht verfügbar - diese Aktion braucht eine Root-Shell (eigene Skripte und Aktionen, SSH-2FA, Neustart), die der Management-Benutzer dieses Servers nicht mehr hat")
 	// ErrUserSyncDisabled: Für diesen Server ist der Linux-Benutzer-Sync in
 	// den Server-Einstellungen deaktiviert.
 	ErrUserSyncDisabled = errors.New("der linux-benutzer-sync ist für diesen server deaktiviert")

@@ -149,7 +149,7 @@ export class SrvMore extends LitElement {
         : null,
       !agent ? { id: 'reconnect', label: t('servers.bar.reconnect.label'), tip: t('serverDetail.more.tips.reconnect'), icon: 'link', run: async () => void router.navigate(`/servers/join?reconnect=${s.id}`) } : null,
       !device ? { id: 'dns-test', label: t('serverDetail.more.dnsTest'), tip: t('serverDetail.more.tips.dnsTest'), icon: 'search', run: () => this.#done(t('serverDetail.more.dnsTestDone', { name: s.name }), detailApi.dnsTest(s.id)) } : null,
-      !device && !s.restricted_sudo
+      !device
         ? { id: 'security-tools', label: t('serverDetail.more.securityTools'), icon: 'shield', run: async () => void router.navigate(`${serverPath(s.id, 'security')}?modal=security-tool`) }
         : null,
       !device && !s.restricted_sudo

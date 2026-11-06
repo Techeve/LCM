@@ -354,7 +354,6 @@ func TestPreviewSecurityToolsRefusedLikeRun(t *testing.T) {
 	}{
 		{"RouterOS", map[string]any{"os_id": domain.OSIDRouterOS}, services.ErrRouterOSUnsupported},
 		{"DSM", map[string]any{"os_id": domain.OSIDSynologyDSM}, services.ErrDSMUnsupported},
-		{"eingeschränkt", map[string]any{"restricted_sudo": true}, services.ErrRestrictedSudo},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -368,6 +367,24 @@ func TestPreviewSecurityToolsRefusedLikeRun(t *testing.T) {
 			}
 		})
 	}
+
+	// Eingeschränkt: Einrichten und Verwalten der Sicherheits-Tools laufen über
+	// den Helper; gesperrt bleibt nur die SSH-2FA (Eingriff in PAM und sshd).
+	t.Run("eingeschränkt", func(t *testing.T) {
+		env := newTestEnv(t)
+		id := joinTestServer(t, env, "web01")
+		setServerFields(t, env, id, map[string]any{"restricted_sudo": true})
+		for _, action := range actions {
+			_, err := env.Servers.PreviewAction(scope, id, action, args)
+			ssh2fa := action == services.PreviewSSH2FAEnable || action == services.PreviewSSH2FADisable
+			if ssh2fa && !errors.Is(err, services.ErrRestrictedSudo) {
+				t.Errorf("%s: %v, erwartet %v", action, err, services.ErrRestrictedSudo)
+			}
+			if !ssh2fa && err != nil {
+				t.Errorf("%s im eingeschränkten Modus: %v", action, err)
+			}
+		}
+	})
 
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
@@ -578,8 +595,8 @@ func TestPreviewSettingsRefused(t *testing.T) {
 		t.Errorf("NTP im Container: %v", err)
 	}
 	setServerFields(t, env, id, map[string]any{"restricted_sudo": true})
-	if err := preview(services.PreviewPinsApply, services.PreviewArgs{}); !errors.Is(err, services.ErrRestrictedSudo) {
-		t.Errorf("Pins im eingeschränkten Modus: %v", err)
+	if err := preview(services.PreviewPinsApply, services.PreviewArgs{}); err != nil {
+		t.Errorf("Pins im eingeschränkten Modus gehen über den Helper: %v", err)
 	}
 	setServerFields(t, env, id, map[string]any{"os_id": domain.OSIDRouterOS})
 	for _, action := range []string{services.PreviewDNS, services.PreviewTimezone, services.PreviewNTP, services.PreviewPinsApply,

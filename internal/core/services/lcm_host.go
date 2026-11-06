@@ -85,10 +85,27 @@ const aptCacherInstallScript = "set -e; " +
 // Helper trägt dasselbe Skript (siehe lcm_helper.go) und läuft als root über
 // die sudoers-Whitelist. So braucht auch der LCM-Host kein NOPASSWD:ALL.
 func hostScript(server *domain.Server, full, sub string, args ...string) string {
-	if server.RestrictedSudo {
+	return rootStep(server.RestrictedSudo, full, sub, args...)
+}
+
+// rootStep ist hostScript für Aufrufer, die nur den Modus kennen: der Schritt,
+// der root braucht, als Skript (Voll-Modus) oder als Helper-Aufruf.
+func rootStep(restricted bool, full, sub string, args ...string) string {
+	if restricted {
 		return helperCmd(sub, args...)
 	}
 	return full
+}
+
+// shellVars liefert Variablenzuweisungen NAME='wert' (Paare name, wert), die
+// einem Rumpf vorangestellt werden. Der Helper setzt dieselben Variablen aus
+// seinen geprüften Parametern und führt denselben Rumpf aus.
+func shellVars(pairs ...string) string {
+	var b strings.Builder
+	for i := 0; i+1 < len(pairs); i += 2 {
+		b.WriteString(pairs[i] + "=" + shellQuote(pairs[i+1]) + "\n")
+	}
+	return b.String()
 }
 
 // LcmHostStatus beschreibt den Einrichtungszustand des LCM-Hosts.

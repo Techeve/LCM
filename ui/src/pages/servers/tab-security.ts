@@ -176,7 +176,6 @@ export class SrvSecurity extends SrvTab {
         lcm-ip=${s.lcmSourceIp}
         ?active=${s.active[tool]}
         ?can-write=${this.canWrite}
-        ?restricted=${s.restrictedSudo}
         .allowlists=${this.#allowlists.data ?? []}
       ></lcm-srv-tool>`,
     );

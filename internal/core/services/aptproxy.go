@@ -157,10 +157,7 @@ func (s *ServerService) planAptProxy(server *domain.Server, enable bool, cacheID
 		return "", "", err
 	}
 	if !enable {
-		if server.RestrictedSudo {
-			return helperCmd("apt-proxy", "off"), "", nil
-		}
-		return aptProxyDisableScript(), "", nil
+		return rootStep(server.RestrictedSudo, aptProxyDisableScript(), "apt-proxy", "off"), "", nil
 	}
 	if s.aptCacheURL == nil {
 		return "", "", ErrNoAptCacheURL
@@ -169,12 +166,15 @@ func (s *ServerService) planAptProxy(server *domain.Server, enable bool, cacheID
 	if err != nil {
 		return "", "", err
 	}
-	// Eingeschränkter Modus: das Drop-in schreibt der LCM-Helper
-	// (validiert die URL, gleiche apt-update-Probe mit Rollback).
-	if server.RestrictedSudo {
-		return helperCmd("apt-proxy", cacheURL), cacheURL, nil
-	}
-	return aptProxyEnableScript(cacheURL), cacheURL, nil
+	return aptProxyEnableCmd(server, cacheURL), cacheURL, nil
+}
+
+// aptProxyEnableCmd bindet den Server an den Cache an. Im eingeschränkten Modus
+// schreibt das Drop-in der LCM-Helper (validiert die URL, gleiche
+// apt-update-Probe mit Rollback) - Aktion, Gruppen-Regel und Durchsetzung
+// gehen alle diesen Weg.
+func aptProxyEnableCmd(server *domain.Server, cacheURL string) string {
+	return rootStep(server.RestrictedSudo, aptProxyEnableScript(cacheURL), "apt-proxy", cacheURL)
 }
 
 // aptProxyEnforceHint warnt beim Trennen, wenn eine aktive apt-proxy-

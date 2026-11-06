@@ -90,110 +90,117 @@ func serviceUnit(tool string) string {
 	return "fail2ban"
 }
 
+// securityServiceBody ist das Dienst-Kommando einer Aktion samt Meldung; es
+// erwartet den Dienstnamen in $UNIT. Voll-Modus und Helper
+// (security-service) benutzen denselben Rumpf.
+func securityServiceBody(action string) string {
+	return serviceCommand(action, `"$UNIT"`) + "\necho \"LCM: $UNIT " + action + "\""
+}
+
+// securityServiceStep steuert den Dienst des Werkzeugs: der Rumpf im
+// Voll-Modus, der Helper-Aufruf (security-service) im eingeschränkten.
+func securityServiceStep(restricted bool, action, tool string) string {
+	return rootStep(restricted, shellVars("UNIT", serviceUnit(tool))+securityServiceBody(action),
+		"security-service", tool, action)
+}
+
+// Rümpfe des Entfernens: die Konfiguration, die LCM geschrieben hat. Der Helper
+// (security-purge) trägt beide und wählt nach dem Werkzeug.
+const (
+	// NICHT `rm -rf /etc/fail2ban`: dort liegt neben LCMs Drop-in auch
+	// jail.local, in der Administratoren ihre eigenen Jails und
+	// Verschärfungen pflegen. Ein Rückbau, der fremde Konfiguration
+	// mitreißt, ist dieselbe Fehlerklasse wie das stille Überschreiben
+	// aus R2-076. Entfernt wird deshalb LCMs eigene Datei; das
+	// Verzeichnis nur, wenn danach nichts Fremdes mehr darin steht.
+	purgeFail2banBody = `rm -f ` + fail2banDropin + `
+rmdir /etc/fail2ban/jail.d 2>/dev/null || true
+if rmdir /etc/fail2ban 2>/dev/null; then echo 'LCM: /etc/fail2ban entfernt (war leer)'; ` +
+		`else echo 'LCM: /etc/fail2ban bleibt bestehen - es enthaelt Konfiguration, die nicht von LCM stammt'; fi
+echo 'LCM: fail2ban entfernt (Paket, Dienst und LCM-Konfiguration)'`
+	purgeCrowdSecBody = `rm -rf /etc/crowdsec
+echo 'LCM: crowdsec entfernt (Paket, Dienst und /etc/crowdsec)'`
+)
+
+func purgeBody(tool string) string {
+	if tool == SecurityToolCrowdSec {
+		return purgeCrowdSecBody
+	}
+	return purgeFail2banBody
+}
+
 // uninstallScript entfernt das Werkzeug samt Konfiguration. Der Dienst wird
 // zuerst gestoppt und aus dem Autostart genommen - sonst bliebe je nach
 // Paketverwaltung eine verwaiste Unit zurueck.
-func uninstallScript(mgr, tool string) string {
-	unit := serviceUnit(tool)
+func uninstallScript(restricted bool, mgr, tool string) string {
 	pkgs := []string{"fail2ban"}
-	conf := "/etc/fail2ban"
 	if tool == SecurityToolCrowdSec {
 		// Der Bouncer wird mitentfernt, falls vorhanden - sonst blockiert er
 		// weiter nach Regeln, die niemand mehr pflegt.
 		pkgs = []string{"crowdsec", "crowdsec-firewall-bouncer-iptables", "crowdsec-firewall-bouncer-nftables"}
-		conf = "/etc/crowdsec"
 	}
 	steps := []string{
-		serviceCommand(SecurityToolActionStop, unit),
-		serviceCommand(SecurityToolActionDisable, unit),
+		securityServiceStep(restricted, SecurityToolActionStop, tool),
+		securityServiceStep(restricted, SecurityToolActionDisable, tool),
 	}
 	for _, p := range pkgs {
 		// Fehlende Pakete duerfen den Lauf nicht abbrechen (der Bouncer ist
 		// optional, und die Bouncer-Variante haengt an der Firewall).
 		steps = append(steps, pkgRemovePackagesScript(mgr, []string{p})+" 2>/dev/null || true")
 	}
-	if tool == SecurityToolFail2ban {
-		// NICHT `rm -rf /etc/fail2ban`: dort liegt neben LCMs Drop-in auch
-		// jail.local, in der Administratoren ihre eigenen Jails und
-		// Verschärfungen pflegen. Ein Rückbau, der fremde Konfiguration
-		// mitreißt, ist dieselbe Fehlerklasse wie das stille Überschreiben
-		// aus R2-076. Entfernt wird deshalb LCMs eigene Datei; das
-		// Verzeichnis nur, wenn danach nichts Fremdes mehr darin steht.
-		steps = append(steps,
-			"rm -f "+fail2banDropin,
-			"rmdir /etc/fail2ban/jail.d 2>/dev/null || true",
-			"if rmdir "+conf+" 2>/dev/null; then echo 'LCM: "+conf+" entfernt (war leer)'; "+
-				"else echo 'LCM: "+conf+" bleibt bestehen - es enthaelt Konfiguration, die nicht von LCM stammt'; fi",
-			fmt.Sprintf("echo 'LCM: %s entfernt (Paket, Dienst und LCM-Konfiguration)'", tool),
-		)
-		return strings.Join(steps, "\n")
-	}
-	steps = append(steps,
-		"rm -rf "+conf,
-		fmt.Sprintf("echo 'LCM: %s entfernt (Paket, Dienst und %s)'", tool, conf),
-	)
+	steps = append(steps, rootStep(restricted, purgeBody(tool), "security-purge", tool))
 	return strings.Join(steps, "\n")
 }
 
 // allowlistUpdateScript schreibt NUR die Allowlist neu und laedt sie nach -
-// ohne Neuinstallation. Der Aufbau der Datei ist identisch zur Einrichtung,
-// damit beide Wege denselben Zustand erzeugen.
-func allowlistUpdateScript(tool, srcIP string, extra []string) string {
+// ohne Neuinstallation. Es ist derselbe Schritt wie bei der Einrichtung, damit
+// beide Wege denselben Zustand erzeugen.
+func allowlistUpdateScript(restricted bool, tool, srcIP string, extra []string) string {
 	ips := allowlistIPs(srcIP, extra)
 	if tool == SecurityToolCrowdSec {
-		var ipYAML strings.Builder
-		for _, ip := range ips {
-			ipYAML.WriteString("    - \"" + ip + "\"\\n")
-		}
-		return strings.Join([]string{
-			"install -d -m 755 /etc/crowdsec/parsers/s02-enrich",
-			fmt.Sprintf("printf 'name: lcm/whitelist\\ndescription: \"LCM management allowlist\"\\nwhitelist:\\n  reason: \"LCM management\"\\n  ip:\\n%s' > /etc/crowdsec/parsers/s02-enrich/lcm-whitelist.yaml", ipYAML.String()),
-			serviceCommand(SecurityToolActionRestart, "crowdsec"),
-			fmt.Sprintf("echo 'LCM: CrowdSec-Allowlist aktualisiert (%s)'", strings.Join(ips, " ")),
-		}, "\n")
+		step, _ := crowdsecConfigureStep(restricted, "", CrowdSecConfig{}, ips)
+		return step
 	}
-	ignore := strings.Join(ips, " ")
-	return strings.Join([]string{
-		"install -d -m 755 /etc/fail2ban",
-		// jail.local wird komplett neu geschrieben - wie bei der Einrichtung.
-		fmt.Sprintf("printf '[DEFAULT]\\nbackend = systemd\\nignoreip = %s\\n\\n[sshd]\\nenabled = true\\n' > /etc/fail2ban/jail.local", ignore),
-		"fail2ban-client reload 2>/dev/null || " + serviceCommand(SecurityToolActionRestart, "fail2ban"),
-		fmt.Sprintf("echo 'LCM: fail2ban-Allowlist aktualisiert (ignoreip: %s)'", ignore),
-	}, "\n")
+	return fail2banConfigStep(restricted, ips)
 }
 
-// unbanScript hebt eine Sperre auf. Die IP ist vorher kanonisiert worden - sie
-// landet woertlich in einem Kommando.
-func unbanScript(tool, ip string) string {
-	if tool == SecurityToolCrowdSec {
-		return strings.Join([]string{
-			"cscli decisions delete --ip " + ip,
-			fmt.Sprintf("echo 'LCM: CrowdSec-Entscheidungen fuer %s aufgehoben'", ip),
-		}, "\n")
-	}
+// Rümpfe von Entsperren (erwarten die IP in $IP) und Sperrliste. Der Helper
+// trägt dieselben (security-unban, security-bans).
+const (
 	// fail2ban: Die IP kann in mehreren Jails sitzen - alle durchgehen.
-	return strings.Join([]string{
-		"for j in $(fail2ban-client status | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' '); do",
-		"  fail2ban-client set \"$j\" unbanip " + ip + " >/dev/null 2>&1 && echo \"LCM: $j -> " + ip + " entsperrt\"",
-		"done",
-		"fail2ban-client unban " + ip + " >/dev/null 2>&1 || true",
-	}, "\n")
+	unbanFail2banBody = `for j in $(fail2ban-client status | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' '); do
+  fail2ban-client set "$j" unbanip "$IP" >/dev/null 2>&1 && echo "LCM: $j -> $IP entsperrt"
+done
+fail2ban-client unban "$IP" >/dev/null 2>&1 || true`
+	unbanCrowdSecBody = `cscli decisions delete --ip "$IP"
+echo "LCM: CrowdSec-Entscheidungen fuer $IP aufgehoben"`
+
+	banListCrowdSecBody = `cscli decisions list -o json 2>/dev/null || echo '[]'`
+	// Je Zeile "jail|ip" - bewusst einfach, damit kein Parser-Format der
+	// jeweiligen fail2ban-Version im Weg steht.
+	banListFail2banBody = `for j in $(fail2ban-client status 2>/dev/null | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' '); do
+  for ip in $(fail2ban-client status "$j" 2>/dev/null | sed -n 's/.*Banned IP list:[[:space:]]*//p'); do
+    [ -n "$ip" ] && echo "$j|$ip"
+  done
+done`
+)
+
+// unbanScript hebt eine Sperre auf. Die IP ist vorher kanonisiert worden.
+func unbanScript(restricted bool, tool, ip string) string {
+	body := unbanFail2banBody
+	if tool == SecurityToolCrowdSec {
+		body = unbanCrowdSecBody
+	}
+	return rootStep(restricted, shellVars("IP", ip)+body, "security-unban", tool, ip)
 }
 
 // banListCommand liefert die Sperrliste in einem maschinenlesbaren Format.
-func banListCommand(tool string) string {
+func banListCommand(restricted bool, tool string) string {
+	body := banListFail2banBody
 	if tool == SecurityToolCrowdSec {
-		return "cscli decisions list -o json 2>/dev/null || echo '[]'"
+		body = banListCrowdSecBody
 	}
-	// Je Zeile "jail|ip" - bewusst einfach, damit kein Parser-Format der
-	// jeweiligen fail2ban-Version im Weg steht.
-	return strings.Join([]string{
-		"for j in $(fail2ban-client status 2>/dev/null | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' ' '); do",
-		"  for ip in $(fail2ban-client status \"$j\" 2>/dev/null | sed -n 's/.*Banned IP list:[[:space:]]*//p'); do",
-		"    [ -n \"$ip\" ] && echo \"$j|$ip\"",
-		"  done",
-		"done",
-	}, "\n")
+	return rootStep(restricted, body, "security-bans", tool)
 }
 
 // parseBans wandelt die Ziel-Ausgabe in die vereinheitlichte Liste.
@@ -258,7 +265,7 @@ func (s *ServerService) SecurityToolBans(scope repositories.AccessScope, id uint
 	}
 	defer conn.Close()
 
-	out, _, err := conn.Run(privRun(server, banListCommand(tool)))
+	out, _, err := conn.Run(privRun(server, banListCommand(server.RestrictedSudo, tool)))
 	if err != nil {
 		return nil, err
 	}
@@ -299,12 +306,6 @@ func planManageSecurityTool(server *domain.Server, in *SecurityToolManageInput) 
 	if err := ensureNotRouterOS(server); err != nil {
 		return err
 	}
-	// Alle Aktionen greifen in Dienste und Systemkonfiguration ein - im
-	// eingeschraenkten Modus ist das bewusst gesperrt, wie bei der Einrichtung.
-	if err := ensureFullSudo(server); err != nil {
-		return err
-	}
-
 	switch in.Action {
 	case SecurityToolActionStart, SecurityToolActionStop, SecurityToolActionRestart,
 		SecurityToolActionEnable, SecurityToolActionDisable,
@@ -390,17 +391,16 @@ func (s *ServerService) buildManageScript(conn sshx.Conn, server *domain.Server,
 // manageScript baut das Skript einer Verwaltungs-Aktion - der Lauf und die
 // Befehlsvorschau rufen es gleich auf.
 func (s *ServerService) manageScript(server *domain.Server, in SecurityToolManageInput, srcIP string) (string, error) {
-	unit := serviceUnit(in.Tool)
 	switch in.Action {
 	case SecurityToolActionStart, SecurityToolActionStop, SecurityToolActionRestart,
 		SecurityToolActionEnable, SecurityToolActionDisable:
-		return serviceCommand(in.Action, unit) + "\necho 'LCM: " + unit + " " + in.Action + "'", nil
+		return securityServiceStep(server.RestrictedSudo, in.Action, in.Tool), nil
 
 	case SecurityToolActionUninstall:
-		return uninstallScript(server.PackageManager, in.Tool), nil
+		return uninstallScript(server.RestrictedSudo, server.PackageManager, in.Tool), nil
 
 	case SecurityToolActionUnban:
-		return unbanScript(in.Tool, in.UnbanIP), nil
+		return unbanScript(server.RestrictedSudo, in.Tool, in.UnbanIP), nil
 
 	case SecurityToolActionAllowlist:
 		extra := append([]string{}, in.AllowlistIPs...)
@@ -411,7 +411,7 @@ func (s *ServerService) manageScript(server *domain.Server, in SecurityToolManag
 			}
 			extra = append(resolved, extra...)
 		}
-		return allowlistUpdateScript(in.Tool, srcIP, extra), nil
+		return allowlistUpdateScript(server.RestrictedSudo, in.Tool, srcIP, extra), nil
 	}
 	return "", ErrSecurityToolAction
 }

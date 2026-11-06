@@ -1839,8 +1839,7 @@
       "upgrade_failed": "Der Ereigniskanal konnte nicht geöffnet werden"
     },
     "firewall": {
-      "invalid_rules": "Ungültige Firewall-Regeln",
-      "needs_full_sudo": "Dieses Firewall-Backend braucht volle Sudo-Rechte – im eingeschränkten Modus ist nur ufw verwaltbar"
+      "invalid_rules": "Ungültige Firewall-Regeln"
     },
     "group": {
       "custom_action_not_selected": "Für eine Regel vom Typ „Eigene Aktion“ musst du eine gültige Eigene Aktion wählen",
@@ -4666,8 +4665,8 @@
       "keyWhere": "Den öffentlichen Schlüssel findet, wer die Einstellungen verwalten darf, unter Einstellungen → Allgemein.",
       "restricted": {
         "label": "Eingeschränkte Rechte (empfohlen)",
-        "description": "Der LCM-Benutzer darf nur Pakete, Docker und die Firewall steuern und das System auslesen.",
-        "on": "An: kein Shell- und Dateisystemzugriff für LCM. Dafür sind SSH-Härtung, eigene Repositorys, APT-Cache und eigene Skripte für diesen Server gesperrt.",
+        "description": "Der LCM-Benutzer darf nur Pakete, Docker, Firewall und Sicherheits-Tools steuern, die von LCM verwalteten Einstellungen schreiben und das System auslesen.",
+        "on": "An: kein Shell- und Dateisystemzugriff für LCM. Dafür sind eigene Skripte, eigene Aktionen, SSH-2FA und der Neustart für diesen Server gesperrt.",
         "off": "Aus: LCM bekommt sudo ohne Passwort für alles und kann alle Funktionen nutzen."
       },
       "duplicate": "Diese Adresse mit diesem Port ist schon angelegt:",
@@ -4681,7 +4680,7 @@
         "user": "Legt den Dienstbenutzer lcm-svc an und hinterlegt einen Schlüssel, den LCM nur für diesen Server erzeugt.",
         "reuser": "Legt den Dienstbenutzer lcm-svc neu an und hinterlegt einen neuen, nur für diesen Server erzeugten Schlüssel.",
         "sudoFull": "Gibt lcm-svc sudo ohne Passwort (/etc/sudoers.d/lcm-svc).",
-        "sudoRestricted": "Gibt lcm-svc nur die Rechte für Paketverwaltung, Docker, Firewall und das Auslesen des Systems.",
+        "sudoRestricted": "Gibt lcm-svc nur die Rechte für Paketverwaltung, Docker, Firewall, Sicherheits-Tools und das Auslesen des Systems.",
         "verify": "Prüft die Anmeldung mit dem neuen Schlüssel und liest das System ein: Pakete, Quellen, Benutzer, Container, Speicher.",
         "group": "Nimmt den Server in die System-Gruppe auf – damit laufen Zustandsprüfung und Abgleich sofort.",
         "keep": "Gruppen und Benutzer-Zuordnungen des Servers bleiben, die alten Zugangsdaten werden ersetzt."
@@ -4984,7 +4983,6 @@
     "versionTitle": "Version",
     "version": "Version",
     "buildLabel": "Build",
-    "commit": "Commit",
     "dirty": "Dirty-Build",
     "dirtyHelp": "Gebaut aus einem Arbeitsstand mit ungespeicherten Änderungen. Er entspricht keinem Commit und ist kein Release.",
     "platform": "Plattform",
@@ -4996,12 +4994,12 @@
     "checkedAt": "Zuletzt geprüft",
     "checkError": "Prüfung fehlgeschlagen",
     "checkNow": "Jetzt prüfen",
+    "upToDate": "Aktuell",
+    "newVersion": "{latest} ist verfügbar",
     "checkFailed": "Die Prüfung ließ sich nicht starten",
     "imprintTitle": "Impressum",
     "owner": "Inhaber: {name}",
-    "country": "Deutschland",
-    "email": "E-Mail",
-    "web": "Web"
+    "country": "Deutschland"
   },
   "console": {
     "stop": "STOPP!",
@@ -5017,7 +5015,6 @@
     "install": "Jetzt installieren",
     "cancel": "Abbrechen",
     "dismiss": "Hinweis ausblenden",
-    "current": "LCM {current} ist aktuell.",
     "waiting": "LCM {version} wird installiert, sobald diese Jobs fertig sind: {jobs}",
     "backup": "Sicherung läuft, danach wird LCM {version} installiert.",
     "installing": "LCM {version} wird installiert. Die Seite lädt danach neu.",
@@ -5912,9 +5909,9 @@
       "restrictInfo": {
         "intro": "Der LCM-Benutzer auf diesem Server hat aktuell volle Root-Rechte. Die Aktion schränkt ihn nachträglich auf eine feste Whitelist ein, genau wie die Option „Eingeschränkte Rechte“ beim Onboarding.",
         "allowedLabel": "Danach erlaubt",
-        "allowed": "Über sudo nur noch Paketverwaltung (apt/dnf/zypper, snap), Docker und die ufw-Firewall steuern und das System auslesen, dazu über den mitinstallierten, streng prüfenden LCM-Helper: Repositories einrichten, den APT-Cache anbinden, SSH konfigurieren (Härtung, Root-Login, Port) und Linux-Benutzer abgleichen.",
+        "allowed": "Über sudo nur noch Paketverwaltung (apt/dnf/zypper, snap), Docker und die ufw-Firewall steuern und das System auslesen, dazu über den mitinstallierten, streng prüfenden LCM-Helper: Repositories einrichten, den APT-Cache anbinden, SSH konfigurieren (Härtung, Root-Login, Port), Linux-Benutzer abgleichen, firewalld und nftables steuern, fail2ban und CrowdSec einrichten und bedienen, Paket-Pins schreiben und Dienste der LCM-Werkzeuge steuern.",
         "blockedLabel": "Gesperrt",
-        "blocked": "Keine beliebigen Kommandos über LCM: Eigene Skripte, eigene Aktionen und der Neustart sind für diesen Server gesperrt, ebenso der direkte Aufruf einer Root-Shell.",
+        "blocked": "Keine beliebigen Kommandos über LCM: Eigene Skripte, eigene Aktionen, SSH-2FA und der Neustart sind für diesen Server gesperrt, ebenso der direkte Aufruf einer Root-Shell.",
         "scopeLabel": "Wogegen das schützt, und wogegen nicht",
         "scope": "Der Modus verkleinert die Angriffsfläche gegen Bedienfehler und versehentliche Eingriffe. Er schützt nicht vor jemandem, der den Service-Schlüssel erlangt: Paketverwaltung und Docker führen prinzipbedingt Code als root aus (etwa über apt-Hooks oder Container mit Host-Einbindung), und sudo kann ihre Argumente nicht zuverlässig filtern. Ohne diese Programme wäre der Modus funktionslos, weil Updates und Docker gerade weiterlaufen sollen.",
         "irreversibleLabel": "Nicht per Klick rückgängig machbar",
@@ -5965,7 +5962,7 @@
     }
   },
   "serverSecurity": {
-    "restricted": "Dieser Server läuft mit eingeschränktem Sudo. Für diese Einstellungen braucht LCM vollen Sudo-Zugriff.",
+    "restricted": "Dieser Server läuft mit eingeschränktem Sudo. Die SSH-2FA braucht vollen Sudo-Zugriff.",
     "protection": {
       "firewall": "Firewall bearbeiten",
       "install": "Sicherheits-Tools einrichten"

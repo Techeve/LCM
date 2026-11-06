@@ -63,10 +63,9 @@ func (s *ServerService) planKernelCleanup(server *domain.Server) (packagePlan, [
 	// (protectedPackagePrefixes) - mit gutem Grund: Ein von Hand entferntes
 	// linux-image macht die Maschine unbootbar. Diese Aktion darf sie
 	// anfassen, weil SIE die Auswahl trifft und den laufenden Kernel niemals
-	// enthaelt. Volles sudo ist dafuer Voraussetzung.
-	if err := ensureFullSudo(server); err != nil {
-		return packagePlan{}, nil, err
-	}
+	// enthaelt. Im eingeschraenkten Modus laeuft sie ohne Root-Shell: das
+	// Skript besteht nur aus Lesebefehlen und `apt-get purge`, und apt-get
+	// steht auf der sudo-Whitelist.
 	if pkgFamily(server.PackageManager) != pkgApt {
 		return packagePlan{}, nil, ErrKernelCleanupUnsupported
 	}
