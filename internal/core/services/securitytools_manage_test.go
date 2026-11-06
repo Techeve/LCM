@@ -30,7 +30,7 @@ func TestServiceCommandCoversInitSystems(t *testing.T) {
 // im schlimmsten Fall sperrt er dauerhaft aus.
 func TestUninstallRemovesBouncer(t *testing.T) {
 	script := uninstallScript(false, "apt", SecurityToolCrowdSec)
-	for _, want := range []string{"crowdsec-firewall-bouncer-iptables", "crowdsec-firewall-bouncer-nftables", "/etc/crowdsec"} {
+	for _, want := range []string{"crowdsec-firewall-bouncer-iptables", "crowdsec-firewall-bouncer-nftables", "/etc/crowdsec", "dpkg --purge crowdsec"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("uninstall-skript enthaelt %q nicht:\n%s", want, script)
 		}

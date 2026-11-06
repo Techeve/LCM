@@ -99,8 +99,8 @@ Danach richtet LCM je nach Auswahl ein:
   `crowdsec-firewall-bouncer-nftables`, wenn `nft` vorhanden ist, sonst
   `crowdsec-firewall-bouncer-iptables`,
 - die **Allowlist als Parser-Whitelist** unter
-  `/etc/crowdsec/parsers/s02-enrich/lcm-whitelist.yaml` (versionsrobust über alle
-  CrowdSec-Stände):
+  `/etc/crowdsec/parsers/s02-enrich/lcm-whitelist.yaml`. Einzelne Adressen und
+  Netze darfst du gemischt eingeben, LCM trennt sie für CrowdSec:
 
   ```yaml
   name: lcm/whitelist
@@ -108,10 +108,11 @@ Danach richtet LCM je nach Auswahl ein:
   whitelist:
     reason: "LCM management"
     ip:
-      - 127.0.0.1/8
-      - ::1
-      - 203.0.113.10
-      - 198.51.100.0/24
+      - "::1"
+      - "203.0.113.10"
+    cidr:
+      - "127.0.0.1/8"
+      - "198.51.100.0/24"
   ```
 
 Geheimnisse (LAPI-Passwort, Console-Key) werden **base64-kodiert übertragen** und

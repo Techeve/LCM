@@ -118,7 +118,13 @@ rmdir /etc/fail2ban/jail.d 2>/dev/null || true
 if rmdir /etc/fail2ban 2>/dev/null; then echo 'LCM: /etc/fail2ban entfernt (war leer)'; ` +
 		`else echo 'LCM: /etc/fail2ban bleibt bestehen - es enthaelt Konfiguration, die nicht von LCM stammt'; fi
 echo 'LCM: fail2ban entfernt (Paket, Dienst und LCM-Konfiguration)'`
-	purgeCrowdSecBody = `rm -rf /etc/crowdsec
+	// dpkg --purge vor dem Löschen: Ein nur entferntes Paket merkt sich seine
+	// Konfigurationsdateien als vorhanden, und eine spätere Neuinstallation
+	// scheiterte an der fehlenden config.yaml.
+	purgeCrowdSecBody = `if command -v dpkg >/dev/null; then
+  dpkg --purge crowdsec crowdsec-firewall-bouncer-iptables crowdsec-firewall-bouncer-nftables 2>/dev/null || true
+fi
+rm -rf /etc/crowdsec
 echo 'LCM: crowdsec entfernt (Paket, Dienst und /etc/crowdsec)'`
 )
 

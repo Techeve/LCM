@@ -189,6 +189,8 @@ export interface SshCommand {
   output: string;
   exit_code: number;
   err?: string;
+  /** Läuft noch: Exit-Code und Dauer stehen erst am Ende fest, `output` wächst mit. */
+  running?: boolean;
 }
 
 export interface SshSession {

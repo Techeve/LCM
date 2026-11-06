@@ -66,7 +66,8 @@ type SSHCommand struct {
 	Command      string    `gorm:"serializer:aesgcm" json:"command"` // AES-GCM at rest
 	Output       string    `gorm:"serializer:aesgcm" json:"output"`  // AES-GCM at rest
 	ExitCode     int       `json:"exit_code"`
-	Err          string    `json:"err,omitempty"` // Transportfehler (kein Non-Zero-Exit)
+	Err          string    `json:"err,omitempty"`     // Transportfehler (kein Non-Zero-Exit)
+	Running      bool      `json:"running,omitempty"` // Kommando läuft noch; Output wächst mit
 }
 
 // BeforeCreate vergibt eine UUID, falls noch keine gesetzt ist.

@@ -118,6 +118,7 @@ export class JobsDetail extends LitElement {
   #tick: ReturnType<typeof setInterval> | undefined;
   readonly #sessions = new LiveData<SshSession[]>(this, {
     url: () => (this.jobId ? jobSessionsUrl(this.jobId) : null),
+    topics: () => (this.jobId ? [`job:${this.jobId}`] : []),
     transform: normaliseSessions,
   });
 
@@ -132,8 +133,11 @@ export class JobsDetail extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     // Dauer und „vor … Sekunden“ eines laufenden Jobs zählen mit, auch wenn gerade keine Ausgabe kommt.
+    // Das SSH-Protokoll wächst ohne eigenes Ereignis: Es wird im selben Takt wie die Dauer abgeholt.
     this.#tick = setInterval(() => {
-      if (this.jobId && isActive(this.#merged().status)) this.requestUpdate();
+      if (!this.jobId || !isActive(this.#merged().status)) return;
+      this.requestUpdate();
+      this.#sessions.reload();
     }, 1000);
   }
 
@@ -183,7 +187,7 @@ export class JobsDetail extends LitElement {
 
   #renderSessions(): TemplateResult {
     if (this.#sessions.error && !this.#sessions.data) return html`<lcm-notice tone="crit">${this.#sessions.error}</lcm-notice>`;
-    return html`<lcm-jobs-ssh .sessions=${this.#sessions.data ?? []}></lcm-jobs-ssh>`;
+    return html`<lcm-jobs-ssh .sessions=${this.#sessions.data ?? []} ?active=${isActive(this.#merged().status)}></lcm-jobs-ssh>`;
   }
 
   #abort(job: JobItem): void {

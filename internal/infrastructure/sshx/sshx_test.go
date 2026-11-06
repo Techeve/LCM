@@ -41,3 +41,22 @@ func TestSyncBufferConcurrentWrites(t *testing.T) {
 		t.Error("puffer-inhalt korrumpiert")
 	}
 }
+
+// TestPartialOutputFollowsRunningCommand: Die bisherige Ausgabe gibt es nur,
+// solange ein Kommando läuft.
+func TestPartialOutputFollowsRunningCommand(t *testing.T) {
+	c := &clientConn{}
+	if got := c.PartialOutput(); got != "" {
+		t.Fatalf("ohne Kommando: %q", got)
+	}
+	var buf syncBuffer
+	c.setRunning(&buf)
+	_, _ = buf.Write([]byte("erste Zeile\n"))
+	if got := c.PartialOutput(); got != "erste Zeile\n" {
+		t.Fatalf("während des Kommandos: %q", got)
+	}
+	c.setRunning(nil)
+	if got := c.PartialOutput(); got != "" {
+		t.Fatalf("nach dem Kommando: %q", got)
+	}
+}

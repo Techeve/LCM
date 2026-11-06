@@ -76,9 +76,9 @@ func validateSecurityToolInput(in *SecurityToolInput) error {
 	default:
 		return ErrUnknownSecurityTool
 	}
-	// Ad-hoc-Allowlist-IPs kanonisieren - IP ODER CIDR (ignoreip/whitelist
-	// vertragen beides; die aus benannten Allowlists aufgelösten Einträge sind
-	// ohnehin bereits kanonisch).
+	// Ad-hoc-Allowlist-IPs kanonisieren - IP ODER CIDR (ignoreip nimmt beides,
+	// crowdsecWhitelistBody trennt sie; die aus benannten Allowlists aufgelösten
+	// Einträge sind ohnehin bereits kanonisch).
 	clean := make([]string, 0, len(in.AllowlistIPs))
 	for _, raw := range in.AllowlistIPs {
 		ip := strings.TrimSpace(raw)
@@ -313,6 +313,29 @@ func crowdsecInstallScript(restricted bool, mgr, srcIP string, extra []string, i
 // Leerzeichen-getrennte Namen).
 const crowdsecCollectionsBody = `cscli collections install $COLLS 2>/dev/null || true`
 
+// crowdsecWhitelistBody schreibt LCMs Allowlist aus $IPS. CrowdSec trennt streng:
+// Unter `ip:` stehen nur einzelne Adressen, unter `cidr:` nur Netze. Ein Netz
+// unter `ip:` lässt den Dienst gar nicht erst starten, und mit ihm scheitert
+// jede Paket-Einrichtung, die ihn neu startet.
+const crowdsecWhitelistBody = `CS_ADDRS=""; CS_NETS=""
+for ip in $IPS; do
+  case "$ip" in
+    */*) CS_NETS="$CS_NETS $ip" ;;
+    *) CS_ADDRS="$CS_ADDRS $ip" ;;
+  esac
+done
+install -d -m 755 /etc/crowdsec/parsers/s02-enrich
+{ printf 'name: lcm/whitelist\ndescription: "LCM management allowlist"\nwhitelist:\n  reason: "LCM management"\n'
+  if [ -n "$CS_ADDRS" ]; then
+    printf '  ip:\n'
+    for ip in $CS_ADDRS; do printf '    - "%s"\n' "$ip"; done
+  fi
+  if [ -n "$CS_NETS" ]; then
+    printf '  cidr:\n'
+    for ip in $CS_NETS; do printf '    - "%s"\n' "$ip"; done
+  fi
+} > /etc/crowdsec/parsers/s02-enrich/lcm-whitelist.yaml`
+
 // crowdsecConfigureBody bindet die LAPI an (remote/console), schreibt die
 // Allowlist als Parser-Whitelist (versionsrobust über alle CrowdSec-Stände) und
 // aktiviert/lädt den Dienst. Erwartet $LAPI_MODE (remote | console, sonst
@@ -328,10 +351,11 @@ const crowdsecConfigureBody = `case "$LAPI_MODE" in
   console)
     cscli console enroll "$CONSOLE_KEY" 2>/dev/null || echo 'LCM: Console-Enrollment fehlgeschlagen' ;;
 esac
-install -d -m 755 /etc/crowdsec/parsers/s02-enrich
-{ printf 'name: lcm/whitelist\ndescription: "LCM management allowlist"\nwhitelist:\n  reason: "LCM management"\n  ip:\n'
-  for ip in $IPS; do printf '    - "%s"\n' "$ip"; done
-} > /etc/crowdsec/parsers/s02-enrich/lcm-whitelist.yaml
+` + crowdsecWhitelistBody + `
+if ! crowdsec -c /etc/crowdsec/config.yaml -t -error; then
+  echo 'LCM: CrowdSec lehnt die Konfiguration ab, der Dienst bleibt unveraendert' >&2
+  exit 1
+fi
 systemctl enable --now crowdsec 2>/dev/null || rc-service crowdsec start 2>/dev/null || true
 systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec 2>/dev/null || rc-service crowdsec restart 2>/dev/null || true
 echo "LCM: CrowdSec eingerichtet (Allowlist: $IPS)"

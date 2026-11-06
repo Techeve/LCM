@@ -77,6 +77,13 @@ var ErrPasswordRejected = errors.New("Anmeldung abgelehnt - Benutzername oder Pa
 // DialTimeout begrenzt Verbindungsaufbau und Handshake.
 const DialTimeout = 15 * time.Second
 
+// PartialOutputReader ist eine Verbindung, die schon während eines Kommandos
+// dessen bisherige Ausgabe kennt. Der Agent-Weg (Frage und Antwort) kann das
+// nicht, deshalb gehört es nicht zu Conn.
+type PartialOutputReader interface {
+	PartialOutput() string
+}
+
 // Conn ist eine authentifizierte SSH-Verbindung zu einem Server.
 type Conn interface {
 	// Run führt ein Kommando aus und liefert den kombinierten
@@ -252,7 +259,8 @@ type clientConn struct {
 	client *ssh.Client
 
 	mu         sync.Mutex
-	onActivity func() // Lebenszeichen-Rückruf, siehe Conn.OnActivity
+	onActivity func()      // Lebenszeichen-Rückruf, siehe Conn.OnActivity
+	running    *syncBuffer // Ausgabe des laufenden Kommandos, siehe PartialOutput
 }
 
 // KeyExchange liefert das ausgehandelte Schlüsselaustausch-Verfahren.
@@ -312,6 +320,8 @@ func (c *clientConn) RunStdin(cmd, stdin string) (string, int, error) {
 	if stdin != "" {
 		session.Stdin = strings.NewReader(stdin)
 	}
+	c.setRunning(&buf)
+	defer c.setRunning(nil)
 
 	err = session.Run(cmd)
 	output := buf.String()
@@ -323,6 +333,23 @@ func (c *clientConn) RunStdin(cmd, stdin string) (string, int, error) {
 		return output, exitErr.ExitStatus(), nil // Non-Zero-Exit ist kein Transportfehler
 	}
 	return output, -1, fmt.Errorf("ssh-kommando: %w", err)
+}
+
+func (c *clientConn) setRunning(buf *syncBuffer) {
+	c.mu.Lock()
+	c.running = buf
+	c.mu.Unlock()
+}
+
+// PartialOutput liefert, was das laufende Kommando bisher ausgegeben hat.
+func (c *clientConn) PartialOutput() string {
+	c.mu.Lock()
+	buf := c.running
+	c.mu.Unlock()
+	if buf == nil {
+		return ""
+	}
+	return buf.String()
 }
 
 func (c *clientConn) Close() error { return c.client.Close() }

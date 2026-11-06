@@ -2,6 +2,9 @@ package services
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -112,5 +115,47 @@ func TestFail2banInstallFailsWithoutPackage(t *testing.T) {
 	write := strings.Index(script, "99-lcm.local")
 	if check < 0 || write < check || !strings.Contains(script, "exit 1") {
 		t.Fatalf("Die Prüfung muss vor dem Einrichten stehen und den Job beenden:\n%s", script)
+	}
+}
+
+// TestCrowdSecWhitelistSeparatesAddressesAndNets: Ein Netz unter `ip:` lässt
+// CrowdSec nicht starten. Das Skript läuft hier wirklich, mit einem Zielpfad
+// im Testverzeichnis.
+func TestCrowdSecWhitelistSeparatesAddressesAndNets(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.ReplaceAll(crowdsecWhitelistBody, "/etc/crowdsec/parsers/s02-enrich", dir)
+	script := shellVars("IPS", strings.Join(allowlistIPs("10.0.0.5", []string{"192.168.1.0/24", "2001:db8::/32"}), " ")) + body
+	if out, err := exec.Command("sh", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("skript: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "lcm-whitelist.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `name: lcm/whitelist
+description: "LCM management allowlist"
+whitelist:
+  reason: "LCM management"
+  ip:
+    - "::1"
+    - "10.0.0.5"
+  cidr:
+    - "127.0.0.1/8"
+    - "192.168.1.0/24"
+    - "2001:db8::/32"
+`
+	if string(got) != want {
+		t.Fatalf("allowlist:\n%s", got)
+	}
+}
+
+// TestCrowdSecConfigureChecksBeforeRestart: Eine ungültige Konfiguration muss
+// den Job scheitern lassen, statt „eingerichtet" zu melden und den laufenden
+// Dienst zu stoppen.
+func TestCrowdSecConfigureChecksBeforeRestart(t *testing.T) {
+	check := strings.Index(crowdsecConfigureBody, "crowdsec -c /etc/crowdsec/config.yaml -t -error")
+	reload := strings.Index(crowdsecConfigureBody, "systemctl reload crowdsec")
+	if check < 0 || reload < check {
+		t.Fatalf("Prüfung fehlt oder steht hinter dem Neustart:\n%s", crowdsecConfigureBody)
 	}
 }

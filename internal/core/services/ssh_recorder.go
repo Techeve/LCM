@@ -11,6 +11,7 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
+	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -137,6 +138,11 @@ func (r *SSHRecorder) DeleteRoutineCommandsOlderThan(cutoff time.Time) (int64, e
 // Benutzer-Abgleiche, und die gehören sehr wohl ins Protokoll.
 var trivialCommands = map[string]bool{healthProbeCmd: true}
 
+// LiveOutputInterval ist der Takt, in dem die Ausgabe eines laufenden Kommandos
+// ins Protokoll wandert. Bewusst eine exportierte Variable: Tests setzen ihn
+// herunter, statt in Echtzeit zu warten (wie RebootSettleDelay).
+var LiveOutputInterval = 2 * time.Second
+
 // recordingConn ist der Protokoll-Decorator um eine echte SSH-Verbindung.
 // Die Lebenszeichen reicht er unverändert an die innere Verbindung durch -
 // sie allein sieht den Ausgabestrom, während das Kommando noch läuft.
@@ -162,9 +168,8 @@ func (c *recordingConn) KeyExchange() string { return c.inner.KeyExchange() }
 // stdin-Inhalt (z.B. ein sudo-Passwort) wird BEWUSST nicht mitgeschrieben -
 // nur das Kommando (redigiert) landet im Protokoll.
 func (c *recordingConn) RunStdin(cmd, stdin string) (string, int, error) {
-	start := time.Now()
-	out, code, err := c.inner.RunStdin(cmd, stdin)
 	if trivialCommands[strings.TrimSpace(cmd)] {
+		out, code, err := c.inner.RunStdin(cmd, stdin)
 		// Nicht mitschreiben - aber Fehler zählen weiter: Scheitert
 		// ausgerechnet der Ping, ist das die Aussage der ganzen Sitzung.
 		if err != nil || code != 0 {
@@ -176,12 +181,20 @@ func (c *recordingConn) RunStdin(cmd, stdin string) (string, int, error) {
 	entry := &domain.SSHCommand{
 		SSHSessionID: c.sess.ID,
 		Seq:          c.seq,
-		StartedAt:    start,
-		DurationMs:   time.Since(start).Milliseconds(),
+		StartedAt:    time.Now(),
 		Command:      redactSecrets(cmd),
-		Output:       truncateOutput(redactSecrets(out)),
-		ExitCode:     code,
+		ExitCode:     -1,
+		Running:      true,
 	}
+	stored := c.logs.StartCommand(entry) == nil
+	stop := c.watchOutput(entry, stored)
+	out, code, err := c.inner.RunStdin(cmd, stdin)
+	stop()
+
+	entry.DurationMs = time.Since(entry.StartedAt).Milliseconds()
+	entry.Output = truncateOutput(redactSecrets(out))
+	entry.ExitCode = code
+	entry.Running = false
 	if err != nil {
 		entry.Err = err.Error()
 		c.hadError = true
@@ -189,7 +202,12 @@ func (c *recordingConn) RunStdin(cmd, stdin string) (string, int, error) {
 	if code != 0 {
 		c.hadError = true
 	}
-	_ = c.logs.AddCommand(entry)
+	if stored {
+		_ = c.logs.FinishCommand(entry)
+	} else {
+		entry.ID = ""
+		_ = c.logs.AddCommand(entry)
+	}
 
 	// Auf log_level=debug jedes Kommando auch ins Anwendungs-Log.
 	//
@@ -216,6 +234,46 @@ func (c *recordingConn) RunStdin(cmd, stdin string) (string, int, error) {
 		slog.Debug("ssh command", attrs...)
 	}
 	return out, code, err
+}
+
+// watchOutput schreibt die Ausgabe des laufenden Kommandos regelmäßig ins
+// Protokoll, bis die zurückgegebene Funktion aufgerufen wird. Es gehen nur
+// fertige Zeilen durch die Redaction: Ein mitten im Geheimnis abgeschnittener
+// Block entginge sonst ihren Mustern.
+func (c *recordingConn) watchOutput(entry *domain.SSHCommand, stored bool) (stop func()) {
+	reader, ok := c.inner.(sshx.PartialOutputReader)
+	if !ok || !stored {
+		return func() {}
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	safego.Go("ssh-live-output", func() {
+		defer close(finished)
+		ticker := time.NewTicker(LiveOutputInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				c.storePartialOutput(entry, reader.PartialOutput())
+			}
+		}
+	})
+	return func() {
+		close(done)
+		<-finished
+	}
+}
+
+func (c *recordingConn) storePartialOutput(entry *domain.SSHCommand, partial string) {
+	lines := partial[:strings.LastIndexByte(partial, '\n')+1]
+	output := truncateOutput(redactSecrets(lines))
+	if output == entry.Output {
+		return
+	}
+	entry.Output = output
+	_ = c.logs.UpdateCommandOutput(entry)
 }
 
 func (c *recordingConn) Close() error {

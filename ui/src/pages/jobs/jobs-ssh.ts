@@ -10,7 +10,7 @@ import { logStyles } from './jobs-styles';
 
 /** <lcm-jobs-ssh .sessions=${…}> – die SSH-Sitzungen eines Jobs, jede aufklappbar mit ihren Kommandos. */
 export class JobsSsh extends LitElement {
-  static override properties = { sessions: { attribute: false }, _open: { state: true } };
+  static override properties = { sessions: { attribute: false }, active: { type: Boolean }, _open: { state: true } };
   static override styles = [
     baseStyles,
     logStyles,
@@ -110,11 +110,14 @@ export class JobsSsh extends LitElement {
   ];
 
   declare sessions: SshSession[];
+  /** Der Job läuft noch. Nur dann gilt `running`: Nach einem Absturz von LCM bliebe es sonst ewig stehen. */
+  declare active: boolean;
   declare _open: string;
 
   constructor() {
     super();
     this.sessions = [];
+    this.active = false;
     this._open = '';
     new I18nController(this);
   }
@@ -124,8 +127,10 @@ export class JobsSsh extends LitElement {
       <div class="cmd-head">
         <code>$ ${command.command}</code>
         <span class="cmd-meta">
-          <lcm-badge tone=${command.exit_code === 0 ? 'ok' : 'crit'}>${t('jobs.ssh.exit', { code: command.exit_code })}</lcm-badge>
-          ${t('jobs.ssh.duration', { ms: command.duration_ms })}
+          ${command.running && this.active
+            ? html`<lcm-badge tone="accent">${t('jobs.ssh.running')}</lcm-badge>`
+            : html`<lcm-badge tone=${command.exit_code === 0 ? 'ok' : 'crit'}>${t('jobs.ssh.exit', { code: command.exit_code })}</lcm-badge>
+                ${t('jobs.ssh.duration', { ms: command.duration_ms })}`}
         </span>
       </div>
       ${command.output ? html`<pre>${command.output}</pre>` : nothing}

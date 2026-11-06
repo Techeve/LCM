@@ -19,6 +19,20 @@ test.describe('Serverdetail: Pakete', () => {
     await expect(openssl.getByRole('button', { name: 'openssl vor dem Aufräumen schützen' })).toBeVisible();
   });
 
+  test('Bestätigung bleibt bedienbar, wenn die Vorschau höher als das Browserfenster ist', async ({ page }) => {
+    const hoehe = 420;
+    await page.setViewportSize({ width: 1280, height: hoehe });
+    await page.goto('/servers/1/packages');
+    await page.getByRole('button', { name: 'Alle Updates einspielen' }).click();
+    const dialog = fenster(page, 'Alle Updates einspielen');
+    await expect(dialog.getByText('Wird ausgeführt')).toBeVisible();
+    // Überschrift und Knopf zugleich im Bild: Nur der Inhalt dazwischen scrollt, das Fenster selbst nicht.
+    await expect(dialog.getByRole('heading', { name: 'Alle Updates einspielen' })).toBeInViewport({ ratio: 1 });
+    const knopf = await dialog.getByRole('button', { name: 'Alle Updates einspielen' }).boundingBox();
+    expect(knopf).not.toBeNull();
+    expect(knopf!.y + knopf!.height).toBeLessThanOrEqual(hoehe);
+  });
+
   test('alle Pakete zeigen und nach Namen suchen', async ({ page }) => {
     await page.goto('/servers/1/packages');
     // web01-Seed: openssl hat ein Update, curl und nginx nicht.

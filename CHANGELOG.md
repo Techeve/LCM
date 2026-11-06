@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.0.0-beta.5 - 2026-11-06
+
+### 🚀 Features
+
+- **jobs**: SSH-Sitzung zeigt Kommandos und Ausgabe schon während des Laufs (ce8366d4)
+
+### 🐛 Bugfixes
+
+- **crowdsec**: Allowlist trennt Adressen und Netze, CrowdSec startet wieder (f1cefdd9)
+- **ui**: Bestätigungsfenster bleibt auch bei langer Vorschau bedienbar (a5e1f7f7)
+
 ## v2.0.0-beta.4 - 2026-11-06
 
 ### 🚀 Features

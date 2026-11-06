@@ -2439,6 +2439,7 @@
       "noCommands": "No commands in this session.",
       "error": "Error",
       "exit": "Exit {code}",
+      "running": "running",
       "duration": "{ms} ms",
       "transportError": "Transport error: {error}",
       "commands": {

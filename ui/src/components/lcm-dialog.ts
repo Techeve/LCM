@@ -14,6 +14,7 @@ export interface Impact {
  * <lcm-dialog open heading="…" message="…" .impacts=${[…]} tone="danger" expect="web03"> – Bestätigung mit Wirkung.
  * Zeigt, was passiert (`impacts`: betroffene Server, Ausfallzeit, umkehrbar …) statt „Sind Sie sicher?“.
  * Mit `expect` muss der Name getippt werden (zerstörende Aktionen). Natives <dialog>: Fokusfalle und Esc inklusive.
+ * Höchstens so hoch wie das Browserfenster: Der Inhalt scrollt, der Fuß mit den Knöpfen bleibt stehen.
  * Scheitert die Aktion, gehört der Fehler in den Dialog (`error`, steht über dem Fuß), nicht in einen Toast.
  * Ereignisse: `lcm-confirm`, `lcm-cancel`.
  */
@@ -42,9 +43,17 @@ export class LcmDialog extends LitElement {
       }
       dialog {
         inline-size: min(34rem, calc(100vw - 2rem));
+        max-block-size: calc(100dvh - 4rem);
+      }
+      dialog[open] {
+        display: flex;
+        flex-direction: column;
       }
       .body {
+        flex: 1 1 auto;
+        min-block-size: 0;
         padding: var(--space-5);
+        overflow-y: auto;
       }
       h2 {
         margin: 0 0 var(--space-2);
@@ -101,9 +110,11 @@ export class LcmDialog extends LitElement {
         font-size: var(--fs-m);
       }
       .error {
+        flex: none;
         padding: 0 var(--space-5) var(--space-3);
       }
       footer {
+        flex: none;
         display: flex;
         justify-content: flex-end;
         gap: var(--space-2);
