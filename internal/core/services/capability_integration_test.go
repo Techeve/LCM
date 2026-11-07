@@ -281,3 +281,37 @@ func TestUebersprungenerJobHeiltDieVerbindungNicht(t *testing.T) {
 		t.Errorf("Health-Ping hat die Verbindung nicht geheilt: %+v", c)
 	}
 }
+
+func TestNichtsOffenBerücksichtigtKandidatenUndGescheiterteUpdatePruefung(t *testing.T) {
+	env := newTestEnv(t)
+	servers := repositories.NewServerRepository(env.DB())
+	s := &domain.Server{Name: "noble", Host: "10.1.1.1", Reachable: true}
+	if err := servers.Create(s); err != nil {
+		t.Fatal(err)
+	}
+
+	erwarte := func(want bool) {
+		t.Helper()
+		got, err := servers.NothingPending(s.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("NothingPending = %v, erwartet %v", got, want)
+		}
+	}
+
+	erwarte(true)
+	if err := servers.ReplacePackages(s.ID, []domain.Package{{Name: "curl", Version: "1", CandidateVersion: "2"}}); err != nil {
+		t.Fatal(err)
+	}
+	erwarte(false)
+	if err := servers.ReplacePackages(s.ID, []domain.Package{{Name: "curl", Version: "2"}}); err != nil {
+		t.Fatal(err)
+	}
+	erwarte(true)
+	if err := servers.UpdateFields(s.ID, map[string]any{"update_check_error": "Quelle kaputt"}); err != nil {
+		t.Fatal(err)
+	}
+	erwarte(false)
+}

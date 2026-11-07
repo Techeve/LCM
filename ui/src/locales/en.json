@@ -1944,6 +1944,7 @@
       "trigger_failed": "The system schedule cannot be triggered: {detail}"
     },
     "security_tool": {
+      "bans_timeout": "The server did not deliver the ban list in time",
       "console_key_missing": "No CrowdSec console key is configured",
       "crowdsec_unsupported": "CrowdSec is not supported on this package manager",
       "invalid_allowlist_ip": "Invalid allowlist IP",

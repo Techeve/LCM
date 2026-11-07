@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
@@ -248,6 +249,14 @@ func parseBans(tool, out string) []SecurityToolBan {
 	return bans
 }
 
+// banListTimeout begrenzt die Abfrage der Sperrliste. Sie läuft synchron im
+// Seitenaufruf: Antwortet der Server nicht, soll die Seite das schnell sagen,
+// statt zu warten, bis der Proxy mit einem 504 aufgibt.
+var banListTimeout = 30 * time.Second
+
+// ErrBanListTimeout: Der Server hat die Sperrliste nicht rechtzeitig geliefert.
+var ErrBanListTimeout = errors.New("der server hat die sperrliste nicht rechtzeitig geliefert")
+
 // SecurityToolBans liest die aktuelle Sperrliste. Bewusst SYNCHRON und ohne
 // Job: Die Oberflaeche zeigt damit eine Liste an, und ein Job-Umweg mit
 // Polling waere fuer eine reine Abfrage unangemessen.
@@ -271,11 +280,31 @@ func (s *ServerService) SecurityToolBans(scope repositories.AccessScope, id uint
 	}
 	defer conn.Close()
 
-	out, _, err := conn.Run(privRun(server, banListCommand(server.RestrictedSudo, tool)))
+	out, err := runBanList(conn, privRun(server, banListCommand(server.RestrictedSudo, tool)))
 	if err != nil {
 		return nil, err
 	}
 	return parseBans(tool, out), nil
+}
+
+// runBanList wartet höchstens banListTimeout auf das Kommando. Läuft die Frist
+// ab, beendet das Schließen der Verbindung im Aufrufer auch das Kommando.
+func runBanList(conn sshx.Conn, cmd string) (string, error) {
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	safego.Go("security-tool-bans", func() {
+		out, _, err := conn.Run(cmd)
+		done <- result{out, err}
+	})
+	select {
+	case r := <-done:
+		return r.out, r.err
+	case <-time.After(banListTimeout):
+		return "", ErrBanListTimeout
+	}
 }
 
 // ManageSecurityTool fuehrt eine Verwaltungs-Aktion auf einem bereits

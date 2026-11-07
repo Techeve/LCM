@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.0.0-beta.8 - 2026-11-07
+
+### 🐛 Bugfixes
+
+- **capability**: Erledigte Warnungen verschwinden von selbst (5d76c7d7)
+- **ssh**: Ein hängender Server hält Seiten und Jobs nicht mehr auf (4648839b)
+
 ## v2.0.0-beta.7 - 2026-11-07
 
 ### 🚀 Features

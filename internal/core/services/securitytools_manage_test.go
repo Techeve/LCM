@@ -1,8 +1,12 @@
 package services
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"LCM/internal/infrastructure/sshx"
 )
 
 // TestServiceCommandCoversInitSystems: LCM verwaltet Debian, RHEL, SUSE, Arch
@@ -139,5 +143,29 @@ func TestParseBansToleratesGarbage(t *testing.T) {
 	}
 	if n := len(parseBans(SecurityToolFail2ban, "")); n != 0 {
 		t.Errorf("fail2ban: leere ausgabe ergab %d sperren", n)
+	}
+}
+
+type stummeVerbindung struct {
+	sshx.Conn
+	frei chan struct{}
+}
+
+func (c *stummeVerbindung) Run(string) (string, int, error) {
+	<-c.frei
+	return "", 0, nil
+}
+
+// TestSperrlisteWartetNichtEwig: Die Abfrage läuft im Seitenaufruf. Ein
+// hängender Server darf die Seite nicht aufhalten, bis der Proxy aufgibt.
+func TestSperrlisteWartetNichtEwig(t *testing.T) {
+	old := banListTimeout
+	banListTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { banListTimeout = old })
+	conn := &stummeVerbindung{frei: make(chan struct{})}
+	t.Cleanup(func() { close(conn.frei) })
+
+	if _, err := runBanList(conn, "fail2ban-client status"); !errors.Is(err, ErrBanListTimeout) {
+		t.Fatalf("Fehler = %v, erwartet ErrBanListTimeout", err)
 	}
 }

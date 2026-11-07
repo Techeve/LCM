@@ -427,7 +427,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// schreibt den Zustand seiner Kategorie fort. Vor dem Watchdog verdrahten,
 	// damit dessen Goroutine den Hook nicht mitten im Setzen sieht.
 	capabilityRepo := repositories.NewCapabilityRepository(db)
-	capabilityService := services.NewCapabilityService(capabilityRepo)
+	capabilityService := services.NewCapabilityService(capabilityRepo).WithNothingPending(serverRepo.NothingPending)
 	jobService.OnOutcome(capabilityService.RecordJob)
 	// Verwaiste Jobs des letzten Laufs aufräumen: nach einem Neustart kann
 	// kein Job mehr legitim "running" sein - hängengebliebene Einträge würden

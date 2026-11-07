@@ -58,6 +58,7 @@ var (
 	errNoAptCache             = apierr.Define(400, "apt_cache.not_selected", "no APT cache selected or configured")
 	errInvalidFirewallRules   = apierr.Define(400, "firewall.invalid_rules", "invalid firewall rules")
 	errUnknownSecurityTool    = apierr.Define(400, "security_tool.unknown", "unknown security tool")
+	errBanListTimeout         = apierr.Define(504, "security_tool.bans_timeout", "server did not deliver the ban list in time")
 	errInvalidAllowlistIP     = apierr.Define(400, "security_tool.invalid_allowlist_ip", "invalid allowlist IP")
 	errCrowdSecLapiMissing    = apierr.Define(400, "security_tool.lapi_missing", "no CrowdSec LAPI selected or configured")
 	errCrowdSecConsoleMissing = apierr.Define(400, "security_tool.console_key_missing", "no CrowdSec console key configured")
@@ -128,6 +129,7 @@ var serverErrors = []sentinelCode{
 	{services.ErrLcmHostNotApt, errLcmHostNotApt},
 	{services.ErrLcmHostInContainer, errLcmHostInContainer},
 	{services.ErrUnknownSecurityTool, errUnknownSecurityTool},
+	{services.ErrBanListTimeout, errBanListTimeout},
 	{services.ErrInvalidAllowlistIP, errInvalidAllowlistIP},
 	{services.ErrCrowdSecLapiMissing, errCrowdSecLapiMissing},
 	{services.ErrCrowdSecConsoleMissing, errCrowdSecConsoleMissing},

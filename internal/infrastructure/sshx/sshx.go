@@ -74,8 +74,12 @@ var ErrPasswordAuthUnavailable = errors.New("der Server bietet keine Passwort-An
 // sshd-Konfiguration und einem zweiten Blick auf das Passwort.
 var ErrPasswordRejected = errors.New("Anmeldung abgelehnt - Benutzername oder Passwort stimmt nicht (der Server bietet die Passwort-Anmeldung an)")
 
-// DialTimeout begrenzt Verbindungsaufbau und Handshake.
+// DialTimeout begrenzt den TCP-Aufbau.
 const DialTimeout = 15 * time.Second
+
+// HandshakeTimeout begrenzt Handshake und Anmeldung. Großzügiger als der
+// TCP-Aufbau, weil PAM auf einem ausgelasteten Server seine Zeit braucht.
+var HandshakeTimeout = 30 * time.Second
 
 // PartialOutputReader ist eine Verbindung, die schon während eines Kommandos
 // dessen bisherige Ausgabe kennt. Der Agent-Weg (Frage und Antwort) kann das
@@ -140,7 +144,7 @@ func (c *Client) Probe(host string, port int) (string, string, error) {
 		},
 		Timeout: DialTimeout,
 	}
-	conn, err := ssh.Dial("tcp", addr(host, port), config)
+	conn, err := dialClient(host, port, config)
 	if err == nil {
 		conn.Close()
 	}
@@ -245,7 +249,7 @@ func (c *Client) dial(host string, port int, user string, auth []ssh.AuthMethod,
 		},
 		Timeout: DialTimeout,
 	}
-	client, err := ssh.Dial("tcp", addr(host, port), config)
+	client, err := dialClient(host, port, config)
 	if err != nil {
 		if strings.Contains(err.Error(), ErrHostKeyMismatch.Error()) {
 			return nil, ErrHostKeyMismatch
@@ -253,6 +257,26 @@ func (c *Client) dial(host string, port int, user string, auth []ssh.AuthMethod,
 		return nil, fmt.Errorf("ssh-verbindung zu %s: %w", host, err)
 	}
 	return &clientConn{client: client}, nil
+}
+
+// dialClient baut die Verbindung auf. ssh.Dial begrenzt nur den TCP-Aufbau:
+// Hängt der Server danach, etwa weil sein Kernel steht, warteten Handshake und
+// Anmeldung ohne Ende und mit ihnen Jobs, Slots und Seitenaufrufe. Die Frist
+// fällt weg, sobald die Verbindung steht, damit lange Kommandos laufen dürfen.
+func dialClient(host string, port int, config *ssh.ClientConfig) (*ssh.Client, error) {
+	target := addr(host, port)
+	netConn, err := net.DialTimeout("tcp", target, config.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	_ = netConn.SetDeadline(time.Now().Add(HandshakeTimeout))
+	conn, chans, reqs, err := ssh.NewClientConn(netConn, target, config)
+	if err != nil {
+		netConn.Close()
+		return nil, err
+	}
+	_ = netConn.SetDeadline(time.Time{})
+	return ssh.NewClient(conn, chans, reqs), nil
 }
 
 type clientConn struct {

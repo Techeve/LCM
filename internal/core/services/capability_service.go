@@ -48,10 +48,20 @@ type CapabilityService struct {
 	// onTransition erfährt, wenn eine Kategorie alarmwürdig wird oder eine
 	// alarmwürdige geheilt ist. Optional; wird außerhalb von mu gerufen.
 	onTransition func(serverID uint, c domain.ServerCapability, recovered bool)
+
+	// nothingPending prüft, ob auf dem Server noch Updates offen sind.
+	// Optional - ohne sie heilt nur ein erfolgreiches Update.
+	nothingPending func(serverID uint) (bool, error)
 }
 
 func NewCapabilityService(repo *repositories.CapabilityRepository) *CapabilityService {
 	return &CapabilityService{repo: repo}
+}
+
+// WithNothingPending verdrahtet die Prüfung auf offene Updates.
+func (s *CapabilityService) WithNothingPending(fn func(serverID uint) (bool, error)) *CapabilityService {
+	s.nothingPending = fn
+	return s
 }
 
 // OnTransition meldet künftig jeden Wechsel in oder aus dem Alarmzustand an fn.
@@ -141,7 +151,9 @@ func failureOf(o JobOutcome) (category string, f domain.Failure, ok bool) {
 	category = domain.CapabilityCategoryFor(job.Type)
 	// Ein Health-Ping, der den Server erreicht hat und trotzdem scheitert,
 	// scheitert an den mitlaufenden Grundsatz-Regeln - die Verbindung steht.
-	if category == domain.CapabilityConnection {
+	// Beendet ihn der Watchdog, hing er dagegen: Das betrifft die Verbindung,
+	// und die heilt der nächste Erfolg, ohne dass dieselbe Regel laufen muss.
+	if category == domain.CapabilityConnection && !o.ByWatchdog {
 		category = domain.CapabilityRules
 	}
 	if category == "" {
@@ -196,6 +208,7 @@ func applyFailure(c *domain.ServerCapability, f domain.Failure, job *domain.Job,
 func (s *CapabilityService) recordSuccess(serverID uint, job *domain.Job) {
 	// Wer einen Job ausführen konnte, erreicht den Server.
 	s.healConnection(serverID)
+	s.healWhenNothingPending(serverID, job)
 
 	category := domain.CapabilityCategoryFor(job.Type)
 	if category == domain.CapabilityConnection {
@@ -216,6 +229,29 @@ func (s *CapabilityService) recordSuccess(serverID uint, job *domain.Job) {
 		if job.Type == domain.RuleTypePackageScan {
 			setPackageWarning(c, job.Output)
 		}
+		return true
+	})
+}
+
+// healWhenNothingPending: Ein gescheitertes Update heilt sonst nur ein
+// erfolgreiches. Findet ein Scan nichts mehr zu aktualisieren, käme dieses nie,
+// und die Meldung bliebe stehen, obwohl nichts mehr zu tun ist. Fällt eine
+// Paketquelle aus, kann der Scan offene Updates übersehen, dann bleibt sie.
+func (s *CapabilityService) healWhenNothingPending(serverID uint, job *domain.Job) {
+	if s.nothingPending == nil || (job.Type != domain.RuleTypePackageScan && job.Type != JobTypeFullRefresh) {
+		return
+	}
+	if domain.ClassifyRefresh(job.Output).PartiallyFailed() {
+		return
+	}
+	if done, err := s.nothingPending(serverID); err != nil || !done {
+		return
+	}
+	s.update(serverID, domain.CapabilityPackages, func(c *domain.ServerCapability) bool {
+		if c.State != domain.CapabilityFailed || !c.InstallFailed() {
+			return false
+		}
+		resetToOK(c)
 		return true
 	})
 }

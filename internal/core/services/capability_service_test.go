@@ -570,3 +570,68 @@ func TestAnderesHealthPingHeiltRegelFehlerNicht(t *testing.T) {
 	svc.RecordJob(ruleJob(domain.RuleTypeHealth, domain.JobStatusSuccess, 1, "Health A"))
 	requireState(t, repo, domain.CapabilityRules, domain.CapabilityOK)
 }
+
+func TestVomWatchdogBeendeterPingHeiltBeimNaechstenErfolg(t *testing.T) {
+	svc, repo, _ := newCapabilityTest(t)
+	hung := jobOutcome(domain.RuleTypeHealth, domain.JobStatusAborted, "ABGEBROCHEN: Stille", nil)
+	hung.ByWatchdog = true
+	svc.RecordJob(hung)
+
+	c := requireState(t, repo, domain.CapabilityConnection, domain.CapabilityFailed)
+	if c.LastErrorClass != domain.ErrClassTimeout {
+		t.Errorf("Klasse = %q, erwartet timeout", c.LastErrorClass)
+	}
+	if rules := storedCapability(t, repo, domain.CapabilityRules); rules != nil && rules.State == domain.CapabilityFailed {
+		t.Errorf("ein hängender Ping ist kein Regel-Fehler: %+v", rules)
+	}
+
+	// Ein Ping aus anderer Quelle, etwa von Hand gestartet, genügt.
+	manual := successJob(domain.RuleTypeHealth, "ok")
+	manual.Job.Name = "Health-Check von Hand"
+	svc.RecordJob(manual)
+	requireState(t, repo, domain.CapabilityConnection, domain.CapabilityOK)
+}
+
+func TestScanOhneOffeneUpdatesHeiltGescheiterteInstallation(t *testing.T) {
+	for _, jobType := range []string{domain.RuleTypeUpdate, domain.RuleTypeSecurity, domain.RuleTypePackages} {
+		for _, scanType := range []string{domain.RuleTypePackageScan, JobTypeFullRefresh} {
+			svc, repo, _ := newCapabilityTest(t)
+			svc.WithNothingPending(func(uint) (bool, error) { return true, nil })
+			svc.RecordJob(failedJob(jobType, brokenDepsOutput, 100))
+
+			svc.RecordJob(successJob(scanType, "Reading package lists... Done"))
+
+			requireState(t, repo, domain.CapabilityPackages, domain.CapabilityOK)
+		}
+	}
+}
+
+func TestScanMitOffenenUpdatesHeiltNicht(t *testing.T) {
+	svc, repo, _ := newCapabilityTest(t)
+	svc.WithNothingPending(func(uint) (bool, error) { return false, nil })
+	svc.RecordJob(failedJob(domain.RuleTypeUpdate, brokenDepsOutput, 100))
+
+	svc.RecordJob(successJob(domain.RuleTypePackageScan, "Reading package lists... Done"))
+
+	requireState(t, repo, domain.CapabilityPackages, domain.CapabilityFailed)
+}
+
+func TestScanHeiltKeineGescheiterteBereinigung(t *testing.T) {
+	svc, repo, _ := newCapabilityTest(t)
+	svc.WithNothingPending(func(uint) (bool, error) { return true, nil })
+	svc.RecordJob(failedJob(domain.RuleTypeAutoremove, brokenDepsOutput, 100))
+
+	svc.RecordJob(successJob(domain.RuleTypePackageScan, "Reading package lists... Done"))
+
+	requireState(t, repo, domain.CapabilityPackages, domain.CapabilityFailed)
+}
+
+func TestScanMitAusgefallenerQuelleHeiltNicht(t *testing.T) {
+	svc, repo, _ := newCapabilityTest(t)
+	svc.WithNothingPending(func(uint) (bool, error) { return true, nil })
+	svc.RecordJob(failedJob(domain.RuleTypeUpdate, brokenDepsOutput, 100))
+
+	svc.RecordJob(successJob(domain.RuleTypePackageScan, zypperRefreshPartialOutput))
+
+	requireState(t, repo, domain.CapabilityPackages, domain.CapabilityFailed)
+}

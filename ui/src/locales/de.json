@@ -1944,6 +1944,7 @@
       "trigger_failed": "Der System-Zeitplan lässt sich nicht auslösen: {detail}"
     },
     "security_tool": {
+      "bans_timeout": "Der Server hat die Sperrliste nicht rechtzeitig geliefert",
       "console_key_missing": "Es ist kein CrowdSec-Console-Schlüssel hinterlegt",
       "crowdsec_unsupported": "CrowdSec wird auf dieser Paketverwaltung nicht unterstützt",
       "invalid_allowlist_ip": "Ungültige Allowlist-IP",

@@ -218,6 +218,15 @@ func (c *ServerCapability) Heals(success *Job) bool {
 		(c.LastJobType == RuleTypeSecurity || c.LastJobType == RuleTypePackages)
 }
 
+// InstallFailed: Der letzte Fehlschlag wollte Pakete einspielen.
+func (c *ServerCapability) InstallFailed() bool {
+	switch c.LastJobType {
+	case RuleTypeUpdate, RuleTypeSecurity, RuleTypePackages:
+		return true
+	}
+	return false
+}
+
 // sameSource: Der Job stammt von derselben Regel wie der letzte Fehlschlag.
 // Ad-hoc-Läufe haben keine Regel; dort unterscheidet nur der Jobname - sonst
 // würde ein unbeteiligtes Ad-hoc-Skript das fehlgeschlagene

@@ -318,6 +318,20 @@ func (r *ServerRepository) CountOutdatedPackages(serverID uint) (int64, error) {
 	return n, err
 }
 
+// NothingPending meldet, ob der letzte Paket-Scan durchlief und kein Update
+// offen ließ. Eine gescheiterte Update-Prüfung sagt über den Stand nichts aus.
+func (r *ServerRepository) NothingPending(serverID uint) (bool, error) {
+	var server domain.Server
+	if err := r.db.Select("update_check_error").First(&server, serverID).Error; err != nil {
+		return false, err
+	}
+	if server.UpdateCheckError != "" {
+		return false, nil
+	}
+	n, err := r.CountOutdatedPackages(serverID)
+	return n == 0, err
+}
+
 // CountOutdatedPackagesFor zählt die überfälligen Updates (Zählweise wie
 // CountOutdatedPackages) für mehrere Server mit EINER Abfrage. Server ohne
 // überfällige Pakete fehlen im Ergebnis.
