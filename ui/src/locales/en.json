@@ -4019,8 +4019,8 @@
       "expand": "Expand explanation",
       "images": {
         "title": "How to read the images",
-        "intro": "The daily Docker check compares every image with the registry and scans images in use centrally with Trivy for vulnerabilities, without contacting the servers.",
-        "update": "Update available: the registry has a newer state (new digest).",
+        "intro": "The daily Docker check compares every image with the registry and scans centrally with Trivy for vulnerabilities, without contacting the servers: all images in use, and the newest unused image per repository.",
+        "update": "Update available: the registry has a newer state (new digest), or a container still runs the old version.",
         "unverifiable": "Cannot be checked: the image is private and cannot be queried anonymously.",
         "local": "Built locally: there is no registry state to compare with.",
         "cves": "The vulnerabilities count distinct CVE identifiers per image, not per server."
@@ -5087,6 +5087,7 @@
         "other": "+{count} older copies"
       },
       "unused": "unused",
+      "restartPending": "Recreate container",
       "updateAvailable": "Update available",
       "current": "current",
       "notChecked": "not checked yet",

@@ -41,10 +41,21 @@ z. B. auf einen Blick zu sehen, wie viele Server noch ein veraltetes
 
 ## Image-CVE-Scan
 
-Im selben Lauf scannt LCM die **genutzten** Images mit Trivy - adressiert per
-`repo@digest` (exakt der laufende Stand) und dedupliziert pro (Repository,
-Digest). Die Funde landen in derselben Schwachstellen-Tabelle wie der
-Paket-Scan. In **Ampel und Alarme** fließen sie standardmäßig **nicht** ein -
+Im selben Lauf scannt LCM Images mit Trivy - adressiert per `repo@digest`
+(exakt der vorhandene Stand) und dedupliziert pro (Repository, Digest):
+
+- **Genutzte Images** werden immer geprüft, auch eine ältere Fassung, auf der
+  noch ein Container läuft.
+- Von den **ungenutzten Images** prüft LCM je Repository nur das neueste, weil
+  es als Nächstes in Betrieb gehen könnte. Ältere Stände bleiben außen vor.
+
+Ob ein Image genutzt wird, entscheidet die Image-ID des Containers, nicht sein
+Name. Nach *Laden* liegt das neue Image auf dem Server, der Container läuft aber
+weiter mit dem alten. Das Update gilt deshalb erst als erledigt, wenn der
+Container neu erstellt wurde; bis dahin steht er auf *Container noch neu
+erstellen*.
+
+Die Funde landen in derselben Schwachstellen-Tabelle wie der Paket-Scan. In **Ampel und Alarme** fließen sie standardmäßig **nicht** ein -
 nur für Container, die im Reiter *Container* eines Servers in der Spalte
 *In der Ampel* eingeschaltet sind (im Folgenden **CVE-relevant**), zählen die Image-CVEs mit voller Schwere (kritisch → 🔴, hoch → 🟡;
 siehe [Status-Berechnung](/guides/status/)). Veraltete genutzte Images → 🟡.

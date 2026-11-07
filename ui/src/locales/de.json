@@ -4019,8 +4019,8 @@
       "expand": "Erklärung aufklappen",
       "images": {
         "title": "So liest du die Images",
-        "intro": "Der tägliche Docker-Check vergleicht jedes Image mit der Registry und scannt genutzte Images zentral mit Trivy auf Sicherheitslücken, ohne die Server zu kontaktieren.",
-        "update": "Update verfügbar: Die Registry hat einen neueren Stand (neuer Digest).",
+        "intro": "Der tägliche Docker-Check vergleicht jedes Image mit der Registry und scannt zentral mit Trivy auf Sicherheitslücken, ohne die Server zu kontaktieren: alle genutzten Images und von den ungenutzten je Repository das neueste.",
+        "update": "Update verfügbar: Die Registry hat einen neueren Stand (neuer Digest), oder ein Container läuft noch mit der alten Fassung.",
         "unverifiable": "Nicht prüfbar: Das Image ist privat und lässt sich anonym nicht abfragen.",
         "local": "Lokal gebaut: Es gibt keinen Registry-Stand zum Vergleichen.",
         "cves": "Die Lücken zählen eindeutige CVE-Kennungen je Image, nicht je Server."
@@ -5087,6 +5087,7 @@
         "other": "+{count} ältere Fassungen"
       },
       "unused": "ungenutzt",
+      "restartPending": "Container noch neu erstellen",
       "updateAvailable": "Update verfügbar",
       "current": "aktuell",
       "notChecked": "noch nicht geprüft",

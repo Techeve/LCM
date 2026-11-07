@@ -7,7 +7,7 @@ import '../../components/lcm-status';
 import type { Column } from '../../components/lcm-data-table';
 import { baseStyles } from '../../components/shared';
 import { serverSummaryUrl } from '../../api/servers';
-import { composeGroups, normaliseOpsDocker, normaliseServerFlags, opsApi, opsDockerUrl, vulnsByImage, type ComposeGroup, type OpsContainer, type OpsDocker, type OpsServerFlags } from '../../api/servers-ops';
+import { composeGroups, normaliseOpsDocker, normaliseServerFlags, opsApi, opsDockerUrl, supersededImageIds, vulnsByImage, type ComposeGroup, type OpsContainer, type OpsDocker, type OpsServerFlags } from '../../api/servers-ops';
 import { stateLevel } from '../../api/containers';
 import { t } from '../../lib/i18n';
 import { LiveData } from '../../lib/live-data';
@@ -95,12 +95,13 @@ export class SrvContainers extends SrvTab {
 
   #columns(group: ComposeGroup, data: OpsDocker): Column<OpsContainer>[] {
     const vulns = vulnsByImage(data.images);
+    const superseded = supersededImageIds(data.images);
     const relevant = new Set(this.#flags.data?.cveRelevant ?? []);
     const withProject = group.project !== '';
     return [
       { key: 'state', label: t('serverOps.docker.column.state'), render: (r) => html`<lcm-status level=${stateLevel(r.state)} label=${stateText(r.state)}></lcm-status>${r.status ? html`<lcm-sec-cell block muted>${r.status}</lcm-sec-cell>` : nothing}` },
       { key: 'name', label: t('serverOps.docker.column.container'), sortable: true, render: (r) => html`<strong>${r.name}</strong>${r.service ? html`<lcm-sec-cell block muted>${t('serverOps.docker.service', { service: r.service })}</lcm-sec-cell>` : nothing}` },
-      { key: 'image', label: t('serverOps.docker.column.image'), render: (r) => this.#imageCell(r, vulns.get(r.image)) },
+      { key: 'image', label: t('serverOps.docker.column.image'), render: (r) => this.#imageCell(r, vulns.get(r.imageId || r.image), superseded.has(r.imageId)) },
       { key: 'ports', label: t('serverOps.docker.column.ports'), kind: 'mono', render: (r) => r.ports || '–' },
       {
         key: 'relevant',
@@ -111,8 +112,10 @@ export class SrvContainers extends SrvTab {
     ];
   }
 
-  #imageCell(container: OpsContainer, vulns: { critical: number; high: number } | undefined): TemplateResult {
-    return html`<lcm-sec-cell mono>${container.image}</lcm-sec-cell>${vulns
+  #imageCell(container: OpsContainer, vulns: { critical: number; high: number } | undefined, stale: boolean): TemplateResult {
+    return html`<lcm-sec-cell mono>${container.image}</lcm-sec-cell>${stale
+      ? html` <lcm-badge tone="warn">${t('serverOps.docker.restartPending')}</lcm-badge>`
+      : nothing}${vulns
       ? html` <lcm-badge tone=${vulns.critical > 0 ? 'crit' : 'warn'}>${vulns.critical > 0 ? t('serverOps.docker.critical', { count: vulns.critical }) : t('serverOps.docker.high', { count: vulns.high })}</lcm-badge>`
       : nothing}`;
   }

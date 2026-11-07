@@ -20,6 +20,16 @@ test.describe('Anmeldung', () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
+  test('das Zwei-Faktor-Feld steht mittig und zeigt ein Beispiel', async ({ page }) => {
+    await page.route('**/api/v1/auth/login', (route) =>
+      route.fulfill({ json: { twofa_required: true, challenge: 'probe' } }),
+    );
+    await meldeAn(page, ADMIN_PASSWORD);
+    const code = page.getByRole('textbox', { name: 'Code' });
+    await expect(code).toHaveAttribute('placeholder', '123456');
+    await expect(code).toHaveCSS('text-align', 'center');
+  });
+
   test('Admin kann sich anmelden und abmelden', async ({ page }) => {
     await meldeAn(page, ADMIN_PASSWORD);
     const konto = page.getByRole('button', { name: 'Konto von Administrator' });

@@ -491,12 +491,13 @@ func (r *ServerRepository) FindDockerImages(serverID uint) ([]domain.DockerImage
 	return images, nil
 }
 
-// CountOutdatedDockerImages zählt genutzte Images mit verfügbarem Update
-// (speist die Ampel-Bewertung).
+// CountOutdatedDockerImages zählt genutzte Images mit verfügbarem Update,
+// dazu überholte Fassungen, auf denen noch ein Container läuft: Für ihn ist
+// das Update erst fertig, wenn er neu erstellt wurde (speist die Ampel).
 func (r *ServerRepository) CountOutdatedDockerImages(serverID uint) (int64, error) {
 	var n int64
 	err := r.db.Model(&domain.DockerImage{}).
-		Where("server_id = ? AND update_available = ? AND in_use = ?", serverID, true, true).
+		Where("server_id = ? AND in_use = ? AND (update_available = ? OR superseded = ?)", serverID, true, true, true).
 		Count(&n).Error
 	return n, err
 }
@@ -1173,7 +1174,7 @@ func (r *ServerRepository) GlobalDockerOverview(scope AccessScope) ([]DockerImag
 		Select("docker_images.repository, docker_images.tag,"+
 			" COUNT(DISTINCT docker_images.server_id) AS server_count,"+
 			" SUM(CASE WHEN docker_images.in_use THEN 1 ELSE 0 END) AS in_use_count,"+
-			" MAX(CASE WHEN docker_images.update_available THEN 1 ELSE 0 END) AS update_available,"+
+			" MAX(CASE WHEN docker_images.update_available OR docker_images.restart_pending THEN 1 ELSE 0 END) AS update_available,"+
 			" MAX(CASE WHEN docker_images.check_status = 'unauthorized' THEN 1 ELSE 0 END) AS unverifiable,"+
 			" MIN(CASE WHEN docker_images.check_status = 'local' THEN 1 ELSE 0 END) AS local_only").
 		Joins("JOIN servers ON servers.id = docker_images.server_id").

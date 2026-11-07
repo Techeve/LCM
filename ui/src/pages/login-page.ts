@@ -260,10 +260,11 @@ export class LoginPage extends LitElement {
         label=${t('login.totpCode')}
         name="code"
         mono
+        code
         digits
         maxlength=${CODE_LENGTH + 1}
         autocomplete="one-time-code"
-        placeholder="000000"
+        placeholder="123456"
         required
         .value=${live(this._code)}
         @lcm-input=${this.#onCode}

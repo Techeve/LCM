@@ -96,6 +96,10 @@ export const fieldStyles = css`
   select:focus-visible {
     outline: none;
   }
+  input.code {
+    text-align: center;
+    letter-spacing: 0.2em;
+  }
   input::placeholder {
     color: var(--text-3);
   }

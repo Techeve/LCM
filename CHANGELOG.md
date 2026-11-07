@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.0.0-beta.9 - 2026-11-07
+
+### 🚀 Features
+
+- **ui**: Der Zwei-Faktor-Code steht bei der Anmeldung mittig (f0fa73d5)
+
+### 🐛 Bugfixes
+
+- **advisory**: Die Frühwarnung scheitert nicht mehr an „database is locked“ (1567d69a)
+- **docker**: Ein geladenes Image gilt erst als aktuell, wenn der Container es nutzt (7ff047f2)
+- **packages**: Entfernte Pakete zählen nicht mehr als installiert (3d864c67)
+
 ## v2.0.0-beta.8 - 2026-11-07
 
 ### 🐛 Bugfixes

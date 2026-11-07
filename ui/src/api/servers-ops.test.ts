@@ -21,12 +21,13 @@ import {
   shortDigest,
   userActions,
   vulnsByImage,
+  supersededImageIds,
   type OpsContainer,
   type OpsImage,
 } from './servers-ops';
 
-const container = (name: string, project = '', service = ''): OpsContainer => ({ id: name, name, image: 'x', state: 'running', status: '', ports: '', project, service });
-const image = (patch: Partial<OpsImage>): OpsImage => ({ id: 'i', ref: 'nginx:1', tag: '1', digest: '', size: '', inUse: true, superseded: false, olderCopies: 0, updateAvailable: false, checkStatus: '', critical: 0, high: 0, ...patch });
+const container = (name: string, project = '', service = ''): OpsContainer => ({ id: name, name, image: 'x', imageId: '', state: 'running', status: '', ports: '', project, service });
+const image = (patch: Partial<OpsImage>): OpsImage => ({ id: 'i', ref: 'nginx:1', tag: '1', digest: '', size: '', inUse: true, superseded: false, restartPending: false, imageId: '', olderCopies: 0, updateAvailable: false, checkStatus: '', critical: 0, high: 0, ...patch });
 
 describe('server flags', () => {
   it('reads the first item of the list answer', () => {
@@ -203,5 +204,25 @@ describe('storage', () => {
     expect(history.points.map((p) => p.percent)).toEqual([25, 0]);
     expect(history.forecast).toEqual({ days: 40, unlimited: false, insufficient: false });
     expect(normaliseStorageHistory({}).forecast).toBeNull();
+  });
+});
+
+describe('docker images after a pull', () => {
+  it('finds the findings of the running image by its ID, not by the moved tag', () => {
+    const vulns = vulnsByImage([
+      image({ ref: 'nginx:1', imageId: 'sha256:new', critical: 0, high: 0 }),
+      image({ ref: 'nginx@sha256:old', imageId: 'sha256:old', superseded: true, critical: 2 }),
+    ]);
+    expect(vulns.get('sha256:old')).toEqual({ critical: 2, high: 0 });
+    expect(vulns.get('sha256:new')).toBeUndefined();
+  });
+
+  it('names the images a container still has to leave', () => {
+    const ids = supersededImageIds([image({ imageId: 'sha256:new' }), image({ imageId: 'sha256:old', superseded: true })]);
+    expect([...ids]).toEqual(['sha256:old']);
+  });
+
+  it('does not offer to delete the image a container is waiting for', () => {
+    expect(imageActions(image({ inUse: false, restartPending: true })).remove).toBe(false);
   });
 });

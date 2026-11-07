@@ -87,7 +87,7 @@ export function normaliseDocker(raw: unknown): DockerData {
         ref: text(i.tag) ? `${text(i.repository)}:${text(i.tag)}` : text(i.repository),
         size: text(i.size_text),
         inUse: i.in_use === true,
-        updateAvailable: i.update_available === true,
+        updateAvailable: i.update_available === true || i.restart_pending === true,
         critical: num(i.critical_vulns),
         high: num(i.high_vulns),
       })),

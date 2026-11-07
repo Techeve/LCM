@@ -53,11 +53,12 @@ export class OpsDockerImages extends LitElement {
     return html`<lcm-sec-cell mono>${image.ref || t('serverOps.docker.unnamed')}</lcm-sec-cell>
       ${image.superseded ? html`<lcm-badge>${t('serverOps.docker.superseded')}</lcm-badge>` : nothing}
       ${image.olderCopies > 0 ? html`<lcm-badge>${t('serverOps.docker.olderCopies', { count: image.olderCopies })}</lcm-badge>` : nothing}
-      ${!image.inUse && !image.superseded ? html`<lcm-badge>${t('serverOps.docker.unused')}</lcm-badge>` : nothing}`;
+      ${!image.inUse && !image.superseded && !image.restartPending ? html`<lcm-badge>${t('serverOps.docker.unused')}</lcm-badge>` : nothing}`;
   }
 
   #statusCell(image: OpsImage): TemplateResult | string {
     if (image.updateAvailable) return html`<lcm-badge tone="warn">${t('serverOps.docker.updateAvailable')}</lcm-badge>`;
+    if (image.restartPending) return html`<lcm-badge tone="warn">${t('serverOps.docker.restartPending')}</lcm-badge>`;
     if (image.superseded) return '–';
     const check = CHECK_LABELS[image.checkStatus];
     if (check) return html`<lcm-badge tone=${check.tone}>${t(check.key)}</lcm-badge>`;

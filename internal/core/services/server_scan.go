@@ -356,7 +356,7 @@ func scanPackagesAndRepos(mgr string, run func(label, cmd string) string) ([]dom
 		pkgs = parseApkList(run("packages", "apk list -I 2>/dev/null"))
 		applyApkUpgrades(pkgs, run("upgradable", "apk version -l '<' 2>/dev/null"))
 	default:
-		pkgs = parseDpkgList(run("packages", "dpkg-query -W -f='${Package} ${Version}\\n'"))
+		pkgs = parseDpkgList(run("packages", dpkgInstalledCommand))
 		applyUpgradable(pkgs, run("upgradable", "apt list --upgradable 2>/dev/null"))
 		applyHeldBack(pkgs, run("held-back", aptHeldBackFunc+"lcm_apt_heldback"))
 	}
@@ -655,6 +655,14 @@ func unescapeMountpoint(s string) string {
 	}
 	return b.String()
 }
+
+// dpkgInstalledFilter behält, was wirklich installiert ist. dpkg-query -W nennt
+// auch entfernte Pakete, von denen nur die Konfiguration blieb (Status „rc"),
+// samt letzter Version. Als Bestand ergäbe das CVEs für Pakete, die es auf dem
+// Server nicht mehr gibt, und zu denen apt folgerichtig kein Update meldet.
+const dpkgInstalledFilter = `awk '$1 !~ /^.[cn]/ {print $2" "$3}'`
+
+const dpkgInstalledCommand = `dpkg-query -W -f='${db:Status-Abbrev} ${Package} ${Version}\n' 2>/dev/null | ` + dpkgInstalledFilter
 
 // parseDpkgList parst "paket version"-Zeilen von dpkg-query.
 func parseDpkgList(out string) []domain.Package {

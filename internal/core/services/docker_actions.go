@@ -73,9 +73,9 @@ func (s *ServerService) Docker(scope repositories.AccessScope, id uint) (*Docker
 	}
 	for _, img := range images {
 		view := DockerImageView{DockerImage: img}
+		view.CriticalVulns = crit[img.VulnRef()]
+		view.HighVulns = high[img.VulnRef()]
 		if !img.Superseded {
-			view.CriticalVulns = crit[img.Ref()]
-			view.HighVulns = high[img.Ref()]
 			view.OlderCopies = older[img.Repository]
 		}
 		report.Images = append(report.Images, view)
@@ -324,7 +324,7 @@ func (s *ServerService) planDeleteImage(server *domain.Server, image string) (do
 	if match == nil {
 		return dockerPlan{}, ErrDockerImageUnknown
 	}
-	if match.InUse {
+	if match.InUse || match.RestartPending {
 		return dockerPlan{}, ErrDockerImageInUse
 	}
 	return dockerPlan{name: "Image löschen: " + image, script: dockerRemoveImageScript(image)}, nil

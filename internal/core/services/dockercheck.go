@@ -12,8 +12,8 @@ import (
 
 // RunDockerCheck ist der zentrale Docker-Lauf (serverloser System-Job,
 // analog zu Backup/CVE-Scan): Er prüft für jedes erfasste Image, ob die
-// Registry hinter dem Tag einen neueren Digest führt, und scannt die
-// GENUTZTEN Images mit Trivy auf bekannte Sicherheitslücken. Beides läuft
+// Registry hinter dem Tag einen neueren Digest führt, und scannt die Images
+// aus imagesToScan mit Trivy auf bekannte Sicherheitslücken. Beides läuft
 // auf dem LCM-Host - die verwalteten Server werden dafür NICHT
 // kontaktiert. Dedupliziert: nginx:1.25 auf 12 Servern = 1 Registry-Call
 // und 1 Trivy-Scan; die Funde werden auf alle betroffenen Server verteilt
@@ -91,7 +91,42 @@ func (e *Executor) runDockerCheck(ctx context.Context) (string, error) {
 	return summary, nil
 }
 
-// scanDockerImages prüft die genutzten Docker-Images mit Trivy auf CVEs -
+// imagesToScan wählt die Images für den CVE-Scan. Was ein Container nutzt, wird
+// immer geprüft, auch eine überholte Fassung: Genau sie läuft ja noch. Von den
+// ungenutzten zählt je Repository nur das neueste, denn das könnte als Nächstes
+// in Betrieb gehen. Ältere Stände, die nichts mehr nutzt, wären nur Rauschen.
+// Ohne Registry-Digest (lokal gebaut) kann Trivy nichts laden.
+func imagesToScan(images []domain.DockerImage) []*domain.DockerImage {
+	type repo struct {
+		server uint
+		name   string
+	}
+	newest := map[repo]time.Time{}
+	for i := range images {
+		img := &images[i]
+		if img.Superseded || img.BuiltAt == nil {
+			continue
+		}
+		key := repo{img.ServerID, img.Repository}
+		if img.BuiltAt.After(newest[key]) {
+			newest[key] = *img.BuiltAt
+		}
+	}
+	var out []*domain.DockerImage
+	for i := range images {
+		img := &images[i]
+		if img.ScanRef() == "" {
+			continue
+		}
+		latest := !img.Superseded && (img.BuiltAt == nil || !img.BuiltAt.Before(newest[repo{img.ServerID, img.Repository}]))
+		if img.InUse || (latest && img.Tag != "") {
+			out = append(out, img)
+		}
+	}
+	return out
+}
+
+// scanDockerImages prüft die Images aus imagesToScan mit Trivy auf CVEs -
 // dedupliziert pro (Referenz, Digest) - und ersetzt die Docker-CVE-Funde
 // der betroffenen Server. Server, bei denen ein Image-Scan fehlschlug,
 // behalten ihren bisherigen Bestand (kein Flackern durch transiente
@@ -101,23 +136,22 @@ func (e *Executor) scanDockerImages(ctx context.Context, images []domain.DockerI
 		return "Image-CVE-Scan übersprungen: Trivy nicht verfügbar."
 	}
 
-	// Scanbare Images: genutzt, mit Tag und Registry-Digest (lokal gebaute
-	// kann Trivy nicht aus der Registry ziehen). Gescannt wird per
-	// "repo@digest" - also EXAKT der Stand, der auf den Servern läuft.
-	// Ein Scan per "repo:tag" würde den AKTUELLEN Registry-Stand des Tags
-	// prüfen und bei veralteten lokalen Images die falschen (nämlich gar
-	// keine) Lücken melden - im Live-Test mit einem zurückgetaggten
+	// Gescannt wird per "repo@digest" - also EXAKT der Stand, der auf den
+	// Servern liegt. Ein Scan per "repo:tag" würde den AKTUELLEN Registry-Stand
+	// des Tags prüfen und bei veralteten lokalen Images die falschen (nämlich
+	// gar keine) Lücken melden - im Live-Test mit einem zurückgetaggten
 	// alpine:3 aufgefallen. Nebeneffekt: mehrfach getaggte Images
 	// (alpine:3 + alpine:3.19 auf demselben Digest) werden nur einmal
 	// gescannt.
-	byKey := map[string][]*domain.DockerImage{}
+	var live []domain.DockerImage
 	for i := range images {
-		img := &images[i]
-		if demo[img.ServerID] || !img.InUse || img.Tag == "" || img.RepoDigest == "" {
-			continue
+		if !demo[images[i].ServerID] {
+			live = append(live, images[i])
 		}
-		k := img.Repository + "@" + img.RepoDigest
-		byKey[k] = append(byKey[k], img)
+	}
+	byKey := map[string][]*domain.DockerImage{}
+	for _, img := range imagesToScan(live) {
+		byKey[img.ScanRef()] = append(byKey[img.ScanRef()], img)
 	}
 
 	// Jede (Repository, Digest)-Kombination genau einmal scannen.
@@ -152,7 +186,7 @@ func (e *Executor) scanDockerImages(ctx context.Context, images []domain.DockerI
 				continue
 			}
 			for _, v := range vulnsByKey[k] {
-				v.ImageRef = img.Ref()
+				v.ImageRef = img.VulnRef()
 				perServer[img.ServerID] = append(perServer[img.ServerID], v)
 			}
 		}

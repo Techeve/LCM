@@ -1,7 +1,10 @@
 package services
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"LCM/internal/core/domain"
 )
@@ -96,5 +99,102 @@ func TestSupersededImageIsNotInUseByRepoName(t *testing.T) {
 	markImagesInUse(images, containers)
 	if !images[1].InUse {
 		t.Errorf("container auf der alten ID muss das überholte image als genutzt markieren")
+	}
+}
+
+// Der Kern des Pull-Falls: Der Tag liegt schon auf dem neuen Image, der
+// Container läuft aber noch auf dem alten. Der Status darf nicht „aktuell" sagen.
+func TestPullOhneNeustartLaesstContainerAufDerAltenFassung(t *testing.T) {
+	images := []domain.DockerImage{
+		{Repository: "nginx", Tag: "latest", ImageID: "sha256:neu"},
+		{Repository: "nginx", ImageID: "sha256:alt", Superseded: true},
+	}
+	markImagesInUse(images, []domain.DockerContainer{{Image: "nginx", ImageID: "sha256:alt"}})
+
+	if images[0].InUse {
+		t.Error("das neue Image nutzt noch niemand")
+	}
+	if !images[0].RestartPending {
+		t.Error("der Container wartet noch auf das neue Image")
+	}
+	if !images[1].InUse || images[1].RestartPending {
+		t.Errorf("die alte Fassung läuft noch: %+v", images[1])
+	}
+
+	markImagesInUse(images, []domain.DockerContainer{{Image: "nginx:latest", ImageID: "sha256:neu"}})
+	if !images[0].InUse || images[0].RestartPending || images[1].InUse {
+		t.Errorf("nach dem Neuerstellen ist alles aktuell: %+v", images)
+	}
+}
+
+func TestOhneImageIDBleibtDerNameAlsNotbehelf(t *testing.T) {
+	images := []domain.DockerImage{{Repository: "redis", Tag: "7", ImageID: "sha256:r"}}
+	markImagesInUse(images, []domain.DockerContainer{{Image: "redis:7"}})
+	if !images[0].InUse || images[0].RestartPending {
+		t.Errorf("Zuordnung über den Namen fehlt: %+v", images[0])
+	}
+}
+
+func TestInspectLiefertDenNamenStattDerImageID(t *testing.T) {
+	containers := []domain.DockerContainer{{ContainerID: "c1", Image: "4f2a9c1b77d0"}}
+	applyComposeLabels(containers, "c1\t\t\t\t\tsha256:alt\tnginx:1.27\n")
+	if containers[0].Image != "nginx:1.27" || containers[0].ImageID != "sha256:alt" {
+		t.Errorf("inspect nicht übernommen: %+v", containers[0])
+	}
+}
+
+func TestWithDefaultTag(t *testing.T) {
+	for ref, want := range map[string]string{
+		"nginx":                    "nginx:latest",
+		"nginx:1.27":               "nginx:1.27",
+		"registry:5000/foo":        "registry:5000/foo:latest",
+		"registry:5000/foo:1":      "registry:5000/foo:1",
+		"ghcr.io/foo/bar@sha256:a": "ghcr.io/foo/bar@sha256:a",
+		"":                         "",
+	} {
+		if got := withDefaultTag(ref); got != want {
+			t.Errorf("withDefaultTag(%q) = %q, erwartet %q", ref, got, want)
+		}
+	}
+}
+
+func TestImagesToScan(t *testing.T) {
+	alt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	neu := alt.AddDate(0, 3, 0)
+	images := []domain.DockerImage{
+		{Repository: "nginx", Tag: "1.26", RepoDigest: "sha256:a", BuiltAt: &alt, InUse: true}, // genutzt, nicht das neueste
+		{Repository: "nginx", Tag: "1.27", RepoDigest: "sha256:b", BuiltAt: &neu},              // ungenutzt, das neueste
+		{Repository: "nginx", Tag: "1.25", RepoDigest: "sha256:c", BuiltAt: &alt},              // ungenutzt und alt
+		{Repository: "redis", RepoDigest: "sha256:d", Superseded: true, InUse: true},           // überholt, läuft noch
+		{Repository: "redis", RepoDigest: "sha256:e", Superseded: true},                        // überholt, ungenutzt
+		{Repository: "postgres", Tag: "16", RepoDigest: "sha256:f"},                            // ohne Datum
+		{Repository: "eigenbau", Tag: "1", InUse: true},                                        // lokal gebaut
+		{ServerID: 2, Repository: "nginx", Tag: "1.25", RepoDigest: "sha256:c", BuiltAt: &alt}, // auf Server 2 das neueste
+	}
+	var got []string
+	for _, img := range imagesToScan(images) {
+		got = append(got, fmt.Sprintf("%d %s", img.ServerID, img.ScanRef()))
+	}
+	want := "0 nginx@sha256:a|0 nginx@sha256:b|0 redis@sha256:d|0 postgres@sha256:f|2 nginx@sha256:c"
+	if strings.Join(got, "|") != want {
+		t.Errorf("Auswahl = %v, erwartet %s", got, want)
+	}
+}
+
+func TestUeberholteFassungBehaeltDigestAusDemDanglingFilter(t *testing.T) {
+	list := `{"Digest":"<none>","ID":"sha256:img-old","Repository":"<none>","Tag":"<none>","Size":"30MB"}`
+	images := parseDockerImages(list, parseUntaggedImages("sha256:img-old\t30000000\tnginx@sha256:77e5 \n"))
+	if len(images) != 1 || images[0].VulnRef() != "nginx@sha256:77e5" {
+		t.Errorf("Digest der überholten Fassung fehlt: %+v", images)
+	}
+}
+
+func TestParseDockerTime(t *testing.T) {
+	got := parseDockerTime("2026-05-01 10:00:00 +0200 CEST")
+	if got == nil || got.UTC().Hour() != 8 {
+		t.Errorf("Zeit nicht gelesen: %v", got)
+	}
+	if parseDockerTime("vor drei Tagen") != nil {
+		t.Error("Unlesbares darf kein Datum ergeben")
 	}
 }

@@ -163,8 +163,10 @@ func countedVulns(facts []repositories.VulnFact, relevantRefs map[string]bool) i
 // dockerRelevantRefs löst die als CVE-relevant markierten Container-Namen
 // eines Servers (CVERelevantContainers) in die Image-Referenzen auf, unter
 // denen der CVE-Scan seine Docker-Funde ablegt (Vulnerability.ImageRef):
-// die Container-Image-Ref wie gestartet plus alle Inventar-Refs mit derselben
-// Image-ID. nil bei leerer Auswahl - dann zählt kein Docker-Fund.
+// alle Inventar-Refs mit der Image-ID, die der Container wirklich nutzt. Nur
+// wenn das Inventar sie nicht kennt, zählt die Ref wie gestartet: Nach einem
+// Pull zeigt sie schon auf das neue Image. nil bei leerer Auswahl - dann zählt
+// kein Docker-Fund.
 func dockerRelevantRefs(servers *repositories.ServerRepository, server *domain.Server) map[string]bool {
 	// Der Server ist ausgenommen: kein Docker-Fund zählt. Das sticht bewusst
 	// auch die Markierung einzelner Container UND die automatische Relevanz
@@ -204,8 +206,8 @@ func dockerRelevantRefs(servers *repositories.ServerRepository, server *domain.S
 	images, _ := servers.FindDockerImages(server.ID)
 	byImageID := map[string][]string{}
 	for i := range images {
-		if images[i].ImageID != "" && !images[i].Superseded {
-			byImageID[images[i].ImageID] = append(byImageID[images[i].ImageID], images[i].Ref())
+		if ref := images[i].VulnRef(); images[i].ImageID != "" && ref != "" {
+			byImageID[images[i].ImageID] = append(byImageID[images[i].ImageID], ref)
 		}
 	}
 	refs := map[string]bool{}
@@ -214,10 +216,11 @@ func dockerRelevantRefs(servers *repositories.ServerRepository, server *domain.S
 		if !nameSet[strings.ToLower(strings.TrimSpace(c.Name))] {
 			continue
 		}
-		if c.Image != "" {
+		known := byImageID[c.ImageID]
+		if len(known) == 0 && c.Image != "" {
 			refs[c.Image] = true
 		}
-		for _, r := range byImageID[c.ImageID] {
+		for _, r := range known {
 			refs[r] = true
 		}
 	}

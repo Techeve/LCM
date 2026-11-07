@@ -81,7 +81,13 @@ type DockerImage struct {
 	Superseded bool   `json:"superseded"`
 	RepoDigest string `json:"repo_digest"`                 // Manifest-Digest; "" = lokal gebaut
 	SizeText   string `json:"size_text"`                   // human-readable ("213MB")
-	InUse      bool   `gorm:"default:false" json:"in_use"` // von mind. einem Container referenziert
+	InUse      bool   `gorm:"default:false" json:"in_use"` // von mind. einem Container genutzt
+	// RestartPending: Ein Container wurde unter dieser Referenz gestartet, läuft
+	// aber noch mit einer älteren Fassung. Das Image ist geladen, das Update
+	// erst fertig, wenn der Container neu erstellt wurde.
+	RestartPending bool `gorm:"default:false" json:"restart_pending"`
+	// BuiltAt ist das Baudatum des Images; es bestimmt die neueste Fassung.
+	BuiltAt *time.Time `json:"built_at"`
 
 	CandidateDigest string     `json:"candidate_digest"` // aktueller Digest des Tags in der Registry
 	UpdateAvailable bool       `gorm:"default:false;index" json:"update_available"`
@@ -104,6 +110,25 @@ func (i *DockerImage) Ref() string {
 		return i.Repository
 	}
 	return i.Repository + ":" + i.Tag
+}
+
+// ScanRef ist das, was Trivy aus der Registry zieht: exakt dieser Stand, nicht
+// der aktuelle des Tags. Leer, wenn das Image keinen Registry-Digest hat.
+func (i *DockerImage) ScanRef() string {
+	if i.Repository == "" || i.RepoDigest == "" {
+		return ""
+	}
+	return i.Repository + "@" + i.RepoDigest
+}
+
+// VulnRef ist die Referenz, unter der die CVE-Funde des Images stehen. Eine
+// überholte Fassung hat keinen Tag und braucht den Digest: Der Repo-Name allein
+// fiele mit dem aktuellen latest zusammen.
+func (i *DockerImage) VulnRef() string {
+	if i.Superseded {
+		return i.ScanRef()
+	}
+	return i.Ref()
 }
 
 // PublishedPort ist eine von Docker auf dem HOST veröffentlichte Portbindung

@@ -86,6 +86,7 @@ export interface OpsContainer {
   id: string;
   name: string;
   image: string;
+  imageId: string;
   state: string;
   status: string;
   ports: string;
@@ -101,11 +102,13 @@ export interface OpsImage {
   size: string;
   inUse: boolean;
   superseded: boolean;
+  restartPending: boolean;
   olderCopies: number;
   updateAvailable: boolean;
   checkStatus: CheckStatus;
   critical: number;
   high: number;
+  imageId: string;
 }
 
 export interface OpsDocker {
@@ -130,6 +133,7 @@ export function normaliseOpsDocker(raw: unknown): OpsDocker {
       id: text(c.id) || text(c.container_id) || text(c.name),
       name: text(c.name),
       image: text(c.image),
+      imageId: text(c.image_id),
       state: text(c.state),
       status: text(c.status),
       ports: text(c.ports),
@@ -146,11 +150,13 @@ export function normaliseOpsDocker(raw: unknown): OpsDocker {
         size: text(i.size_text),
         inUse: i.in_use === true,
         superseded: i.superseded === true,
+        restartPending: i.restart_pending === true,
         olderCopies: num(i.older_copies),
         updateAvailable: i.update_available === true,
         checkStatus: checkStatus(i.check_status),
         critical: num(i.critical_vulns),
         high: num(i.high_vulns),
+        imageId: text(i.image_id),
       };
     }),
   };
@@ -186,13 +192,22 @@ export function shortDigest(digest: string): string {
 
 /** Pull ist nur für ein Image mit Tag und Update sinnvoll; löschen nur, was kein Container nutzt. */
 export function imageActions(image: OpsImage): { pull: boolean; remove: boolean } {
-  return { pull: image.updateAvailable && image.tag !== '', remove: !image.inUse && !image.superseded };
+  return { pull: image.updateAvailable && image.tag !== '', remove: !image.inUse && !image.superseded && !image.restartPending };
 }
 
-/** Gefundene Lücken je Image-Referenz, damit die Containerzeile sie zeigen kann. */
+/** Container, die noch auf einer überholten Fassung laufen, erkennt man an ihrer Image-ID. */
+export function supersededImageIds(images: OpsImage[]): Set<string> {
+  return new Set(images.filter((image) => image.superseded && image.imageId).map((image) => image.imageId));
+}
+
+/** Gefundene Lücken je Image-ID und Referenz, damit die Containerzeile sie zeigen kann. */
 export function vulnsByImage(images: OpsImage[]): Map<string, { critical: number; high: number }> {
   const out = new Map<string, { critical: number; high: number }>();
-  for (const image of images) if (image.critical > 0 || image.high > 0) out.set(image.ref, { critical: image.critical, high: image.high });
+  for (const image of images) {
+    if (image.critical === 0 && image.high === 0) continue;
+    out.set(image.ref, { critical: image.critical, high: image.high });
+    if (image.imageId) out.set(image.imageId, { critical: image.critical, high: image.high });
+  }
   return out;
 }
 

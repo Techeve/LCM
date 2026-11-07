@@ -8,6 +8,7 @@ import { baseStyles, emit, uid } from './shared.js';
  * Meldet `lcm-input` (jeder Tastendruck) und `lcm-change` (Übernahme), je mit { value }.
  * `width` (xs, s, m, l, full; Vorgabe m) richtet die Breite nach dem Inhalt, siehe `FieldWidth`.
  * `maxlength` begrenzt die Eingabe in Zeichen (Grenzen in `lib/validate.ts`), `digits` lässt nur Ziffern zu.
+ * `code` setzt kurze Codes mittig und gesperrt, etwa die sechs Ziffern der Zwei-Faktor-Anmeldung.
  */
 export class LcmInput extends LitElement {
   static override properties = {
@@ -22,6 +23,7 @@ export class LcmInput extends LitElement {
     icon: { type: String },
     autocomplete: { type: String },
     mono: { type: Boolean },
+    code: { type: Boolean },
     disabled: { type: Boolean, reflect: true },
     required: { type: Boolean },
     invalid: { type: Boolean, reflect: true },
@@ -43,6 +45,7 @@ export class LcmInput extends LitElement {
   declare icon: IconName | '';
   declare autocomplete: string;
   declare mono: boolean;
+  declare code: boolean;
   declare disabled: boolean;
   declare required: boolean;
   declare invalid: boolean;
@@ -63,6 +66,7 @@ export class LcmInput extends LitElement {
     this.icon = '';
     this.autocomplete = 'off';
     this.mono = false;
+    this.code = false;
     this.disabled = false;
     this.required = false;
     this.invalid = false;
@@ -88,7 +92,7 @@ export class LcmInput extends LitElement {
           id=${this.inputId}
           name=${this.name || nothing}
           type=${this.type}
-          class=${this.mono ? 'mono' : ''}
+          class=${`${this.mono ? 'mono' : ''} ${this.code ? 'code' : ''}`}
           placeholder=${this.placeholder || nothing}
           autocomplete=${this.autocomplete}
           maxlength=${this.maxlength ?? nothing}
