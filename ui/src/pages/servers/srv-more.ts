@@ -10,11 +10,13 @@ import { toast } from '../../components/lcm-toaster';
 import { baseStyles } from '../../components/shared';
 import { isApiDevice, refreshServer, serverPath, serversApi, type ServerItem, type StartedJob } from '../../api/servers';
 import { detailApi, unrestrictCommands } from '../../api/server-detail';
+import { pendingSyncsUrl } from '../../api/servers-ops';
 import { copyWithToast } from '../../lib/clipboard';
 import { I18nController } from '../../lib/controllers';
 import { errorText, t } from '../../lib/i18n';
 import { announceJob } from '../../lib/job-toast';
 import { router } from '../../lib/router';
+import { store } from '../../lib/store';
 import type { ActionPreviewData } from '../../api/servers';
 import type { ConfigPreviewAction } from '../../api/servers-previews';
 import { effectImpacts } from './preview';
@@ -126,7 +128,7 @@ export class SrvMore extends LitElement {
     // dort; das Menü selbst zeigt nur die Namen.
     const actions: Array<MoreAction | null> = [
       !device && !s.proxmox_type && !s.user_sync_disabled
-        ? { id: 'sync-users', label: t('serverDetail.more.syncUsers.label'), tip: t('serverDetail.more.tips.syncUsers'), icon: 'users', run: () => this.#done(t('serverDetail.more.syncUsers.done', { name: s.name }), detailApi.syncUsers(s.id)) }
+        ? { id: 'sync-users', label: t('serverDetail.more.syncUsers.label'), tip: t('serverDetail.more.tips.syncUsers'), icon: 'users', run: () => this.#done(t('serverDetail.more.syncUsers.done', { name: s.name }), detailApi.syncUsers(s.id).then(() => store.invalidate(pendingSyncsUrl(s.id)))) }
         : null,
       agent
         ? {

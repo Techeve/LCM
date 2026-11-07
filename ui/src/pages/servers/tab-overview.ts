@@ -29,7 +29,7 @@ const KNOWN_CLASSES = new Set(['lock_busy', 'dpkg_interrupted', 'broken_deps', '
  * und System, installierte Kernel, Gruppen. Befunde stehen in der Blase an der Ampel im Kopf, Jobs im Reiter „Jobs“.
  */
 export class SrvOverview extends SrvTab {
-  static override properties = { ...SrvTab.properties, _outputs: { state: true } };
+  static override properties = { ...SrvTab.properties, _outputs: { state: true }, _healthChoice: { state: true } };
   static override styles = [
     baseStyles,
     tabStyles,
@@ -136,10 +136,13 @@ export class SrvOverview extends SrvTab {
 
   /** Job-Ausgaben, die der Nutzer in der Karte aufgeklappt hat, je Kategorie (Text oder Fehlermeldung). */
   declare _outputs: Partial<Record<string, string>>;
+  /** Von Hand gewählt, samt dem Befund von damals: Ändert er sich, zählt wieder der Befund. */
+  declare _healthChoice: { problem: boolean; open: boolean } | null;
 
   constructor() {
     super();
     this._outputs = {};
+    this._healthChoice = null;
   }
 
   readonly #capabilities = new LiveData<Capability[]>(this, {
@@ -265,12 +268,24 @@ export class SrvOverview extends SrvTab {
     </li>`;
   }
 
-  /** Eine Zeile je Bereich, auch wenn alles läuft; bei einem Problem stehen Ursache, Abhilfe und Aktionen darunter. */
+  /**
+   * Eine Zeile je Bereich; bei einem Problem stehen Ursache, Abhilfe und Aktionen darunter. Läuft alles, bleibt die Karte
+   * zu, bei einem Problem geht sie von selbst auf. Wer sie von Hand umschaltet, behält das, bis sich der Befund ändert.
+   */
   #renderHealth(): TemplateResult | typeof nothing {
     const { data, error } = this.#capabilities;
     if (error && !data) return html`<lcm-card heading=${t('servers.capability.title')}><p class="error">${error}</p></lcm-card>`;
     if (!data || data.length === 0) return nothing;
-    return html`<lcm-card heading=${t('servers.capability.title')} subtitle=${t('servers.capability.subtitle')}>
+    const problem = data.some((capability) => capabilityLevel(capability) !== 'ok');
+    const choice = this._healthChoice;
+    const open = choice !== null && choice.problem === problem ? choice.open : problem;
+    return html`<lcm-card
+      collapsible
+      ?open=${open}
+      heading=${t('servers.capability.title')}
+      subtitle=${t(problem ? 'servers.capability.subtitle' : 'servers.capability.allOk')}
+      @lcm-toggle=${(event: CustomEvent<{ open: boolean }>) => (this._healthChoice = { problem, open: event.detail.open })}
+    >
       <ul class="cats">
         ${data.map((capability) => this.#renderCapability(capability))}
       </ul>

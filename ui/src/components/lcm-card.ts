@@ -1,9 +1,11 @@
 import { LitElement, css, html, nothing } from 'lit';
-import { baseStyles } from './shared.js';
+import { icon } from './icons.js';
+import { baseStyles, emit } from './shared.js';
 
 /**
  * <lcm-card heading="…" subtitle="…"> – Karte auf geschichteter Fläche.
  * Slots: Standard (Inhalt), `actions` (rechts im Kopf), `footer`. `variant="inset"` setzt sie eine Stufe tiefer.
+ * Mit `collapsible` klappt der Kopf den Inhalt ein und aus; `open` sagt, ob er offen ist. Meldet `lcm-toggle` { open }.
  */
 export class LcmCard extends LitElement {
   static override properties = {
@@ -11,6 +13,8 @@ export class LcmCard extends LitElement {
     subtitle: { type: String },
     variant: { type: String, reflect: true },
     level: { type: Number },
+    collapsible: { type: Boolean, reflect: true },
+    open: { type: Boolean, reflect: true },
     _hasFooter: { state: true },
   };
   static override styles = [
@@ -36,6 +40,37 @@ export class LcmCard extends LitElement {
       }
       .titles {
         min-inline-size: 0;
+      }
+      :host([collapsible]) .titles {
+        flex: 1;
+        cursor: pointer;
+      }
+      :host([collapsible]:not([open])) header {
+        padding-block-end: var(--space-card);
+      }
+      .toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        font: inherit;
+        letter-spacing: inherit;
+        text-align: start;
+        cursor: pointer;
+      }
+      .toggle svg {
+        flex: none;
+        inline-size: 1rem;
+        block-size: 1rem;
+        color: var(--text-2);
+        transform: rotate(-90deg);
+        transition: transform var(--dur-1) var(--ease);
+      }
+      :host([open]) .toggle svg {
+        transform: none;
       }
       .heading {
         margin: 0;
@@ -73,6 +108,8 @@ export class LcmCard extends LitElement {
   declare subtitle: string;
   declare variant: 'default' | 'inset' | 'flat';
   declare level: number;
+  declare collapsible: boolean;
+  declare open: boolean;
   declare _hasFooter: boolean;
 
   constructor() {
@@ -81,23 +118,36 @@ export class LcmCard extends LitElement {
     this.subtitle = '';
     this.variant = 'default';
     this.level = 3;
+    this.collapsible = false;
+    this.open = false;
     this._hasFooter = false;
+  }
+
+  #toggle(): void {
+    this.open = !this.open;
+    emit(this, 'lcm-toggle', { open: this.open });
+  }
+
+  #heading() {
+    if (!this.collapsible) return this.heading;
+    return html`<button class="toggle" type="button" aria-expanded=${String(this.open)}>${icon('chevron-down')}${this.heading}</button>`;
   }
 
   override render() {
     const hasHead = this.heading !== '';
+    const closed = this.collapsible && !this.open;
     return html`
       ${hasHead
         ? html`<header>
-            <div class="titles">
-              <div class="heading" role="heading" aria-level=${this.level}>${this.heading}</div>
+            <div class="titles" @click=${this.collapsible ? () => this.#toggle() : nothing}>
+              <div class="heading" role="heading" aria-level=${this.level}>${this.#heading()}</div>
               ${this.subtitle ? html`<p class="subtitle">${this.subtitle}</p>` : nothing}
             </div>
             <div class="actions"><slot name="actions"></slot></div>
           </header>`
         : nothing}
-      <div class="body"><slot></slot></div>
-      <footer ?hidden=${!this._hasFooter}>
+      <div class="body" ?hidden=${closed}><slot></slot></div>
+      <footer ?hidden=${closed || !this._hasFooter}>
         <slot name="footer" @slotchange=${(e: Event) => (this._hasFooter = (e.target as HTMLSlotElement).assignedNodes().length > 0)}></slot>
       </footer>
     `;

@@ -394,7 +394,7 @@ export class SrvHarden extends LitElement {
   }
 
   override render() {
-    return html`<lcm-card heading=${t('serverSecurity.harden.title')} subtitle=${t('serverSecurity.harden.subtitle')}>
+    return html`<lcm-card collapsible heading=${t('serverSecurity.harden.title')} subtitle=${t('serverSecurity.harden.subtitle')}>
       <section class="section">${this.#renderAcl()}</section>
       <section class="section">
         <h3>${t('serverSecurity.harden.listTitle')}</h3>

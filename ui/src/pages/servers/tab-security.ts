@@ -121,7 +121,7 @@ export class SrvSecurity extends SrvTab {
   }
 
   #renderProtection(s: ServerSecurity): TemplateResult {
-    return html`<lcm-card heading=${t('servers.security.protection')} subtitle=${t('servers.security.protectionHint')}>
+    return html`<lcm-card collapsible heading=${t('servers.security.protection')} subtitle=${t('servers.security.protectionHint')}>
       ${this.#renderProtectionActions(s)}
       <ul class="protection">
         ${this.#protectionItem(s.firewallActive, 'firewall', s.firewallActive ? s.firewallTool : '')}
@@ -139,7 +139,7 @@ export class SrvSecurity extends SrvTab {
     if (!s.twoFactor) return nothing;
     const server = this.server;
     const remove = this.canWrite && !s.restrictedSudo;
-    return html`<lcm-card heading=${t('serverSecurity.twoFactor.title')}>
+    return html`<lcm-card collapsible heading=${t('serverSecurity.twoFactor.title')}>
       <div slot="actions" class="card-actions"><lcm-badge tone="ok">${t('serverSecurity.tool.active')}</lcm-badge></div>
       <div class="section">
         <p class="muted">${t('serverSecurity.twoFactor.intro')}</p>
@@ -273,7 +273,7 @@ export class SrvSecurity extends SrvTab {
   override render() {
     const listening = this.#security.data?.listeningPackages ?? '';
     return html`<div class="stack">
-      ${whenLoaded(this.#security, (s) => this.#renderSecurity(s), 2)} ${whenLoaded(this.#vulns, (data) => this.#renderVulns(data, listening), 5)}
+      ${whenLoaded(this.#vulns, (data) => this.#renderVulns(data, listening), 5)} ${whenLoaded(this.#security, (s) => this.#renderSecurity(s), 2)}
     </div>`;
   }
 }

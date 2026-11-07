@@ -3271,6 +3271,7 @@
     },
     "capability": {
       "title": "Operability",
+      "allOk": "All good. Expand to see the individual areas.",
       "neverSucceeded": "never succeeded",
       "stale": {
         "since": "Package state outdated: the package list has not been updated successfully for {duration}.",

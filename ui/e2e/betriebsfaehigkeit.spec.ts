@@ -81,6 +81,23 @@ test.describe('Betriebsfähigkeit', () => {
     await expect.poll(() => anfrage).toEqual({ action: 'dpkg_configure' });
   });
 
+  test('läuft alles, bleibt die Karte zu und lässt sich aufklappen', async ({ page }) => {
+    await page.goto('/servers/1');
+    const kopf = karte(page).getByRole('button', { name: 'Betriebsfähigkeit' });
+    await expect(kopf).toHaveAttribute('aria-expanded', 'false');
+    await expect(karte(page).getByRole('list')).toBeHidden();
+    await kopf.click();
+    await expect(kopf).toHaveAttribute('aria-expanded', 'true');
+    await expect(karte(page).getByRole('list')).toBeVisible();
+  });
+
+  test('bei einem Problem klappt die Karte von selbst auf', async ({ page }) => {
+    await page.route('**/api/v1/servers/1/capabilities', (route) => route.fulfill({ json: gesperrtePakete() }));
+    await page.goto('/servers/1');
+    await expect(karte(page).getByRole('button', { name: 'Betriebsfähigkeit' })).toHaveAttribute('aria-expanded', 'true');
+    await expect(karte(page).getByText('dpkg-Sperre durch unattended-upgr (PID 1234)')).toBeVisible();
+  });
+
   test('der Job zum Fehlschlag ist nur mit jobs:read verlinkt', async ({ page }) => {
     await page.route('**/api/v1/servers/1/capabilities', (route) => route.fulfill({ json: gesperrtePakete() }));
     await page.goto('/servers/1');
@@ -102,12 +119,12 @@ test.describe('Betriebsfähigkeit', () => {
   test('läuft alles, steht trotzdem je Bereich eine Zeile mit „In Ordnung“', async ({ page }) => {
     await page.route('**/api/v1/servers/1/capabilities', (route) => route.fulfill({ json: ALLES_OK }));
     await page.goto('/servers/1');
-    await expect(karte(page)).toBeVisible();
+    await karte(page).getByRole('button', { name: 'Betriebsfähigkeit' }).click();
     const zeilen = karte(page).getByRole('listitem');
     await expect(zeilen).toHaveText([/Verbindung\s*In Ordnung/, /Pakete\s*In Ordnung/, /Regeln\s*In Ordnung/, /CVE-Scan\s*In Ordnung/]);
     await expect(karte(page).getByRole('img', { name: 'In Ordnung' })).toHaveCount(4);
-    // Nichts zu reparieren, nichts zu wiederholen.
-    await expect(karte(page).getByRole('button')).toHaveCount(0);
+    // Nichts zu reparieren, nichts zu wiederholen: Es bleibt nur der Kopf der Karte.
+    await expect(karte(page).getByRole('button')).toHaveCount(1);
   });
 
   test('zeigt veralteten Paketstand und die Warnung einer Paketquelle auch ohne Fehlschlag', async ({ page }) => {

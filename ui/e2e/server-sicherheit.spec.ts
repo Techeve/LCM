@@ -4,7 +4,19 @@ import { bestaetige, fenster, waehle } from './helpers';
 
 const cveTabelle = (page: import('@playwright/test').Page) => page.getByRole('grid', { name: 'Sicherheitslücken', exact: true });
 
+/** Nur die Sicherheitslücken stehen offen; alles andere klappt man über den Kopf der Karte auf. */
+const klappeAuf = (page: import('@playwright/test').Page, karte: string) => page.getByRole('button', { name: karte, exact: true }).click();
+
 test.describe('Serverdetail: Sicherheit', () => {
+  test('nur die Sicherheitslücken sind offen, alles andere klappt man auf', async ({ page }) => {
+    await page.goto('/servers/1/security');
+    await expect(cveTabelle(page)).toBeVisible();
+    const schutz = page.getByRole('button', { name: 'Schutz', exact: true });
+    await expect(schutz).toHaveAttribute('aria-expanded', 'false');
+    await schutz.click();
+    await expect(schutz).toHaveAttribute('aria-expanded', 'true');
+  });
+
   test('listet CVEs mit Schweregrad, Quelle und Paket', async ({ page }) => {
     // web01 hat im Demo eine kritische und mehrere hohe CVEs.
     await page.goto('/servers/1/security');
@@ -40,6 +52,7 @@ test.describe('Serverdetail: Sicherheit', () => {
   test('SSH-2FA erscheint erst nach der Einrichtung und wird über die Sicherheits-Tools eingerichtet', async ({ page }) => {
     await page.goto('/servers/1/security');
     // Solange 2FA nicht eingerichtet ist, steht sie als „nicht aktiv“ in der Übersicht des Schutzes.
+    await klappeAuf(page, 'Schutz');
     await expect(page.getByRole('listitem').filter({ hasText: 'Zwei-Faktor für SSH' }).getByRole('img', { name: 'nicht aktiv' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Sicherheits-Tools einrichten' }).click();
@@ -59,7 +72,7 @@ test.describe('Serverdetail: Sicherheit', () => {
   test('fail2ban verwalten: Dienst, Allowlist, Sperrliste; Aktionen melden das echte Ergebnis', async ({ page }) => {
     // web01 hat im Demo fail2ban installiert und aktiv.
     await page.goto('/servers/1/security');
-    await expect(page.getByRole('heading', { level: 3, name: 'fail2ban verwalten' })).toBeVisible();
+    await klappeAuf(page, 'fail2ban verwalten');
     for (const knopf of ['Starten', 'Neu starten', 'Stoppen', 'Autostart an', 'Autostart aus', 'Deinstallieren']) {
       await expect(page.getByRole('button', { name: knopf, exact: true })).toBeVisible();
     }
@@ -77,6 +90,7 @@ test.describe('Serverdetail: Sicherheit', () => {
     // Mit dem Recht (Admin): Reiter da, die Meldung führt zum Job.
     await page.goto('/servers/1/security');
     await expect(page.getByRole('tab', { name: /^Jobs/ })).toBeVisible();
+    await klappeAuf(page, 'fail2ban verwalten');
     await page.getByRole('button', { name: 'Neu starten', exact: true }).click();
     await expect(page.locator('lcm-toaster .toast').filter({ hasText: 'Neu starten gestartet auf web01' }).getByRole('button', { name: 'Job ansehen' })).toBeVisible();
 
@@ -91,6 +105,7 @@ test.describe('Serverdetail: Sicherheit', () => {
     await expect(page.getByRole('tab', { name: 'Übersicht' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('tab', { name: /^Jobs/ })).toHaveCount(0);
     await page.getByRole('tab', { name: 'Sicherheit' }).click();
+    await klappeAuf(page, 'fail2ban verwalten');
     await page.getByRole('button', { name: 'Neu starten', exact: true }).click();
     const meldung = page.locator('lcm-toaster .toast').filter({ hasText: 'Neu starten gestartet auf web01' });
     await expect(meldung).toBeVisible();
@@ -102,11 +117,13 @@ test.describe('Serverdetail: Sicherheit', () => {
     await expect(page.getByRole('heading', { level: 3, name: 'CrowdSec verwalten' })).toBeVisible();
     await expect(page.getByRole('heading', { level: 3, name: 'fail2ban verwalten' })).toHaveCount(0);
 
+    await klappeAuf(page, 'CrowdSec verwalten');
     await expect(page.getByText('gestoppt', { exact: true })).toBeVisible();
 
     await page.goto('/servers/3/security');
     await expect(page.getByRole('heading', { level: 3, name: 'Schutz' })).toBeVisible();
     await expect(page.getByRole('heading', { name: /verwalten$/ })).toHaveCount(0);
+    await klappeAuf(page, 'Schutz');
     await expect(page.getByRole('listitem').filter({ hasText: 'Fail2ban' }).getByRole('img', { name: 'nicht aktiv' })).toBeVisible();
   });
 });

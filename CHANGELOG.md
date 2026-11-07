@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.0-beta.7 - 2026-11-07
+
+### 🚀 Features
+
+- **ui**: Betriebsfähigkeit und Sicherheit bleiben eingeklappt, bis etwas zu tun ist (81741c12)
+
+### 🐛 Bugfixes
+
+- **users**: Hinweis „Abgleich steht aus“ verschwindet nach dem Abgleich von Hand (6f38681f)
+
 ## v2.0.0-beta.6 - 2026-11-06
 
 ### 🚀 Features

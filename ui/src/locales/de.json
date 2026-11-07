@@ -3271,6 +3271,7 @@
     },
     "capability": {
       "title": "Betriebsfähigkeit",
+      "allOk": "Alles in Ordnung. Aufklappen zeigt die einzelnen Bereiche.",
       "neverSucceeded": "noch nie erfolgreich",
       "stale": {
         "since": "Paketstand veraltet: Die Paketliste wurde seit {duration} nicht mehr erfolgreich aktualisiert.",

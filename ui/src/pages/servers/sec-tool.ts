@@ -296,7 +296,7 @@ export class SrvTool extends LitElement {
   }
 
   override render() {
-    return html`<lcm-card heading=${t('serverSecurity.tool.title', { tool: this.#name })}>
+    return html`<lcm-card collapsible heading=${t('serverSecurity.tool.title', { tool: this.#name })}>
       <div slot="actions" class="head">
         ${this._running ? html`<lcm-badge tone="info">${t('serverSecurity.tool.running')}</lcm-badge>` : nothing}
         <lcm-badge tone=${this.active ? 'ok' : 'warn'}>${t(this.active ? 'serverSecurity.tool.active' : 'serverSecurity.tool.inactive')}</lcm-badge>
