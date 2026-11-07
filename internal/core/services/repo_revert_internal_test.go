@@ -35,10 +35,10 @@ func TestRueckstellungNurAusDerKandidatenliste(t *testing.T) {
 func TestRueckstellungRolltZurueck(t *testing.T) {
 	script := revertHTTPSScript([]string{"https://deb.debian.org/debian"})
 	for _, part := range []string{
-		`cp "$f" "$f.lcm-bak"`,                      // Sicherung vorher
-		"if apt-get update; then",                   // Probe danach
-		`mv "$f" "${f%.lcm-bak}"`,                   // Rückrollen
-		"exit 1",                                    // und als Fehler melden
+		`cp "$f" "$f.lcm-bak"`, // Sicherung vorher
+		aptUpdateProbe,         // Probe danach
+		rollbackSourcesScript,  // Rückrollen
+		"exit 1",               // und als Fehler melden
 		`sed -i "s|$u|http://${u#https://}|g" "$f"`, // nur das Schema tauschen
 	} {
 		if !strings.Contains(script, part) {

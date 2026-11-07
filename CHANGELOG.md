@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.0-beta.10 - 2026-11-07
+
+### 🐛 Bugfixes
+
+- **repos**: Die HTTPS-Umstellung erkennt scheiternde Paketquellen und rollt zurück (49c80d05)
+
 ## v2.0.0-beta.9 - 2026-11-07
 
 ### 🚀 Features

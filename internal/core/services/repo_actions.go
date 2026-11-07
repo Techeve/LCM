@@ -70,12 +70,22 @@ func (s *ServerService) SecureRepositories(scope repositories.AccessScope, id ui
 		return output, runErr
 	}
 	if code != 0 {
-		return output, fmt.Errorf("https-umstellung fehlgeschlagen (exit %d)", code)
+		return output, repoSwitchError("https-umstellung", output, code)
 	}
 	// Die http→https-Umstellung ist apt-spezifisch (sources.list).
 	s.rescanRepositories(conn, server, pkgApt)
 	s.audit.Log(actor, "server.secure-repos", "server", id, server.Name)
 	return output, nil
+}
+
+// repoSwitchError nennt die Quellen, an denen die Umstellung gescheitert ist.
+// Die Oberfläche zeigt im Fehlerfall nur diesen Text, nicht die Ausgabe.
+func repoSwitchError(action, output string, code int) error {
+	failed := domain.ClassifyAptUpdate(output).FailedSources
+	if len(failed) == 0 {
+		return fmt.Errorf("%s fehlgeschlagen (exit %d)", action, code)
+	}
+	return fmt.Errorf("%s zurückgerollt, nicht erreichbar: %s", action, strings.Join(failed, ", "))
 }
 
 // planSecureRepos prüft den Server und baut das Skript der https-Umstellung -
@@ -267,9 +277,28 @@ func (s *ServerService) rescanRepositories(conn sshx.Conn, server *domain.Server
 	s.updateHTTPSRevertURLs(conn, server, repos)
 }
 
+// aptUpdateProbe lässt `apt-get update` laufen und reicht die Ausgabe durch.
+// Ausgewertet wird sie mit aptUpdateOK, denn der Exit-Code allein genügt nicht:
+// `apt-get update` endet auch dann mit 0, wenn einzelne Quellen mit „Err:"
+// scheitern. So blieb ein Spiegel ohne HTTPS als gemeldeter Erfolg stehen.
+// LC_ALL=C, weil apt auf einem deutschen System „Fehl:" schreibt.
+const aptUpdateProbe = `LCM_OUT=$(LC_ALL=C apt-get update 2>&1); LCM_RC=$?
+printf '%s\n' "$LCM_OUT"`
+
+// aptUpdateOK ist die Bedingung zu aptUpdateProbe. Sie gilt für alle Quellen:
+// War eine fremde Quelle schon vorher kaputt, bleibt der Server lieber beim
+// bekannten Stand, und die Ausgabe nennt die Quelle.
+const aptUpdateOK = `[ "$LCM_RC" -eq 0 ] && ! printf '%s\n' "$LCM_OUT" | grep -qE '^(Err|E):'`
+
+// rollbackSourcesScript stellt die gesicherten Quellen wieder her und lädt die
+// Paketlisten neu: apt verwirft beim Update die Listen der alten Adressen.
+const rollbackSourcesScript = `  for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done
+  apt-get update >/dev/null 2>&1 || true`
+
 // secureHTTPSScript stellt alle http-Quellen auf https um. Vor der Änderung
-// wird jede betroffene Datei gesichert; schlägt `apt-get update` danach fehl,
-// wird alles zurückgerollt und die Aktion als Fehler gemeldet.
+// wird jede betroffene Datei gesichert; meldet `apt-get update` danach eine
+// fehlerhafte Quelle, wird alles zurückgerollt und die Aktion als Fehler
+// gemeldet.
 func secureHTTPSScript() string {
 	return strings.Join([]string{
 		// Root-Zertifikate für TLS sicherstellen (best effort - auf minimalen
@@ -284,11 +313,12 @@ func secureHTTPSScript() string {
 		"  changed=1",
 		"done",
 		`if [ "$changed" -eq 0 ]; then echo 'LCM: keine http-quellen gefunden - nichts zu tun'; exit 0; fi`,
-		"if apt-get update; then",
+		aptUpdateProbe,
+		"if " + aptUpdateOK + "; then",
 		keepBackupsScript,
 		"  echo 'LCM: alle paketquellen auf https umgestellt'",
 		"else",
-		`  for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done`,
+		rollbackSourcesScript,
 		"  echo 'LCM: apt-update nach der umstellung fehlgeschlagen - alle aenderungen zurueckgerollt'",
 		"  exit 1",
 		"fi",
@@ -331,7 +361,8 @@ var ErrNotRevertible = errors.New("diese Paketquelle ist nicht zum Zurückstelle
 // Servers zurückgestellt.
 //
 // Sicherheitsnetz wie bei der Umstellung: Vor der Änderung wird jede Datei
-// gesichert - schlägt `apt-get update` danach fehl, wird alles zurückgerollt.
+// gesichert - meldet `apt-get update` danach eine fehlerhafte Quelle, wird
+// alles zurückgerollt.
 func (s *ServerService) RevertRepositoriesHTTPS(scope repositories.AccessScope, id uint, uris []string, actor string) (string, error) {
 	server, err := s.servers.FindByID(scope, id)
 	if err != nil {
@@ -352,7 +383,7 @@ func (s *ServerService) RevertRepositoriesHTTPS(scope repositories.AccessScope, 
 		return output, runErr
 	}
 	if code != 0 {
-		return output, fmt.Errorf("https-rückstellung fehlgeschlagen (exit %d)", code)
+		return output, repoSwitchError("https-rückstellung", output, code)
 	}
 	s.rescanRepositories(conn, server, pkgApt)
 	s.audit.Log(actor, "server.revert-repos-https", "server", id, server.Name)
@@ -437,11 +468,12 @@ func revertHTTPSScript(uris []string) string {
 		"  changed=1",
 		"done",
 		`if [ "$changed" -eq 0 ]; then echo 'LCM: keine der genannten quellen gefunden - nichts zu tun'; exit 0; fi`,
-		"if apt-get update; then",
+		aptUpdateProbe,
+		"if " + aptUpdateOK + "; then",
 		"  find /etc/apt -name '*.lcm-bak' -delete",
 		"  echo 'LCM: paketquellen auf http zurueckgestellt'",
 		"else",
-		`  for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done`,
+		rollbackSourcesScript,
 		"  echo 'LCM: apt-update nach der rueckstellung fehlgeschlagen - alle aenderungen zurueckgerollt'",
 		"  exit 1",
 		"fi",

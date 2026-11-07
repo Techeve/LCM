@@ -253,8 +253,25 @@ repo_add() {
     apt-get update
 }
 
+# apt_update_ok: apt-get update laufen lassen und die Ausgabe auswerten. Der
+# Exit-Code allein genuegt nicht: apt-get update endet auch dann mit 0, wenn
+# einzelne Quellen mit "Err:" scheitern.
+apt_update_ok() {
+    out=$(LC_ALL=C apt-get update 2>&1)
+    rc=$?
+    printf '%s\n' "$out"
+    [ "$rc" -eq 0 ] && ! printf '%s\n' "$out" | grep -qE '^(Err|E):'
+}
+
+# restore_sources: gesicherte Quellen zurueck und die Paketlisten neu laden,
+# denn apt verwirft beim Update die Listen der alten Adressen.
+restore_sources() {
+    for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done
+    apt-get update >/dev/null 2>&1 || true
+}
+
 # repos-https: alle http://-apt-Quellen auf https umstellen (mit Sicherung
-# und Rollback, falls apt-update danach fehlschlaegt).
+# und Rollback, falls apt-update danach eine fehlerhafte Quelle meldet).
 repos_https() {
     apt-get install -y --no-install-recommends ca-certificates >/dev/null 2>&1 || true
     changed=0
@@ -266,21 +283,22 @@ repos_https() {
         changed=1
     done
     if [ "$changed" -eq 0 ]; then echo 'LCM: keine http-quellen gefunden - nichts zu tun'; return 0; fi
-    if apt-get update; then
+    if apt_update_ok; then
         for f in $(find /etc/apt -name '*.lcm-bak'); do
             orig="${f%.lcm-bak}"; dest="@@HTTPS_BACKUP_DIR@@$orig"
             if [ -f "$dest" ]; then rm -f "$f"; else mkdir -p "$(dirname "$dest")"; mv "$f" "$dest"; fi
         done
         echo 'LCM: alle paketquellen auf https umgestellt'
     else
-        for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done
+        restore_sources
         echo 'LCM: apt-update nach der umstellung fehlgeschlagen - alle aenderungen zurueckgerollt'
         exit 1
     fi
 }
 
 # repos-http <url>...: die genannten Paketquellen von https auf http
-# zurueckstellen (mit Sicherung und Rollback, falls apt-update fehlschlaegt).
+# zurueckstellen (mit Sicherung und Rollback, falls apt-update eine fehlerhafte
+# Quelle meldet).
 # Zurueck darf nur, was LCM selbst umgestellt hat - welche URLs das sind,
 # entscheidet der LCM-Server anhand seines Protokolls; hier wird geprueft,
 # dass es ueberhaupt unbedenkliche URLs sind.
@@ -298,11 +316,11 @@ repos_http() {
         changed=1
     done
     if [ "$changed" -eq 0 ]; then echo 'LCM: keine der genannten quellen gefunden - nichts zu tun'; return 0; fi
-    if apt-get update; then
+    if apt_update_ok; then
         find /etc/apt -name '*.lcm-bak' -delete
         echo 'LCM: paketquellen auf http zurueckgestellt'
     else
-        for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done
+        restore_sources
         echo 'LCM: apt-update nach der rueckstellung fehlgeschlagen - alle aenderungen zurueckgerollt'
         exit 1
     fi

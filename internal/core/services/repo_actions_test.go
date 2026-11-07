@@ -54,6 +54,24 @@ func TestSecureRepositoriesReportsRollback(t *testing.T) {
 	}
 }
 
+// Scheitert ein Spiegel, muss die Meldung ihn nennen: Die Oberfläche zeigt im
+// Fehlerfall nur diesen Text, nicht die Ausgabe des Skripts.
+func TestSecureRepositoriesNamesFailedSource(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+
+	env.Dialer.Responses["sed -i"] = sshx.FakeResponse{
+		Output: "Err:2 https://de.archive.ubuntu.com/ubuntu noble InRelease\n" +
+			"  Could not connect to de.archive.ubuntu.com:443\n" +
+			"LCM: apt-update nach der umstellung fehlgeschlagen - alle aenderungen zurueckgerollt\n",
+		ExitCode: 1,
+	}
+	_, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, "admin")
+	if err == nil || !strings.Contains(err.Error(), "https://de.archive.ubuntu.com/ubuntu noble") {
+		t.Fatalf("meldung nennt die quelle nicht: %v", err)
+	}
+}
+
 func TestAddKnownRepository(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "web01")
