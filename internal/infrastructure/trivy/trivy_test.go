@@ -199,13 +199,14 @@ func (r *blockingRunner) scanImage(context.Context, string) ([]byte, error) {
 	return []byte(`{"Results":[]}`), nil
 }
 
-func (r *blockingRunner) updateDB(context.Context) (string, error) {
+func (r *blockingRunner) updateDB(context.Context) (DBUpdate, error) {
 	r.enter()
-	return "", nil
+	return DBUpdate{}, nil
 }
 
 func (r *blockingRunner) info(context.Context) domain.CVEDBStatus {
-	return domain.CVEDBStatus{Available: true}
+	now := time.Now()
+	return domain.CVEDBStatus{Available: true, UpdatedAt: &now}
 }
 
 // TestSchwereLaeufeLaufenNichtGleichzeitig: Trivy sperrt sein Cache-Verzeichnis
@@ -251,12 +252,53 @@ func TestSchwereLaeufeAchtenAufDenKontext(t *testing.T) {
 	defer close(r.release)
 	tv := newTrivy(r)
 
-	go func() { _, _ = tv.UpdateDB(context.Background()) }()
+	go func() { _, _ = tv.ScanImage(context.Background(), "beispiel@sha256:abc") }()
 	<-r.entered // die Schranke ist jetzt belegt
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := tv.UpdateDB(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := tv.ScanImage(ctx, "beispiel@sha256:def"); !errors.Is(err, context.Canceled) {
 		t.Errorf("abgebrochener Aufruf sollte context.Canceled liefern, war %v", err)
+	}
+}
+
+// firstRunRunner hat noch keine Datenbank, bis updateDB gelaufen ist.
+type firstRunRunner struct {
+	blockingRunner
+	updates int
+}
+
+func (r *firstRunRunner) info(context.Context) domain.CVEDBStatus {
+	if r.updates == 0 {
+		return domain.CVEDBStatus{Available: true}
+	}
+	return r.blockingRunner.info(context.Background())
+}
+
+func (r *firstRunRunner) updateDB(context.Context) (DBUpdate, error) {
+	r.updates++
+	return DBUpdate{}, nil
+}
+
+func (r *firstRunRunner) scanImage(context.Context, string) ([]byte, error) {
+	if r.updates == 0 {
+		return nil, errors.New("--skip-db-update cannot be specified on the first run")
+	}
+	return []byte(`{"Results":[]}`), nil
+}
+
+// TestImageScanHoltFehlendeDatenbank: Auf einem frischen Host ist der
+// Docker-Check der erste Trivy-Lauf.
+func TestImageScanHoltFehlendeDatenbank(t *testing.T) {
+	r := &firstRunRunner{}
+	tv := newTrivy(r)
+
+	for range 2 {
+		if _, err := tv.ScanImage(context.Background(), "beispiel@sha256:abc"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r.updates != 1 {
+		t.Errorf("%d datenbank-abgleiche, erwartet 1", r.updates)
 	}
 }

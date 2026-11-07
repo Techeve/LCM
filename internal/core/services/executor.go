@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -66,6 +67,9 @@ type Executor struct {
 	customActions *repositories.CustomActionRepository
 	scanner       VulnScanner
 	registry      registry.Checker
+	// cveDBFailJobAt ist die Unix-Zeit des letzten Fehler-Jobs des
+	// Datenbank-Abgleichs (siehe RefreshCVEDB).
+	cveDBFailJobAt atomic.Int64
 	// apps ist der Anwendungskatalog - nur für den zentralen Anwendungs-Check.
 	apps       *AppService
 	alerts     *AlertService
@@ -1404,30 +1408,60 @@ func (e *Executor) RunBackup(triggeredBy string) {
 	})
 }
 
-// RefreshCVEDB zieht die Trivy-Datenbank nach - der stille Gegenpart zum
+// HasCVEScanner meldet, ob ein CVE-Scanner bereitsteht.
+func (e *Executor) HasCVEScanner() bool {
+	return e.scanner != nil && e.scanner.Available()
+}
+
+// RunCVEDBUpdate gleicht die Datenbank auf Anforderung ab. Anders als der
+// stille Stundentakt legt das einen Job an: „Ausführen" verspricht ein Ergebnis
+// in den Jobs.
+func (e *Executor) RunCVEDBUpdate(triggeredBy string) {
+	e.runSystemJob(domain.RuleTypeScript, triggeredBy, "CVE-Datenbank aktualisieren", func() (string, error) {
+		update, err := e.scanner.UpdateDB(context.Background())
+		return update.Output, err
+	})
+}
+
+// cveDBFailJobInterval begrenzt die Fehler-Jobs des stündlichen Abgleichs: Ein
+// Host ohne Netz soll das Protokoll nicht mit 24 gleichen Einträgen am Tag
+// füllen. Der Grund steht je Lauf im Log, eine überalterte Datenbank meldet
+// die Ampel.
+const cveDBFailJobInterval = 6 * time.Hour
+
+// RefreshCVEDB gleicht die Trivy-Datenbank ab - der stille Gegenpart zum
 // Knopf „CVE-Datenbank aktualisieren" (ServerService.UpdateCVEDB): Der
-// Scheduler ruft das fest alle 6 Stunden auf, im Takt, in dem der Hersteller
-// die Datenbank baut. Erfolg wird nur geloggt - vier Job-Einträge pro Tag
-// wären Rauschen. Erst ein Fehlschlag erzeugt einen Job mit der vollen
-// Trivy-Ausgabe (Proxy, Rate-Limit, kein Netz), damit die Ursache im
-// Protokoll steht statt nur im Log. Ohne Scanner passiert nichts: eine
-// Instanz ohne Trivy soll nicht alle 6 Stunden einen Fehler produzieren.
+// Scheduler ruft das stündlich auf, damit ein neuer Stand kurz nach dem Bau
+// ankommt. Erfolg wird nur geloggt - ein Job je Stunde wäre Rauschen. Erst ein
+// Fehlschlag erzeugt einen Job mit der vollen Trivy-Ausgabe (Proxy, Rate-Limit,
+// kein Netz), damit die Ursache im Protokoll steht statt nur im Log. Ohne
+// Scanner passiert nichts: eine Instanz ohne Trivy soll nicht stündlich einen
+// Fehler produzieren.
 func (e *Executor) RefreshCVEDB(triggeredBy string) {
 	if e.scanner == nil || !e.scanner.Available() {
 		return
 	}
-	out, err := e.scanner.UpdateDB(context.Background())
+	update, err := e.scanner.UpdateDB(context.Background())
 	if err == nil {
-		slog.Info("cve database refreshed")
+		if update.Updated {
+			slog.Info("cve database refreshed")
+		}
 		return
 	}
 	slog.Warn("cve database refresh failed", "error", err)
+	if triggeredBy == "scheduler" {
+		now := time.Now()
+		if now.Sub(time.Unix(e.cveDBFailJobAt.Load(), 0)) < cveDBFailJobInterval {
+			return
+		}
+		e.cveDBFailJobAt.Store(now.Unix())
+	}
 	job, jobErr := e.jobs.Start(nil, nil, domain.RuleTypeScript, "CVE-Datenbank aktualisieren", triggeredBy)
 	if jobErr != nil {
 		slog.Error("cve db refresh: job start failed", "error", jobErr)
 		return
 	}
-	e.jobs.Complete(job, out, nil, err)
+	e.jobs.Complete(job, update.Output, nil, err)
 }
 
 // RunAdvisoryPoll fragt die Online-Quellen nach Befunden zum installierten
@@ -1542,9 +1576,9 @@ func (e *Executor) RunCVEScan(triggeredBy string) {
 			e.recordScannerUnavailable()
 			return errCVEScannerUnavailable.Error(), nil
 		}
-		// Datenbank direkt vor dem Durchlauf ziehen - der nächtliche Lauf
-		// soll mit der frischesten Ausgabe arbeiten, nicht mit der vom
-		// letzten 6-Stunden-Zug. Ein Fehlschlag ist nicht fatal: dann wird
+		// Datenbank direkt vor dem Durchlauf abgleichen - der Lauf soll mit
+		// der frischesten Ausgabe arbeiten, auch wenn der stündliche Abgleich
+		// sie noch nicht geholt hat. Ein Fehlschlag ist nicht fatal: dann wird
 		// wie bisher mit dem vorhandenen Stand gescannt, und der Grund steht
 		// im Job - die Ampel meldet eine überalterte Datenbank ohnehin.
 		var dbNote string

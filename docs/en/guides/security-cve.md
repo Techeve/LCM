@@ -122,10 +122,22 @@ firewall and counts as covered).
 
 ### How current is the vulnerability database?
 
-Trivy downloads its database itself when scanning - but only with network access
-to the registry. If the LCM host is isolated, sits behind a proxy or hits a rate
-limit, **Trivy warns and keeps scanning with the old database**. The result is
-then not an error but "no vulnerabilities found".
+The vendor rebuilds the database every six hours. LCM checks every hour whether
+there is a new version and fetches it itself. Scans do not download anything.
+
+The download runs in the background in its own directory. Scans keep working with
+the current database in the meantime. LCM only replaces it once the new one is
+complete, and a running scan finishes on the old one. If the download fails, the
+current database stays unchanged. For the swap the LCM host temporarily needs
+about 2 GB of extra disk space.
+
+A new database only changes the findings with the next CVE scan. That scan runs
+on its schedule, the sync does not start one. You find the sync under
+*Settings → Schedules* as *Sync CVE database*.
+
+If the LCM host is isolated, sits behind a proxy or hits a rate limit, the old
+database stays in place. Scans do not report that as an error but, if in doubt,
+as "no vulnerabilities found".
 
 That is the dangerous variant: a three-week-old database looks exactly like a
 genuinely clean server. LCM therefore states the database state explicitly:
@@ -146,17 +158,18 @@ data.
 
 | Age | Tier | Effect |
 |---|---|---|
-| < 48 h | current | nothing shown (Trivy refreshes on a 24-hour rhythm) |
+| < 48 h | current | nothing shown |
 | from 48 h | outdated | warning on the security page, note per server, alert |
 | from 7 days | critical | as above, more prominently marked |
 
 The 48 hours deliberately survive one failed nightly run without letting real
 rot slip through.
 
-**Updating the database**: the button on the security page downloads it right
-away (`trivy --download-db-only`). It runs as a job - a failure lands in the log
-together with Trivy's output, and that is exactly where the cause shows up (no
-network, proxy, rate limit).
+**Updating the database**: the button on the security page checks right away
+whether there is a new version and fetches it. It runs as a job - the log states
+the version, or that there is no newer one. A failure lands in the log together
+with Trivy's output, and that is exactly where the cause shows up (no network,
+proxy, rate limit).
 
 **Alert**: the rule *"CVE database outdated"* (Settings → Alerts) reports the
 state actively. Without it the state would only surface if someone looked - for

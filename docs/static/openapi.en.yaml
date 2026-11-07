@@ -3104,7 +3104,7 @@ paths:
       summary: Reload the vulnerability database.
       operationId: opsCtrl_UpdateCVEDB
       description: |-
-        Downloads the vulnerability database without scanning (`trivy --download-db-only`). Asynchronous job (202 {status, job_id, job_name}) - so that a failure, including the tool's output, ends up in the log instead of silently fizzling out. That is also exactly where the cause is found (no network, proxy, registry rate limit).
+        Fetches a newer version of the vulnerability database in the background, without scanning. Asynchronous job (202 {status, job_id, job_name}) - so that a failure, including the tool's output, ends up in the log instead of silently fizzling out. That is also exactly where the cause is found (no network, proxy, registry rate limit).
 
         The job is not attached to any server: scanner and database live centrally on the LCM host.
 

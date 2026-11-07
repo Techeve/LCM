@@ -1286,7 +1286,9 @@
         "alertCheck": "Alert evaluation",
         "alertCheckHelp": "Evaluates all alert rules and notifies through their channels when something fires.",
         "updateCheck": "Update check",
-        "updateCheckHelp": "Checks whether there is a new LCM version. Nothing is installed."
+        "updateCheckHelp": "Checks whether there is a new LCM version. Nothing is installed.",
+        "cveDbUpdate": "Sync CVE database",
+        "cveDbUpdateHelp": "Fetches a newer version of the vulnerability database in the background. Running scans are not disturbed; new findings appear with the next CVE scan."
       },
       "where": {
         "lcm": "LCM itself",
@@ -1325,7 +1327,7 @@
         "title": "Schedules in LCM",
         "intro": "All schedules in one place, sorted by the next run.",
         "group": "belong to a server group and run its rules on all servers of the group. You edit them in the group.",
-        "system": "come from the settings (backup, log clean-up, CVE scan) or are built in (alert evaluation, update check).",
+        "system": "come from the settings (backup, log clean-up, CVE scan) or are built in (alert evaluation, update check, CVE database).",
         "manual": "“Run” starts a run immediately. The regular date stays."
       },
       "everyMinutes": "Every {count} minutes",

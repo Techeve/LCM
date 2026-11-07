@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.0-beta.11 - 2026-11-07
+
+### 🐛 Bugfixes
+
+- **cve**: Die Trivy-Datenbank kommt kurz nach dem Bau an und stört keinen Scan mehr (73f549dd)
+
 ## v2.0.0-beta.10 - 2026-11-07
 
 ### 🐛 Bugfixes

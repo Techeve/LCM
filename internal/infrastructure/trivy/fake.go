@@ -23,6 +23,8 @@ type Fake struct {
 	// UpdateDBFunc erlaubt es, einen fehlgeschlagenen Download zu simulieren.
 	UpdateDBFunc func() (string, error)
 	UpdateCalls  int
+	// DBUpdated meldet einen tatsächlich neuen Datenbank-Stand.
+	DBUpdated bool
 	// CacheStatsVal setzt den gemeldeten Zwischenspeicher-Zustand.
 	CacheStatsVal *CacheStats
 }
@@ -67,12 +69,13 @@ func (f *Fake) Info(_ context.Context) domain.CVEDBStatus {
 }
 
 // UpdateDB ruft UpdateDBFunc (falls gesetzt), sonst ein erfolgreicher No-op.
-func (f *Fake) UpdateDB(_ context.Context) (string, error) {
+func (f *Fake) UpdateDB(_ context.Context) (DBUpdate, error) {
 	f.UpdateCalls++
 	if f.UpdateDBFunc != nil {
-		return f.UpdateDBFunc()
+		output, err := f.UpdateDBFunc()
+		return DBUpdate{Output: output, Updated: f.DBUpdated}, err
 	}
-	return "fake: datenbank aktualisiert", nil
+	return DBUpdate{Output: "fake: datenbank aktualisiert", Updated: f.DBUpdated}, nil
 }
 
 // CacheStats liefert CacheStatsVal (Standard: leerer Zustand).

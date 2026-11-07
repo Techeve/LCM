@@ -1286,7 +1286,9 @@
         "alertCheck": "Alarm-Auswertung",
         "alertCheckHelp": "Wertet alle Alarmregeln aus und benachrichtigt über ihre Kanäle, wenn etwas auslöst.",
         "updateCheck": "Update-Prüfung",
-        "updateCheckHelp": "Fragt nach, ob es eine neue LCM-Version gibt. Installiert wird dabei nichts."
+        "updateCheckHelp": "Fragt nach, ob es eine neue LCM-Version gibt. Installiert wird dabei nichts.",
+        "cveDbUpdate": "CVE-Datenbank abgleichen",
+        "cveDbUpdateHelp": "Holt einen neueren Stand der Schwachstellen-Datenbank im Hintergrund. Laufende Scans werden nicht gestört, neue Befunde gibt es erst beim nächsten CVE-Scan."
       },
       "where": {
         "lcm": "LCM selbst",
@@ -1325,7 +1327,7 @@
         "title": "Zeitpläne in LCM",
         "intro": "Hier stehen alle Zeitpläne an einem Ort, sortiert nach dem nächsten Lauf.",
         "group": "gehören zu einer Servergruppe und führen deren Regeln auf allen Servern der Gruppe aus. Bearbeiten kannst du sie in der Gruppe.",
-        "system": "entstehen aus den Einstellungen (Backup, Log-Bereinigung, CVE-Scan) oder sind fest eingebaut (Alarm-Auswertung, Update-Prüfung).",
+        "system": "entstehen aus den Einstellungen (Backup, Log-Bereinigung, CVE-Scan) oder sind fest eingebaut (Alarm-Auswertung, Update-Prüfung, CVE-Datenbank).",
         "manual": "„Ausführen“ startet einen Lauf sofort. Der reguläre Termin bleibt bestehen."
       },
       "everyMinutes": "Alle {count} Minuten",

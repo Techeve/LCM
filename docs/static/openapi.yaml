@@ -3197,8 +3197,8 @@ paths:
       - Sicherheit (global)
       summary: Schwachstellen-Datenbank nachladen.
       operationId: opsCtrl_UpdateCVEDB
-      description: 'Lädt die Schwachstellen-Datenbank herunter, ohne zu scannen
-        (`trivy --download-db-only`). Asynchroner Job (202 {status, job_id,
+      description: 'Holt einen neueren Stand der Schwachstellen-Datenbank im
+        Hintergrund, ohne zu scannen. Asynchroner Job (202 {status, job_id,
         job_name}) - damit ein Fehlschlag samt Ausgabe des Werkzeugs im
         Protokoll landet statt still zu verpuffen. Genau dort steht dann auch
         die Ursache (kein Netz, Proxy, Rate-Limit der Registry).

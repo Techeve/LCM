@@ -18,9 +18,10 @@ import (
 // eine normale Installation (.deb/systemd). Im Container-Betrieb tritt an
 // seine Stelle der remoteRunner.
 type localRunner struct {
-	binary   string        // Pfad/Name des Trivy-Binaries (z.B. "trivy")
-	cacheDir string        // Vuln-DB-Cache (z.B. <state>/trivy)
-	timeout  time.Duration // Zeitlimit je SBOM-Scan
+	binary    string        // Pfad/Name des Trivy-Binaries (z.B. "trivy")
+	cacheDir  string        // Vuln-DB-Cache (z.B. <state>/trivy)
+	timeout   time.Duration // Zeitlimit je SBOM-Scan
+	refresher *DBRefresher
 }
 
 // sbomTimeout ist das Zeitlimit eines SBOM-Scans (lokale Datenbank, kein Netz).
@@ -38,7 +39,9 @@ func newLocal(binary, cacheDir string) *localRunner {
 	if binary == "" {
 		binary = "trivy"
 	}
-	return &localRunner{binary: binary, cacheDir: cacheDir, timeout: sbomTimeout}
+	l := &localRunner{binary: binary, cacheDir: cacheDir, timeout: sbomTimeout}
+	l.refresher = NewDBRefresher(cacheDir, l.downloadDB)
+	return l
 }
 
 // available prüft, ob das Trivy-Binary auffindbar ist.
@@ -117,7 +120,10 @@ func (l *localRunner) scanImage(ctx context.Context, ref string) ([]byte, error)
 		// nichts bei - die Befunde am Paketbestand kommen aus der normalen
 		// Schwachstellen-Datenbank -, kostet aber auf einer kleinen Maschine
 		// genau die Reserve, die dem Dienst daneben fehlt.
-		"--skip-java-db-update"}
+		"--skip-java-db-update",
+		// --skip-db-update: Sonst lüde Trivy mitten im Scan selbst nach und
+		// schriebe in die aktive Datenbank. Das macht allein der DBRefresher.
+		"--skip-db-update"}
 	if l.cacheDir != "" {
 		args = append(args, "--cache-dir", l.cacheDir)
 	}
@@ -215,17 +221,18 @@ func (l *localRunner) info(ctx context.Context) domain.CVEDBStatus {
 	return st
 }
 
-// updateDB lädt die Schwachstellen-Datenbank herunter, ohne zu scannen
-// (`--download-db-only`).
-func (l *localRunner) updateDB(ctx context.Context) (string, error) {
+// updateDB gleicht die Schwachstellen-Datenbank ab (siehe DBRefresher).
+func (l *localRunner) updateDB(ctx context.Context) (DBUpdate, error) {
 	ctx, cancel := context.WithTimeout(ctx, dbUpdateTimeout)
 	defer cancel()
+	return l.refresher.Refresh(ctx)
+}
 
-	args := []string{"image", "--download-db-only"}
-	if l.cacheDir != "" {
-		args = append(args, "--cache-dir", l.cacheDir)
-	}
-	cmd := l.command(ctx, true, nil, args...)
+// downloadDB lädt die Datenbank in cacheDir, ohne zu scannen
+// (`--download-db-only`). Der Pfad liegt unter l.cacheDir, die Sandbox gibt ihn
+// also frei.
+func (l *localRunner) downloadDB(ctx context.Context, cacheDir string) (string, error) {
+	cmd := l.command(ctx, true, nil, "image", "--download-db-only", "--cache-dir", cacheDir)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

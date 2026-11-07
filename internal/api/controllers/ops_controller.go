@@ -434,8 +434,8 @@ func (ctrl *OpsController) ScannerStatus(c fiber.Ctx) error {
 }
 
 // UpdateCVEDB - POST /api/v1/security/scanner/update-db (settings:manage)
-// Lädt die Schwachstellen-Datenbank herunter, ohne zu scannen. Asynchroner
-// Job - damit ein Fehlschlag (Proxy, Rate-Limit, kein Netz) samt Ausgabe im
+// Holt einen neueren Stand der Schwachstellen-Datenbank im Hintergrund, ohne
+// zu scannen. Asynchroner Job - damit ein Fehlschlag (Proxy, Rate-Limit, kein Netz) samt Ausgabe im
 // Protokoll landet statt still zu verpuffen.
 func (ctrl *OpsController) UpdateCVEDB(c fiber.Ctx) error {
 	job, err := ctrl.servers.UpdateCVEDB(actor(c))

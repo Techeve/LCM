@@ -24,6 +24,7 @@ export const SYSTEM_KINDS: Record<string, SystemKind> = {
   'cve-scan': { label: 'settings.schedules.kind.cveScan', help: 'settings.schedules.kind.cveScanHelp', where: 'settings.schedules.where.allServers', reversible: true },
   'alert-check': { label: 'settings.schedules.kind.alertCheck', help: 'settings.schedules.kind.alertCheckHelp', where: 'settings.schedules.where.lcm', reversible: true },
   'update-check': { label: 'settings.schedules.kind.updateCheck', help: 'settings.schedules.kind.updateCheckHelp', where: 'settings.schedules.where.lcm', reversible: true },
+  'cve-db-update': { label: 'settings.schedules.kind.cveDbUpdate', help: 'settings.schedules.kind.cveDbUpdateHelp', where: 'settings.schedules.where.lcm', reversible: true },
 };
 
 export function isGroupSchedule(entry: ScheduleEntry): boolean {

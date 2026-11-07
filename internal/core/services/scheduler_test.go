@@ -105,6 +105,9 @@ func TestJederSystemScheduleIstAusloesbar(t *testing.T) {
 	if !kinds[services.KindUpdate] {
 		t.Error("die Update-Prüfung fehlt in der Übersicht, obwohl sie verdrahtet ist")
 	}
+	if !kinds[services.KindCVEDB] {
+		t.Error("der Datenbank-Abgleich fehlt in der Übersicht, obwohl ein Scanner bereitsteht")
+	}
 	// Und die Update-Prüfung muss wirklich gelaufen sein, nicht nur
 	// fehlerfrei angenommen worden sein.
 	select {

@@ -31,25 +31,23 @@ const alertCheckCron = "@every 30m"
 // unabhängig von den globalen Einstellungen.
 const updateCheckCron = "@every 3h"
 
-// cveDBUpdateCron zieht die Trivy-Datenbank fest alle 6 Stunden nach - im
-// Takt, in dem der Hersteller sie baut. Ohne diesen Zug altert die Datenbank
-// unbegrenzt, sobald niemand den Knopf drückt: Der SBOM-Scan lädt bewusst
-// nichts nach (--skip-db-update, Sandbox ohne Netz). Wie die Update-Prüfung
-// bewusst KEINE Einstellungsoption und - wie backupWatchdogCron - nicht in
-// der Schedule-Übersicht: ein interner Wartungstakt, kein Zeitplan des
-// Betreibers. Der Aufruf ist leise; nur ein Fehlschlag erzeugt einen Job
-// (siehe Executor.RefreshCVEDB).
+// cveDBUpdateCron gleicht die Trivy-Datenbank stündlich ab. Der Hersteller baut
+// sie alle sechs Stunden, und ein neuer Stand soll kurz nach dem Bau ankommen.
+// Die Bauten starten zu festen UTC-Zeiten, sind aber erst rund eine Stunde
+// später fertig; eine lokale Uhrzeit träfe das je nach Sommerzeit daneben.
+// Ohne neuen Stand kostet der Lauf nur eine kleine Anfrage an die Registry
+// (siehe trivy.DBRefresher). Ohne diesen Zug altert die Datenbank unbegrenzt:
+// Der SBOM-Scan lädt bewusst nichts nach (--skip-db-update, Sandbox ohne Netz).
 //
-// Feste Uhrzeiten statt „@every 6h": Der relative Takt beginnt beim
-// PROZESSSTART, nicht zur vollen Stunde. Auf dem LCM-Host von Techeve hat das
-// eine Rückkopplung erzeugt, die sich jede Nacht selbst bestätigte - der
-// Dienst wurde um 04:10 abgeräumt, der Takt verankerte sich neu auf 04:10,
-// und der nächste Datenbank-Download landete am Folgetag wieder genau in der
-// Zeitplan-Welle um vier Uhr, die ihn umgebracht hatte. Feste Zeiten können
-// nicht wandern, und 01:40 / 07:40 / 13:40 / 19:40 liegen frei zwischen dem
-// Docker-Check (kurz nach Mitternacht), dem System-Sync (04:00), dem
-// OSV-Spiegel (04:15), der Anreicherung (04:45) und der Sicherung (05:14).
-const cveDBUpdateCron = "40 1,7,13,19 * * *"
+// Bewusst KEINE Einstellungsoption, aber wie die Update-Prüfung in der
+// Schedule-Übersicht sichtbar. Der Aufruf ist leise; nur ein Fehlschlag erzeugt
+// einen Job (siehe Executor.RefreshCVEDB).
+//
+// Feste Minute statt „@every 1h": Der relative Takt beginnt beim PROZESSSTART
+// und würde mit jedem Neustart wandern. Auf dem LCM-Host von Techeve landete
+// ein Download so jede Nacht in der Zeitplan-Welle um vier Uhr, die ihn
+// umgebracht hatte.
+const cveDBUpdateCron = "10 * * * *"
 
 // advisoryPollCron ist der Takt der Fruehwarnung. 15 Minuten sind der
 // Kompromiss zwischen „schnell genug, um die Trivy-Spur (6-12 h) deutlich zu
@@ -84,6 +82,7 @@ const (
 	KindCVE      = "cve-scan"
 	KindAlert    = "alert-check"
 	KindUpdate   = "update-check"
+	KindCVEDB    = "cve-db-update"
 )
 
 // Scheduler ist der interne Cronjob des LCM. Er registriert zwei Arten von
@@ -254,8 +253,8 @@ func (s *Scheduler) Reload() error {
 			slog.Error("alert check schedule could not be registered", "error", err)
 		}
 	}
-	// Trivy-Datenbank - fest alle 6 Stunden nachziehen. Ohne Scanner ein
-	// No-op (RefreshCVEDB prüft das selbst).
+	// Trivy-Datenbank - stündlich abgleichen. Ohne Scanner ein No-op
+	// (RefreshCVEDB prüft das selbst).
 	if _, err := s.cron.AddFunc(cveDBUpdateCron, func() {
 		s.executor.RefreshCVEDB("scheduler")
 	}); err != nil {
@@ -467,6 +466,13 @@ func (s *Scheduler) Overview() ([]ScheduleOverview, error) {
 			Enabled: true,
 		})
 	}
+	if s.executor.HasCVEScanner() {
+		out = append(out, ScheduleOverview{
+			Kind: KindCVEDB, Name: "CVE-Datenbank abgleichen", Type: KindCVEDB,
+			CronExpr: cveDBUpdateCron, NextRun: s.nextForSpec(cveDBUpdateCron),
+			Enabled: true,
+		})
+	}
 	return out, nil
 }
 
@@ -515,6 +521,11 @@ func (s *Scheduler) TriggerSystem(kind, actor string) error {
 			return fmt.Errorf("die Update-Prüfung ist auf dieser Instanz nicht eingerichtet")
 		}
 		safego.Go("system:update-check", s.updateCheck)
+	case KindCVEDB:
+		if !s.executor.HasCVEScanner() {
+			return fmt.Errorf("auf dieser Instanz ist kein CVE-Scanner eingerichtet")
+		}
+		safego.Go("system:cve-db-update", func() { s.executor.RunCVEDBUpdate(actor) })
 	default:
 		return fmt.Errorf("unbekannter system-schedule: %q", kind)
 	}

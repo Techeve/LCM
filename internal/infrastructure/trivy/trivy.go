@@ -37,9 +37,9 @@ type Scanner interface {
 	Info(ctx context.Context) domain.CVEDBStatus
 	// CacheStats liefert den Zustand des Ergebnis-Zwischenspeichers.
 	CacheStats() CacheStats
-	// UpdateDB lädt die Schwachstellen-Datenbank herunter, ohne zu scannen.
-	// Liefert die Ausgabe des Werkzeugs (für das Job-Protokoll).
-	UpdateDB(ctx context.Context) (string, error)
+	// UpdateDB übernimmt einen neueren Stand der Schwachstellen-Datenbank,
+	// falls es einen gibt. Scans laufen währenddessen weiter (DBRefresher).
+	UpdateDB(ctx context.Context) (DBUpdate, error)
 }
 
 // Target bündelt die Eingaben eines Scans: Distribution, Paketverwaltung und
@@ -71,7 +71,8 @@ type Trivy struct {
 	scans scanCache
 
 	// heavy lässt genau EINEN schweren Trivy-Lauf gleichzeitig zu (Scan,
-	// Image-Scan, Datenbank-Download).
+	// Image-Scan). Der Datenbank-Download läuft bewusst daneben: Er hat ein
+	// eigenes Cache-Verzeichnis, und Scans sollen seinetwegen nicht warten.
 	//
 	// Zwei Gründe, beide im Betrieb belegt. Erstens teilen sich alle Läufe ein
 	// Cache-Verzeichnis, das Trivy exklusiv sperrt: Überlappende Aufrufe
@@ -217,24 +218,16 @@ func (t *Trivy) ForgetInfo() {
 	t.infoMu.Unlock()
 }
 
-// UpdateDB lädt die Schwachstellen-Datenbank herunter, ohne zu scannen
-// (`--download-db-only`). Danach wird der Info-Cache verworfen, damit die
-// Oberfläche sofort den neuen Stand zeigt statt bis zu einer Minute den alten.
-func (t *Trivy) UpdateDB(ctx context.Context) (string, error) {
+// UpdateDB übernimmt einen neueren Stand der Schwachstellen-Datenbank. Danach
+// wird der Info-Cache verworfen, damit die Oberfläche sofort den neuen Stand
+// zeigt statt bis zu einer Minute den alten.
+func (t *Trivy) UpdateDB(ctx context.Context) (DBUpdate, error) {
 	if !t.Available() {
-		return "", fmt.Errorf("trivy nicht verfügbar")
+		return DBUpdate{}, fmt.Errorf("trivy nicht verfügbar")
 	}
-	release, err := t.acquire(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer release()
-
-	out, err := t.run.updateDB(ctx)
-	// Danach den gemerkten Stand verwerfen, damit die Oberfläche sofort den
-	// neuen zeigt statt bis zu einer Minute den alten.
+	update, err := t.run.updateDB(ctx)
 	t.ForgetInfo()
-	return out, err
+	return update, err
 }
 
 // ScanImage lässt Trivy ein Container-Image aus der Registry prüfen
@@ -243,6 +236,13 @@ func (t *Trivy) UpdateDB(ctx context.Context) (string, error) {
 func (t *Trivy) ScanImage(ctx context.Context, ref string) ([]domain.Vulnerability, error) {
 	if !t.Available() {
 		return nil, fmt.Errorf("trivy nicht verfügbar")
+	}
+	// Der Image-Scan lädt nichts nach (--skip-db-update) und bräche ohne
+	// Datenbank ab. Das betrifft nur den allerersten Lauf.
+	if dbStamp(t.Info(ctx)).IsZero() {
+		if update, err := t.UpdateDB(ctx); err != nil {
+			return nil, fmt.Errorf("trivy-datenbank laden: %w: %s", err, update.Output)
+		}
 	}
 	release, err := t.acquire(ctx)
 	if err != nil {

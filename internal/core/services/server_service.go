@@ -344,9 +344,9 @@ func (s *ServerService) CVEDBStatus() domain.CVEDBStatus {
 	return st
 }
 
-// UpdateCVEDB laedt die Schwachstellen-Datenbank herunter - als Job, damit ein
-// Fehlschlag (Proxy, Rate-Limit, kein Netz) samt Ausgabe im Protokoll landet
-// statt still zu verpuffen. Der Job haengt an keinem Server: Scanner und
+// UpdateCVEDB holt einen neueren Stand der Schwachstellen-Datenbank - als Job,
+// damit ein Fehlschlag (Proxy, Rate-Limit, kein Netz) samt Ausgabe im Protokoll
+// landet statt still zu verpuffen. Der Job haengt an keinem Server: Scanner und
 // Datenbank liegen zentral auf dem LCM-Host.
 func (s *ServerService) UpdateCVEDB(actor string) (*domain.Job, error) {
 	if s.scanner == nil || !s.scanner.Available() {
@@ -358,7 +358,8 @@ func (s *ServerService) UpdateCVEDB(actor string) (*domain.Job, error) {
 	}
 	s.audit.Log(actor, "system.cve-db-update", "system", 0, "CVE-Datenbank aktualisieren")
 	safego.GoCleanup("job:cve-db-update", jobPanicCleanup(s.jobs, job), func() {
-		out, err := s.scanner.UpdateDB(context.Background())
+		update, err := s.scanner.UpdateDB(context.Background())
+		out := update.Output
 		if err != nil {
 			s.jobs.Complete(job, out, nil, err)
 			return

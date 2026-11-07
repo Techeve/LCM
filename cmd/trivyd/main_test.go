@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"LCM/internal/infrastructure/trivy"
 )
@@ -42,7 +44,7 @@ func itoa(i int) string {
 
 func testServer(t *testing.T, bin string) *httptest.Server {
 	t.Helper()
-	s := &server{trivy: bin, cache: t.TempDir(), token: "test-token"}
+	s := newServer(bin, t.TempDir(), "test-token")
 	srv := httptest.NewServer(s.routes())
 	t.Cleanup(srv.Close)
 	return srv
@@ -210,5 +212,46 @@ func TestLoopbackAdresse(t *testing.T) {
 		if got := loopbackAddr(ein); got != expected {
 			t.Errorf("%q -> %q, erwartet %q", ein, got, expected)
 		}
+	}
+}
+
+// Der Image-Scan darf nicht selbst nachladen: Das schriebe in die aktive
+// Datenbank, während der Abgleich sie austauscht.
+func TestImageScanLaedtKeineDatenbankNach(t *testing.T) {
+	bin, argsFile := fakeTrivy(t, `{"Results":[]}`, 0)
+	srv := testServer(t, bin)
+
+	resp, body := request(t, srv, http.MethodPost, trivy.PathScanImage, "test-token", `{"ref":"beispiel:1"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", resp.StatusCode, body)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--skip-db-update") {
+		t.Errorf("der image-scan lädt nach:\n%s", args)
+	}
+}
+
+// Scans warten nicht auf den Download: Er läuft an s.mu vorbei.
+func TestDatenbankDownloadBrauchtKeinenScanPlatz(t *testing.T) {
+	bin, argsFile := fakeTrivy(t, "", 0)
+	s := newServer(bin, t.TempDir(), "test-token")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cacheDir := t.TempDir()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := s.downloadDB(ctx, cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), cacheDir) {
+		t.Errorf("download läuft nicht im eigenen verzeichnis:\n%s", args)
 	}
 }

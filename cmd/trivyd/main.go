@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -57,7 +58,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	srv := &server{trivy: *binary, cache: *cacheDir, token: token}
+	srv := newServer(*binary, *cacheDir, token)
 	slog.Info("trivyd gestartet", "address", *addr, "cache", *cacheDir)
 	if err := http.ListenAndServe(*addr, srv.routes()); err != nil { //nolint:gosec // Zeitlimits setzt der Aufrufer; hier zaehlt der lange DB-Download
 		slog.Error("trivyd beendet", "error", err)
@@ -73,6 +74,13 @@ type server struct {
 	// gleichzeitige Läufe blockieren sich gegenseitig bis ins Zeitlimit.
 	// Serialisieren ist ehrlicher als parallel scheitern.
 	mu sync.Mutex
+	db *trivy.DBRefresher
+}
+
+func newServer(binary, cache, token string) *server {
+	s := &server{trivy: binary, cache: cache, token: token}
+	s.db = trivy.NewDBRefresher(cache, s.downloadDB)
+	return s
 }
 
 func (s *server) routes() http.Handler {
@@ -164,7 +172,7 @@ func (s *server) handleScanImage(w http.ResponseWriter, r *http.Request) {
 	// --skip-java-db-update wie im lokalen Weg: ein zweiter, rund anderthalb
 	// Gigabyte großer Download, der für Linux-Serverflotten nichts beiträgt.
 	args := []string{"image", "--format", "json", "--quiet", "--scanners", "vuln",
-		"--skip-java-db-update", "--cache-dir", s.cache, ref}
+		"--skip-java-db-update", "--skip-db-update", "--cache-dir", s.cache, ref}
 	out, err := s.runTrivy(r, imageTimeout, args...)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -174,14 +182,23 @@ func (s *server) handleScanImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleUpdateDB(w http.ResponseWriter, r *http.Request) {
-	out, err := s.runTrivy(r, dbUpdateTimeout, "image", "--download-db-only", "--cache-dir", s.cache)
+	ctx, cancel := contextWithTimeout(r, dbUpdateTimeout)
+	defer cancel()
+	update, err := s.db.Refresh(ctx)
 	if err != nil {
 		// Die Ausgabe des Werkzeugs gehört auch im Fehlerfall zum Betreiber -
 		// dort stehen Proxy-, Rate-Limit- und Netzfehler im Klartext.
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, mustJSON(trivy.UpdateResponse{Output: strings.TrimSpace(string(out))}))
+	writeJSON(w, mustJSON(trivy.UpdateResponse{Output: update.Output, Updated: update.Updated}))
+}
+
+// downloadDB lädt die Datenbank in ein eigenes Cache-Verzeichnis. Das geht an
+// s.mu vorbei, denn Scans sollen während des Downloads weiterlaufen.
+func (s *server) downloadDB(ctx context.Context, cacheDir string) (string, error) {
+	out, err := s.execTrivy(ctx, "image", "--download-db-only", "--cache-dir", cacheDir)
+	return strings.TrimSpace(string(out)), err
 }
 
 func (s *server) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -235,7 +252,10 @@ func (s *server) runTrivy(r *http.Request, timeout time.Duration, args ...string
 
 	ctx, cancel := contextWithTimeout(r, timeout)
 	defer cancel()
+	return s.execTrivy(ctx, args...)
+}
 
+func (s *server) execTrivy(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, s.trivy, args...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

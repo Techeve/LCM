@@ -125,10 +125,23 @@ eigene Firewall mit und zählt als abgedeckt).
 
 ### Wie aktuell ist die Schwachstellen-Datenbank?
 
-Trivy lädt seine Datenbank beim Scan selbst nach - aber nur mit Netzzugang zur
-Registry. Ist der LCM-Host abgeschottet, hängt hinter einem Proxy oder läuft in
-ein Rate-Limit, dann **warnt Trivy und scannt mit der alten Datenbank weiter**.
-Das Ergebnis ist dann kein Fehler, sondern „keine Sicherheitslücken gefunden".
+Der Hersteller baut die Datenbank alle sechs Stunden neu. LCM fragt stündlich
+nach, ob es einen neuen Stand gibt, und holt ihn dann selbst. Die Scans laden
+nichts nach.
+
+Der Download läuft im Hintergrund in einem eigenen Verzeichnis. Scans arbeiten
+währenddessen mit der bisherigen Datenbank weiter. Erst wenn die neue vollständig
+ist, ersetzt LCM die alte, und ein laufender Scan beendet sich noch auf der alten.
+Scheitert der Download, bleibt die bisherige Datenbank unverändert. Für den Tausch
+braucht der LCM-Host vorübergehend rund 2 GB zusätzlichen Plattenplatz.
+
+Eine neue Datenbank ändert die Befunde erst beim nächsten CVE-Scan. Der läuft
+nach seinem Zeitplan, der Abgleich startet keinen eigenen. Den Abgleich findest
+du unter *Einstellungen → Zeitpläne* als *CVE-Datenbank abgleichen*.
+
+Ist der LCM-Host abgeschottet, hängt hinter einem Proxy oder läuft in ein
+Rate-Limit, bleibt es bei der alten Datenbank. Die Scans melden das nicht als
+Fehler, sondern im Zweifel „keine Sicherheitslücken gefunden".
 
 Das ist die gefährliche Variante: Eine drei Wochen alte Datenbank sieht in der
 Übersicht genauso aus wie ein tatsächlich sauberer Server. Deshalb zeigt LCM
@@ -150,17 +163,18 @@ hat trotzdem alte Daten.
 
 | Alter | Stufe | Wirkung |
 |---|---|---|
-| < 48 h | aktuell | keine Anzeige (Trivy erneuert im 24-Stunden-Rhythmus) |
+| < 48 h | aktuell | keine Anzeige |
 | ab 48 h | veraltet | Warnung auf der Sicherheitsseite, Hinweis je Server, Alarm |
 | ab 7 Tagen | kritisch | wie oben, deutlicher hervorgehoben |
 
 Die 48 Stunden überleben bewusst einen ausgefallenen Nachtlauf, ohne dass echtes
 Verrotten durchrutscht.
 
-**Datenbank aktualisieren**: Der Knopf auf der Sicherheitsseite lädt sie sofort
-nach (`trivy --download-db-only`). Das läuft als Job - ein Fehlschlag landet
-samt Ausgabe von Trivy im Protokoll, und genau dort steht dann die Ursache
-(kein Netz, Proxy, Rate-Limit).
+**Datenbank aktualisieren**: Der Knopf auf der Sicherheitsseite prüft sofort, ob es
+einen neuen Stand gibt, und holt ihn. Das läuft als Job - das Protokoll nennt
+den Stand, oder dass es keinen neueren gibt. Ein Fehlschlag landet samt Ausgabe
+von Trivy im Protokoll, und genau dort steht dann die Ursache (kein Netz, Proxy,
+Rate-Limit).
 
 **Alarm**: Die Regel *„CVE-Datenbank veraltet"* (Einstellungen → Alarme) meldet
 den Zustand aktiv. Ohne sie fiele er nur auf, wenn jemand hinsieht - bei einem

@@ -45,9 +45,10 @@ type InfoResponse struct {
 }
 
 // UpdateResponse ist die Antwort von PathUpdateDB: die Ausgabe des Werkzeugs
-// fürs Job-Protokoll.
+// fürs Job-Protokoll und ob ein neuerer Stand übernommen wurde.
 type UpdateResponse struct {
-	Output string `json:"output"`
+	Output  string `json:"output"`
+	Updated bool   `json:"updated"`
 }
 
 // ErrorResponse ist der Fehlerkörper aller Endpunkte. Der Text landet im
