@@ -29,6 +29,7 @@ var (
 	errScannerUnavailable        = apierr.Define(409, "cve.scanner_unavailable", "the CVE scanner (Trivy) is not available on the LCM host")
 	errSelfUpdateOff             = apierr.Define(503, "selfupdate.not_configured", "self-update is not set up on this installation")
 	errSelfUpdateRejected        = apierr.Define(409, "selfupdate.rejected", "the self-update cannot be started")
+	errSelfUpdateNotCancelable   = apierr.Define(409, "selfupdate.not_cancelable", "the self-update is no longer waiting and cannot be cancelled")
 )
 
 // mailerErrors ordnet die Konfigurationsfehler des Standard-E-Mail-Versands zu.

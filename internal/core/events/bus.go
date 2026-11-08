@@ -35,6 +35,10 @@ const (
 	TypeAlertFired   = "alert.fired"   // ein Alarm wurde ausgelöst
 	TypeBulkProgress = "bulk.progress" // Fortschritt des Sammel-Updates
 	TypeSystemBuild  = "system.build"  // neue Version oder Selbst-Update-Fortschritt
+	// TypeSystemMaintenance: Die Sperre während des Selbst-Updates beginnt oder
+	// endet. Anders als system.build sieht es jeder Benutzer, denn die Sperre
+	// trifft jeden.
+	TypeSystemMaintenance = "system.maintenance"
 )
 
 // subscriberBuffer ist die Zahl der Ereignisse, die ein Abonnent aufstauen

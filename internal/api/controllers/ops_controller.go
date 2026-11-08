@@ -10,6 +10,7 @@ import (
 
 	"LCM/internal/api/middlewares"
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/core/services"
 	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
@@ -430,7 +431,7 @@ func (ctrl *OpsController) Vulnerabilities(c fiber.Ctx) error {
 // gefunden" wäre dann nicht von „seit Wochen nicht nachgesehen" zu
 // unterscheiden.
 func (ctrl *OpsController) ScannerStatus(c fiber.Ctx) error {
-	return c.JSON(ctrl.servers.CVEDBStatus())
+	return c.JSON(ctrl.servers.ScannerStatus())
 }
 
 // UpdateCVEDB - POST /api/v1/security/scanner/update-db (settings:manage)
@@ -761,6 +762,30 @@ func (ctrl *OpsController) StartSelfUpdate(c fiber.Ctx) error {
 		return errSelfUpdateRejected.With("detail", err.Error())
 	}
 	return c.JSON(status)
+}
+
+// CancelSelfUpdate - DELETE /api/v1/system/self-update (settings:manage)
+// Bricht das angeforderte Update ab, solange es noch auf laufende Jobs wartet,
+// und hebt die Sperre auf.
+func (ctrl *OpsController) CancelSelfUpdate(c fiber.Ctx) error {
+	if ctrl.selfUpdate == nil {
+		return errSelfUpdateOff
+	}
+	status, err := ctrl.selfUpdate.Cancel(actor(c))
+	if err != nil {
+		return errSelfUpdateNotCancelable
+	}
+	return c.JSON(status)
+}
+
+// Maintenance - GET /api/v1/system/maintenance (angemeldet)
+// Sagt jedem Benutzer, ob LCM gerade wegen des Updates gesperrt ist. Ohne
+// Selbst-Update gibt es keine Sperre.
+func (ctrl *OpsController) Maintenance(c fiber.Ctx) error {
+	if ctrl.selfUpdate == nil {
+		return c.JSON(events.SystemMaintenanceData{Phase: services.SelfUpdateIdle})
+	}
+	return c.JSON(ctrl.selfUpdate.Maintenance())
 }
 
 // globalSettingsRequest ist der PATCH-Rumpf für die globalen Einstellungen.

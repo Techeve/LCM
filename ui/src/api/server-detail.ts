@@ -73,6 +73,61 @@ export function normaliseStatusDetail(raw: unknown): ServerStatusDetail {
   return { kernel, exposures };
 }
 
+/** Ein Port an der Firewall vorbei. `addresses` leer: an keine bestimmte Adresse gebunden, er gilt für jede Schnittstelle. */
+export interface ExposedPort {
+  port: string;
+  addresses: string[];
+}
+
+/** Die Ports eines Containers, die an der Firewall vorbei erreichbar sind. */
+export interface ExposureGroup {
+  container: string;
+  ports: ExposedPort[];
+}
+
+export interface ExposureSummary {
+  /** Verschiedene Ports (Port/Protokoll); IPv4 und IPv6 desselben Ports zählen einmal. */
+  count: number;
+  /** Davon an keine bestimmte Adresse gebunden – sie gelten für jede Schnittstelle. */
+  unbound: number;
+  groups: ExposureGroup[];
+}
+
+/** Docker meldet „alle Adressen“ als 0.0.0.0 bzw. ::. */
+const ANY_ADDRESS = new Set(['', '0.0.0.0', '::', '[::]', '*']);
+
+interface PortBinding {
+  any: boolean;
+  addresses: Set<string>;
+}
+
+/** Fasst die Port-Freigaben zusammen: je Container eine Zeile statt je Port und Adresse. */
+export function summariseExposures(exposures: PortExposure[]): ExposureSummary {
+  const unbound = new Set<string>();
+  const ports = new Set<string>();
+  const groups = new Map<string, Map<string, PortBinding>>();
+  for (const e of exposures) {
+    const port = `${e.host_port}/${e.proto}`;
+    const any = ANY_ADDRESS.has(e.host_ip);
+    ports.add(port);
+    if (any) unbound.add(port);
+    const byPort = groups.get(e.container) ?? new Map<string, PortBinding>();
+    const binding = byPort.get(port) ?? { any: false, addresses: new Set<string>() };
+    if (any) binding.any = true;
+    else binding.addresses.add(e.host_ip);
+    byPort.set(port, binding);
+    groups.set(e.container, byPort);
+  }
+  return {
+    count: ports.size,
+    unbound: unbound.size,
+    groups: [...groups].map(([container, byPort]) => ({
+      container,
+      ports: [...byPort].map(([port, b]) => ({ port, addresses: b.any ? [] : [...b.addresses] })),
+    })),
+  };
+}
+
 /** Zustand eines installierten Kernels: läuft, wartet auf Neustart (neuer als der laufende), entfernbar oder Rückfallebene. */
 export type KernelState = 'running' | 'awaiting' | 'removable' | 'fallback';
 
@@ -90,6 +145,8 @@ export function kernelStates(kernel: KernelInfo): KernelState[] {
 export interface ScannerInfo {
   available: boolean;
   version: string;
+  /** Neuere Trivy-Version aus dem Paketbestand des Hosts; leer, wenn aktuell. */
+  update_version: string;
   updated_at: string | null;
   freshness: string;
   sandboxed: boolean;
@@ -123,6 +180,7 @@ export function normaliseLcmHost(raw: unknown): LcmHostStatus {
       ? {
           available: s.available === true,
           version: text(s.version),
+          update_version: text(s.update_version),
           updated_at: text(s.updated_at) || null,
           freshness: text(s.freshness) || 'unknown',
           sandboxed: s.sandboxed === true,
@@ -210,6 +268,7 @@ export const detailApi = {
     started(await api.post(`${SERVERS_URL}/${id}/apps/${encodeURIComponent(slug)}/${action}`)),
   installTrivy: async (id: number) => started(await api.post(`${SERVERS_URL}/${id}/lcm-host/install-trivy`)),
   installSandbox: async (id: number) => started(await api.post(`${SERVERS_URL}/${id}/lcm-host/install-sandbox`)),
+  updateTrivy: async (id: number) => started(await api.post(`${SERVERS_URL}/${id}/lcm-host/update-trivy`)),
   installAptCacher: async (id: number) => started(await api.post(`${SERVERS_URL}/${id}/lcm-host/install-apt-cacher`)),
   installCrowdSecLapi: async (id: number, bouncer: boolean) => started(await api.post(`${SERVERS_URL}/${id}/lcm-host/install-crowdsec-lapi`, { bouncer })),
 };

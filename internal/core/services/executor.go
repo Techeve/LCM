@@ -528,6 +528,8 @@ func (e *Executor) runOnServer(server *domain.Server, rule *domain.Rule, trigger
 			slog.Info("scheduled run skipped", "server", server.Name, "rule", rule.Name)
 		case errors.Is(err, ErrServerBusy):
 			slog.Info("job blocked (server busy)", "server", server.Name, "rule", rule.Name)
+		case errors.Is(err, ErrMaintenance):
+			slog.Info("job held back (lcm is updating)", "server", server.Name, "rule", rule.Name)
 		default:
 			slog.Error("job start failed", "server", server.Name, "error", err)
 		}
@@ -1383,7 +1385,7 @@ func reachableFields(now time.Time) map[string]any {
 func (e *Executor) runSystemJob(jobType, triggeredBy, name string, fn func() (string, error)) {
 	job, err := e.jobs.Start(nil, nil, jobType, name, triggeredBy)
 	if err != nil {
-		slog.Error("system job start failed", "job", name, "error", err)
+		logStartFailure("system job", name, err)
 		return
 	}
 	out, runErr := fn()
@@ -1458,7 +1460,7 @@ func (e *Executor) RefreshCVEDB(triggeredBy string) {
 	}
 	job, jobErr := e.jobs.Start(nil, nil, domain.RuleTypeScript, "CVE-Datenbank aktualisieren", triggeredBy)
 	if jobErr != nil {
-		slog.Error("cve db refresh: job start failed", "error", jobErr)
+		logStartFailure("cve db refresh", "CVE-Datenbank aktualisieren", jobErr)
 		return
 	}
 	e.jobs.Complete(job, update.Output, nil, err)
@@ -1482,7 +1484,7 @@ func (e *Executor) RunAdvisoryPoll(triggeredBy string) {
 	slog.Warn("advisory poll failed", "error", err)
 	job, jobErr := e.jobs.Start(nil, nil, domain.RuleTypeScript, "Fruehwarnung: Abfrage", triggeredBy)
 	if jobErr != nil {
-		slog.Error("advisory poll: job start failed", "error", jobErr)
+		logStartFailure("advisory poll", "Fruehwarnung: Abfrage", jobErr)
 		return
 	}
 	e.jobs.Complete(job, "", nil, err)
@@ -1559,7 +1561,7 @@ func (e *Executor) RunAdvisoryEnrich(triggeredBy string) {
 	slog.Warn("advisory enrichment failed", "error", err)
 	job, jobErr := e.jobs.Start(nil, nil, domain.RuleTypeScript, "Fruehwarnung: Ausnutzungs-Signal", triggeredBy)
 	if jobErr != nil {
-		slog.Error("advisory enrichment: job start failed", "error", jobErr)
+		logStartFailure("advisory enrichment", "Fruehwarnung: Ausnutzungs-Signal", jobErr)
 		return
 	}
 	e.jobs.Complete(job, "", nil, err)
@@ -1639,7 +1641,7 @@ func (e *Executor) RunCVEScanServer(id uint, triggeredBy string) {
 	}
 	job, err := e.jobs.Start(&server.ID, nil, domain.RuleTypeCVEScan, "CVE-Scan @ "+server.Name, triggeredBy)
 	if err != nil {
-		if !errors.Is(err, ErrServerBusy) {
+		if !heldBack(err) {
 			slog.Error("cve scan job start failed", "server", server.Name, "error", err)
 		}
 		return

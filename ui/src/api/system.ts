@@ -9,6 +9,7 @@ export const UPDATE_INFO_URL = '/api/v1/system/update-info';
 export const UPDATE_CHECK_URL = '/api/v1/system/update-check';
 export const SELF_UPDATE_URL = '/api/v1/system/self-update';
 export const RELEASE_NOTES_URL = '/api/v1/system/release-notes';
+export const MAINTENANCE_URL = '/api/v1/system/maintenance';
 
 type Raw = Record<string, unknown>;
 
@@ -102,6 +103,22 @@ export function selfUpdateBusy(status: SelfUpdate | null | undefined): boolean {
   return status?.phase === 'waiting' || status?.phase === 'backup' || status?.phase === 'running';
 }
 
+/** Die Sperre während des Selbst-Updates: Sie trifft jeden Benutzer, also sieht sie auch jeder. */
+export interface Maintenance {
+  active: boolean;
+  phase: SelfUpdatePhase;
+  target_version: string;
+}
+
+export function normaliseMaintenance(raw: unknown): Maintenance {
+  const r = record(raw);
+  return {
+    active: r.active === true,
+    phase: PHASES.find((p) => p === r.phase) ?? 'idle',
+    target_version: text(r.target_version),
+  };
+}
+
 /** Hinweise zum letzten Update; leer, solange es für diesen Benutzer nichts zu zeigen gibt. */
 export interface ReleaseNotes {
   version: string;
@@ -123,5 +140,9 @@ export const systemApi = {
   /** Vor dem Einspielen sichert LCM immer; ohne Sicherung wird nicht aktualisiert. */
   async startSelfUpdate(): Promise<SelfUpdate> {
     return normaliseSelfUpdate(await api.post(SELF_UPDATE_URL, { with_backup: true }));
+  },
+  /** Nur solange das Update noch auf laufende Jobs wartet. */
+  async cancelSelfUpdate(): Promise<SelfUpdate> {
+    return normaliseSelfUpdate(await api.delete(SELF_UPDATE_URL));
   },
 };

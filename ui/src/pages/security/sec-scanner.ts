@@ -111,6 +111,16 @@ export class SecScanner extends LitElement {
     </p>`;
   }
 
+  /** Trivy selbst war schon von CVEs betroffen: Eine neuere Version gehört sichtbar, aktualisiert wird am LCM-Host. */
+  #newVersion(scanner: ScannerStatus) {
+    if (!scanner.available || !scanner.updateVersion) return nothing;
+    return html`<lcm-badge tone="warn"
+      ><lcm-term heading=${t('security.scanner.newVersion', { version: scanner.updateVersion })} definition=${t('security.scanner.newVersionHelp')}
+        >${t('security.scanner.newVersion', { version: scanner.updateVersion })}</lcm-term
+      ></lcm-badge
+    >`;
+  }
+
   #sandbox(scanner: ScannerStatus) {
     if (!scanner.available) return nothing;
     if (scanner.sandboxed) return html`<lcm-badge tone="ok">${t('security.scanner.sandboxOn', { backend: scanner.sandboxBackend })}</lcm-badge>`;
@@ -129,7 +139,8 @@ export class SecScanner extends LitElement {
         <div class="text">
           ${this.#headline(scanner)}
           <div class="badges">
-            ${scanner.available && scanner.version ? html`<span class="muted mono">${SCANNER_NAME} ${scanner.version}</span>` : nothing} ${this.#sandbox(scanner)}
+            ${scanner.available && scanner.version ? html`<span class="muted mono">${SCANNER_NAME} ${scanner.version}</span>` : nothing} ${this.#newVersion(scanner)}
+            ${this.#sandbox(scanner)}
           </div>
         </div>
         ${scanner.available && this.canManage

@@ -372,7 +372,7 @@ func (e *Executor) RunDeepScanServer(id uint, triggeredBy string) {
 	}
 	job, err := e.jobs.Start(&server.ID, nil, domain.RuleTypeDeepScan, "Deep Scan @ "+server.Name, triggeredBy)
 	if err != nil {
-		if !errors.Is(err, ErrServerBusy) {
+		if !heldBack(err) {
 			slog.Error("deep scan job start failed", "server", server.Name, "error", err)
 		}
 		return

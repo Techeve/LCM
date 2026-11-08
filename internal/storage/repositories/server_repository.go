@@ -297,6 +297,19 @@ func (r *ServerRepository) FindPackages(serverID uint) ([]domain.Package, error)
 	return pkgs, nil
 }
 
+// FindPackage liefert ein Paket eines Servers nach Namen; nil, wenn es nicht im
+// Bestand steht.
+func (r *ServerRepository) FindPackage(serverID uint, name string) (*domain.Package, error) {
+	var pkgs []domain.Package
+	if err := r.db.Where("server_ref = ? AND name = ?", ServerRef(serverID), name).Limit(1).Find(&pkgs).Error; err != nil {
+		return nil, err
+	}
+	if len(pkgs) == 0 {
+		return nil, nil
+	}
+	return &pkgs[0], nil
+}
+
 func (r *ServerRepository) FindOutdatedPackages(serverID uint) ([]domain.Package, error) {
 	var pkgs []domain.Package
 	if err := r.db.Where("server_ref = ? AND candidate_version != '' AND candidate_version != version", ServerRef(serverID)).

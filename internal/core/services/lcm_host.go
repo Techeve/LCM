@@ -162,7 +162,7 @@ func (s *ServerService) LcmHostStatus(scope repositories.AccessScope, id uint) (
 	// Zustand, den der CVE-Scan tatsächlich nutzt).
 	st.TrivyInstalled = s.ScannerAvailable()
 	if st.TrivyInstalled {
-		scanner := s.CVEDBStatus()
+		scanner := s.ScannerStatus()
 		st.Scanner = &scanner
 	}
 	// Nachrüsten anbieten, solange der Scanner ungesperrt läuft. Ob es dann
@@ -216,6 +216,62 @@ func (s *ServerService) InstallTrivy(scope repositories.AccessScope, id uint, ac
 	return job, nil
 }
 
+// trivyPackage ist der Name des Trivy-Pakets aus dem Aqua-APT-Repo.
+const trivyPackage = "trivy"
+
+// ScannerStatus ist CVEDBStatus samt der Trivy-Version, die apt auf dem
+// LCM-Host neu anbietet. Getrennt von CVEDBStatus, weil die Ampel jedes
+// Servers CVEDBStatus fragt und dafür nicht jedes Mal den Paketbestand des
+// Hosts lesen soll.
+func (s *ServerService) ScannerStatus() domain.CVEDBStatus {
+	st := s.CVEDBStatus()
+	if st.Available {
+		st.UpdateVersion = s.trivyUpdateVersion()
+	}
+	return st
+}
+
+// trivyUpdateVersion liest die angebotene Trivy-Version aus dem Paketbestand
+// des LCM-Hosts. Sie ist so aktuell wie der letzte Paket-Scan des Hosts.
+func (s *ServerService) trivyUpdateVersion() string {
+	host := s.findLcmHost(repositories.ScopeAll())
+	if host == nil {
+		return ""
+	}
+	pkg, err := s.servers.FindPackage(host.ID, trivyPackage)
+	if err != nil || pkg == nil || !pkg.Outdated() {
+		return ""
+	}
+	return pkg.CandidateVersion
+}
+
+// UpdateTrivy spielt die neuere Trivy-Version auf dem LCM-Host ein - derselbe
+// Weg wie ein gezieltes Paket-Update, danach liest der Scanner seine Version
+// neu.
+func (s *ServerService) UpdateTrivy(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
+	if _, err := s.requireLcmHostApt(scope, id); err != nil {
+		return nil, err
+	}
+	job, err := s.UpdatePackages(scope, id, []string{trivyPackage}, "", actor)
+	if err != nil {
+		return nil, err
+	}
+	jobID := job.ID
+	safego.Go("lcm-host:trivy-updated", func() {
+		s.waitJobTerminal(jobID)
+		s.forgetScannerInfo()
+	})
+	return job, nil
+}
+
+// forgetScannerInfo verwirft den gemerkten Stand des Scanners (Version,
+// Sandbox), damit die Oberfläche nach einer Änderung den neuen sieht.
+func (s *ServerService) forgetScannerInfo() {
+	if f, ok := s.scanner.(interface{ ForgetInfo() }); ok {
+		f.ForgetInfo()
+	}
+}
+
 // InstallSandbox rüstet die Sandbox des CVE-Scanners nach (bubblewrap) und
 // wertet die Erkennung anschließend neu aus - ohne Neustart des Dienstes.
 // Nur für den LCM-Host und nur auf apt-Systemen.
@@ -238,9 +294,7 @@ func (s *ServerService) InstallSandbox(scope repositories.AccessScope, id uint, 
 		st := sandbox.Recheck()
 		// Der Scanner merkt sich seinen Status ebenfalls - sonst zeigte die
 		// Oberfläche trotz aktiver Sandbox weiter den alten Stand.
-		if f, ok := s.scanner.(interface{ ForgetInfo() }); ok {
-			f.ForgetInfo()
-		}
+		s.forgetScannerInfo()
 		slog.Info("sandbox rechecked after retrofit", "active", st.Active, "backend", st.Backend, "reason", st.Reason)
 	})
 	return job, nil

@@ -22,7 +22,7 @@ const (
 	topicJob       = "job"       // job:<id> - Ereignisse dieses Jobs
 	topicAlerts    = "alerts"    // ausgelöste Alarme
 	topicBulk      = "bulk"      // Sammel-Update
-	topicSystem    = "system"    // Version und Selbst-Update
+	topicSystem    = "system"    // Version, Selbst-Update und Wartungssperre
 	topicDashboard = "dashboard" // alles, was das Dashboard verändert
 )
 
@@ -97,7 +97,7 @@ func (t topic) matches(e events.Event) bool {
 	case topicBulk:
 		return e.Type == events.TypeBulkProgress
 	case topicSystem:
-		return e.Type == events.TypeSystemBuild
+		return e.Type == events.TypeSystemBuild || e.Type == events.TypeSystemMaintenance
 	case topicDashboard:
 		return e.Type == events.TypeServerStatus || e.Type == events.TypeJobFinished || e.Type == events.TypeAlertFired
 	}
@@ -116,7 +116,10 @@ func (t topic) subscribePermission() string {
 	case topicBulk:
 		return domain.PermPackagesRead
 	case topicSystem:
-		return domain.PermSettingsManage
+		// Die Wartungssperre trifft jeden, also darf jeder angemeldete Benutzer
+		// zuhören. system.build bekommt trotzdem nur, wer die Einstellungen
+		// verwaltet (eventPermission).
+		return ""
 	}
 	return domain.PermServersRead
 }
@@ -138,8 +141,15 @@ func eventPermission(t topic, eventType string) string {
 		return domain.PermPackagesRead
 	case events.TypeSystemBuild:
 		return domain.PermSettingsManage
+	case events.TypeSystemMaintenance:
+		return "" // jeder angemeldete Benutzer, siehe subscribePermission
 	}
 	return domain.PermServersRead
+}
+
+// allowed prüft ein Recht; leer heißt „angemeldet genügt".
+func allowed(user *domain.User, permission string) bool {
+	return permission == "" || user.HasPermission(permission)
 }
 
 // access ist die Sicht eines Benutzers auf Rechte und Server zu einem
@@ -165,7 +175,7 @@ func (a *access) canSee(serverID uint) bool {
 // Ereignisses muss in seinem Sichtbereich liegen.
 func (a *access) deliverable(t topic, e events.Event) bool {
 	return t.matches(e) &&
-		a.user.HasPermission(eventPermission(t, e.Type)) &&
+		allowed(a.user, eventPermission(t, e.Type)) &&
 		a.visibleTo(e)
 }
 

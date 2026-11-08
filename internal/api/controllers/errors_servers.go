@@ -109,6 +109,7 @@ var serverErrors = []sentinelCode{
 	{sshx.ErrHostKeyMismatch, errHostKeyMismatch},
 	{services.ErrLoopbackInContainer, errLoopbackInContainer},
 	{services.ErrServerBusy, errServerBusy},
+	{services.ErrMaintenance, apierr.Maintenance},
 	{services.ErrProxmoxRestricted, errProxmoxRestricted},
 	{services.ErrPackagePinsUnavailable, errPinsUnavailable},
 	{services.ErrPackagePinsNotWired, errPinsNotWired},

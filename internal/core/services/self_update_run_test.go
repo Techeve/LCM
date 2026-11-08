@@ -25,6 +25,7 @@ type startedJob struct {
 	name    string
 	script  string
 	calls   int
+	after   func(ok bool)
 }
 
 func (s *startedJob) snapshot() startedJob {
@@ -55,9 +56,10 @@ func selfUpdateEnv(t *testing.T, env *testEnv, latest string) (*services.SelfUpd
 	lcmHostServer(t, env)
 
 	started := &startedJob{}
-	runJob := func(jobType, name, script, _ string, _ func(bool)) (*domain.Job, error) {
+	runJob := func(jobType, name, script, _ string, after func(bool)) (*domain.Job, error) {
 		started.mu.Lock()
 		started.jobType, started.name, started.script = jobType, name, script
+		started.after = after
 		started.calls++
 		started.mu.Unlock()
 		return &domain.Job{ID: "job-selbst-update"}, nil
@@ -249,6 +251,9 @@ func TestSelfUpdateMeldetPhasenwechsel(t *testing.T) {
 	for len(phases) == 0 || phases[len(phases)-1] != services.SelfUpdateRunning {
 		select {
 		case e := <-sub.Events():
+			if e.Type == events.TypeSystemMaintenance {
+				continue // die Sperre für alle - eigener Test
+			}
 			if e.Type != events.TypeSystemBuild {
 				t.Fatalf("unerwartetes Ereignis %s", e.Type)
 			}
@@ -259,5 +264,153 @@ func TestSelfUpdateMeldetPhasenwechsel(t *testing.T) {
 	}
 	if phases[0] != services.SelfUpdateWaiting {
 		t.Errorf("erste Phase = %s, erwartet waiting (alle: %v)", phases[0], phases)
+	}
+}
+
+// TestSelfUpdateSperrtNeueJobsBisZumNeustart: Vom Anfordern an startet kein
+// neuer Job - sonst käme hinter dem letzten wartenden Job immer noch einer
+// nach, und der Neustart träfe ihn. Der Update-Lauf selbst kommt durch.
+func TestSelfUpdateSperrtNeueJobsBisZumNeustart(t *testing.T) {
+	env := newTestEnv(t)
+	svc, _ := selfUpdateEnv(t, env, "1.27.0")
+	svc.WithMaintenanceGate(env.Jobs)
+
+	other := joinTestServer(t, env, "web-01")
+	running, err := env.Jobs.Start(&other, nil, domain.RuleTypeUpdate, "läuft schon", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Start("admin", false); err != nil {
+		t.Fatal(err)
+	}
+	if !svc.Locked() || !env.Jobs.InMaintenance() {
+		t.Fatal("nach dem Anfordern muss gesperrt sein")
+	}
+	if _, err := env.Jobs.Start(&other, nil, domain.RuleTypeReboot, "neuer Job", "kollege"); !errors.Is(err, services.ErrMaintenance) {
+		t.Fatalf("neuer Job während des Wartens: %v", err)
+	}
+
+	env.Jobs.Complete(running, "", ptrIntTest(0), nil)
+	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
+	if !env.Jobs.InMaintenance() {
+		t.Error("auch während des Update-Laufs bleibt gesperrt")
+	}
+}
+
+// TestSelfUpdateAbbrechenHebtDieSperreAuf: Solange das Update wartet, lässt es
+// sich abbrechen, danach nicht mehr.
+func TestSelfUpdateAbbrechenHebtDieSperreAuf(t *testing.T) {
+	env := newTestEnv(t)
+	svc, started := selfUpdateEnv(t, env, "1.27.0")
+	svc.WithMaintenanceGate(env.Jobs)
+
+	other := joinTestServer(t, env, "web-01")
+	running, err := env.Jobs.Start(&other, nil, domain.RuleTypeUpdate, "läuft schon", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Start("admin", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Cancel("admin"); err != nil {
+		t.Fatalf("abbrechen: %v", err)
+	}
+	if svc.Locked() || env.Jobs.InMaintenance() {
+		t.Error("nach dem Abbruch darf nichts mehr gesperrt sein")
+	}
+	env.Jobs.Complete(running, "", ptrIntTest(0), nil)
+	time.Sleep(30 * time.Millisecond)
+	if started.snapshot().calls != 0 {
+		t.Error("ein abgebrochenes Update darf nicht mehr starten")
+	}
+	if _, err := svc.Cancel("admin"); !errors.Is(err, services.ErrSelfUpdateNotCancelable) {
+		t.Errorf("ohne wartendes Update: %v", err)
+	}
+}
+
+// TestSelfUpdateGescheiterterLaufHebtDieSperreAuf: Scheitert der Update-Job,
+// läuft LCM in der alten Version weiter - dann darf es nicht gesperrt bleiben.
+func TestSelfUpdateGescheiterterLaufHebtDieSperreAuf(t *testing.T) {
+	env := newTestEnv(t)
+	svc, started := selfUpdateEnv(t, env, "1.27.0")
+	svc.WithMaintenanceGate(env.Jobs)
+	if _, err := svc.Start("admin", false); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
+
+	started.mu.Lock()
+	after := started.after
+	started.mu.Unlock()
+	after(false)
+	if st := svc.Status(); st.Phase != services.SelfUpdateFailed || st.Error == "" {
+		t.Errorf("erwartet failed mit Begründung, bekam %+v", st)
+	}
+	if env.Jobs.InMaintenance() {
+		t.Error("nach dem Fehlschlag muss die Sperre fallen")
+	}
+}
+
+// TestSelfUpdateOhneNeustartHebtDieSperreAuf: Gelingt der Anstoß, aber LCM
+// startet nicht neu (apt in der eigenen Unit gescheitert), fällt die Sperre
+// nach der Frist.
+func TestSelfUpdateOhneNeustartHebtDieSperreAuf(t *testing.T) {
+	env := newTestEnv(t)
+	svc, started := selfUpdateEnv(t, env, "1.27.0")
+	svc.WithMaintenanceGate(env.Jobs)
+	limit := services.SelfUpdateRestartLimit
+	services.SelfUpdateRestartLimit = 10 * time.Millisecond
+	t.Cleanup(func() { services.SelfUpdateRestartLimit = limit })
+
+	if _, err := svc.Start("admin", false); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
+	started.mu.Lock()
+	after := started.after
+	started.mu.Unlock()
+	after(true)
+	if st := svc.Status(); st.Phase != services.SelfUpdateFailed || !strings.Contains(st.Error, "journalctl") {
+		t.Errorf("erwartet failed mit Hinweis aufs Protokoll, bekam %+v", st)
+	}
+	if env.Jobs.InMaintenance() {
+		t.Error("ohne Neustart muss die Sperre nach der Frist fallen")
+	}
+}
+
+// TestSelfUpdateAbbruchUndNeustartLaufenNichtDoppelt: Wer abbricht und gleich
+// neu anfordert, bekommt genau einen Lauf. Der alte darf weder weitermachen
+// noch die Sperre des neuen aufheben.
+func TestSelfUpdateAbbruchUndNeustartLaufenNichtDoppelt(t *testing.T) {
+	env := newTestEnv(t)
+	svc, started := selfUpdateEnv(t, env, "1.27.0")
+	svc.WithMaintenanceGate(env.Jobs)
+
+	other := joinTestServer(t, env, "web-01")
+	running, err := env.Jobs.Start(&other, nil, domain.RuleTypeUpdate, "läuft schon", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Start("admin", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Cancel("admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Start("admin", false); err != nil {
+		t.Fatal(err)
+	}
+	if !env.Jobs.InMaintenance() {
+		t.Fatal("der neue Lauf muss sperren")
+	}
+
+	env.Jobs.Complete(running, "", ptrIntTest(0), nil)
+	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
+	time.Sleep(30 * time.Millisecond) // dem alten Lauf Gelegenheit geben, sich (fälschlich) zu melden
+	if n := started.snapshot().calls; n != 1 {
+		t.Errorf("erwartet genau einen Update-Lauf, gestartet wurden %d", n)
+	}
+	if !env.Jobs.InMaintenance() {
+		t.Error("die Sperre muss bis zum Neustart stehen")
 	}
 }

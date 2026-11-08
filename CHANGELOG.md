@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.0.0-beta.14 - 2026-11-08
+
+### 🚀 Features
+
+- **trivy**: Eine neuere Trivy-Version wird angezeigt und lässt sich mit einem Klick einspielen (1bd219bf)
+- **update**: Während des LCM-Updates sind alle Aktionen gesperrt, das Update-Fenster bleibt mit dem Fortschritt offen (0a6f8d82)
+
+### 🐛 Bugfixes
+
+- **servers**: Docker-Ports an der Firewall vorbei stehen als Zahl, die Liste klappt man bei Bedarf auf (67d7ab7e)
+
 ## v2.0.0-beta.13 - 2026-11-08
 
 ### 🚀 Features

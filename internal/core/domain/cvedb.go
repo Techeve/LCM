@@ -46,6 +46,11 @@ type CVEDBStatus struct {
 	Available bool `json:"available"`
 	// Version des Scanner-Binaries, z.B. "0.72.0".
 	Version string `json:"version,omitempty"`
+	// UpdateVersion ist die neuere Trivy-Version, die apt auf dem LCM-Host
+	// anbietet (aus dem Paketbestand); leer, wenn Trivy aktuell ist oder
+	// nicht aus dem Paket kommt. Trivy ist selbst schon von CVEs betroffen
+	// gewesen - ein veralteter Scanner gehört sichtbar gemacht.
+	UpdateVersion string `json:"update_version,omitempty"`
 	// UpdatedAt: wann der Hersteller diese Datenbank gebaut hat.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 	// NextUpdate: wann der Hersteller die naechste Ausgabe vorsieht.

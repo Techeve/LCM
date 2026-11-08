@@ -103,6 +103,18 @@ func SystemBuild(d SystemBuildData) Event {
 	return Event{Type: TypeSystemBuild, Data: d}
 }
 
+// SystemMaintenanceData: ob LCM gerade wegen des Selbst-Updates gesperrt ist.
+type SystemMaintenanceData struct {
+	Active        bool   `json:"active"`
+	Phase         string `json:"phase"`
+	TargetVersion string `json:"target_version,omitempty"`
+}
+
+// SystemMaintenance baut das Ereignis system.maintenance.
+func SystemMaintenance(d SystemMaintenanceData) Event {
+	return Event{Type: TypeSystemMaintenance, Data: d}
+}
+
 func idOf(id *uint) uint {
 	if id == nil {
 		return 0

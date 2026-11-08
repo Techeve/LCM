@@ -169,6 +169,37 @@ test.describe('Update-Hinweise', () => {
     await expect(page.getByText(/sobald diese Jobs fertig sind: Alle Pakete aktualisieren @ web-01/)).toBeVisible();
   });
 
+  test('das Fortschrittsfenster bleibt offen und lässt das Warten abbrechen', async ({ page }) => {
+    await page.route('**/api/v1/system/update-info', (route) =>
+      route.fulfill({ json: { current_version: '1.0.0', latest_version: '99.9.9', update_available: true, channel: 'beta' } }),
+    );
+    let phase = 'idle';
+    await page.route('**/api/v1/system/self-update', (route) => {
+      const method = route.request().method();
+      if (method === 'POST') phase = 'waiting';
+      if (method === 'DELETE') phase = 'idle';
+      return route.fulfill({
+        json: { supported: true, phase, target_version: phase === 'idle' ? '' : '99.9.9', waiting_for: phase === 'waiting' ? ['CVE-Scan @ web-01'] : [] },
+      });
+    });
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Jetzt installieren' }).click();
+    await bestaetige(page, 'LCM 99.9.9 installieren?', 'Jetzt installieren');
+
+    // Nach dem Bestätigen geht nichts zu: Das Fenster zeigt, wie weit das Update ist und dass alles gesperrt ist.
+    const fortschritt = fenster(page, 'LCM 99.9.9 wird installiert');
+    await expect(fortschritt).toBeVisible();
+    await expect(fortschritt.getByText(/niemand kann eine Aktion auslösen/)).toBeVisible();
+    await expect(fortschritt.getByText('Wartet auf: CVE-Scan @ web-01')).toBeVisible();
+    await expect(fortschritt.getByText('Datenbank sichern')).toBeVisible();
+
+    // Solange es wartet, lässt es sich abbrechen.
+    await fortschritt.getByRole('button', { name: 'Update abbrechen' }).click();
+    await expect(fortschritt).toBeHidden();
+    await expect(page.getByText('LCM 99.9.9 ist verfügbar (installiert: 1.0.0).')).toBeVisible();
+  });
+
   test('nach einem Update lädt die Oberfläche sich selbst neu', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();

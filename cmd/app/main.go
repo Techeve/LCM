@@ -817,7 +817,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 				return "", err
 			}
 			return b.FileName, nil
-		}).WithEvents(eventBus)
+		}).WithMaintenanceGate(jobService).WithEvents(eventBus)
 	safego.Go("subscription-check:initial", subscriptionService.CheckOnStartupIfStale)
 
 	// Den eigenen Rechner in die Verwaltung aufnehmen, sofern das

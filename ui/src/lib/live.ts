@@ -44,6 +44,8 @@ export function targetsFor(message: EventMessage): Target[] {
     case 'system.build':
       // Fortschritt des Selbst-Updates; die Zielversion steht im Update-Stand.
       return [{ prefix: '/api/v1/system/self-update' }, { prefix: '/api/v1/system/update-info' }];
+    case 'system.maintenance':
+      return [{ prefix: '/api/v1/system/maintenance' }];
     default:
       return [];
   }

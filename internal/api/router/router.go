@@ -259,6 +259,10 @@ func New(deps Deps) *fiber.App {
 	if deps.DemoPublic {
 		api.Use(middlewares.DemoGuard())
 	}
+	// Selbst-Update: Bis zum Neustart nimmt LCM keine Aktionen mehr an.
+	if deps.SelfUpdate != nil {
+		api.Use(middlewares.MaintenanceGuard(deps.SelfUpdate.Locked))
+	}
 
 	// System-Info: Version, Build, Uptime (Controller ohne DB-Schicht).
 	api.Get("/system/info", systemCtrl.Info)
@@ -294,6 +298,8 @@ func New(deps Deps) *fiber.App {
 	// Admin-Sache - der Vorgang startet den Dienst neu.
 	api.Get("/system/self-update", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.SelfUpdateStatus)
 	api.Post("/system/self-update", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.StartSelfUpdate)
+	api.Delete("/system/self-update", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.CancelSelfUpdate)
+	api.Get("/system/maintenance", middlewares.RequireAuth(), opsCtrl.Maintenance)
 
 	// Hinweis zu Fiber v3: Handler laufen in Angabe-Reihenfolge -
 	// Middlewares stehen deshalb VOR dem Controller-Handler.
@@ -412,6 +418,7 @@ func New(deps Deps) *fiber.App {
 	// Trivy bzw. apt-cacher-ng.
 	servers.Get("/:id/lcm-host/status", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.LcmHostStatus)
 	servers.Post("/:id/lcm-host/install-trivy", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.InstallTrivy)
+	servers.Post("/:id/lcm-host/update-trivy", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.UpdateTrivy)
 	servers.Post("/:id/lcm-host/install-sandbox", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.InstallSandbox)
 	servers.Post("/:id/lcm-host/install-apt-cacher", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.InstallAptCacher)
 	servers.Post("/:id/lcm-host/install-crowdsec-lapi", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.InstallCrowdSecLapi)

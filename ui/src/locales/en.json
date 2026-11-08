@@ -1966,7 +1966,8 @@
     },
     "selfupdate": {
       "not_configured": "Self-update is not set up on this installation",
-      "rejected": "The self-update cannot be started: {detail}"
+      "rejected": "The self-update cannot be started: {detail}",
+      "not_cancelable": "The update is no longer waiting for jobs and can no longer be cancelled"
     },
     "server": {
       "action_failed": "The action failed on the target system: {detail}",
@@ -2096,6 +2097,9 @@
     },
     "conflict": {
       "duplicate": "{field}: this value already exists"
+    },
+    "system": {
+      "maintenance": "LCM is being updated. All actions are locked until it has restarted."
     }
   },
   "insights": {
@@ -3779,7 +3783,9 @@
         "meaning": "The next scans rely on the new state. Nothing changes on your servers.",
         "started": "Database update started",
         "failed": "The database update could not be started"
-      }
+      },
+      "newVersion": "Trivy {version} available",
+      "newVersionHelp": "apt offers a newer Trivy version on the LCM host. Trivy itself has been affected by vulnerabilities before. It can be updated in the overview of the LCM host under “LCM host”."
     },
     "bulk": {
       "label": "Update all servers",
@@ -5061,9 +5067,37 @@
       "backup": "Before",
       "backupValue": "Database backup, no update without it",
       "jobs": "Running jobs",
-      "jobsValue": "Finish first, new ones wait",
+      "jobsValue": "Finish first, new ones wait until after the update",
       "downtime": "Downtime",
-      "downtimeValue": "UI and API briefly gone, servers keep running"
+      "downtimeValue": "UI and API briefly gone, servers keep running",
+      "lock": "Lock",
+      "lockValue": "No actions until the restart, for all users"
+    },
+    "lockedAll": "All actions are locked until the restart.",
+    "lockedOther": "LCM is being updated to {version}. No actions can be started until it has restarted.",
+    "showProgress": "Progress",
+    "abort": "Cancel update",
+    "close": "Close",
+    "restarted": "LCM has restarted. After reloading, the about window shows which version is running.",
+    "reloadNow": "Reload now",
+    "progress": {
+      "title": "Installing LCM {version}",
+      "lock": "Until the restart no new job starts and nobody can trigger an action. Scheduled runs wait until afterwards.",
+      "failed": "The update was not installed"
+    },
+    "step": {
+      "jobs": "Wait for running jobs",
+      "jobsWaiting": "Waiting for: {jobs}",
+      "jobsChecking": "Checking whether jobs are still running",
+      "jobsDone": "No job is running anymore",
+      "backup": "Back up the database",
+      "install": "Install the package and restart",
+      "installHint": "The interface is briefly unavailable and reloads by itself afterwards."
+    },
+    "stepState": {
+      "done": "done",
+      "current": "running",
+      "pending": "pending"
     }
   },
   "apps": {
@@ -5811,7 +5845,14 @@
       "coresCount": {
         "one": "1 core",
         "other": "{count} cores"
-      }
+      },
+      "dockerBypassAll": "None is bound to a specific address, they apply to every interface of the server.",
+      "dockerBypassSome": {
+        "one": "1 of them is not bound to a specific address and applies to every interface of the server.",
+        "other": "{count} of them are not bound to a specific address and apply to every interface of the server."
+      },
+      "dockerBypassShow": "Show ports",
+      "dockerBypassOnly": "only"
     },
     "kernels": {
       "title": "Installed kernels",
@@ -5853,7 +5894,13 @@
         "help": "Adds the Aqua Security package archive, installs Trivy and then enables CVE scanning. Runs as a job on this server.",
         "meaning": "LCM then scans all servers for known vulnerabilities.",
         "name": "Trivy",
-        "version": "Trivy {version}"
+        "version": "Trivy {version}",
+        "updateAvailable": "Version {version} available",
+        "update": {
+          "label": "Update to Trivy {version}",
+          "help": "Installs the newer Trivy version from the Aqua Security package archive. Runs as a job on this server.",
+          "meaning": "The scanner is up to date afterwards. Database and findings are kept."
+        }
       },
       "sandbox": {
         "label": "Add sandbox",

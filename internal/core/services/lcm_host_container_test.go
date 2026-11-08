@@ -164,3 +164,31 @@ func TestDemoSkriptJobHebtKeinePakete(t *testing.T) {
 		t.Fatalf("Skript-Job hat Pakete verändert: %+v", pkgs)
 	}
 }
+
+// TestTrivyUpdateAusDemPaketbestand: Die neuere Trivy-Version kommt aus dem,
+// was apt auf dem LCM-Host anbietet. Ist Trivy aktuell, bleibt das Feld leer -
+// und eine Kandidat-Version eines anderen Pakets zählt nicht.
+func TestTrivyUpdateAusDemPaketbestand(t *testing.T) {
+	svc, id := containerTestService(t, false)
+	if got := svc.trivyUpdateVersion(); got != "" {
+		t.Fatalf("ohne Paketbestand erwartete ich nichts, bekam %q", got)
+	}
+
+	if err := svc.servers.ReplacePackages(id, []domain.Package{
+		{Name: "trivy", Version: "0.67.2", CandidateVersion: "0.68.1"},
+		{Name: "curl", Version: "8.5.0", CandidateVersion: "8.5.1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.trivyUpdateVersion(); got != "0.68.1" {
+		t.Errorf("erwartete 0.68.1, bekam %q", got)
+	}
+
+	// Kandidat gleich installiert heißt ebenfalls „aktuell".
+	if err := svc.servers.ReplacePackages(id, []domain.Package{{Name: "trivy", Version: "0.68.1", CandidateVersion: "0.68.1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.trivyUpdateVersion(); got != "" {
+		t.Errorf("aktuelles Trivy darf kein Update melden, bekam %q", got)
+	}
+}

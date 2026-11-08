@@ -828,6 +828,14 @@ func (ctrl *ServerController) InstallSandbox(c fiber.Ctx) error {
 	})
 }
 
+// UpdateTrivy - POST /api/v1/servers/:id/lcm-host/update-trivy (servers:write)
+// Spielt die neuere Trivy-Version ein, die apt auf dem LCM-Host anbietet.
+func (ctrl *ServerController) UpdateTrivy(c fiber.Ctx) error {
+	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
+		return ctrl.servers.UpdateTrivy(scopeFor(c), id, actor(c))
+	})
+}
+
 // InstallTrivy - POST /api/v1/servers/:id/lcm-host/install-trivy (servers:write)
 func (ctrl *ServerController) InstallTrivy(c fiber.Ctx) error {
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {

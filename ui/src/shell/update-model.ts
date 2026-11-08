@@ -18,6 +18,26 @@ export function updateBanner(info: UpdateInfo | undefined, self: SelfUpdate | nu
   return null;
 }
 
+// ---- Fortschritt im Update-Fenster ----
+
+export type StepState = 'done' | 'current' | 'pending';
+
+export interface UpdateStep {
+  key: 'jobs' | 'backup' | 'install';
+  state: StepState;
+}
+
+const STEP_ORDER: readonly UpdateStep['key'][] = ['jobs', 'backup', 'install'];
+const CURRENT_STEP: Partial<Record<SelfUpdate['phase'], UpdateStep['key']>> = { waiting: 'jobs', backup: 'backup', running: 'install' };
+
+/** Die drei Schritte des Updates und wie weit es ist. Ohne laufendes Update gibt es keine. */
+export function updateSteps(status: SelfUpdate | null | undefined): UpdateStep[] {
+  const current = status ? CURRENT_STEP[status.phase] : undefined;
+  if (!current) return [];
+  const at = STEP_ORDER.indexOf(current);
+  return STEP_ORDER.map((key, i) => ({ key, state: i < at ? 'done' : i === at ? 'current' : 'pending' }));
+}
+
 const DISMISSED_KEY = 'lcm.update.dismissed';
 
 /** Gemeinsamer Stand von Balken und Info-Fenster: die weggeklickte Version. */

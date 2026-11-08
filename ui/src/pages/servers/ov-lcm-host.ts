@@ -145,6 +145,24 @@ export class SrvLcmHost extends LitElement {
     ></lcm-set-action>`;
   }
 
+  #updateTrivy(version: string): TemplateResult | typeof nothing {
+    if (!this.canWrite) return nothing;
+    const s = this.server;
+    return html`<lcm-set-action
+      icon="download"
+      server-id=${s.id}
+      server-name=${s.name}
+      label=${t('serverDetail.lcmHost.trivy.update.label', { version })}
+      help=${t('serverDetail.lcmHost.trivy.update.help')}
+      meaning=${t('serverDetail.lcmHost.trivy.update.meaning')}
+      .run=${async () => {
+        const job = await detailApi.updateTrivy(s.id);
+        this.#status.reload();
+        return job;
+      }}
+    ></lcm-set-action>`;
+  }
+
   #scanner(scanner: ScannerInfo | null): TemplateResult | typeof nothing {
     if (!scanner?.available) return nothing;
     const db = scanner.updated_at
@@ -153,6 +171,7 @@ export class SrvLcmHost extends LitElement {
       : pill('crit', t('serverDetail.lcmHost.trivy.dbNever'));
     return html`<div class="meta"><span class="mono">${t('serverDetail.lcmHost.trivy.version', { version: scanner.version })}</span> · ${db}</div>
       <div class="state">
+        ${scanner.update_version ? pill('warn', t('serverDetail.lcmHost.trivy.updateAvailable', { version: scanner.update_version })) : nothing}
         ${scanner.sandboxed ? pill('ok', t('serverDetail.lcmHost.trivy.sandboxOn', { backend: scanner.sandbox_backend })) : pill('warn', t('serverDetail.lcmHost.trivy.sandboxOff'))}
       </div>
       ${scanner.sandboxed ? nothing : html`<p class="meta">${t('serverDetail.lcmHost.trivy.sandboxOffHint')}${scanner.sandbox_note ? ` ${scanner.sandbox_note}` : ''}</p>`}`;
@@ -166,6 +185,7 @@ export class SrvLcmHost extends LitElement {
       ${status.trivy_installed ? this.#scanner(status.scanner) : nothing}
       <div class="act">
         ${status.trivy_installed ? nothing : this.#install('trivy', () => detailApi.installTrivy(id))}
+        ${status.scanner?.update_version ? this.#updateTrivy(status.scanner.update_version) : nothing}
         ${status.trivy_installed && status.sandbox_retrofit ? this.#install('sandbox', () => detailApi.installSandbox(id), 'outline') : nothing}
       </div>
     </div>`;

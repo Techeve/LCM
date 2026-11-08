@@ -1966,7 +1966,8 @@
     },
     "selfupdate": {
       "not_configured": "Das Selbst-Update ist auf dieser Installation nicht eingerichtet",
-      "rejected": "Das Selbst-Update lässt sich nicht starten: {detail}"
+      "rejected": "Das Selbst-Update lässt sich nicht starten: {detail}",
+      "not_cancelable": "Das Update wartet nicht mehr auf Jobs und lässt sich nicht mehr abbrechen"
     },
     "server": {
       "action_failed": "Die Aktion ist auf dem Zielsystem fehlgeschlagen: {detail}",
@@ -2096,6 +2097,9 @@
     },
     "conflict": {
       "duplicate": "{field}: Diesen Wert gibt es schon"
+    },
+    "system": {
+      "maintenance": "LCM wird gerade aktualisiert. Bis zum Neustart sind alle Aktionen gesperrt."
     }
   },
   "insights": {
@@ -3779,7 +3783,9 @@
         "meaning": "Die nächsten Scans stützen sich auf den neuen Stand. Auf deinen Servern ändert sich nichts.",
         "started": "Datenbank-Update gestartet",
         "failed": "Das Datenbank-Update ließ sich nicht starten"
-      }
+      },
+      "newVersion": "Trivy {version} verfügbar",
+      "newVersionHelp": "apt bietet auf dem LCM-Host eine neuere Trivy-Version an. Trivy selbst war schon von Sicherheitslücken betroffen. Aktualisieren lässt es sich in der Übersicht des LCM-Hosts unter „LCM-Host“."
     },
     "bulk": {
       "label": "Alle Server aktualisieren",
@@ -5061,9 +5067,37 @@
       "backup": "Vorher",
       "backupValue": "Sicherung der Datenbank, ohne Sicherung kein Update",
       "jobs": "Laufende Jobs",
-      "jobsValue": "Werden erst fertig, neue warten",
+      "jobsValue": "Werden erst fertig, neue warten bis nach dem Update",
       "downtime": "Ausfall",
-      "downtimeValue": "Oberfläche und API kurz weg, Server laufen weiter"
+      "downtimeValue": "Oberfläche und API kurz weg, Server laufen weiter",
+      "lock": "Sperre",
+      "lockValue": "Bis zum Neustart keine Aktionen, für alle Benutzer"
+    },
+    "lockedAll": "Bis zum Neustart sind alle Aktionen gesperrt.",
+    "lockedOther": "LCM wird gerade auf {version} aktualisiert. Bis zum Neustart lassen sich keine Aktionen starten.",
+    "showProgress": "Fortschritt",
+    "abort": "Update abbrechen",
+    "close": "Schließen",
+    "restarted": "LCM wurde neu gestartet. Nach dem Neuladen zeigt das Info-Fenster, welche Version läuft.",
+    "reloadNow": "Jetzt neu laden",
+    "progress": {
+      "title": "LCM {version} wird installiert",
+      "lock": "Bis zum Neustart startet kein neuer Job, und niemand kann eine Aktion auslösen. Zeitplan-Läufe warten bis danach.",
+      "failed": "Das Update wurde nicht eingespielt"
+    },
+    "step": {
+      "jobs": "Laufende Jobs abwarten",
+      "jobsWaiting": "Wartet auf: {jobs}",
+      "jobsChecking": "Prüft, ob noch Jobs laufen",
+      "jobsDone": "Kein Job läuft mehr",
+      "backup": "Datenbank sichern",
+      "install": "Paket einspielen und neu starten",
+      "installHint": "Die Oberfläche ist kurz nicht erreichbar und lädt danach von selbst neu."
+    },
+    "stepState": {
+      "done": "erledigt",
+      "current": "läuft",
+      "pending": "steht noch aus"
     }
   },
   "apps": {
@@ -5811,7 +5845,14 @@
       "coresCount": {
         "one": "1 Kern",
         "other": "{count} Kerne"
-      }
+      },
+      "dockerBypassAll": "Keiner ist an eine bestimmte Adresse gebunden, sie gelten für jede Schnittstelle des Servers.",
+      "dockerBypassSome": {
+        "one": "1 davon ist an keine bestimmte Adresse gebunden und gilt für jede Schnittstelle des Servers.",
+        "other": "{count} davon sind an keine bestimmte Adresse gebunden und gelten für jede Schnittstelle des Servers."
+      },
+      "dockerBypassShow": "Ports anzeigen",
+      "dockerBypassOnly": "nur"
     },
     "kernels": {
       "title": "Installierte Kernel",
@@ -5853,7 +5894,13 @@
         "help": "Bindet das Paketarchiv von Aqua Security ein, installiert Trivy und schaltet danach den CVE-Scan ein. Läuft als Job auf diesem Server.",
         "meaning": "Danach scannt LCM alle Server auf bekannte Sicherheitslücken.",
         "name": "Trivy",
-        "version": "Trivy {version}"
+        "version": "Trivy {version}",
+        "updateAvailable": "Version {version} verfügbar",
+        "update": {
+          "label": "Auf Trivy {version} aktualisieren",
+          "help": "Spielt die neuere Trivy-Version aus dem Paketarchiv von Aqua Security ein. Läuft als Job auf diesem Server.",
+          "meaning": "Der Scanner ist danach auf dem neuesten Stand. Datenbank und Funde bleiben erhalten."
+        }
       },
       "sandbox": {
         "label": "Sandbox nachrüsten",

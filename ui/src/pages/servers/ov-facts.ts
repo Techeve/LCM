@@ -14,7 +14,9 @@ import {
   packageManagers,
   platformOf,
   splitList,
+  summariseExposures,
   supportState,
+  type ExposureSummary,
   type ServerStatusDetail,
 } from '../../api/server-detail';
 import { copyWithToast } from '../../lib/clipboard';
@@ -103,6 +105,15 @@ export class SrvFacts extends LitElement {
       .warnbox {
         flex-basis: 100%;
         margin: var(--space-1) 0 0;
+      }
+      .warnbox details {
+        margin-block-start: var(--space-1);
+      }
+      .warnbox summary {
+        inline-size: fit-content;
+        color: var(--accent-text);
+        font-weight: var(--fw-medium);
+        cursor: pointer;
       }
       .warnbox ul {
         margin: var(--space-1) 0 0;
@@ -244,11 +255,35 @@ export class SrvFacts extends LitElement {
     return html`<span>${t(s.firewall_active ? 'serverDetail.facts.firewallOn' : 'serverDetail.facts.firewallOff')}</span>
       ${s.firewall_tool ? html`<lcm-badge>${s.firewall_tool}</lcm-badge>` : nothing}
       ${s.firewall_active ? html`<span class="muted">(${t('serverDetail.facts.ports')}: <span class="mono">${ports}</span>)</span>` : nothing}
-      ${exposures.length > 0
-        ? html`<lcm-notice class="warnbox" tone="warn" heading=${t('serverDetail.facts.dockerBypass', { count: exposures.length })}>
-            <ul>${exposures.map((e) => html`<li><span class="mono">${e.host_port}/${e.proto}</span> · ${e.container} <span class="mono">(${e.host_ip})</span></li>`)}</ul>
-          </lcm-notice>`
-        : nothing}`;
+      ${exposures.length > 0 ? this.#dockerBypass(summariseExposures(exposures)) : nothing}`;
+  }
+
+  /** Eine Zeile mit der Zahl; welche Ports es sind, klappt man bei Bedarf auf – es können Dutzende sein. */
+  #dockerBypass(summary: ExposureSummary): TemplateResult {
+    const binding =
+      summary.unbound === summary.count
+        ? t('serverDetail.facts.dockerBypassAll')
+        : t('serverDetail.facts.dockerBypassSome', { count: summary.unbound });
+    return html`<lcm-notice class="warnbox" tone="warn" heading=${t('serverDetail.facts.dockerBypass', { count: summary.count })}>
+      ${summary.unbound > 0 ? binding : nothing}
+      <details>
+        <summary>${t('serverDetail.facts.dockerBypassShow')}</summary>
+        <ul>
+          ${summary.groups.map(
+            (g) =>
+              html`<li>
+                ${g.container} ·
+                ${g.ports.map(
+                  (p, i) =>
+                    html`${i ? ', ' : ''}<span class="mono">${p.port}</span>${p.addresses.length
+                        ? html` <span class="muted">(${t('serverDetail.facts.dockerBypassOnly')} <span class="mono">${p.addresses.join(', ')}</span>)</span>`
+                        : nothing}`,
+                )}
+              </li>`,
+          )}
+        </ul>
+      </details>
+    </lcm-notice>`;
   }
 
   #securityTools(): TemplateResult {

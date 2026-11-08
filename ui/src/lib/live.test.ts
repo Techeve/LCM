@@ -31,6 +31,10 @@ describe('targetsFor', () => {
     expect(targetsFor(message('bulk.progress', 'bulk'))).toHaveLength(1);
   });
 
+  it('reloads the lock state on system.maintenance', () => {
+    expect(targetsFor(message('system.maintenance', 'system')).map((t) => t.prefix)).toEqual(['/api/v1/system/maintenance']);
+  });
+
   it('reloads the self-update state on system.build', () => {
     expect(targetsFor(message('system.build', 'system')).map((t) => t.prefix)).toEqual(['/api/v1/system/self-update', '/api/v1/system/update-info']);
   });

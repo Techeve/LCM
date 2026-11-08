@@ -80,6 +80,9 @@ var (
 	Unauthorized    = Define(401, "auth.required", "authentication required")
 	Forbidden       = Define(403, "auth.forbidden", "missing permission")
 	TooManyRequests = Define(429, "request.rate_limited", "too many requests")
+	// Maintenance: LCM aktualisiert sich gerade selbst; Aktionen sind bis zum
+	// Neustart gesperrt (siehe middlewares.MaintenanceGuard).
+	Maintenance = Define(423, "system.maintenance", "LCM is being updated, actions are locked until it has restarted")
 )
 
 // StatusOf liefert den HTTP-Status, den der zentrale ErrorHandler für err

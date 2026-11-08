@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { normaliseServer } from './servers';
 import {
   clockState,
+  summariseExposures,
   distinctHostname,
   dnsLevel,
   filterByName,
@@ -133,5 +134,28 @@ describe('hasConsole', () => {
     expect(hasConsole({ ...server, transport: 'agent' })).toBe(false);
     expect(hasConsole({ ...server, os_id: 'routeros' })).toBe(false);
     expect(hasConsole({ ...server, console_disabled: true })).toBe(false);
+  });
+});
+
+describe('summariseExposures', () => {
+  const e = (container: string, host_port: string, host_ip = '0.0.0.0', proto = 'tcp') => ({ container, host_ip, host_port, proto });
+
+  it('counts a port once for IPv4 and IPv6 and groups by container', () => {
+    const summary = summariseExposures([e('web', '80'), e('web', '80', '::'), e('web', '443'), e('db', '5432')]);
+    expect(summary.count).toBe(3);
+    expect(summary.unbound).toBe(3);
+    expect(summary.groups).toEqual([
+      { container: 'web', ports: [{ port: '80/tcp', addresses: [] }, { port: '443/tcp', addresses: [] }] },
+      { container: 'db', ports: [{ port: '5432/tcp', addresses: [] }] },
+    ]);
+  });
+
+  it('keeps the binding per port, so an open port is not hidden behind a bound one', () => {
+    const summary = summariseExposures([e('web', '80'), e('web', '5432', '127.0.0.1')]);
+    expect(summary.count).toBe(2);
+    expect(summary.unbound).toBe(1);
+    expect(summary.groups).toEqual([
+      { container: 'web', ports: [{ port: '80/tcp', addresses: [] }, { port: '5432/tcp', addresses: ['127.0.0.1'] }] },
+    ]);
   });
 });

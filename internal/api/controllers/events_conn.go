@@ -176,7 +176,7 @@ func (c *eventConn) admit(t topic, have int) *apierr.Error {
 	switch {
 	case have >= maxEventTopics:
 		return errTooManyTopics
-	case !acc.user.HasPermission(t.subscribePermission()):
+	case !allowed(acc.user, t.subscribePermission()):
 		return errForbiddenTopic
 	case t.kind == topicServer && !c.mayWatchServer(acc, t.serverID):
 		return errForbiddenTopic

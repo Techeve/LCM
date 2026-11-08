@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normaliseSelfUpdate, normaliseSystemInfo, normaliseUpdateInfo } from '../api/system';
-import { updateBanner } from './update-model';
+import { updateBanner, updateSteps } from './update-model';
 
 const info = (latest: string, available: boolean) => normaliseUpdateInfo({ current_version: '1.0.0', latest_version: latest, update_available: available });
 const self = (phase: string, extra: Record<string, unknown> = {}) => normaliseSelfUpdate({ supported: true, phase, ...extra });
@@ -30,5 +30,19 @@ describe('system normalisers', () => {
     expect(normaliseSystemInfo({ version: '1.0.0', built_at: 'unbekannt', dirty: true }).built_at).toBe('');
     expect(normaliseSystemInfo({ version: '1.0.0', built_at: '2026-11-01T10:00:00Z' }).built_at).toBe('2026-11-01T10:00:00Z');
     expect(normaliseSelfUpdate({ phase: 'exploded', waiting_for: ['a', 3] })).toMatchObject({ phase: 'idle', waiting_for: ['a'] });
+  });
+});
+
+describe('updateSteps', () => {
+  it('follows the phases of the self-update', () => {
+    expect(updateSteps(self('waiting')).map((s) => s.state)).toEqual(['current', 'pending', 'pending']);
+    expect(updateSteps(self('backup')).map((s) => s.state)).toEqual(['done', 'current', 'pending']);
+    expect(updateSteps(self('running')).map((s) => s.state)).toEqual(['done', 'done', 'current']);
+  });
+
+  it('has no steps without a running update', () => {
+    expect(updateSteps(self('idle'))).toEqual([]);
+    expect(updateSteps(self('failed'))).toEqual([]);
+    expect(updateSteps(null)).toEqual([]);
   });
 });

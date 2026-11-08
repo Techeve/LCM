@@ -41,7 +41,12 @@ test.describe('Serverdetail: Übersicht', () => {
     // obwohl Port 80 von außen erreichbar war.
     await page.goto('/servers/1');
     await expect(page.getByText('1 Docker-Port umgeht diese Firewall')).toBeVisible();
-    await expect(page.getByText('80/tcp · webshop-web-1 (0.0.0.0)')).toBeVisible();
+    await expect(page.getByText(/Keiner ist an eine bestimmte Adresse gebunden/)).toBeVisible();
+    // Die einzelnen Ports stehen erst nach dem Aufklappen da - es können Dutzende sein.
+    const zeile = page.getByText('webshop-web-1 · 80/tcp');
+    await expect(zeile).toBeHidden();
+    await page.getByText('Ports anzeigen').click();
+    await expect(zeile).toBeVisible();
   });
 
   test('Post-Quanten-Zustand des Schlüsselaustauschs', async ({ page }) => {
@@ -111,6 +116,25 @@ test.describe('Serverdetail: Übersicht', () => {
     if (!(await imContainer.isVisible())) {
       await expect(page.getByText('apt-cacher-ng')).toBeVisible();
     }
+  });
+
+  test('LCM-Host: eine neuere Trivy-Version steht an Trivy, mit Knopf zum Aktualisieren', async ({ page }) => {
+    // Der Stand kommt aus dem Paketbestand des Hosts; hier vorgegeben, damit der Test nicht davon abhängt,
+    // ob auf der Testmaschine gerade ein neueres Trivy im Paketarchiv liegt.
+    await page.route('**/api/v1/servers/*/lcm-host/status', (route) =>
+      route.fulfill({
+        json: {
+          is_lcm_host: true,
+          package_manager: 'apt',
+          trivy_installed: true,
+          scanner: { available: true, version: '0.67.2', update_version: '0.68.1', freshness: 'fresh', updated_at: new Date().toISOString(), sandboxed: true, sandbox_backend: 'bubblewrap' },
+        },
+      }),
+    );
+    await page.goto('/servers');
+    await page.getByRole('row').filter({ hasText: 'lcm-host' }).getByRole('gridcell', { name: 'lcm-host' }).click();
+    await expect(page.getByText('Version 0.68.1 verfügbar')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Auf Trivy 0.68.1 aktualisieren' })).toBeVisible();
   });
 
   test('Proxmox: Erkennung mit Typ und Version, gesperrte Aktionen', async ({ page }) => {

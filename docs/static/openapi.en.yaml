@@ -5918,6 +5918,32 @@ paths:
           description: Not signed in.
         '403':
           description: No permission.
+  /api/v1/servers/{id}/lcm-host/update-trivy:
+    post:
+      tags:
+      - Servers
+      summary: Update Trivy
+      operationId: serverCtrl_UpdateTrivy
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: |-
+        Installs the newer Trivy version that apt offers on the LCM host (`update_version` in the scanner status). Runs as a package job.
+
+        Required permission: `servers:write`.
+      responses:
+        '200':
+          description: Successful.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
   /api/v1/servers/{id}/lcm-host/status:
     get:
       tags:
@@ -9175,6 +9201,43 @@ paths:
           description: No permission.
         '409':
           description: Self-update not possible here (reason in the text).
+    delete:
+      tags:
+      - System
+      summary: Cancels the requested self-update while it is still waiting for running jobs.
+      operationId: opsCtrl_CancelSelfUpdate
+      description: |-
+        Cancels the requested self-update while it is still waiting for running jobs, and lifts the lock. Once the backup or the update is running, this is no longer possible.
+
+        Required permission: `settings:manage`.
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Successful.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+        '409':
+          description: The update is no longer waiting and cannot be cancelled.
+  /api/v1/system/maintenance:
+    get:
+      tags:
+      - System
+      summary: Tells whether LCM is currently locked because of the self-update.
+      operationId: opsCtrl_Maintenance
+      description: |-
+        Tells every signed-in user whether LCM is currently locked because of the self-update (`active`, `phase`, `target_version`). From the request until the restart no new jobs start, and every writing request except signing in and out is rejected with 423 `system.maintenance`. Changes are reported by the `system.maintenance` event on the `system` topic.
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Successful.
+        '401':
+          description: Not signed in.
   /api/v1/system/release-notes:
     get:
       tags:

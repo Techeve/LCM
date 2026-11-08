@@ -246,13 +246,13 @@ func TestHubSpezifischstesThemaGewinnt(t *testing.T) {
 }
 
 func TestHubFehlerrahmen(t *testing.T) {
-	f := newHubFixture(t, managerUser(2)) // Manager: weder alerts noch system
+	f := newHubFixture(t, managerUser(2)) // Manager: keine alerts
 	c := f.dial(t)
 	c.send(t, map[string]any{"type": "subscribe",
-		"topics": []string{"bogus", "server:0", "job:keine-uuid", "alerts", "system", "servers"}})
+		"topics": []string{"bogus", "server:0", "job:keine-uuid", "alerts", "servers"}})
 
 	want := []string{"events.bad_topic@bogus", "events.bad_topic@server:0", "events.bad_topic@job:keine-uuid",
-		"events.forbidden_topic@alerts", "events.forbidden_topic@system"}
+		"events.forbidden_topic@alerts"}
 	for _, w := range want {
 		e := c.nextType(t, "error")
 		if got := e["code"].(string) + "@" + e["topic"].(string); got != w {
@@ -538,4 +538,21 @@ func TestHubCloseBeendetAlleVerbindungen(t *testing.T) {
 	if len(f.hub.conns) != 0 || len(f.hub.perKey) != 0 {
 		t.Errorf("Verbindungen übrig: %d, Schlüssel: %d", len(f.hub.conns), len(f.hub.perKey))
 	}
+}
+
+// TestHubWartungSiehtJeder: Die Sperre während des Selbst-Updates trifft jeden
+// Benutzer, also erfährt auch jeder davon. Den Fortschritt (system.build)
+// bekommt weiterhin nur, wer die Einstellungen verwaltet.
+func TestHubWartungSiehtJeder(t *testing.T) {
+	f := newHubFixture(t, managerUser(2))
+	c := f.dial(t)
+	c.subscribe(t, "system")
+
+	f.bus.Publish(events.SystemBuild(events.SystemBuildData{Phase: "waiting"}))
+	f.bus.Publish(events.SystemMaintenance(events.SystemMaintenanceData{Active: true, Phase: "waiting"}))
+	ev := c.nextType(t, "event")
+	if ev["event"] != events.TypeSystemMaintenance {
+		t.Errorf("erwartet system.maintenance, bekam %v", ev)
+	}
+	c.silent(t, 100*time.Millisecond)
 }

@@ -169,6 +169,8 @@ export type DbFreshness = 'fresh' | 'stale' | 'critical' | 'unknown';
 export interface ScannerStatus {
   available: boolean;
   version: string;
+  /** Neuere Trivy-Version, die apt auf dem LCM-Host anbietet; leer, wenn aktuell. */
+  updateVersion: string;
   updatedAt: string | null;
   nextUpdate: string | null;
   freshness: DbFreshness;
@@ -185,6 +187,7 @@ export function normaliseScanner(raw: unknown): ScannerStatus {
   return {
     available: r.available === true,
     version: text(r.version),
+    updateVersion: text(r.update_version),
     updatedAt: textOrNull(r.updated_at),
     nextUpdate: textOrNull(r.next_update),
     freshness,

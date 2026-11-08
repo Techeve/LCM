@@ -6051,6 +6051,32 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/lcm-host/update-trivy:
+    post:
+      tags:
+      - Server
+      summary: Trivy aktualisieren
+      operationId: serverCtrl_UpdateTrivy
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: 'Spielt die neuere Trivy-Version ein, die apt auf dem LCM-Host anbietet (`update_version` im Scanner-Stand). Läuft als Paket-Job.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/servers/{id}/lcm-host/status:
     get:
       tags:
@@ -9479,6 +9505,46 @@ paths:
           description: Keine Berechtigung.
         '409':
           description: Selbst-Update hier nicht möglich (Grund im Text).
+    delete:
+      tags:
+      - System
+      summary: Bricht das angeforderte Selbst-Update ab, solange es noch auf laufende Jobs wartet.
+      operationId: opsCtrl_CancelSelfUpdate
+      description: 'Bricht das angeforderte Selbst-Update ab, solange es noch auf laufende Jobs wartet,
+        und hebt die Sperre auf. Läuft schon die Sicherung oder das Update, geht das nicht mehr.
+
+
+        Benötigte Berechtigung: `settings:manage`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '409':
+          description: Das Update wartet nicht mehr und lässt sich nicht mehr abbrechen.
+  /api/v1/system/maintenance:
+    get:
+      tags:
+      - System
+      summary: Sagt, ob LCM gerade wegen des Selbst-Updates gesperrt ist.
+      operationId: opsCtrl_Maintenance
+      description: 'Sagt jedem angemeldeten Benutzer, ob LCM gerade wegen des Selbst-Updates gesperrt ist
+        (`active`, `phase`, `target_version`). Von der Anforderung bis zum Neustart starten keine neuen
+        Jobs, und jede schreibende Anfrage außer An- und Abmelden wird mit 423 `system.maintenance`
+        abgelehnt. Änderungen meldet das Ereignis `system.maintenance` im Thema `system`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
   /api/v1/system/release-notes:
     get:
       tags:
