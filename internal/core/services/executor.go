@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/dbmetrics"
 	"LCM/internal/infrastructure/registry"
 	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/safego"
@@ -1388,7 +1389,11 @@ func (e *Executor) runSystemJob(jobType, triggeredBy, name string, fn func() (st
 		logStartFailure("system job", name, err)
 		return
 	}
+	// System-Jobs treiben die Datenbank (Backup, Bereinigung, CVE-Scan) und
+	// stehen deshalb neben VACUUM und Checkpoint in den Läufen der Messung.
+	done := dbmetrics.Track("job", name)
 	out, runErr := fn()
+	done(runErr)
 	e.jobs.Complete(job, out, ptrInt(0), runErr)
 	if runErr != nil {
 		// Ein gescheiterter System-Job (Backup!) stand bisher NUR in der

@@ -31,6 +31,7 @@ import (
 	"LCM/internal/core/domain"
 	"LCM/internal/core/events"
 	"LCM/internal/core/services"
+	"LCM/internal/dbmetrics"
 	"LCM/internal/health"
 	"LCM/internal/i18n"
 	"LCM/internal/infrastructure/advisories"
@@ -971,6 +972,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 
 	dashboardService := services.NewDashboardService(serverService, jobRepo, alertRepo, groupRepo, eventBus)
 
+	// Messung der Datenbank (GET /api/v1/system/db, /metrics). Die Zeilen je
+	// Tabelle zählt sie stündlich selbst, alles andere fällt nebenbei an.
+	dbReporter := dbmetrics.NewReporter(dbmetrics.Default, db, dbPath)
+	safego.Go("db-table-counter", func() { dbReporter.CountTablesEvery(context.Background(), time.Hour) })
+
 	app = router.New(router.Deps{
 		LogFile:                  logFile,
 		Restart:                  restart,
@@ -1013,6 +1019,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		Events:                   eventBus,
 		Dashboard:                dashboardService,
 		ReleaseNotes:             releaseNotes,
+		DBMetrics:                dbReporter,
 	})
 
 	// LCM Remote: Der Agent-WebSocket (MQTT) läuft auf einem EIGENEN,

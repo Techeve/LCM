@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/dbmetrics"
 	"LCM/internal/storage/repositories"
 )
 
@@ -52,6 +53,11 @@ func Open(path string) (*gorm.DB, error) {
 	// Aufrufstellen: Von denen gibt es über achtzig.
 	if err := registerMapUpdateEncryption(db); err != nil {
 		return nil, fmt.Errorf("feldverschlüsselung einhängen: %w", err)
+	}
+	// Messung für GET /api/v1/system/db und /metrics: Wartezeit auf die
+	// Schreibsperre, Dauer der Anweisungen, Fehler durch Sperren.
+	if err := dbmetrics.Install(db, dbmetrics.Default); err != nil {
+		return nil, fmt.Errorf("messung einhängen: %w", err)
 	}
 	if path != ":memory:" {
 		// Die DB-Datei (samt WAL/SHM) enthält neben feldverschlüsselten

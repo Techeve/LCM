@@ -1,13 +1,13 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
 
+	"LCM/internal/dbmetrics"
 	"LCM/internal/version"
 )
 
@@ -153,7 +153,7 @@ func repackValue(stored string) (string, bool, error) {
 // der Platz für den Umbau reicht. Liefert die Größe davor und danach (0, 0:
 // kein VACUUM).
 func vacuumIfWorthwhile(db *gorm.DB, freeBytes func() (uint64, bool)) (int64, int64, error) {
-	pages, freePages, pageSize, err := pageStats(db)
+	pages, freePages, pageSize, err := dbmetrics.PageStats(db)
 	if err != nil || pages == 0 || float64(freePages)/float64(pages) < vacuumFreeShare {
 		return 0, 0, err
 	}
@@ -167,15 +167,15 @@ func vacuumIfWorthwhile(db *gorm.DB, freeBytes func() (uint64, bool)) (int64, in
 	}
 	before := pages * pageSize
 	started := time.Now()
-	if err := db.Exec("VACUUM").Error; err != nil {
+	if err := trackedExec(db, "vacuum", "VACUUM"); err != nil {
 		return 0, 0, fmt.Errorf("vacuum: %w", err)
 	}
 	// Das WAL hält nach dem VACUUM die komplette neue Datei - zurückschreiben
 	// und kürzen, sonst liegt der gesparte Platz dort.
-	if err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)").Error; err != nil {
+	if err := trackedExec(db, "checkpoint", "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		return 0, 0, fmt.Errorf("wal checkpoint: %w", err)
 	}
-	pages, _, pageSize, err = pageStats(db)
+	pages, _, pageSize, err = dbmetrics.PageStats(db)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -183,13 +183,13 @@ func vacuumIfWorthwhile(db *gorm.DB, freeBytes func() (uint64, bool)) (int64, in
 	return before, pages * pageSize, nil
 }
 
-func pageStats(db *gorm.DB) (pages, freePages, pageSize int64, err error) {
-	err = errors.Join(
-		db.Raw("PRAGMA page_count").Scan(&pages).Error,
-		db.Raw("PRAGMA freelist_count").Scan(&freePages).Error,
-		db.Raw("PRAGMA page_size").Scan(&pageSize).Error,
-	)
-	return pages, freePages, pageSize, err
+// trackedExec führt eine Anweisung aus und hält Dauer und Ergebnis als Lauf
+// fest - VACUUM und Checkpoint sind Kandidaten für Stillstände.
+func trackedExec(db *gorm.DB, kind, sql string) error {
+	done := dbmetrics.Track(kind, "")
+	err := db.Exec(sql).Error
+	done(err)
+	return err
 }
 
 // String fasst das Ergebnis für den Bericht der Log-Bereinigung zusammen.

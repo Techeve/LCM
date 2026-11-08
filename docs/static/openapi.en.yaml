@@ -9073,6 +9073,40 @@ paths:
           description: Not signed in.
         '403':
           description: No permission.
+  /api/v1/system/db:
+    get:
+      tags:
+      - System
+      summary: Snapshot of the database measurement.
+      operationId: dbCtrl_Snapshot
+      description: |-
+        Counters and histograms since the process started: wait for the write lock (`lock_wait`, duration of `BEGIN IMMEDIATE`), duration of transactions and of statements per table and kind (`statements`, buckets in `statement_bounds_ms`), the 50 slowest statements without values, the ten longest transactions with their call site, lock errors (`errors.busy`, `errors.locked`), file and WAL size with `page_count` and `freelist_count`, rows per table (counted hourly), the latest runs such as checkpoint, VACUUM, `VACUUM INTO` and system jobs, plus heap, goroutines, open files and pool statistics. The counters live in memory and start at zero on every start (`started_at`). Source for `lcm-probe`.
+
+        Required permission: `settings:manage`, also via API key with scope `read`.
+      responses:
+        '200':
+          description: Successful.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+  /metrics:
+    get:
+      tags:
+      - System
+      summary: The same measurement in the Prometheus text format.
+      operationId: dbCtrl_Metrics
+      description: |-
+        Lives outside `/api/v1`, at the path Prometheus scrapes by default. Durations in seconds, prefixes `lcm_db_` and `lcm_process_`.
+
+        Required permission: `settings:manage`, also via API key with scope `read`.
+      responses:
+        '200':
+          description: Successful (`text/plain; version=0.0.4`).
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
   /api/v1/system/info:
     get:
       tags:

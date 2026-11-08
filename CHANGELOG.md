@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.0.0-beta.16 - 2026-11-08
+
+### 🚀 Features
+
+- **monitoring**: LCM misst, wie lange Schreibvorgänge auf die Datenbank warten und wie lange Anweisungen brauchen, und stellt die Zahlen unter /api/v1/system/db und für Prometheus unter /metrics bereit (ed2746ef)
+- **probe**: Das neue Paket lcm-probe zeichnet den LCM-Host alle 2 Sekunden und die Datenbank jede Minute dauerhaft auf, erkennt Stillstände und wertet alles selbst aus, auch als HTML mit Diagrammen (7e4e80d1)
+
+### ♻️ Refactoring
+
+- **tlsx**: Zertifikats-Pinnung des Healthchecks für lcm-probe freigeben (17ee7b04)
+
+### 🔧 Sonstiges
+
+- **plan**: Monitoring-Plan übernommen, Quellen in CT 120 und VM 150 geprüft (ef2b30e5)
+- **plan**: Stand des Baus und Abweichungen vom Plan (fa9a7ddb)
+- **probe**: Paket lcm-probe mit eigenem Dienst in Makefile und Pipeline (8d4981f9)
+- **reference**: Monitoring von Host und Datenbank, uPlot im Bestand (e7e9b155)
+- **release**: Hinweise zu LCM 2.0 nennen das Monitoring mit lcm-probe (91438807)
+
 ## v2.0.0-beta.15 - 2026-11-08
 
 ### 🔧 Sonstiges

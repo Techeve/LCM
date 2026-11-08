@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/dbmetrics"
 	"LCM/internal/infrastructure/creds"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/tlsx"
@@ -189,7 +190,10 @@ func (s *BackupService) Create(trigger, passphrase string) (*domain.Backup, erro
 
 	// 1. Konsistente DB-Momentaufnahme via VACUUM INTO in eine Temp-Datei.
 	tmpDB := filepath.Join(dir, fmt.Sprintf(".snap-%s.db", time.Now().Format("20060102-150405.000")))
-	if err := s.db.Exec("VACUUM INTO ?", tmpDB).Error; err != nil {
+	done := dbmetrics.Track("vacuum_into", "")
+	err = s.db.Exec("VACUUM INTO ?", tmpDB).Error
+	done(err)
+	if err != nil {
 		return nil, fmt.Errorf("datenbank-momentaufnahme: %w", err)
 	}
 	defer os.Remove(tmpDB)

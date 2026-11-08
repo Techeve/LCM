@@ -153,6 +153,16 @@ Agent-Kanal über WebSocket (`fasthttp/websocket` ist ohnehin im Bestand).
 (ersetzt `andybalholm/brotli`). Reines Go, fuzz-getestet, vom
 fasthttp-Maintainer mitgepflegt, aber jung und mit Bus-Faktor 1.
 
+**uPlot steckt als Datei in `lcm-probe`** (1.6.32, MIT, Leon Sorokin, Stufe 3):
+die Diagramme des HTML-Berichts. Es läuft nur im Browser dessen, der den Bericht
+öffnet, nie in LCM und nie auf einem verwalteten Server, und liest nur Zahlen,
+die `lcm-probe` selbst geschrieben hat. Weil es unter
+`internal/probe/analysis/assets/` liegt und nicht in einer `package.json`, sieht
+Renovate es nicht: Aktualisieren von Hand mit `npm pack uplot@<version>`, dann
+`dist/uPlot.iife.min.js`, `dist/uPlot.min.css` und `LICENSE` ersetzen. Eigenbau
+lohnt nicht: gekoppelter Zoom über mehrere Zeitreihen sind einige hundert Zeilen
+für ein Werkzeug, dessen Fehler harmlos wären.
+
 ## Abhängigkeit entfernen
 
 Wenn eine Abhängigkeit ersetzt wird, gehört ein **Differenztest** dazu: Solange

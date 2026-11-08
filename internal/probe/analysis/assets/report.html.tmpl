@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>{{.UplotCSS}}</style>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1c2430; --muted: #5d6878; --line: #dde2e8;
+  --alert: #b3261e; --gap: rgba(179, 38, 30, 0.16); --outage: rgba(93, 104, 120, 0.18); --op: rgba(31, 111, 178, 0.10); --opline: rgba(31, 111, 178, 0.75);
+  --s1: #1f6fb2; --s2: #d9822b; --s3: #2e8b57; --s4: #8e44ad; --s5: #c0392b; --s6: #7f8c8d;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161c; --panel: #1b2129; --text: #e4e8ee; --muted: #9aa5b4; --line: #2c3540;
+    --alert: #ff7b72; --gap: rgba(255, 123, 114, 0.18); --outage: rgba(154, 165, 180, 0.16); --op: rgba(88, 166, 255, 0.10); --opline: rgba(88, 166, 255, 0.8);
+    --s1: #58a6ff; --s2: #f0a35e; --s3: #56d364; --s4: #c297ff; --s5: #ff7b72; --s6: #a0aab5;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; }
+header h1 { font-size: 20px; margin: 0 0 2px; font-weight: 600; }
+header p { margin: 0; color: var(--muted); }
+.stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 8px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; min-width: 150px; }
+.stat .label { color: var(--muted); font-size: 12px; }
+.stat .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .note { color: var(--muted); font-size: 12px; }
+.stat.alert .value { color: var(--alert); }
+.hint { color: var(--muted); font-size: 13px; margin: 6px 0 14px; }
+.key { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin: 0 4px 0 12px; }
+section.chart { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 12px 4px; margin-bottom: 12px; }
+section.chart h2 { font-size: 15px; margin: 0 4px 2px; font-weight: 600; }
+section.chart p { margin: 0 4px 6px; color: var(--muted); font-size: 13px; }
+.u-legend { font-size: 12px; color: var(--text); }
+.u-legend .u-marker { border-radius: 2px; }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin-top: 12px; }
+summary { cursor: pointer; font-weight: 600; }
+pre { overflow-x: auto; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 10px 0 0; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>lcm-probe: {{.Host}}</h1>
+  <p>{{.Range}}</p>
+</header>
+<div class="stats">
+{{- range .Stats}}
+  <div class="stat{{if .Alert}} alert{{end}}"><div class="label">{{.Label}}</div><div class="value">{{.Value}}</div>{{if .Note}}<div class="note">{{.Note}}</div>{{end}}</div>
+{{- end}}
+</div>
+<p class="hint">Ziehen markiert einen Ausschnitt und vergrößert alle Diagramme, Doppelklick zeigt wieder alles.
+  <span class="key" style="background: var(--gap)"></span>Lücke
+  <span class="key" style="background: var(--outage)"></span>LCM nicht erreichbar
+  <span class="key" style="background: var(--opline)"></span>Lauf (Backup, VACUUM, Job)</p>
+<div id="charts"></div>
+<details>
+  <summary>Textbericht</summary>
+  <pre>{{.ReportText}}</pre>
+</details>
+</main>
+<script>{{.UplotJS}}</script>
+<script type="application/json" id="data">{{.DataJSON}}</script>
+<script>
+(function () {
+  "use strict";
+  var D = JSON.parse(document.getElementById("data").textContent);
+  var css = getComputedStyle(document.documentElement);
+  var v = function (name) { return css.getPropertyValue(name).trim(); };
+  var charts = [];
+  var syncing = false;
+
+  var CHARTS = [
+    { title: "Wartezeit auf die Schreibsperre", note: "Mittel und 95-%-Stufe je Minute (ms), dazu Transaktionen je Minute rechts.", data: D.db,
+      series: [["wait_mean", "Mittel ms", "--s1", "ms"], ["wait_p95", "95 % ms", "--s5", "ms"], ["waits", "je Minute", "--s6", "n"]] },
+    { title: "Druck und iowait", note: "Anteil der Zeit in Prozent, in der Prozesse auf I/O, Speicher oder CPU warten mussten.", data: D.host,
+      series: [["io_some", "I/O some", "--s5", "%"], ["io_full", "I/O full", "--s2", "%"], ["mem_some", "Speicher some", "--s4", "%"], ["cpu_some", "CPU some", "--s3", "%"], ["iowait", "iowait", "--s1", "%"]] },
+    { title: "CPU und Last", note: "Anteile in Prozent, Last über eine Minute rechts.", data: D.host,
+      series: [["user", "Benutzer", "--s1", "%"], ["sys", "System", "--s2", "%"], ["steal", "steal", "--s5", "%"], ["load1", "Last 1 min", "--s6", "n"]] },
+    { title: "Arbeitsspeicher", note: "Megabyte; die Grenze ist die des Containers, sonst der ganze Speicher.", data: D.host,
+      series: [["mem_used", "belegt", "--s1", "MB"], ["mem_cached", "Cache", "--s3", "MB"], ["mem_limit", "Grenze", "--s6", "MB"], ["swap_used", "Swap", "--s5", "MB"]] },
+    { title: "Platte", note: "Megabyte je Sekunde, rechts die mittlere Wartezeit je Vorgang und das fdatasync von lcm-probe in ms.", data: D.host,
+      series: [["disk_w", "geschrieben MB/s", "--s2", "MB/s"], ["disk_r", "gelesen MB/s", "--s1", "MB/s"], ["await", "Wartezeit ms", "--s5", "ms"], ["sync", "fdatasync ms", "--s4", "ms"]] },
+    { title: "Datenbankdatei", note: "Megabyte: Datei links, WAL und freie Seiten rechts.", data: D.db,
+      series: [["db", "Datei", "--s1", "MB"], ["wal", "WAL", "--s2", "MB2"], ["free", "frei", "--s3", "MB2"]] }
+  ];
+
+  var num = function (x, digits) {
+    return x == null ? "–" : x.toLocaleString("de-DE", { maximumFractionDigits: digits == null ? 2 : digits });
+  };
+  var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+  var timeLabel = function (sec, withDate) {
+    var d = new Date(sec * 1000);
+    var t = pad(d.getHours()) + ":" + pad(d.getMinutes());
+    return withDate ? pad(d.getDate()) + "." + pad(d.getMonth() + 1) + ". " + t : t;
+  };
+
+  // Bänder für Lücken und Zeiten ohne LCM, Linien für Läufe.
+  function drawMarks(u) {
+    var ctx = u.ctx, top = u.bbox.top, h = u.bbox.height;
+    var x = function (t) { return u.valToPos(t, "x", true); };
+    var band = function (a, b, color) {
+      var x0 = x(a), x1 = Math.max(x(b), x0 + 2);
+      ctx.fillStyle = color;
+      ctx.fillRect(x0, top, x1 - x0, h);
+    };
+    ctx.save();
+    D.outages.forEach(function (o) { band(o[0], o[1], v("--outage")); });
+    D.ops.forEach(function (op) {
+      band(op[0], op[1], v("--op"));
+      ctx.fillStyle = v("--opline");
+      ctx.fillRect(x(op[0]), top, devicePixelRatio, h);
+    });
+    D.gaps.forEach(function (g) { band(g[0], g[1], v("--gap")); });
+    ctx.restore();
+  }
+
+  function build(def) {
+    var section = document.createElement("section");
+    section.className = "chart";
+    section.innerHTML = "<h2></h2><p></p><div></div>";
+    section.querySelector("h2").textContent = def.title;
+    section.querySelector("p").textContent = def.note;
+    document.getElementById("charts").appendChild(section);
+    var holder = section.querySelector("div");
+    var x = def.data.x || [];
+    var spanDays = x.length > 1 && x[x.length - 1] - x[0] > 36 * 3600;
+    var scales = [];
+    def.series.forEach(function (s) { if (scales.indexOf(s[3]) < 0) { scales.push(s[3]); } });
+    var axisColor = v("--muted"), grid = v("--line");
+    var axes = [{ stroke: axisColor, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid },
+      values: function (u, splits) { return splits.map(function (s) { return timeLabel(s, spanDays); }); } }];
+    scales.forEach(function (sc, i) {
+      axes.push({ scale: sc, side: i === 0 ? 3 : 1, stroke: axisColor, grid: { show: i === 0, stroke: grid, width: 1 },
+        ticks: { stroke: grid }, values: function (u, splits) { return splits.map(function (s) { return num(s, 1); }); } });
+    });
+    var series = [{ label: "Zeit", value: function (u, sec) { return sec == null ? "–" : timeLabel(sec, true); } }];
+    var data = [x];
+    def.series.forEach(function (s) {
+      series.push({ label: s[1], scale: s[3], stroke: v(s[2]), width: 1.5, spanGaps: false,
+        dash: s[0] === "mem_limit" ? [6, 4] : undefined, value: function (u, val) { return num(val); } });
+      data.push((def.data.series && def.data.series[s[0]]) || []);
+    });
+    var scaleOpts = { x: { time: true } };
+    scales.forEach(function (sc) { scaleOpts[sc] = { range: function (u, min, max) { return [Math.min(0, min), max > 0 ? max * 1.08 : 1]; } }; });
+    var u = new uPlot({
+      width: holder.clientWidth, height: 200, series: series, axes: axes, scales: scaleOpts,
+      cursor: { sync: { key: "lcm-probe" }, drag: { x: true, y: false } },
+      hooks: {
+        drawClear: [drawMarks],
+        setScale: [function (u, key) {
+          if (key !== "x" || syncing) { return; }
+          syncing = true;
+          charts.forEach(function (c) { if (c !== u) { c.setScale("x", { min: u.scales.x.min, max: u.scales.x.max }); } });
+          syncing = false;
+        }]
+      }
+    }, data, holder);
+    charts.push(u);
+  }
+
+  CHARTS.forEach(build);
+  window.addEventListener("resize", function () {
+    charts.forEach(function (c) { c.setSize({ width: c.root.parentNode.clientWidth, height: 200 }); });
+  });
+})();
+</script>
+</body>
+</html>

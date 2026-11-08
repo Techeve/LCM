@@ -147,6 +147,16 @@ an agent channel over WebSocket (`fasthttp/websocket` is in the tree anyway).
 (replaces `andybalholm/brotli`). Pure Go, fuzz-tested, co-maintained by the
 fasthttp maintainer, but young and with a bus factor of 1.
 
+**uPlot is embedded as a file in `lcm-probe`** (1.6.32, MIT, Leon Sorokin,
+level 3): the charts of the HTML report. It runs only in the browser of whoever
+opens the report, never in LCM and never on a managed server, and reads only
+numbers `lcm-probe` wrote itself. Because it lives in
+`internal/probe/analysis/assets/` and not in a `package.json`, Renovate does not
+see it: update by hand with `npm pack uplot@<version>`, then replace
+`dist/uPlot.iife.min.js`, `dist/uPlot.min.css` and `LICENSE`. Building it
+ourselves does not pay off: synchronised zoom across several time series is a
+few hundred lines for a tool whose bugs would be harmless.
+
 ## Removing a dependency
 
 When a dependency is replaced, a **differential test** is part of the job: while

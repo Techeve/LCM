@@ -22,6 +22,7 @@ import (
 	"LCM/internal/core/domain"
 	"LCM/internal/core/events"
 	"LCM/internal/core/services"
+	"LCM/internal/dbmetrics"
 	"LCM/internal/health"
 	"LCM/internal/netfilter"
 	"LCM/internal/remote/wire"
@@ -98,6 +99,8 @@ type Deps struct {
 	Dashboard *services.DashboardService
 	// ReleaseNotes liefert die Hinweise zum letzten Update; nil in Tests => die Routen fehlen.
 	ReleaseNotes *services.ReleaseNotesService
+	// DBMetrics liefert GET /api/v1/system/db und GET /metrics; nil => die Routen fehlen.
+	DBMetrics *dbmetrics.Reporter
 }
 
 // New erstellt die Fiber-App mit allen Routen und Middlewares.
@@ -300,6 +303,15 @@ func New(deps Deps) *fiber.App {
 	api.Post("/system/self-update", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.StartSelfUpdate)
 	api.Delete("/system/self-update", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.CancelSelfUpdate)
 	api.Get("/system/maintenance", middlewares.RequireAuth(), opsCtrl.Maintenance)
+	// Messung der Datenbank für lcm-probe und Prometheus. settings:manage,
+	// weil die Anweisungstexte und Tabellen den Aufbau der Datenbank zeigen.
+	if deps.DBMetrics != nil {
+		dbCtrl := controllers.NewDBMetricsController(deps.DBMetrics)
+		api.Get("/system/db", middlewares.RequirePermission(domain.PermSettingsManage), dbCtrl.Snapshot)
+		// Außerhalb von /api/v1, wo Prometheus standardmäßig fragt.
+		metrics := app.Group("/metrics")
+		metrics.Get("/", middlewares.RequirePermission(domain.PermSettingsManage), dbCtrl.Metrics)
+	}
 
 	// Hinweis zu Fiber v3: Handler laufen in Angabe-Reihenfolge -
 	// Middlewares stehen deshalb VOR dem Controller-Handler.

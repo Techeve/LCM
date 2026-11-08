@@ -173,10 +173,10 @@ func TestHealthcheckOhneZertifikatBleibtBenutzbar(t *testing.T) {
 // die Gegenstelle kein TLS spricht. Griffe er auch bei anderen Fehlern, wuerde
 // ein echtes Problem in einem zweiten Versuch untergehen.
 func TestIsNotTLSTrenntDieFaelle(t *testing.T) {
-	if !isNotTLS(tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}) {
+	if !tlsx.IsNotTLS(tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}) {
 		t.Error("ein Klartext-Dienst muss als „kein TLS\" erkannt werden")
 	}
-	if isNotTLS(fmt.Errorf("connect: connection refused")) {
+	if tlsx.IsNotTLS(fmt.Errorf("connect: connection refused")) {
 		t.Error("eine abgelehnte Verbindung ist kein TLS-Problem - kein zweiter Versuch")
 	}
 }

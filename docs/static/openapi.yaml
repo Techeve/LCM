@@ -9371,6 +9371,56 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/system/db:
+    get:
+      tags:
+      - System
+      summary: Momentaufnahme der Datenbank-Messung.
+      operationId: dbCtrl_Snapshot
+      description: >-
+        Zähler und Histogramme seit dem Start des Prozesses: Wartezeit auf die
+        Schreibsperre (`lock_wait`, Dauer von `BEGIN IMMEDIATE`), Dauer der
+        Transaktionen und der Anweisungen je Tabelle und Art (`statements`,
+        Stufen in `statement_bounds_ms`), die 50 langsamsten Anweisungen ohne
+        Werte, die zehn längsten Transaktionen mit Aufrufstelle, Fehler durch
+        Sperren (`errors.busy`, `errors.locked`), Datei- und WAL-Größe samt
+        `page_count` und `freelist_count`, Zeilen je Tabelle (stündlich
+        gezählt), die letzten Läufe wie Checkpoint, VACUUM, `VACUUM INTO` und
+        System-Jobs, dazu Heap, Goroutines, offene Dateien und Poolstatistik.
+        Die Zähler leben im Speicher und beginnen bei jedem Start bei null
+        (`started_at`). Quelle für `lcm-probe`.
+
+
+        Benötigte Berechtigung: `settings:manage`, auch per API-Schlüssel mit
+        Bereich `read`.
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /metrics:
+    get:
+      tags:
+      - System
+      summary: Dieselbe Messung im Prometheus-Textformat.
+      operationId: dbCtrl_Metrics
+      description: >-
+        Liegt außerhalb von `/api/v1`, unter dem Pfad, den Prometheus
+        standardmäßig abfragt. Dauern in Sekunden, Präfix `lcm_db_` und
+        `lcm_process_`.
+
+
+        Benötigte Berechtigung: `settings:manage`, auch per API-Schlüssel mit
+        Bereich `read`.
+      responses:
+        '200':
+          description: Erfolgreich (`text/plain; version=0.0.4`).
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/system/info:
     get:
       tags:
