@@ -154,6 +154,7 @@ valid_user()  { matches "$1" '^[a-z_][a-z0-9_-]{0,31}$'; }
 valid_port()  { matches "$1" '^[0-9]{1,5}$' && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 valid_url()   { matches "$1" '^https?://[][A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$'; }
 valid_repo_url(){ matches "$1" '^https://[A-Za-z0-9._~:/@%+,=-]+$'; }
+valid_http_repo_url(){ matches "$1" '^http://[A-Za-z0-9._~:/@%+,=-]+$'; }
 valid_pkg_url(){ matches "$1" '^https?://[A-Za-z0-9._~:/@%+,=-]+$'; }
 valid_shell() { matches "$1" '^/[A-Za-z0-9/._-]+$'; }
 valid_ip()    { matches "$1" '^[0-9A-Fa-f:.]{2,45}$'; }
@@ -270,17 +271,36 @@ restore_sources() {
     apt-get update >/dev/null 2>&1 || true
 }
 
-# repos-https: alle http://-apt-Quellen auf https umstellen (mit Sicherung
-# und Rollback, falls apt-update danach eine fehlerhafte Quelle meldet).
+# https_switch_file <datei> [url...]: die genannten http-URLs der Datei (ohne
+# Angabe alle) auf https umstellen, mit Sicherung davor. Endet mit 1, wenn sich
+# an der Datei nichts geaendert hat. Eine URL zaehlt nur als Ganzes - gefolgt
+# von Leerraum oder dem Zeilenende -, sonst stellte .../debian auch
+# .../debian-security mit um, obwohl der Anwender es abgewaehlt hat. Ein
+# Schraegstrich am Ende zaehlt nicht (deb822 schreibt ".../ubuntu/").
+https_switch_file() {
+    f="$1"; shift
+    grep -q 'http://' "$f" || return 1
+    cp "$f" "$f.lcm-bak"
+    if [ $# -eq 0 ]; then
+        sed -i 's|http://|https://|g' "$f"
+    else
+        for u in "$@"; do b="${u%/}"; h="https://${b#http://}"; sed -i -e "s|$b\(/\{0,1\}[[:space:]]\)|$h\1|g" -e "s|$b\(/\{0,1\}\)\$|$h\1|" "$f"; done
+    fi
+    # Nichts geaendert: keine Sicherung, kein Erfolg.
+    if cmp -s "$f" "$f.lcm-bak"; then rm -f "$f.lcm-bak"; return 1; fi
+}
+
+# repos-https [url...]: die genannten http://-apt-Quellen (ohne Angabe alle)
+# auf https umstellen (mit Sicherung und Rollback, falls apt-update danach
+# eine fehlerhafte Quelle meldet). Welche Quellen HTTPS sprechen, prueft der
+# LCM-Server vorher; hier wird geprueft, dass es unbedenkliche URLs sind.
 repos_https() {
+    for u in "$@"; do valid_http_repo_url "$u" || die "ungueltige paketquellen-url: $u"; done
     apt-get install -y --no-install-recommends ca-certificates >/dev/null 2>&1 || true
     changed=0
     for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
         [ -f "$f" ] || continue
-        grep -q 'http://' "$f" || continue
-        cp "$f" "$f.lcm-bak"
-        sed -i 's|http://|https://|g' "$f"
-        changed=1
+        https_switch_file "$f" "$@" && changed=1
     done
     if [ "$changed" -eq 0 ]; then echo 'LCM: keine http-quellen gefunden - nichts zu tun'; return 0; fi
     if apt_update_ok; then
@@ -288,7 +308,7 @@ repos_https() {
             orig="${f%.lcm-bak}"; dest="@@HTTPS_BACKUP_DIR@@$orig"
             if [ -f "$dest" ]; then rm -f "$f"; else mkdir -p "$(dirname "$dest")"; mv "$f" "$dest"; fi
         done
-        echo 'LCM: alle paketquellen auf https umgestellt'
+        echo 'LCM: paketquellen auf https umgestellt'
     else
         restore_sources
         echo 'LCM: apt-update nach der umstellung fehlgeschlagen - alle aenderungen zurueckgerollt'
@@ -1165,7 +1185,7 @@ case "$cmd" in
     security-bans)     [ $# -eq 1 ] || die "security-bans fail2ban|crowdsec"; security_bans "$@" ;;
     reboot)            [ $# -eq 0 ] || die "reboot"; reboot_host ;;
     repo-add)    [ $# -eq 3 ] || die "repo-add <key> <keyurl_b64> <line_b64>"; repo_add "$@" ;;
-    repos-https) repos_https ;;
+    repos-https) repos_https "$@" ;;
     repos-http)  [ $# -ge 1 ] || die "repos-http <https-url>..."; repos_http "$@" ;;
     apt-proxy)   [ $# -eq 1 ] || die "apt-proxy <url>|off"; apt_proxy "$@" ;;
     dns)         [ $# -eq 2 ] || die "dns <ips-csv|off> <testdomain>"; dns "$@" ;;

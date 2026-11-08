@@ -44,9 +44,17 @@ SSH-Verbindungen; die verwalteten Server brauchen keinen Agent.
   zugeordnet und wird nur auf passenden Servern angeboten; die
   APT-Cache-Anbindung (apt-cacher-ng) gilt ausschließlich für apt-Systeme.
 
-  Unverschlüsselte Quellen lassen sich mit einer Schaltfläche geschlossen auf
-  **https** umstellen; schlägt `apt-get update` danach fehl, rollt LCM die
-  Änderung zurück. Die Umstellung ist **umkehrbar**: LCM hebt die
+  Unverschlüsselte Quellen lassen sich mit einer Schaltfläche auf **https**
+  umstellen. Vorher prüft LCM **vom Server aus**, welche Quellen HTTPS können:
+  Viele Landesspiegel (etwa `de.archive.ubuntu.com` oder `ftp.de.debian.org`)
+  bieten kein HTTPS. Im Bestätigungsdialog sind nur die Quellen vorausgewählt,
+  die HTTPS sprechen; jede lässt sich einzeln ab- oder zuwählen, und nur die
+  ausgewählten werden umgestellt. Quellen ohne HTTPS bleiben auf http und
+  tragen in der Quellenliste die Marke **kein HTTPS**, samt Empfehlung für
+  einen Spiegel mit HTTPS (etwa `https://archive.ubuntu.com/ubuntu` oder
+  `https://deb.debian.org/debian`) - getauscht wird der Spiegel nicht
+  automatisch. Schlägt `apt-get update` nach der Umstellung fehl, rollt LCM
+  die Änderung zurück. Die Umstellung ist **umkehrbar**: LCM hebt die
   Sicherungskopien der Quellen-Dateien unter `/var/backups/lcm-apt-https` auf
   und weiß dadurch später noch, welche Quelle vorher http war. Die
   Rückstellung betrifft **nur diese** - eine Fremdquelle, die von sich aus

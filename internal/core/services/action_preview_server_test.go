@@ -400,6 +400,7 @@ func TestPreviewSecurityToolsRefusedLikeRun(t *testing.T) {
 func TestPreviewMatchesRunReposAndAptCache(t *testing.T) {
 	scope := repositories.ScopeAll()
 	const revert = "https://deb.debian.org/debian"
+	const insecure = "http://security.debian.org/debian-security"
 	cases := []struct {
 		name   string
 		action string
@@ -408,7 +409,11 @@ func TestPreviewMatchesRunReposAndAptCache(t *testing.T) {
 	}{
 		{"https", services.PreviewReposSecure, services.PreviewArgs{},
 			func(e *testEnv, id uint) (*domain.Job, error) {
-				return syncRun(func() (string, error) { return e.Servers.SecureRepositories(scope, id, "admin") })()
+				return syncRun(func() (string, error) { return e.Servers.SecureRepositories(scope, id, nil, "admin") })()
+			}},
+		{"https für die auswahl", services.PreviewReposSecure, services.PreviewArgs{URIs: []string{insecure}},
+			func(e *testEnv, id uint) (*domain.Job, error) {
+				return syncRun(func() (string, error) { return e.Servers.SecureRepositories(scope, id, []string{insecure}, "admin") })()
 			}},
 		{"zurück auf http", services.PreviewReposRevert, services.PreviewArgs{URIs: []string{revert}},
 			func(e *testEnv, id uint) (*domain.Job, error) {
@@ -434,6 +439,7 @@ func TestPreviewMatchesRunReposAndAptCache(t *testing.T) {
 			env := newTestEnv(t)
 			id := joinTestServer(t, env, "web01")
 			setServerFields(t, env, id, map[string]any{"https_revert_urls": revert})
+			seedRepos(t, env, id, "deb "+insecure+" bookworm-security main")
 			addAptCache(t, env, "Standort A", "http://cache.local:3142")
 			assertActionMatchesPreview(t, env, id, tc.action, tc.args, false, func() (*domain.Job, error) { return tc.run(env, id) })
 		})
@@ -719,5 +725,34 @@ func TestPreviewMatchesRunServerUsers(t *testing.T) {
 	setServerFields(t, env, id, map[string]any{"os_id": domain.OSIDRouterOS})
 	if _, err := env.Servers.PreviewAction(repositories.ScopeAll(), id, services.PreviewUserLock, services.PreviewArgs{Username: "alice"}); !errors.Is(err, services.ErrRouterOSUnsupported) {
 		t.Errorf("RouterOS: %v", err)
+	}
+}
+
+// TestPreviewReposSecureNenntDieAuswahl: Mit Auswahl nennt die Vorschau die
+// Quellen; im eingeschränkten Modus gehen sie als Argumente an den Helper.
+func TestPreviewReposSecureNenntDieAuswahl(t *testing.T) {
+	const uri = "http://security.debian.org/debian-security"
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	seedRepos(t, env, id, "deb "+uri+" bookworm-security main", "deb http://ftp.de.debian.org/debian bookworm main")
+	setServerFields(t, env, id, map[string]any{"restricted_sudo": true})
+
+	p := previewOf(t, env, id, services.PreviewReposSecure, services.PreviewArgs{URIs: []string{uri}})
+	// Mit Auswahl nur über einen aktuellen Helper - ein alter stellte alles um.
+	if len(p.Commands) != 1 || !strings.Contains(p.Commands[0].Run, "lcm-helper repos-https '"+uri+"'") ||
+		!strings.Contains(p.Commands[0].Run, "lcm-helper version") {
+		t.Errorf("kommandos %+v", p.Commands)
+	}
+	found := false
+	for _, n := range p.Notes {
+		if n.Code == "preview.repos_secure_targets" && n.Params["urls"] == uri {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("hinweis auf die auswahl fehlt: %+v", p.Notes)
+	}
+	if _, err := env.Servers.PreviewAction(repositories.ScopeAll(), id, services.PreviewReposSecure, services.PreviewArgs{URIs: []string{"http://evil.example/x"}}); !errors.Is(err, services.ErrRepoNotSecurable) {
+		t.Errorf("fremde auswahl: %v", err)
 	}
 }

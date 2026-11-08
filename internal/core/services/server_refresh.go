@@ -141,6 +141,7 @@ func (s *ServerService) runRefreshJob(job *domain.Job, server *domain.Server, ac
 		_ = s.servers.ReplaceSnapPackages(server.ID, scan.Snaps)
 		_ = s.servers.ReplaceRepositories(server.ID, scan.Repositories)
 		s.updateHTTPSRevertURLs(conn, server, scan.Repositories)
+		s.pruneHTTPSUnavailableURLs(server, scan.Repositories)
 		s.rescanApps(conn, server)
 		_ = s.servers.ReplaceDiskVolumes(server.ID, scan.DiskVolumes)
 		_ = s.servers.ReplaceStorageHealth(server.ID, scan.StorageHealth)

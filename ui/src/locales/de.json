@@ -1980,6 +1980,7 @@
       "firewall_tool_missing": "Das vorgesehene Firewall-Werkzeug ist auf diesem System nicht installiert",
       "host_key_mismatch": "Der SSH-Host-Key passt nicht zum gespeicherten Fingerabdruck – mögliche Manipulation, die Verbindung wurde abgebrochen",
       "host_taken": "Dieser Server ist schon angelegt (Host oder IP vorhanden)",
+      "https_check_timeout": "Der Server hat die HTTPS-Prüfung nicht rechtzeitig beendet",
       "kernel_cleanup_unsupported": "Alte Kernel entfernen geht derzeit nur auf apt-Systemen",
       "lcm_host_in_container": "LCM läuft in einem Container – diese Einrichtung ist hier nicht möglich",
       "lcm_host_not_apt": "Die automatische Einrichtung geht nur auf Debian und Ubuntu (apt)",
@@ -2004,6 +2005,7 @@
       "probe_failed": "Der Server ist nicht erreichbar: {detail}",
       "proxmox_restricted": "Auf Proxmox-Systemen gesperrt – Proxmox verwaltet das selbst",
       "repair_unsupported": "Diese Reparatur wird für die Paketverwaltung dieses Servers nicht unterstützt",
+      "repo_not_securable": "Diese Paketquelle ist keine unverschlüsselte Quelle des Servers",
       "restricted_sudo": "Im eingeschränkten Modus nicht verfügbar – die Aktion braucht eine Root-Shell",
       "retry_unavailable": "Erneutes Ausführen ist auf dieser Instanz nicht verfügbar",
       "routeros_unsupported": "Für MikroTik RouterOS nicht verfügbar",
@@ -3441,12 +3443,28 @@
       },
       "allSecure": "Alle Quellen verschlüsselt",
       "http": "HTTP",
+      "noHttps": "kein HTTPS",
+      "recommend": "Empfehlung: Spiegel auf {url} tauschen.",
+      "recommendAny": "Dieser Spiegel bietet kein HTTPS. Tausche ihn gegen einen Spiegel, der HTTPS kann.",
       "secure": {
         "label": "Auf HTTPS umstellen",
-        "help": "Stellt alle Paketquellen, die unverschlüsselt per HTTP laufen, auf HTTPS um. Geht eine Quelle danach nicht mehr, wird sie zurückgesetzt.",
+        "help": "Prüft zuerst vom Server aus, welche Paketquellen HTTPS können, und stellt dann die ausgewählten von HTTP auf HTTPS um. Geht eine Quelle danach nicht mehr, wird alles zurückgesetzt.",
         "meaning": "Pakete werden danach verschlüsselt geladen und lassen sich nicht mehr unterwegs mitlesen oder austauschen.",
         "heading": "Paketquellen auf {name} auf HTTPS umstellen?",
-        "done": "Paketquellen auf {name} laufen jetzt über HTTPS"
+        "message": "LCM prüft vom Server aus, welche Quellen HTTPS können. Umgestellt werden nur die ausgewählten, der Rest bleibt auf HTTP.",
+        "done": "Paketquellen auf {name} laufen jetzt über HTTPS",
+        "checking": "Prüfe vom Server aus, welche Quellen HTTPS können …",
+        "checkFailed": "Die Prüfung hat nicht geklappt: {detail}",
+        "nothing": "LCM hat keine Quelle mit HTTP mehr gefunden. Aktualisiere die Paketliste, falls das nicht stimmt.",
+        "choose": "Diese Quellen umstellen",
+        "unchecked": "nicht geprüft",
+        "uncheckedHint": "Ließ sich nicht prüfen. Du kannst sie trotzdem umstellen; geht sie danach nicht, nimmt LCM die Änderung zurück.",
+        "confirm": {
+          "one": "1 Quelle umstellen",
+          "other": "{count} Quellen umstellen"
+        },
+        "missingCerts": "Auf dem Server fehlen die Stammzertifikate (ca-certificates), darum ließ sich kein Spiegel prüfen. Die Umstellung installiert sie zuerst. Wähle die Quellen selbst aus oder richte ca-certificates ein und prüfe erneut.",
+        "recheck": "Erneut prüfen"
       }
     },
     "jobsTab": {
@@ -6230,6 +6248,7 @@
       "ssh_2fa_secrets_kept": "Die TOTP-Schlüssel der Benutzer bleiben liegen und gelten beim erneuten Einrichten sofort wieder.",
       "repos_update_rollback": "Schlägt die Paketverwaltung danach fehl, nimmt LCM die Änderung zurück.",
       "repos_revert_targets": "Zurückgestellt werden: {urls}.",
+      "repos_secure_targets": "Umgestellt werden: {urls}.",
       "repos_unencrypted": "Diese Quellen laufen danach wieder unverschlüsselt.",
       "repo_add": "Der Signaturschlüssel von {name} wird geladen und die Quelle signiert eingebunden.",
       "apt_cache_probe": "Paket-Downloads laufen danach über {url}. LCM testet das sofort und nimmt die Anbindung bei Fehlern zurück; kann der Cache kein HTTPS, laufen HTTPS-Quellen direkt.",

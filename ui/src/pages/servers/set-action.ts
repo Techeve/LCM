@@ -26,7 +26,8 @@ export interface ActionResult {
  * Docker, Konten …). Mit `action` lädt sie die Befehlsvorschau des Backends beim Öffnen der Erklärblase bzw. vor der
  * Bestätigung: Die Blase zeigt die Befehle, der Dialog dazu Hinweise, Umkehrbarkeit und Dauer. `impacts` ergänzt, was
  * nur die Oberfläche weiß (z. B. „22 → 2222“); der Standard-Slot kommt in den Dialog. Nach dem Lauf: Toast (mit Link
- * zum Job, falls einer startet) und `lcm-done` mit der Konsolenausgabe bzw. dem Job.
+ * zum Job, falls einer startet) und `lcm-done` mit der Konsolenausgabe bzw. dem Job. Vor dem Öffnen der Bestätigung meldet
+ * sie `lcm-open`; ändern sich `params` im offenen Dialog, lädt sie die Vorschau neu.
  */
 export class SetAction extends LitElement {
   static override properties = {
@@ -45,6 +46,7 @@ export class SetAction extends LitElement {
     heading: { type: String },
     message: { type: String },
     confirmLabel: { type: String, attribute: 'confirm-label' },
+    confirmDisabled: { type: Boolean, attribute: 'confirm-disabled' },
     impacts: { attribute: false },
     danger: { type: Boolean },
     expect: { type: String },
@@ -80,6 +82,7 @@ export class SetAction extends LitElement {
   declare heading: string;
   declare message: string;
   declare confirmLabel: string;
+  declare confirmDisabled: boolean;
   declare impacts: Impact[];
   declare danger: boolean;
   declare expect: string;
@@ -112,6 +115,7 @@ export class SetAction extends LitElement {
     this.heading = '';
     this.message = '';
     this.confirmLabel = '';
+    this.confirmDisabled = false;
     this.impacts = [];
     this.danger = false;
     this.expect = '';
@@ -131,8 +135,11 @@ export class SetAction extends LitElement {
 
   override willUpdate(changed: Map<string, unknown>): void {
     if ((changed.has('serverId') || changed.has('action') || changed.has('params')) && this.#loadedKey !== this.#key) {
-      this._data = undefined;
       this.#loadedKey = '';
+      // Ändert sich die Auswahl im offenen Dialog, gehört die Vorschau dazu. Die alte bleibt stehen, bis die neue da
+      // ist - sonst springt der Inhalt bei jeder Wahl.
+      if (this._open) void this.#load();
+      else this._data = undefined;
     }
   }
 
@@ -146,7 +153,11 @@ export class SetAction extends LitElement {
       const data = await fetchConfigPreview(this.serverId, this.action, this.params);
       if (this.#loadedKey === key) this._data = data;
     } catch {
-      if (this.#loadedKey === key) this.#loadedKey = ''; // beim nächsten Öffnen erneut versuchen
+      // Beim nächsten Öffnen erneut versuchen; eine stehengebliebene Vorschau anderer Argumente wäre falsch.
+      if (this.#loadedKey === key) {
+        this.#loadedKey = '';
+        this._data = undefined;
+      }
     } finally {
       this._loading = false;
     }
@@ -162,8 +173,12 @@ export class SetAction extends LitElement {
       await this.#start();
       return;
     }
+    // `lcm-open`: Die Seite kann jetzt laden, was nur der Dialog braucht (z. B. eine Prüfung vor der Auswahl).
+    this.dispatchEvent(new CustomEvent('lcm-open'));
     await this.#load();
     this._open = true;
+    // Hat sich die Auswahl geändert, während die Vorschau lud, kommt die passende nach.
+    void this.#load();
   }
 
   async #start(): Promise<void> {
@@ -230,6 +245,7 @@ export class SetAction extends LitElement {
         .impacts=${this.#impacts()}
         error=${this._dialogError}
         ?busy=${this._busy}
+        ?confirm-disabled=${this.confirmDisabled}
         @lcm-cancel=${() => (this._open = false)}
         @lcm-confirm=${() => void this.#start()}
       >

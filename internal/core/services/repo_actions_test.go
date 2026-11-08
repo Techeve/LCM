@@ -23,7 +23,7 @@ func TestSecureRepositoriesSwitchesToHTTPSAndRescans(t *testing.T) {
 		Output: "deb https://deb.debian.org/debian bookworm main\ndeb https://old.example/debian bookworm main\n",
 	}
 
-	out, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, "admin")
+	out, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, nil, "admin")
 	if err != nil {
 		t.Fatalf("secure fehlgeschlagen: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestSecureRepositoriesReportsRollback(t *testing.T) {
 		Output:   "LCM: apt-update nach der umstellung fehlgeschlagen - alle aenderungen zurueckgerollt\n",
 		ExitCode: 1,
 	}
-	_, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, "admin")
+	_, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, nil, "admin")
 	if err == nil {
 		t.Fatal("fehlgeschlagene umstellung muss als fehler gemeldet werden")
 	}
@@ -66,7 +66,7 @@ func TestSecureRepositoriesNamesFailedSource(t *testing.T) {
 			"LCM: apt-update nach der umstellung fehlgeschlagen - alle aenderungen zurueckgerollt\n",
 		ExitCode: 1,
 	}
-	_, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, "admin")
+	_, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, nil, "admin")
 	if err == nil || !strings.Contains(err.Error(), "https://de.archive.ubuntu.com/ubuntu noble") {
 		t.Fatalf("meldung nennt die quelle nicht: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestUmstellungMerktSichDieUmgestelltenQuellen(t *testing.T) {
 	env.Dialer.Responses["@@@DEB822@@@"] = sshx.FakeResponse{
 		Output: "deb https://deb.debian.org/debian bookworm main\ndeb https://download.docker.com/linux/debian bookworm stable\n",
 	}
-	if _, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, "admin"); err != nil {
+	if _, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, nil, "admin"); err != nil {
 		t.Fatalf("secure fehlgeschlagen: %v", err)
 	}
 
@@ -227,5 +227,148 @@ func TestRueckstellungOhneKandidatenLehntAb(t *testing.T) {
 
 	if _, err := env.Servers.RevertRepositoriesHTTPS(repositories.ScopeAll(), id, nil, "admin"); !errors.Is(err, services.ErrNoRevertCandidates) {
 		t.Errorf("erwartet ErrNoRevertCandidates, war %v", err)
+	}
+}
+
+// seedRepos legt den Quellen-Bestand des Servers an; http-Zeilen gelten als
+// unverschlüsselt.
+func seedRepos(t *testing.T, env *testEnv, id uint, lines ...string) {
+	t.Helper()
+	repos := make([]domain.AptRepository, 0, len(lines))
+	for _, line := range lines {
+		repos = append(repos, domain.AptRepository{Line: line, Insecure: strings.Contains(line, "http://")})
+	}
+	if err := repositories.NewServerRepository(env.DB()).ReplaceRepositories(id, repos); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func dialedWith(env *testEnv, part string) []string {
+	var found []string
+	for _, c := range env.Dialer.Commands {
+		if strings.Contains(c, part) {
+			found = append(found, c)
+		}
+	}
+	return found
+}
+
+const (
+	landesSpiegel    = "http://de.archive.ubuntu.com/ubuntu"
+	sicherheitsQuell = "http://security.ubuntu.com/ubuntu"
+)
+
+// TestHTTPSPruefungMerktQuellenOhneHTTPS: Die Prüfung läuft ohne root, meldet
+// je Quelle ein Ergebnis samt Empfehlung und merkt sich die Quellen ohne HTTPS
+// am Server.
+func TestHTTPSPruefungMerktQuellenOhneHTTPS(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	seedRepos(t, env, id,
+		"deb "+landesSpiegel+" noble main",
+		"deb "+landesSpiegel+" noble-updates main",
+		"deb "+sicherheitsQuell+" noble-security main",
+		"deb https://download.docker.com/linux/ubuntu noble stable",
+	)
+	env.Dialer.Responses["apt-helper"] = sshx.FakeResponse{
+		Output: "LCM-HTTPS fail " + landesSpiegel + "\nLCM-HTTPS ok " + sicherheitsQuell + "\n",
+	}
+
+	check, err := env.Servers.CheckRepositoriesHTTPS(repositories.ScopeAll(), id, "admin")
+	if err != nil {
+		t.Fatalf("prüfung: %v", err)
+	}
+	want := []services.RepoHTTPSResult{
+		{URI: landesSpiegel, State: services.RepoHTTPSNone, Alternative: "https://archive.ubuntu.com/ubuntu"},
+		{URI: sicherheitsQuell, State: services.RepoHTTPSOK},
+	}
+	if len(check.Results) != 2 || check.Results[0] != want[0] || check.Results[1] != want[1] {
+		t.Errorf("ergebnis %+v, erwartet %+v", check.Results, want)
+	}
+	cmds := dialedWith(env, "apt-helper")
+	if len(cmds) != 1 || strings.Contains(cmds[0], "sudo") {
+		t.Errorf("erwartet eine Probe ohne sudo: %q", cmds)
+	}
+	// Je URL genau eine Probe, auch wenn sie in zwei Zeilen steht.
+	if strings.Count(cmds[0], "probe '"+landesSpiegel+"'") != 1 {
+		t.Errorf("landesspiegel nicht genau einmal geprüft: %s", cmds[0])
+	}
+
+	server, _ := env.Servers.Get(repositories.ScopeAll(), id)
+	if server.HTTPSUnavailableURLs != landesSpiegel {
+		t.Errorf("gemerkt %q, erwartet %q", server.HTTPSUnavailableURLs, landesSpiegel)
+	}
+}
+
+// TestHTTPSPruefungNurAufApt: gleiche Guards wie die Umstellung.
+func TestHTTPSPruefungNurAufApt(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	setPackageManager(t, env, id, "dnf")
+	if _, err := env.Servers.CheckRepositoriesHTTPS(repositories.ScopeAll(), id, "admin"); !errors.Is(err, services.ErrRepoPackageManagerMismatch) {
+		t.Errorf("prüfung auf dnf: %v", err)
+	}
+}
+
+// TestHTTPSUmstellungDerAuswahl: Nur die gewählte Quelle kommt ins Skript,
+// der Landesspiegel ohne HTTPS bleibt draußen - und behält seine Markierung,
+// solange er http ist.
+func TestHTTPSUmstellungDerAuswahl(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	seedRepos(t, env, id, "deb "+landesSpiegel+" noble main", "deb "+sicherheitsQuell+" noble-security main")
+	setServerFields(t, env, id, map[string]any{"https_unavailable_urls": landesSpiegel})
+	env.Dialer.Responses["URLS="] = sshx.FakeResponse{Output: "LCM: ausgewaehlte paketquellen auf https umgestellt\n"}
+	env.Dialer.Responses["@@@DEB822@@@"] = sshx.FakeResponse{
+		Output: "deb " + landesSpiegel + " noble main\ndeb https://security.ubuntu.com/ubuntu noble-security main\n",
+	}
+
+	if _, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, []string{sicherheitsQuell}, "admin"); err != nil {
+		t.Fatalf("umstellung: %v", err)
+	}
+	cmds := dialedWith(env, "URLS=")
+	if len(cmds) != 1 || !strings.Contains(cmds[0], sicherheitsQuell) || strings.Contains(cmds[0], landesSpiegel) {
+		t.Errorf("unerwartetes kommando: %q", cmds)
+	}
+	server, _ := env.Servers.Get(repositories.ScopeAll(), id)
+	if server.HTTPSUnavailableURLs != landesSpiegel {
+		t.Errorf("markierung %q, erwartet %q", server.HTTPSUnavailableURLs, landesSpiegel)
+	}
+}
+
+// TestHTTPSMarkierungFaelltMitDerQuelle: Ist der Landesspiegel getauscht, gibt
+// es nichts mehr zu markieren.
+func TestHTTPSMarkierungFaelltMitDerQuelle(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	setServerFields(t, env, id, map[string]any{"https_unavailable_urls": landesSpiegel})
+	env.Dialer.Responses["sed -i"] = sshx.FakeResponse{Output: "LCM: alle paketquellen auf https umgestellt\n"}
+	env.Dialer.Responses["@@@DEB822@@@"] = sshx.FakeResponse{Output: "deb https://archive.ubuntu.com/ubuntu noble main\n"}
+
+	if _, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, nil, "admin"); err != nil {
+		t.Fatalf("umstellung: %v", err)
+	}
+	server, _ := env.Servers.Get(repositories.ScopeAll(), id)
+	if server.HTTPSUnavailableURLs != "" {
+		t.Errorf("markierung blieb stehen: %q", server.HTTPSUnavailableURLs)
+	}
+}
+
+// TestHTTPSUmstellungLehntFremdeAuswahlAb: Was nicht als http-Quelle im
+// Bestand steht, kommt nicht in die Kommandozeile - es läuft gar nichts.
+func TestHTTPSUmstellungLehntFremdeAuswahlAb(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	seedRepos(t, env, id, "deb "+sicherheitsQuell+" noble-security main", "deb https://download.docker.com/linux/ubuntu noble stable")
+	env.Dialer.Commands = nil
+
+	for _, uri := range []string{"http://evil.example/x", "https://download.docker.com/linux/ubuntu", "https://security.ubuntu.com/ubuntu"} {
+		_, err := env.Servers.SecureRepositories(repositories.ScopeAll(), id, []string{sicherheitsQuell, uri}, "admin")
+		if !errors.Is(err, services.ErrRepoNotSecurable) {
+			t.Errorf("%s: erwartet ErrRepoNotSecurable, war %v", uri, err)
+		}
+	}
+	if len(env.Dialer.Commands) != 0 {
+		t.Errorf("trotz Ablehnung lief etwas: %q", env.Dialer.Commands)
 	}
 }

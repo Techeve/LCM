@@ -287,24 +287,9 @@ func (s *ServerService) SecurityToolBans(scope repositories.AccessScope, id uint
 	return parseBans(tool, out), nil
 }
 
-// runBanList wartet höchstens banListTimeout auf das Kommando. Läuft die Frist
-// ab, beendet das Schließen der Verbindung im Aufrufer auch das Kommando.
+// runBanList wartet höchstens banListTimeout auf das Kommando.
 func runBanList(conn sshx.Conn, cmd string) (string, error) {
-	type result struct {
-		out string
-		err error
-	}
-	done := make(chan result, 1)
-	safego.Go("security-tool-bans", func() {
-		out, _, err := conn.Run(cmd)
-		done <- result{out, err}
-	})
-	select {
-	case r := <-done:
-		return r.out, r.err
-	case <-time.After(banListTimeout):
-		return "", ErrBanListTimeout
-	}
+	return runBounded(conn, cmd, banListTimeout, ErrBanListTimeout)
 }
 
 // ManageSecurityTool fuehrt eine Verwaltungs-Aktion auf einem bereits

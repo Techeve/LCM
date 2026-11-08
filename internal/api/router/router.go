@@ -440,6 +440,7 @@ func New(deps Deps) *fiber.App {
 	servers.Post("/:id/users/disable", middlewares.RequirePermission(domain.PermServersWrite), provCtrl.DisableServerUser)
 	servers.Post("/:id/users/enable", middlewares.RequirePermission(domain.PermServersWrite), provCtrl.EnableServerUser)
 	servers.Post("/:id/users/remove", middlewares.RequirePermission(domain.PermServersWrite), provCtrl.RemoveServerUser)
+	servers.Post("/:id/repositories/https-check", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.CheckRepositoriesHTTPS)
 	servers.Post("/:id/repositories/secure", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.SecureRepositories)
 	servers.Post("/:id/repositories/revert-https", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RevertRepositoriesHTTPS)
 	servers.Get("/:id/apps", middlewares.RequirePermission(domain.PermServersRead), appCtrl.ServerApps)

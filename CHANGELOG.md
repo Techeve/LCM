@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.0-beta.13 - 2026-11-08
+
+### 🚀 Features
+
+- **repos**: Vor der HTTPS-Umstellung prüft LCM die Spiegel und stellt nur die ausgewählten Quellen um (a4c73859)
+
 ## v2.0.0-beta.12 - 2026-11-08
 
 ### 🐛 Bugfixes

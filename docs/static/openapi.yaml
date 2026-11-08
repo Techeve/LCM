@@ -6905,13 +6905,13 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
-  /api/v1/servers/{id}/repositories/secure:
+  /api/v1/servers/{id}/repositories/https-check:
     post:
       tags:
       - Server
-      summary: Stellt alle http-Quellen auf https um (mit Rollback).
-      operationId: serverCtrl_SecureRepositories
-      description: 'Stellt alle http-Quellen auf https um (mit Rollback).
+      summary: Vor der https-Umstellung prüfen, welche http-Quellen HTTPS sprechen.
+      operationId: serverCtrl_CheckRepositoriesHTTPS
+      description: 'Ruft vom Server aus je unverschlüsselter apt-Quelle die Release-Datei über https ab (apt-helper, ohne root, alle Quellen gleichzeitig mit kurzer Frist). Je Quelle ein Ergebnis: ok, no_https (HTTPS scheitert) oder unknown (nicht prüfbar). Für Quellen ohne HTTPS nennt alternative einen Spiegel derselben Distribution mit HTTPS, sofern LCM einen kennt. Die Quellen ohne HTTPS merkt sich LCM am Server (https_unavailable_urls). Synchron.
 
 
         Benötigte Berechtigung: `servers:write`.'
@@ -6926,7 +6926,70 @@ paths:
       - apiKeyAuth: []
       responses:
         '200':
+          description: Prüfergebnis.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        uri:
+                          type: string
+                          description: Die Quelle in ihrer http-Form.
+                        state:
+                          type: string
+                          enum:
+                          - ok
+                          - no_https
+                          - unknown
+                        alternative:
+                          type: string
+                          description: Spiegel mit HTTPS als Empfehlung; fehlt, wenn LCM keinen kennt.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '504':
+          description: Der Server hat die Prüfung nicht rechtzeitig beendet.
+  /api/v1/servers/{id}/repositories/secure:
+    post:
+      tags:
+      - Server
+      summary: Stellt http-Quellen auf https um (mit Rollback).
+      operationId: serverCtrl_SecureRepositories
+      description: 'Stellt die in uris genannten http-Quellen auf https um, ohne Body alle. Jede URL muss eine unverschlüsselte Quelle des Servers sein (in der http-Form, wie sie die Prüfung liefert), sonst 400 server.repo_not_securable. Ohne Auswahl werden alle http-Quellen umgestellt, auch solche, die die Prüfung als ohne HTTPS gemeldet hat; scheitert eine, wird alles zurückgerollt. Sicherung vor der Änderung, Probe mit apt-get update, bei Fehlschlag alles zurück.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                uris:
+                  type: array
+                  items:
+                    type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
           description: Erfolgreich.
+        '400':
+          description: Eine URL ist keine unverschlüsselte Quelle des Servers.
         '401':
           description: Nicht angemeldet.
         '403':

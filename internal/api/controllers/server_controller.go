@@ -555,10 +555,38 @@ func (ctrl *ServerController) KnownRepos(c fiber.Ctx) error {
 	return c.JSON(repos)
 }
 
+// CheckRepositoriesHTTPS - POST /api/v1/servers/:id/repositories/https-check
+// (servers:write). Prüft vom Server aus, welche http-Quellen HTTPS sprechen -
+// die Grundlage der Auswahl vor der Umstellung. Synchron.
+func (ctrl *ServerController) CheckRepositoriesHTTPS(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	check, err := ctrl.servers.CheckRepositoriesHTTPS(scopeFor(c), id, actor(c))
+	if err != nil {
+		return mapServerActionError(err)
+	}
+	return c.JSON(check)
+}
+
 // SecureRepositories - POST /api/v1/servers/:id/repositories/secure
-// (servers:write). Stellt alle http-Quellen auf https um (mit Rollback).
+// (servers:write). Stellt http-Quellen auf https um (mit Rollback): die in
+// "uris" genannten, ohne Body alle.
 func (ctrl *ServerController) SecureRepositories(c fiber.Ctx) error {
-	return ctrl.runServerAction(c, "secured", ctrl.servers.SecureRepositories)
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	uris, err := optionalURIs(c)
+	if err != nil {
+		return err
+	}
+	output, err := ctrl.servers.SecureRepositories(scopeFor(c), id, uris, actor(c))
+	if err != nil {
+		return mapServerActionError(err)
+	}
+	return c.JSON(fiber.Map{"status": "secured", "output": output})
 }
 
 // RevertRepositoriesHTTPS - POST /api/v1/servers/:id/repositories/revert-https
@@ -569,21 +597,30 @@ func (ctrl *ServerController) RevertRepositoriesHTTPS(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	var req struct {
-		URIs []string `json:"uris"`
+	uris, err := optionalURIs(c)
+	if err != nil {
+		return err
 	}
-	// Leerer Body ist der Normalfall („alle Kandidaten") - nur ein
-	// vorhandener, aber kaputter Body ist ein Fehler.
-	if len(c.Body()) > 0 {
-		if err := bindBody(c, &req); err != nil {
-			return err
-		}
-	}
-	output, err := ctrl.servers.RevertRepositoriesHTTPS(scopeFor(c), id, req.URIs, actor(c))
+	output, err := ctrl.servers.RevertRepositoriesHTTPS(scopeFor(c), id, uris, actor(c))
 	if err != nil {
 		return mapServerActionError(err)
 	}
 	return c.JSON(fiber.Map{"status": "reverted", "output": output})
+}
+
+// optionalURIs liest die Auswahl {"uris": [...]} der Paketquellen-Aktionen.
+// Leerer Body ist der Normalfall („alle") - nur ein vorhandener, aber
+// kaputter Body ist ein Fehler.
+func optionalURIs(c fiber.Ctx) ([]string, error) {
+	var req struct {
+		URIs []string `json:"uris"`
+	}
+	if len(c.Body()) > 0 {
+		if err := bindBody(c, &req); err != nil {
+			return nil, err
+		}
+	}
+	return req.URIs, nil
 }
 
 // AddRepository - POST /api/v1/servers/:id/repositories/add (servers:write)

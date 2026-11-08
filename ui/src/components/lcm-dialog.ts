@@ -16,6 +16,7 @@ export interface Impact {
  * Mit `expect` muss der Name getippt werden (zerstörende Aktionen). Natives <dialog>: Fokusfalle und Esc inklusive.
  * Höchstens so hoch wie das Browserfenster: Der Inhalt scrollt, der Fuß mit den Knöpfen bleibt stehen.
  * Scheitert die Aktion, gehört der Fehler in den Dialog (`error`, steht über dem Fuß), nicht in einen Toast.
+ * Mit `confirm-disabled` bleibt der Bestätigen-Knopf gesperrt (z. B. solange im Dialog nichts gewählt ist).
  * Ereignisse: `lcm-confirm`, `lcm-cancel`.
  */
 export class LcmDialog extends LitElement {
@@ -30,6 +31,7 @@ export class LcmDialog extends LitElement {
     expectLabel: { type: String, attribute: 'expect-label' },
     impacts: { attribute: false },
     busy: { type: Boolean },
+    confirmDisabled: { type: Boolean, attribute: 'confirm-disabled' },
     error: { type: String },
     _showError: { state: true },
     _typed: { state: true },
@@ -134,6 +136,8 @@ export class LcmDialog extends LitElement {
   declare expectLabel: string;
   declare impacts: Impact[];
   declare busy: boolean;
+  /** Bestätigen geht noch nicht, z. B. solange im Dialog nichts ausgewählt ist. */
+  declare confirmDisabled: boolean;
   declare error: string;
   /** Ein Fehler vom letzten Öffnen bleibt verborgen, bis die Seite einen neuen meldet. */
   declare _showError: boolean;
@@ -152,6 +156,7 @@ export class LcmDialog extends LitElement {
     this.expectLabel = '';
     this.impacts = [];
     this.busy = false;
+    this.confirmDisabled = false;
     this.error = '';
     this._showError = false;
     this._typed = '';
@@ -205,7 +210,7 @@ export class LcmDialog extends LitElement {
   }
 
   private get canConfirm(): boolean {
-    return !this.busy && (this.expect === '' || this._typed === this.expect);
+    return !this.busy && !this.confirmDisabled && (this.expect === '' || this._typed === this.expect);
   }
 
   override render() {

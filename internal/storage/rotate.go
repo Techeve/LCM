@@ -69,6 +69,7 @@ var serializerColumns = []struct {
 	// Zustandsfelder, die der Scan schreibt.
 	{"servers", "id", "rhsm_status"},
 	{"servers", "id", "https_revert_urls"},
+	{"servers", "id", "https_unavailable_urls"},
 	// Benutzer-/Linux-Benutzer-Felder ohne Blindindex (die mit Blindindex -
 	// username/email - laufen weiter unten als Sonderfall).
 	{"users", "id", "first_name"},

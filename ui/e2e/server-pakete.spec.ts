@@ -193,6 +193,88 @@ test.describe('Serverdetail: Repositories', () => {
   });
 });
 
+test.describe('Serverdetail: HTTPS-Umstellung', () => {
+  const landesSpiegel = 'http://de.archive.ubuntu.com/ubuntu';
+  const sicherheit = 'http://security.ubuntu.com/ubuntu';
+  const fremd = 'http://repo.example/apt';
+
+  test('prüft vorher vom Server aus und stellt nur die gewählten Quellen um', async ({ page }) => {
+    // Drei http-Quellen; der Landesspiegel kann kein HTTPS, die Fremdquelle ließ sich nicht prüfen.
+    await page.route('**/api/v1/servers/1/repositories', (route) =>
+      route.fulfill({
+        json: [
+          { id: 1, line: `deb ${landesSpiegel} noble main`, insecure: true },
+          { id: 2, line: `deb ${sicherheit} noble-security main`, insecure: true },
+          { id: 3, line: `deb ${fremd} stable main`, insecure: true },
+        ],
+      }),
+    );
+    // Die letzte Prüfung hat sich den Landesspiegel gemerkt.
+    // Ein 304 (ETag) hat keinen Körper; dann bleibt der zuvor veränderte Stand.
+    // Wird die Antwort verworfen, weil die Seite schon weiter ist, braucht sie niemand mehr.
+    await page.route('**/api/v1/servers/1', async (route) => {
+      try {
+        const antwort = await route.fetch();
+        const koerper = await antwort.text();
+        if (!koerper) return await route.fulfill({ response: antwort });
+        return await route.fulfill({ response: antwort, json: { ...JSON.parse(koerper), https_unavailable_urls: landesSpiegel } });
+      } catch {
+        return route.continue().catch(() => undefined);
+      }
+    });
+    await page.route('**/api/v1/servers/1/repositories/https-check', (route) =>
+      route.fulfill({
+        json: {
+          results: [
+            { uri: landesSpiegel, state: 'no_https', alternative: 'https://archive.ubuntu.com/ubuntu' },
+            { uri: sicherheit, state: 'ok' },
+            { uri: fremd, state: 'unknown' },
+          ],
+        },
+      }),
+    );
+    let gesendet: unknown;
+    await page.route('**/api/v1/servers/1/repositories/secure', (route) => {
+      gesendet = route.request().postDataJSON();
+      return route.fulfill({ json: { status: 'secured', output: 'LCM: ausgewaehlte paketquellen auf https umgestellt' } });
+    });
+
+    await page.goto('/servers/1/repositories');
+    // In der Liste: Marke und Empfehlung am Landesspiegel.
+    const eintrag = page.getByRole('listitem').filter({ hasText: `deb ${landesSpiegel}` });
+    await expect(eintrag).toContainText('kein HTTPS');
+    await expect(eintrag).toContainText('Empfehlung: Spiegel auf https://archive.ubuntu.com/ubuntu tauschen.');
+
+    await page.getByRole('button', { name: 'Auf HTTPS umstellen' }).click();
+    const dialog = fenster(page, 'Paketquellen auf web01 auf HTTPS umstellen?');
+    // Die Auswahl hängt im Light-DOM der Aktion, nicht im Dialog selbst.
+    const auswahl = page.locator('lcm-set-action[action="repos-secure"]');
+    const spiegel = auswahl.getByRole('checkbox', { name: /de\.archive\.ubuntu\.com/ });
+    await expect(spiegel).toBeDisabled();
+    await expect(spiegel).not.toBeChecked();
+    await expect(auswahl.locator('label', { hasText: 'de.archive.ubuntu.com' })).toContainText('kein HTTPS');
+    await expect(auswahl.locator('label', { hasText: 'de.archive.ubuntu.com' })).toContainText('Empfehlung: Spiegel auf https://archive.ubuntu.com/ubuntu tauschen.');
+    await expect(auswahl.getByRole('checkbox', { name: /security\.ubuntu\.com/ })).toBeChecked();
+    const ungeprueft = auswahl.getByRole('checkbox', { name: /repo\.example/ });
+    await expect(ungeprueft).toBeEnabled();
+    await expect(ungeprueft).not.toBeChecked();
+
+    // Der Knopf nennt die Zahl der gewählten Quellen; ohne Auswahl ist er gesperrt.
+    await expect(dialog.getByRole('button', { name: '1 Quelle umstellen' })).toBeEnabled();
+    await ungeprueft.check();
+    await expect(dialog.getByRole('button', { name: '2 Quellen umstellen' })).toBeEnabled();
+    await ungeprueft.uncheck();
+    await auswahl.getByRole('checkbox', { name: /security\.ubuntu\.com/ }).uncheck();
+    await expect(dialog.getByRole('button', { name: 'Auf HTTPS umstellen' })).toBeDisabled();
+
+    await auswahl.getByRole('checkbox', { name: /security\.ubuntu\.com/ }).check();
+    await dialog.getByRole('button', { name: '1 Quelle umstellen' }).click();
+    await expect(dialog).toBeHidden();
+    expect(gesendet).toEqual({ uris: [sicherheit] });
+    await expect(page.getByText('LCM: ausgewaehlte paketquellen auf https umgestellt')).toBeVisible();
+  });
+});
+
 test.describe('Serverdetail: Deep-Scan', () => {
   test('datierte Berichte mit Fortschritt statt flacher Befundliste', async ({ page }) => {
     await page.goto('/servers/1/deep-scan'); // web01, zwei Demo-Läufe

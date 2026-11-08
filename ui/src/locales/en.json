@@ -1980,6 +1980,7 @@
       "firewall_tool_missing": "The intended firewall tool is not installed on this system",
       "host_key_mismatch": "The SSH host key does not match the stored fingerprint – possible tampering, the connection was aborted",
       "host_taken": "This server is already registered (host or IP exists)",
+      "https_check_timeout": "The server did not finish the HTTPS check in time",
       "kernel_cleanup_unsupported": "Removing old kernels currently only works on apt systems",
       "lcm_host_in_container": "LCM runs in a container – this setup is not possible here",
       "lcm_host_not_apt": "Automatic setup only works on Debian and Ubuntu (apt)",
@@ -2004,6 +2005,7 @@
       "probe_failed": "The server could not be reached: {detail}",
       "proxmox_restricted": "Blocked on Proxmox systems – Proxmox manages this itself",
       "repair_unsupported": "This repair is not supported for this server’s package manager",
+      "repo_not_securable": "This package source is not an unencrypted source of this server",
       "restricted_sudo": "Not available in restricted mode – the action needs a root shell",
       "retry_unavailable": "Retrying is not available on this instance",
       "routeros_unsupported": "Not available for MikroTik RouterOS",
@@ -3441,12 +3443,28 @@
       },
       "allSecure": "All sources encrypted",
       "http": "HTTP",
+      "noHttps": "no HTTPS",
+      "recommend": "Recommendation: swap the mirror for {url}.",
+      "recommendAny": "This mirror does not offer HTTPS. Swap it for a mirror that supports HTTPS.",
       "secure": {
         "label": "Switch to HTTPS",
-        "help": "Switches every package source that runs unencrypted over HTTP to HTTPS. If a source stops working afterwards, it is reset.",
+        "help": "First checks from the server which package sources support HTTPS, then switches the selected ones from HTTP to HTTPS. If a source stops working afterwards, everything is reset.",
         "meaning": "Packages are then downloaded encrypted and can no longer be read or swapped on the way.",
         "heading": "Switch package sources on {name} to HTTPS?",
-        "done": "Package sources on {name} now use HTTPS"
+        "message": "LCM checks from the server which sources support HTTPS. Only the selected ones are switched, the rest stays on HTTP.",
+        "done": "Package sources on {name} now use HTTPS",
+        "checking": "Checking from the server which sources support HTTPS …",
+        "checkFailed": "The check did not work: {detail}",
+        "nothing": "LCM found no source on HTTP any more. Refresh the package list if that is not right.",
+        "choose": "Switch these sources",
+        "unchecked": "not checked",
+        "uncheckedHint": "Could not be checked. You can still switch it; if it fails afterwards, LCM reverts the change.",
+        "confirm": {
+          "one": "Switch 1 source",
+          "other": "Switch {count} sources"
+        },
+        "missingCerts": "The server lacks the root certificates (ca-certificates), so no mirror could be checked. The switch installs them first. Choose the sources yourself, or install ca-certificates and check again.",
+        "recheck": "Check again"
       }
     },
     "jobsTab": {
@@ -6230,6 +6248,7 @@
       "ssh_2fa_secrets_kept": "The users' TOTP keys stay in place and work again right away when you set it up again.",
       "repos_update_rollback": "If the package manager fails afterwards, LCM reverts the change.",
       "repos_revert_targets": "Reverted: {urls}.",
+      "repos_secure_targets": "Switched: {urls}.",
       "repos_unencrypted": "These sources then run unencrypted again.",
       "repo_add": "The signing key of {name} is downloaded and the source is added signed.",
       "apt_cache_probe": "Package downloads then go through {url}. LCM tests this right away and undoes it on errors; if the cache cannot do HTTPS, HTTPS sources go direct.",

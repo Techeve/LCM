@@ -3,24 +3,50 @@ import '../../components/lcm-badge';
 import '../../components/lcm-button';
 import '../../components/lcm-card';
 import '../../components/lcm-empty-state';
+import '../../components/lcm-notice';
 import '../../components/lcm-select';
 import '../../components/lcm-skeleton';
 import { baseStyles } from '../../components/shared';
 import { normaliseRepositories, repositoriesUrl, serverUrl, type Repository } from '../../api/servers';
-import { APT_CACHES_URL, KNOWN_REPOS_URL, normaliseAptCaches, normaliseKnownRepos, normaliseRepoState, reposApi, reposFor, type AptCache, type KnownRepo, type RepoState } from '../../api/servers-packages';
+import {
+  APT_CACHES_URL,
+  KNOWN_REPOS_URL,
+  httpsMirrorAlternative,
+  initialHttpsSelection,
+  normaliseAptCaches,
+  normaliseKnownRepos,
+  normaliseRepoState,
+  repoUri,
+  reposApi,
+  reposFor,
+  toggleHttpsSelection,
+  type AptCache,
+  type HttpsCheckResult,
+  type KnownRepo,
+  type RepoState,
+} from '../../api/servers-packages';
 import { packageManagers } from '../../api/server-detail';
 import type { ConfigPreviewAction, ConfigPreviewParams } from '../../api/servers-previews';
-import { t } from '../../lib/i18n';
+import { errorText, t } from '../../lib/i18n';
 import { LiveData } from '../../lib/live-data';
 import './set-action';
 import { tabStyles } from './srv-styles';
 import { SrvTab } from './srv-tab';
 
+/** Stand der HTTPS-Prüfung im Bestätigungsdialog der Umstellung. */
+interface HttpsCheck {
+  loading: boolean;
+  error: string;
+  results: HttpsCheckResult[];
+  missingCertificates: boolean;
+}
 
 /**
  * Repositories: die Paketquellen des Servers. Unsichere (HTTP) sind markiert und lassen sich auf HTTPS umstellen
- * (und zurück); bekannte Quellen aus dem Katalog lassen sich einrichten, apt-Server an einen APT-Cache anbinden.
- * Was die Konsole dabei ausgibt, steht unter der Liste.
+ * (und zurück); vor der Umstellung prüft LCM vom Server aus, welche Quellen HTTPS sprechen, und stellt nur die
+ * ausgewählten um. Quellen ohne HTTPS bleiben markiert, mit Empfehlung für einen anderen Spiegel. Bekannte Quellen aus
+ * dem Katalog lassen sich einrichten, apt-Server an einen APT-Cache anbinden. Was die Konsole dabei ausgibt, steht unter
+ * der Liste.
  */
 export class SrvRepositories extends SrvTab {
   static override properties = {
@@ -28,6 +54,8 @@ export class SrvRepositories extends SrvTab {
     _repoKey: { state: true },
     _cacheId: { state: true },
     _output: { state: true },
+    _https: { state: true },
+    _chosen: { state: true },
   };
   static override styles = [
     baseStyles,
@@ -64,6 +92,79 @@ export class SrvRepositories extends SrvTab {
         font-family: var(--font-mono);
         font-size: var(--fs-s);
         overflow-wrap: anywhere;
+      }
+      li p.note {
+        flex-basis: 100%;
+      }
+      .choices {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        margin: var(--space-4) 0 0;
+        padding: 0;
+        border: 0;
+      }
+      .choices legend {
+        margin-block-end: var(--space-2);
+        padding: 0;
+        font-size: var(--fs-s);
+        font-weight: var(--fw-medium);
+      }
+      .choice {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: var(--space-3);
+        align-items: start;
+        padding: var(--space-3) var(--space-4);
+        border-radius: var(--radius-m);
+        background: var(--surface-2);
+        cursor: pointer;
+      }
+      .choice:hover {
+        box-shadow: inset 0 0 0 1px var(--line-strong);
+      }
+      .choice.selected {
+        background: var(--accent-soft);
+        box-shadow: inset 0 0 0 2px var(--accent);
+      }
+      .choice.locked {
+        cursor: not-allowed;
+      }
+      /* Die Empfehlung bleibt voll lesbar, nur die Quelle selbst tritt zurück. */
+      .choice.locked :is(input, .name code) {
+        opacity: 0.55;
+      }
+      .choice:focus-within {
+        outline: 2px solid var(--focus-ring);
+        outline-offset: 2px;
+      }
+      .choice input {
+        margin: 0.25rem 0 0;
+        accent-color: var(--accent);
+      }
+      .choice .name {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-2);
+      }
+      .choice .name code {
+        flex: 0 1 auto;
+      }
+      .choice .hint {
+        display: block;
+        margin-block-start: var(--space-1);
+        color: var(--text-2);
+        font-size: var(--fs-s);
+      }
+      .checking {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+        margin-block-start: var(--space-4);
+      }
+      .recheck {
+        margin-block-start: var(--space-2);
       }
       .setup {
         display: flex;
@@ -112,6 +213,8 @@ export class SrvRepositories extends SrvTab {
   declare _repoKey: string;
   declare _cacheId: string;
   declare _output: { label: string; text: string } | null;
+  declare _https: HttpsCheck | null;
+  declare _chosen: string[];
 
   readonly #repos = new LiveData<Repository[]>(this, {
     url: () => repositoriesUrl(this.server.id),
@@ -127,7 +230,11 @@ export class SrvRepositories extends SrvTab {
     this._repoKey = '';
     this._cacheId = '';
     this._output = null;
+    this._https = null;
+    this._chosen = [];
   }
+
+  #checkRun = 0;
 
   #after(label: string) {
     return (e: CustomEvent<{ output: string }>) => {
@@ -136,7 +243,25 @@ export class SrvRepositories extends SrvTab {
     };
   }
 
-  #action(options: { action: ConfigPreviewAction; params?: ConfigPreviewParams; label: string; help: string; meaning?: string; heading: string; icon: 'lock' | 'undo' | 'plus' | 'package' | 'x'; variant?: 'primary' | 'outline' | 'danger'; impacts?: Array<{ label: string; value: string; tone?: 'ok' | 'warn' | 'crit' }>; done: string; run: () => Promise<{ output: string }>; disabled?: boolean }): TemplateResult {
+  #action(options: {
+    action: ConfigPreviewAction;
+    params?: ConfigPreviewParams;
+    label: string;
+    help: string;
+    meaning?: string;
+    heading: string;
+    message?: string;
+    confirmLabel?: string;
+    confirmDisabled?: boolean;
+    icon: 'lock' | 'undo' | 'plus' | 'package' | 'x';
+    variant?: 'primary' | 'outline' | 'danger';
+    impacts?: Array<{ label: string; value: string; tone?: 'ok' | 'warn' | 'crit' }>;
+    done: string;
+    run: () => Promise<{ output: string }>;
+    disabled?: boolean;
+    onOpen?: () => void;
+    body?: TemplateResult | typeof nothing;
+  }): TemplateResult {
     const server = this.server;
     return html`<lcm-set-action
       variant=${options.variant ?? 'outline'}
@@ -149,13 +274,18 @@ export class SrvRepositories extends SrvTab {
       help=${options.help}
       meaning=${options.meaning ?? ''}
       heading=${options.heading}
+      message=${options.message ?? ''}
+      confirm-label=${options.confirmLabel ?? ''}
+      ?confirm-disabled=${options.confirmDisabled ?? false}
       action=${options.action}
       .params=${options.params ?? {}}
       .impacts=${options.impacts ?? []}
       done=${options.done}
       .run=${options.run}
+      @lcm-open=${() => options.onOpen?.()}
       @lcm-done=${this.#after(options.label)}
-    ></lcm-set-action>`;
+      >${options.body ?? nothing}</lcm-set-action
+    >`;
   }
 
   // ---- Quellen ----
@@ -164,18 +294,103 @@ export class SrvRepositories extends SrvTab {
     // Das Umstellen kennt nur APT-Quellen.
     if (!this.canWrite || insecure === 0 || !apt) return nothing;
     const name = this.server.name;
+    const check = this._https;
+    const chosen = this._chosen;
+    const ready = check !== null && !check.loading && check.error === '';
     return this.#action({
       label: t('servers.repositories.secure.label'),
       help: t('servers.repositories.secure.help'),
       meaning: t('servers.repositories.secure.meaning'),
       heading: t('servers.repositories.secure.heading', { name }),
+      message: t('servers.repositories.secure.message'),
+      // Ohne Auswahl bleibt der gesperrte Knopf bei „Auf HTTPS umstellen“ statt „0 Quellen umstellen“.
+      confirmLabel: ready && chosen.length > 0 ? t('servers.repositories.secure.confirm', { count: chosen.length }) : '',
+      confirmDisabled: !ready || chosen.length === 0,
       icon: 'lock',
       variant: 'primary',
       action: 'repos-secure',
-      impacts: [{ label: t('serverPackages.repos.sources'), value: t('serverPackages.repos.secureValue', { count: insecure }) }],
+      params: { uris: chosen },
+      impacts: ready ? [{ label: t('serverPackages.repos.sources'), value: t('serverPackages.repos.secureValue', { count: chosen.length }) }] : [],
       done: t('servers.repositories.secure.done', { name }),
-      run: () => reposApi.secure(this.server.id),
+      run: () => reposApi.secure(this.server.id, chosen),
+      onOpen: () => void this.#checkHttps(),
+      body: this.#renderHttpsCheck(),
     });
+  }
+
+  /** Prüft vor der Umstellung vom Server aus, welche Quellen HTTPS sprechen; nur die sind vorausgewählt. */
+  async #checkHttps(): Promise<void> {
+    const run = ++this.#checkRun;
+    this._https = { loading: true, error: '', results: [], missingCertificates: false };
+    this._chosen = [];
+    try {
+      const { results, missingCertificates } = await reposApi.checkHttps(this.server.id);
+      if (run !== this.#checkRun) return;
+      this._https = { loading: false, error: '', results, missingCertificates };
+      this._chosen = initialHttpsSelection(results);
+      // Die Prüfung merkt sich die Quellen ohne HTTPS am Server - die Liste markiert sie.
+      this.#state.reload();
+    } catch (error) {
+      if (run === this.#checkRun) this._https = { loading: false, error: errorText(error), results: [], missingCertificates: false };
+    }
+  }
+
+  #renderHttpsCheck(): TemplateResult | typeof nothing {
+    const check = this._https;
+    if (!check) return nothing;
+    if (check.loading) {
+      return html`<div class="checking" role="status">
+        <p class="note">${t('servers.repositories.secure.checking')}</p>
+        <lcm-skeleton shape="row" lines="2" label=${t('servers.repositories.secure.checking')}></lcm-skeleton>
+      </div>`;
+    }
+    if (check.error) {
+      return html`<div class="checking">
+        <lcm-notice tone="crit">${t('servers.repositories.secure.checkFailed', { detail: check.error })}</lcm-notice>
+        ${this.#recheckButton()}
+      </div>`;
+    }
+    if (check.results.length === 0) return html`<p class="note checking">${t('servers.repositories.secure.nothing')}</p>`;
+    return html`${check.missingCertificates ? html`<lcm-notice tone="warn">${t('servers.repositories.secure.missingCerts')}</lcm-notice>` : nothing}
+      <fieldset class="choices">
+      <legend>${t('servers.repositories.secure.choose')}</legend>
+      ${check.results.map((result) => this.#renderHttpsChoice(result, check.results))}
+    </fieldset>
+    ${this.#recheckButton()}`;
+  }
+
+  /** Ein Netzaussetzer kann eine Quelle fälschlich sperren; neu prüfen geht, ohne den Dialog zu schließen. */
+  #recheckButton(): TemplateResult {
+    return html`<div class="recheck">
+      <lcm-button size="small" variant="ghost" icon="refresh" @click=${() => void this.#checkHttps()}>${t('servers.repositories.secure.recheck')}</lcm-button>
+    </div>`;
+  }
+
+  #renderHttpsChoice(result: HttpsCheckResult, results: HttpsCheckResult[]): TemplateResult {
+    const locked = result.state === 'no_https';
+    const checked = this._chosen.includes(result.uri);
+    return html`<label class=${`choice${checked ? ' selected' : ''}${locked ? ' locked' : ''}`}>
+      <input
+        type="checkbox"
+        .checked=${checked}
+        ?disabled=${locked}
+        @change=${(e: Event) => (this._chosen = toggleHttpsSelection(results, this._chosen, result.uri, (e.target as HTMLInputElement).checked))}
+      />
+      <span>
+        <span class="name"
+          ><code>${result.uri}</code>${locked ? html`<lcm-badge tone="warn">${t('servers.repositories.noHttps')}</lcm-badge>` : nothing}${result.state === 'unknown'
+            ? html`<lcm-badge>${t('servers.repositories.secure.unchecked')}</lcm-badge>`
+            : nothing}</span
+        >
+        ${locked ? html`<span class="hint">${this.#recommendation(result.alternative)}</span>` : nothing}
+        ${result.state === 'unknown' ? html`<span class="hint">${t('servers.repositories.secure.uncheckedHint')}</span>` : nothing}
+      </span>
+    </label>`;
+  }
+
+  /** Empfehlung für eine Quelle ohne HTTPS: der Spiegel, auf den sich tauschen lässt, sonst ein allgemeiner Hinweis. */
+  #recommendation(alternative: string): string {
+    return alternative ? t('servers.repositories.recommend', { url: alternative }) : t('servers.repositories.recommendAny');
   }
 
   #renderRevert(state: RepoState): TemplateResult | typeof nothing {
@@ -204,9 +419,21 @@ export class SrvRepositories extends SrvTab {
       ${repos.length === 0
         ? html`<p class="note">${t('servers.repositories.empty.text')}</p>`
         : html`<ul>
-            ${repos.map((repo) => html`<li><code>${repo.line}</code>${repo.insecure ? html`<lcm-badge tone="crit">${t('servers.repositories.http')}</lcm-badge>` : nothing}</li>`)}
+            ${repos.map((repo) => this.#renderRepo(repo, state))}
           </ul>`}
     </lcm-card>`;
+  }
+
+  #renderRepo(repo: Repository, state: RepoState | undefined): TemplateResult {
+    const uri = repoUri(repo.line);
+    const noHttps = repo.insecure && (state?.unavailableUrls.includes(uri) ?? false);
+    return html`<li>
+      <code>${repo.line}</code>${repo.insecure ? html`<lcm-badge tone="crit">${t('servers.repositories.http')}</lcm-badge>` : nothing}
+      ${noHttps
+        ? html`<lcm-badge tone="warn">${t('servers.repositories.noHttps')}</lcm-badge>
+            <p class="note">${this.#recommendation(httpsMirrorAlternative(uri))}</p>`
+        : nothing}
+    </li>`;
   }
 
   // ---- Einrichten ----

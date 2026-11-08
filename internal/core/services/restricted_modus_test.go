@@ -274,6 +274,11 @@ func TestHelperLehntSchlechteParameterAb(t *testing.T) {
 		{"crowdsec-configure", "console", "-", "-", "-", "key\nx", "1.2.3.4"},
 		{"security-unban", "fail2ban", "1.2.3.4\nx"},
 		{"timezone", "Europe/Berlin\nx"},
+		// repos-https nimmt nur http-URLs ohne Sonderzeichen an.
+		{"repos-https", "https://a.example/debian"},
+		{"repos-https", "http://a.example/debian;id"},
+		{"repos-https", "http://a.example/debian", "http://b.example/$(id)"},
+		{"repos-https", "http://a.example/debian\nhttp://b.example/x"},
 		// Eine Leerzeile vorne darf den Rest des Regelsatzes nicht verdecken.
 		{"firewall-apply", "nftables", zeilen("\ninclude \"/etc/shadow\"\ntable inet lcm")},
 	}

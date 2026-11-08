@@ -34,6 +34,8 @@ func TestMapServerErrorUsesCodes(t *testing.T) {
 		{services.ErrServerNameTaken, "server.name_taken", 409},
 		{services.ErrInvalidPackage, "package.invalid_name", 422},
 		{services.ErrTooManyDNSServers, "dns.too_many_servers", 400},
+		{fmt.Errorf("%w: http://x", services.ErrRepoNotSecurable), "server.repo_not_securable", 400},
+		{services.ErrHTTPSCheckTimeout, "server.https_check_timeout", 504},
 	}
 	for _, tt := range tests {
 		got := asAPIError(t, mapServerError(tt.err))

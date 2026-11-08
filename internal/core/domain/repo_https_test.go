@@ -113,3 +113,90 @@ func TestKandidatenOhneProtokoll(t *testing.T) {
 		t.Errorf("erwartet nur den Debian-Spiegel (einmal), war %v", got)
 	}
 }
+
+// TestHTTPSProbeURL: Die Probe ist die Release-Datei der Suite - im flachen
+// Repository ohne dists/, und nie mit doppeltem Schrägstrich.
+func TestHTTPSProbeURL(t *testing.T) {
+	cases := map[string]string{
+		"deb http://de.archive.ubuntu.com/ubuntu noble main":                    "https://de.archive.ubuntu.com/ubuntu/dists/noble/Release",
+		"deb http://de.archive.ubuntu.com/ubuntu/ noble-updates main":           "https://de.archive.ubuntu.com/ubuntu/dists/noble-updates/Release",
+		"deb [arch=amd64] http://repo.example/apt bookworm stable":              "https://repo.example/apt/dists/bookworm/Release",
+		"deb http://repo.example/flat/ ./":                                      "https://repo.example/flat/Release",
+		"deb http://repo.example/flat /":                                        "https://repo.example/flat/Release",
+		"deb http://repo.example/flat bookworm/":                                "https://repo.example/flat/bookworm/Release",
+		"deb http://repo.example/apt":                                           "",
+		"deb https://deb.debian.org/debian bookworm main":                       "",
+		"deb http://repo.example/flat/ $(ARCH)/":                                "",
+		"deb http://security.debian.org/debian-security bookworm-security main": "https://security.debian.org/debian-security/dists/bookworm-security/Release",
+	}
+	for line, want := range cases {
+		if got := domain.HTTPSProbeURL(line); got != want {
+			t.Errorf("HTTPSProbeURL(%q) = %q, erwartet %q", line, got, want)
+		}
+	}
+}
+
+// TestHTTPSProbesJeQuelleEinmal: Je http-Quelle genau eine Probe, aus ihrer
+// ersten Zeile; https-Quellen und unsichere URLs bleiben draußen.
+func TestHTTPSProbesJeQuelleEinmal(t *testing.T) {
+	repos := []domain.AptRepository{
+		{Line: "deb http://de.archive.ubuntu.com/ubuntu noble main", Insecure: true},
+		{Line: "deb http://de.archive.ubuntu.com/ubuntu noble-updates main", Insecure: true},
+		{Line: "deb https://download.docker.com/linux/ubuntu noble stable"},
+		{Line: "deb http://repo.example/$(id) noble main", Insecure: true},
+		{Line: "deb http://repo.example/apt", Insecure: true},
+	}
+	got := domain.HTTPSProbes(repos)
+	want := []domain.HTTPSProbe{
+		{URI: "http://de.archive.ubuntu.com/ubuntu", URL: "https://de.archive.ubuntu.com/ubuntu/dists/noble/Release"},
+		{URI: "http://repo.example/apt", URL: ""},
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("proben %+v, erwartet %+v", got, want)
+	}
+}
+
+// TestHTTPSMirrorAlternative: Für die Spiegel von Ubuntu und Debian gibt es
+// eine zentrale Adresse mit HTTPS, für Fremdquellen keinen Vorschlag.
+func TestHTTPSMirrorAlternative(t *testing.T) {
+	cases := map[string]string{
+		"http://de.archive.ubuntu.com/ubuntu":             "https://archive.ubuntu.com/ubuntu",
+		"http://at.archive.ubuntu.com/ubuntu/":            "https://archive.ubuntu.com/ubuntu",
+		"http://archive.ubuntu.com/ubuntu":                "https://archive.ubuntu.com/ubuntu",
+		"http://de.ports.ubuntu.com/ubuntu-ports":         "https://ports.ubuntu.com/ubuntu-ports",
+		"http://ports.ubuntu.com/ubuntu-ports":            "https://ports.ubuntu.com/ubuntu-ports",
+		"http://security.ubuntu.com/ubuntu":               "https://security.ubuntu.com/ubuntu",
+		"http://ftp.de.debian.org/debian":                 "https://deb.debian.org/debian",
+		"http://ftp.de.debian.org/debian/":                "https://deb.debian.org/debian",
+		"http://ftp.de.debian.org/debian-security":        "https://security.debian.org/debian-security",
+		"http://security.debian.org/debian-security":      "https://security.debian.org/debian-security",
+		"http://ftp.de.debian.org/ubuntu":                 "",
+		"http://debian.org.angreifer.example/debian":      "",
+		"http://repo.example/debian":                      "",
+		"http://de.archive.ubuntu.com.angreifer.example/": "",
+		"kaputt\x7f": "",
+	}
+	for uri, want := range cases {
+		if got := domain.HTTPSMirrorAlternative(uri); got != want {
+			t.Errorf("HTTPSMirrorAlternative(%q) = %q, erwartet %q", uri, got, want)
+		}
+	}
+}
+
+// TestHTTPSMirrorAlternativeNurHauptarchive: Spezialpfade und das Archiv
+// abgelaufener Releases bekommen keine falsche Empfehlung.
+func TestHTTPSMirrorAlternativeNurHauptarchive(t *testing.T) {
+	cases := map[string]string{
+		"http://ftp.de.debian.org/debian":           "https://deb.debian.org/debian",
+		"http://ftp.de.debian.org/debian/":          "https://deb.debian.org/debian",
+		"http://ftp.de.debian.org/debian-security":  "https://security.debian.org/debian-security",
+		"http://ftp.de.debian.org/debian-ports":     "",
+		"http://ftp.de.debian.org/debian-backports": "",
+		"http://archive.debian.org/debian":          "",
+	}
+	for uri, want := range cases {
+		if got := domain.HTTPSMirrorAlternative(uri); got != want {
+			t.Errorf("%s: %q, erwartet %q", uri, got, want)
+		}
+	}
+}

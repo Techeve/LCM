@@ -75,7 +75,7 @@ type PreviewArgs struct {
 	SecurityTool  SecurityToolInput // security-tool(-manage): Werkzeug und Optionen
 	ToolAction    string            // security-tool-manage: start, stop, uninstall, …
 	UnbanIP       string            // security-tool-manage unban
-	URIs          []string          // repos-revert-https: Auswahl; leer = alle Kandidaten
+	URIs          []string          // repos-secure, repos-revert-https: Auswahl; leer = alle Quellen bzw. Kandidaten
 	RepoKey       string            // repos-add: Schlüssel der Katalog-Quelle
 	CacheID       uint              // apt-cache-connect: Cache; 0 = der einzige
 	Servers       []string          // dns, ntp: Name- bzw. Zeitserver
@@ -188,7 +188,7 @@ func (s *ServerService) PreviewAction(scope repositories.AccessScope, id uint, a
 	case PreviewSSH2FAEnable, PreviewSSH2FADisable:
 		return previewSSH2FA(server, action == PreviewSSH2FAEnable)
 	case PreviewReposSecure:
-		return previewSecureRepos(server)
+		return s.previewSecureRepos(server, args.URIs)
 	case PreviewReposRevert:
 		return previewRevertRepos(server, args.URIs)
 	case PreviewReposAdd:

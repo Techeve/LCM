@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { normaliseKnownRepos, normalisePins, normaliseRepoState, normaliseUnknownApps, normaliseVersions, pinFor, pinInputValid, reposFor, versionLess } from './servers-packages';
+import {
+  httpsMirrorAlternative,
+  initialHttpsSelection,
+  httpsCheckMissingCerts,
+  normaliseHttpsCheck,
+  normaliseKnownRepos,
+  normalisePins,
+  normaliseRepoState,
+  normaliseUnknownApps,
+  normaliseVersions,
+  pinFor,
+  pinInputValid,
+  repoUri,
+  reposFor,
+  toggleHttpsSelection,
+  versionLess,
+} from './servers-packages';
 
 describe('normalisePins', () => {
   const raw = {
@@ -70,7 +86,63 @@ describe('repositories', () => {
 
   it('reads revert candidates and the APT cache from the server', () => {
     const state = normaliseRepoState({ package_manager: 'apt', https_revert_urls: 'http://a, http://b,', apt_proxy_active: true, apt_proxy_url: 'http://c:3142', proxmox_type: 'pve' });
-    expect(state).toEqual({ packageManager: 'apt', proxmox: true, revertUrls: ['http://a', 'http://b'], aptProxyActive: true, aptProxyUrl: 'http://c:3142' });
+    expect(state).toEqual({ packageManager: 'apt', proxmox: true, revertUrls: ['http://a', 'http://b'], unavailableUrls: [], aptProxyActive: true, aptProxyUrl: 'http://c:3142' });
+  });
+
+  it('reads the sources without HTTPS from the last check', () => {
+    expect(normaliseRepoState({ https_unavailable_urls: 'http://de.archive.ubuntu.com/ubuntu, ,http://x' }).unavailableUrls).toEqual(['http://de.archive.ubuntu.com/ubuntu', 'http://x']);
+  });
+
+  it('takes the source URL from both apt formats', () => {
+    expect(repoUri('deb [arch=amd64] http://de.archive.ubuntu.com/ubuntu noble main')).toBe('http://de.archive.ubuntu.com/ubuntu');
+    expect(repoUri('URIs: https://deb.debian.org/debian,')).toBe('https://deb.debian.org/debian');
+    expect(repoUri('deb cdrom:[Debian]/ bookworm main')).toBe('');
+  });
+});
+
+describe('HTTPS check before switching', () => {
+  const results = normaliseHttpsCheck({
+    results: [
+      { uri: 'http://de.archive.ubuntu.com/ubuntu', state: 'no_https', alternative: 'https://archive.ubuntu.com/ubuntu' },
+      { uri: 'http://security.ubuntu.com/ubuntu', state: 'ok' },
+      { uri: 'http://repo.example/apt', state: 'seltsam' },
+      { state: 'ok' },
+    ],
+  });
+
+  it('reads one result per source, unknown states count as unchecked', () => {
+    expect(results).toEqual([
+      { uri: 'http://de.archive.ubuntu.com/ubuntu', state: 'no_https', alternative: 'https://archive.ubuntu.com/ubuntu' },
+      { uri: 'http://security.ubuntu.com/ubuntu', state: 'ok', alternative: '' },
+      { uri: 'http://repo.example/apt', state: 'unknown', alternative: '' },
+    ]);
+    expect(normaliseHttpsCheck(null)).toEqual([]);
+    expect(httpsCheckMissingCerts({ results: [], missing_certificates: true })).toBe(true);
+    expect(httpsCheckMissingCerts({ results: [] })).toBe(false);
+  });
+
+  it('preselects only the sources that speak HTTPS', () => {
+    expect(initialHttpsSelection(results)).toEqual(['http://security.ubuntu.com/ubuntu']);
+  });
+
+  it('keeps the order of the check when toggling', () => {
+    const chosen = toggleHttpsSelection(results, ['http://security.ubuntu.com/ubuntu'], 'http://repo.example/apt', true);
+    expect(chosen).toEqual(['http://security.ubuntu.com/ubuntu', 'http://repo.example/apt']);
+    expect(toggleHttpsSelection(results, chosen, 'http://security.ubuntu.com/ubuntu', false)).toEqual(['http://repo.example/apt']);
+  });
+
+  it('recommends the central Ubuntu and Debian mirrors like the backend', () => {
+    expect(httpsMirrorAlternative('http://de.archive.ubuntu.com/ubuntu/')).toBe('https://archive.ubuntu.com/ubuntu');
+    expect(httpsMirrorAlternative('http://de.ports.ubuntu.com/ubuntu-ports')).toBe('https://ports.ubuntu.com/ubuntu-ports');
+    expect(httpsMirrorAlternative('http://ftp.de.debian.org/debian-ports')).toBe('');
+    expect(httpsMirrorAlternative('http://archive.debian.org/debian')).toBe('');
+    expect(httpsMirrorAlternative('http://ftp.de.debian.org/debian/')).toBe('https://deb.debian.org/debian');
+    expect(httpsMirrorAlternative('http://ftp.de.debian.org/debian')).toBe('https://deb.debian.org/debian');
+    expect(httpsMirrorAlternative('http://ftp.de.debian.org/debian-security')).toBe('https://security.debian.org/debian-security');
+    // Die gescheiterte Adresse selbst ist keine Empfehlung, und Fremdquellen kennt LCM nicht.
+    expect(httpsMirrorAlternative('http://archive.ubuntu.com/ubuntu')).toBe('');
+    expect(httpsMirrorAlternative('http://debian.org.example/debian')).toBe('');
+    expect(httpsMirrorAlternative('kaputt')).toBe('');
   });
 });
 

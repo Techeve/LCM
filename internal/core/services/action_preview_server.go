@@ -302,14 +302,17 @@ func previewSSH2FA(server *domain.Server, enable bool) (*ActionPreview, error) {
 	return p, nil
 }
 
-func previewSecureRepos(server *domain.Server) (*ActionPreview, error) {
-	script, err := planSecureRepos(server)
+func (s *ServerService) previewSecureRepos(server *domain.Server, uris []string) (*ActionPreview, error) {
+	script, targets, err := s.planSecureRepos(server, uris)
 	if err != nil {
 		return nil, err
 	}
 	p := newActionPreview(PreviewReposSecure, server)
 	p.addRoot(script)
 	p.Reversible = true
+	if len(targets) > 0 {
+		p.note("preview.repos_secure_targets", "urls", strings.Join(targets, ", "))
+	}
 	p.note("preview.repos_update_rollback")
 	p.Duration = roughDuration(10, 0, 180, 0, 0)
 	return p, nil

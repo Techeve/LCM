@@ -145,22 +145,102 @@ export interface RepoState {
   packageManager: string;
   proxmox: boolean;
   revertUrls: string[];
+  /** http-Quellen, die bei der letzten Prüfung kein HTTPS boten. */
+  unavailableUrls: string[];
   aptProxyActive: boolean;
   aptProxyUrl: string;
 }
+
+const csv = (value: unknown): string[] =>
+  text(value)
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean);
 
 export function normaliseRepoState(raw: unknown): RepoState {
   const r = isRecord(raw) ? raw : {};
   return {
     packageManager: text(r.package_manager) || 'apt',
     proxmox: text(r.proxmox_type) !== '',
-    revertUrls: text(r.https_revert_urls)
-      .split(',')
-      .map((url) => url.trim())
-      .filter(Boolean),
+    revertUrls: csv(r.https_revert_urls),
+    unavailableUrls: csv(r.https_unavailable_urls),
     aptProxyActive: r.apt_proxy_active === true,
     aptProxyUrl: text(r.apt_proxy_url),
   };
+}
+
+// ---- HTTPS-Prüfung vor der Umstellung ----
+
+/** Ergebnis je Quelle: HTTPS geht, geht nicht, oder ließ sich nicht prüfen. */
+export type HttpsState = 'ok' | 'no_https' | 'unknown';
+
+export interface HttpsCheckResult {
+  /** Die Quelle in ihrer http-Form - so geht sie auch an die Umstellung. */
+  uri: string;
+  state: HttpsState;
+  /** Spiegel derselben Distribution mit HTTPS; leer, wenn LCM keinen kennt. */
+  alternative: string;
+}
+
+const HTTPS_STATES: readonly HttpsState[] = ['ok', 'no_https', 'unknown'];
+
+/** Fehlen dem Server die Stammzertifikate, sagt die Prüfung nichts über die Spiegel. */
+export function httpsCheckMissingCerts(raw: unknown): boolean {
+  return isRecord(raw) && raw.missing_certificates === true;
+}
+
+export function normaliseHttpsCheck(raw: unknown): HttpsCheckResult[] {
+  const r = isRecord(raw) ? raw : {};
+  return records(r.results)
+    .map((x) => {
+      const state = text(x.state) as HttpsState;
+      return { uri: text(x.uri), state: HTTPS_STATES.includes(state) ? state : 'unknown', alternative: text(x.alternative) };
+    })
+    .filter((x) => x.uri !== '');
+}
+
+/** Vorausgewählt ist, was nachweislich HTTPS spricht; Ungeprüftes wählt der Anwender selbst. */
+export function initialHttpsSelection(results: HttpsCheckResult[]): string[] {
+  return results.filter((x) => x.state === 'ok').map((x) => x.uri);
+}
+
+/** Schaltet eine Quelle in der Auswahl an oder ab - die Reihenfolge der Prüfung bleibt erhalten. */
+export function toggleHttpsSelection(results: HttpsCheckResult[], chosen: string[], uri: string, on: boolean): string[] {
+  return results.map((x) => x.uri).filter((u) => (u === uri ? on : chosen.includes(u)));
+}
+
+/** Die erste http(s)-URL einer Quellen-Zeile, wie `domain.RepoURI` im Backend. */
+export function repoUri(line: string): string {
+  const field = line.split(/\s+/).find((f) => f.startsWith('http://') || f.startsWith('https://'));
+  return field ? field.replace(/[,;]+$/, '') : '';
+}
+
+/**
+ * Spiegel mit HTTPS für eine Quelle ohne, wie `domain.HTTPSMirrorAlternative` im Backend: die zentralen Adressen von
+ * Ubuntu und Debian. Die Quellenliste braucht ihn ohne frische Prüfung; leer, wenn LCM keinen kennt oder er die Quelle
+ * selbst wäre.
+ */
+export function httpsMirrorAlternative(uri: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return '';
+  }
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.replace(/\/+$/, '');
+  const within = (domain: string) => host === domain || host.endsWith(`.${domain}`);
+  let alternative = '';
+  if (within('archive.ubuntu.com')) alternative = `https://archive.ubuntu.com${path}`;
+  else if (within('ports.ubuntu.com')) alternative = `https://ports.ubuntu.com${path}`;
+  else if (host === 'security.ubuntu.com') alternative = `https://security.ubuntu.com${path}`;
+  else if (host.endsWith('.debian.org') && host !== 'archive.debian.org') {
+    // Nur das Hauptarchiv und die Sicherheitsupdates; debian-ports und abgelaufene Releases liegen woanders.
+    const under = (base: string) => path === base || path.startsWith(`${base}/`);
+    if (under('/debian-security')) alternative = 'https://security.debian.org/debian-security';
+    else if (under('/debian')) alternative = 'https://deb.debian.org/debian';
+  }
+  return alternative === `https://${uri.slice('http://'.length)}`.replace(/\/+$/, '') ? '' : alternative;
 }
 
 // ---- Apps ohne Paket ----
@@ -201,7 +281,13 @@ export const packagesApi = {
 };
 
 export const reposApi = {
-  secure: (id: number) => postOutput(`${SERVERS_URL}/${id}/repositories/secure`),
+  /** Prüft vom Server aus, welche http-Quellen HTTPS sprechen. */
+  checkHttps: async (id: number) => {
+    const raw = await api.post<unknown>(`${SERVERS_URL}/${id}/repositories/https-check`);
+    return { results: normaliseHttpsCheck(raw), missingCertificates: httpsCheckMissingCerts(raw) };
+  },
+  /** Stellt die gewählten http-Quellen auf HTTPS um; ohne Auswahl alle. */
+  secure: (id: number, uris: string[] = []) => postOutput(`${SERVERS_URL}/${id}/repositories/secure`, { uris }),
   revertHttps: (id: number) => postOutput(`${SERVERS_URL}/${id}/repositories/revert-https`, { uris: [] }),
   add: (id: number, key: string) => postOutput(`${SERVERS_URL}/${id}/repositories/add`, { key }),
   aptProxy: (id: number, enable: boolean, cacheId = 0) => postOutput(`${SERVERS_URL}/${id}/apt-proxy`, { enable, cache_id: enable ? cacheId : 0 }),

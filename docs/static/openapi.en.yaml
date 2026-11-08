@@ -6738,14 +6738,14 @@ paths:
           description: Not signed in.
         '403':
           description: No permission.
-  /api/v1/servers/{id}/repositories/secure:
+  /api/v1/servers/{id}/repositories/https-check:
     post:
       tags:
       - Servers
-      summary: Switches all http sources to https (with rollback).
-      operationId: serverCtrl_SecureRepositories
+      summary: Check which http sources speak HTTPS before switching.
+      operationId: serverCtrl_CheckRepositoriesHTTPS
       description: |-
-        Switches all http sources to https (with rollback).
+        Fetches the Release file of every unencrypted apt source over https from the server itself (apt-helper, without root, all sources at once with a short deadline). One result per source: ok, no_https (HTTPS fails) or unknown (could not be checked). For sources without HTTPS, alternative names a mirror of the same distribution that speaks HTTPS, if LCM knows one. LCM remembers the sources without HTTPS on the server (https_unavailable_urls). Synchronous.
 
         Required permission: `servers:write`.
       parameters:
@@ -6759,7 +6759,70 @@ paths:
       - apiKeyAuth: []
       responses:
         '200':
+          description: Check result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        uri:
+                          type: string
+                          description: The source in its http form.
+                        state:
+                          type: string
+                          enum:
+                          - ok
+                          - no_https
+                          - unknown
+                        alternative:
+                          type: string
+                          description: Recommended mirror with HTTPS; missing if LCM knows none.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+        '504':
+          description: The server did not finish the check in time.
+  /api/v1/servers/{id}/repositories/secure:
+    post:
+      tags:
+      - Servers
+      summary: Switches http sources to https (with rollback).
+      operationId: serverCtrl_SecureRepositories
+      description: |-
+        Switches the http sources named in uris to https, all of them without a body. Every URL must be an unencrypted source of the server (in its http form, as the check returns it), otherwise 400 server.repo_not_securable. Without a selection all http sources are switched, including those the check reported as lacking HTTPS; if one fails, everything is rolled back. Backup before the change, probe with apt-get update, everything rolled back on failure.
+
+        Required permission: `servers:write`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                uris:
+                  type: array
+                  items:
+                    type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
           description: Successful.
+        '400':
+          description: A URL is not an unencrypted source of the server.
         '401':
           description: Not signed in.
         '403':

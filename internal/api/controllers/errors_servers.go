@@ -21,6 +21,8 @@ var (
 	errNoOnboardingKey        = apierr.Define(400, "server.no_onboarding_key", "no system onboarding SSH key available")
 	errNotRevertible          = apierr.Define(400, "server.not_revertible", "this package source is not marked for reverting")
 	errNoRevertCandidates     = apierr.Define(409, "server.no_revert_candidates", "no package source to revert")
+	errRepoNotSecurable       = apierr.Define(400, "server.repo_not_securable", "this package source is not an unencrypted source of this server")
+	errHTTPSCheckTimeout      = apierr.Define(504, "server.https_check_timeout", "the server did not finish the HTTPS check in time")
 	errNotLcmHost             = apierr.Define(400, "server.not_lcm_host", "action is only available for the LCM host")
 	errLcmHostNotApt          = apierr.Define(400, "server.lcm_host_not_apt", "automatic setup works only on Debian and Ubuntu (apt)")
 	errLcmHostInContainer     = apierr.Define(400, "server.lcm_host_in_container", "LCM runs in a container, this setup is not possible here")
@@ -124,6 +126,8 @@ var serverErrors = []sentinelCode{
 	{sshx.ErrPasswordAuthUnavailable, errPasswordAuthOff},
 	{sshx.ErrPasswordRejected, errPasswordRejected},
 	{services.ErrNotRevertible, errNotRevertible},
+	{services.ErrRepoNotSecurable, errRepoNotSecurable},
+	{services.ErrHTTPSCheckTimeout, errHTTPSCheckTimeout},
 	{services.ErrNoOnboardingKey, errNoOnboardingKey},
 	{services.ErrNotLcmHost, errNotLcmHost},
 	{services.ErrLcmHostNotApt, errLcmHostNotApt},

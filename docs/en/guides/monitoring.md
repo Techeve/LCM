@@ -42,9 +42,16 @@ SSH connections; the managed servers need no agent.
   offers it on matching servers; the APT cache binding (apt-cacher-ng) applies
   to apt systems only.
 
-  Unencrypted sources can be switched to **https** in one go; if `apt-get
-  update` fails afterwards, LCM rolls the change back. The switch is
-  **reversible**: LCM keeps the backup copies of the source files under
+  Unencrypted sources can be switched to **https** with one button. First,
+  LCM checks **from the server** which sources support HTTPS: many country
+  mirrors (such as `de.archive.ubuntu.com` or `ftp.de.debian.org`) do not offer
+  HTTPS. The confirmation dialog preselects only the sources that speak HTTPS;
+  each one can be deselected or selected, and only the selected ones are
+  switched. Sources without HTTPS stay on http and carry the mark **no HTTPS**
+  in the source list, with a recommended mirror that supports HTTPS (such as
+  `https://archive.ubuntu.com/ubuntu` or `https://deb.debian.org/debian`) -
+  LCM does not swap the mirror automatically. If `apt-get update` fails after
+  the switch, LCM rolls the change back. The switch is **reversible**: LCM keeps the backup copies of the source files under
   `/var/backups/lcm-apt-https` and therefore still knows later which source
   used to be http. Reverting affects **only those** - a third-party source
   that speaks https on its own stays untouched. On servers switched before

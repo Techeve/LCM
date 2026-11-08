@@ -454,6 +454,12 @@ type Server struct {
 	// - siehe HTTPSRevertCandidates. Leer heißt: nichts zurückzustellen.
 	// column: explizit setzen - gorm trennte HTTPS sonst zu http_s_revert_urls.
 	HTTPSRevertURLs string `gorm:"column:https_revert_urls;serializer:aesgcm" json:"https_revert_urls"`
+	// HTTPSUnavailableURLs sind die http-Quellen, die bei der letzten Prüfung
+	// vor der https-Umstellung kein HTTPS boten (kommagetrennt). Sie bleiben
+	// auf http, die Oberfläche markiert sie und empfiehlt einen anderen
+	// Spiegel. Was nicht mehr als http-Quelle im Bestand steht, fällt beim
+	// nächsten Scan heraus.
+	HTTPSUnavailableURLs string `gorm:"column:https_unavailable_urls;serializer:aesgcm" json:"https_unavailable_urls"`
 
 	// DNS: von LCM gesetzte Nameserver (bis zu vier, kommagetrennt). Werden per
 	// Aktion „DNS anwenden" auf den Server geschrieben (systemd-resolved-Drop-in
