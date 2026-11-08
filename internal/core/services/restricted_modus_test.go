@@ -510,7 +510,9 @@ func TestKernelAufraeumenImEingeschraenktenModus(t *testing.T) {
 // eingeschränkten über das Helper-Unterkommando host-apt-channel. Vorher lief
 // sie dort unprivilegiert und scheiterte an /etc/apt.
 func TestPaketkanalImEingeschraenktenModus(t *testing.T) {
+	withInstalledVersion(t, "2.0.0")
 	for _, restricted := range []bool{false, true} {
+		enterprise := fakeChannelRepos(t, "2.0.0", "2.0.0", "2.0.0")
 		svc, settings, db := newSubscriptionEnvDB(t)
 		if err := db.Create(&domain.Server{Name: "lcm-host", Host: "localhost", SSHPort: 22, PackageManager: "apt", RestrictedSudo: restricted}).Error; err != nil {
 			t.Fatal(err)
@@ -521,7 +523,7 @@ func TestPaketkanalImEingeschraenktenModus(t *testing.T) {
 		}
 		if err := settings.UpdateFields(map[string]any{
 			"subscription_access_key_enc": key, "subscription_status": "active",
-			"subscription_repo_url": "https://repo.example/enterprise", "instance_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+			"subscription_repo_url": enterprise, "instance_id": "11111111-aaaa-4bbb-8ccc-000000000001",
 		}); err != nil {
 			t.Fatal(err)
 		}

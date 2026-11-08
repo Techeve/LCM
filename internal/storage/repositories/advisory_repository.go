@@ -55,13 +55,6 @@ func (r *AdvisoryRepository) Reconcile(serverID uint, source string, found []dom
 	ref := ServerRef(serverID)
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		// Erst lesen und dann schreiben scheitert in SQLite sofort, sobald ein
-		// anderer schreibt: Beim Wechsel zum Schreiben greift busy_timeout
-		// nicht. Dieser Befehl ändert nichts, holt aber die Schreibsperre
-		// gleich zu Beginn, und darauf wartet die Transaktion geordnet.
-		if err := tx.Exec("UPDATE advisory_findings SET source = source WHERE 1 = 0").Error; err != nil {
-			return err
-		}
 		var existing []domain.AdvisoryFinding
 		if err := tx.Where("server_ref = ? AND source = ?", ref, source).Find(&existing).Error; err != nil {
 			return err

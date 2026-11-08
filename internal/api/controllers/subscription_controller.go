@@ -91,6 +91,17 @@ func (ctrl *SubscriptionController) Remove(c fiber.Ctx) error {
 	return c.JSON(view)
 }
 
+// AptChannels - GET /api/v1/subscription/apt/channels (settings:manage)
+// Neueste Version je Paketkanal und ob ein Wechsel dorthin erlaubt ist. Eigener
+// Aufruf, weil er die Paketquellen abfragt und damit Sekunden dauern kann.
+func (ctrl *SubscriptionController) AptChannels(c fiber.Ctx) error {
+	view, err := ctrl.subs.ChannelVersions()
+	if err != nil {
+		return err
+	}
+	return c.JSON(view)
+}
+
 // SetAptChannel - POST /api/v1/subscription/apt (settings:manage)
 // Stellt den LCM-Host per Job auf einen Paketkanal um (channel=community,
 // beta oder enterprise). Antwortet mit dem Job - die Oberfläche verfolgt ihn

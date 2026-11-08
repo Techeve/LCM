@@ -1,5 +1,6 @@
 // Einstellungen: Allgemein, Zeit und Subscription.
 import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { speichere, speicherleiste } from './helpers';
 
 test.describe('Einstellungen: Allgemein', () => {
@@ -99,6 +100,7 @@ test.describe('Einstellungen: Subscription', () => {
   });
 
   test('die Kanalauswahl ist ohne Vertrag sichtbar, Enterprise gesperrt', async ({ page }) => {
+    await kanalStaende(page, { community: { latest: '2.0.0' }, beta: { latest: '2.0.1~beta.1' }, enterprise: { lock: 'subscription' } });
     await page.goto('/settings/subscription');
     await expect(page.getByRole('heading', { level: 2, name: 'Paketkanal des LCM-Hosts' })).toBeVisible();
     // Die Kanalauswahl hängt NICHT am Vertrag: Community und Beta sind frei.
@@ -106,5 +108,27 @@ test.describe('Einstellungen: Subscription', () => {
     await expect(page.getByRole('radio', { name: /^Beta-Kanal/ })).toBeEnabled();
     // Ohne hinterlegte Subscription bleibt allein der Enterprise-Kanal zu.
     await expect(page.getByRole('radio', { name: /^Enterprise-Kanal/ })).toBeDisabled();
+    // Jeder Kanal nennt seine neueste Version.
+    await expect(page.getByText('2.0.1-beta.1')).toBeVisible();
+  });
+
+  test('ein Kanal, der eine Feature-Version zurückliegt, ist gesperrt', async ({ page }) => {
+    // Die Demo steht auf Community; der eigene Kanal bleibt immer wählbar.
+    await kanalStaende(page, { community: { latest: '2.1.0' }, beta: { latest: '2.0.0~beta.12', lock: 'behind' }, enterprise: { lock: 'subscription' } }, '2.1.0');
+    await page.goto('/settings/subscription');
+    await expect(page.getByRole('radio', { name: /^Community-Kanal/ })).toBeEnabled();
+    await expect(page.getByRole('radio', { name: /^Beta-Kanal/ })).toBeDisabled();
+    await expect(page.getByText(/liegt hinter der installierten Version 2\.1\.0\. Wechseln geht erst, wenn er 2\.1 erreicht hat/)).toBeVisible();
   });
 });
+
+type KanalStand = { latest?: string; lock?: string };
+
+/** Die Stände der Paketkanäle kommen sonst live aus dem Repository; der Test legt sie fest. */
+async function kanalStaende(page: Page, staende: Record<'community' | 'beta' | 'enterprise', KanalStand>, installed = '2.0.0'): Promise<void> {
+  await page.route('**/api/v1/subscription/apt/channels', (route) =>
+    route.fulfill({
+      json: { installed, channels: Object.entries(staende).map(([channel, stand]) => ({ channel, latest: stand.latest ?? '', lock: stand.lock ?? '' })) },
+    }),
+  );
+}

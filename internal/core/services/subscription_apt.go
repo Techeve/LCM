@@ -387,6 +387,9 @@ func (s *SubscriptionService) SetAptChannel(channel, actor string) (*domain.Job,
 	if err != nil {
 		return nil, err
 	}
+	if err := s.checkChannelSwitch(settings, channel); err != nil {
+		return nil, err
+	}
 
 	var name, script string
 	switch channel {

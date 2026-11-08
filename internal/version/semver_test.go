@@ -50,3 +50,24 @@ func TestZehnteBetaIstNeuerAlsDieNeunte(t *testing.T) {
 		}
 	}
 }
+
+func TestFeatureBehindZaehltNurMajorUndFeature(t *testing.T) {
+	cases := []struct {
+		target, installed string
+		want              bool
+	}{
+		{"1.48.1", "2.0.0~beta.12", true},
+		{"1.48.1", "1.49.0", true},
+		{"2.0.0", "2.0.1-beta.1", false},
+		{"2.0.0~beta.11", "2.0.0-beta.12", false},
+		{"2.0.0~beta.12", "1.48.1", false},
+		{"3.0.0", "2.9.9", false},
+		// Entwicklungsbuild: liegt nie vorn, jeder Wechsel bleibt frei.
+		{"1.48.1", "0.0.0-dev", false},
+	}
+	for _, c := range cases {
+		if got := FeatureBehind(c.target, c.installed); got != c.want {
+			t.Errorf("FeatureBehind(%q, %q) = %v, erwartet %v", c.target, c.installed, got, c.want)
+		}
+	}
+}

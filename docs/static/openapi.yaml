@@ -8317,7 +8317,50 @@ paths:
         '403':
           description: Keine Berechtigung.
         '409':
-          description: Auf dem LCM-Host läuft bereits ein Job.
+          description: Auf dem LCM-Host läuft bereits ein Job, oder der Zielkanal liegt bei Major- oder Feature-Nummer hinter der installierten Version (`subscription.channel_behind`) oder sein Stand nicht abrufbar ist (`subscription.channel_unknown`).
+  /api/v1/subscription/apt/channels:
+    get:
+      tags:
+      - Einstellungen
+      summary: Neueste LCM-Version je Paketkanal und ob ein Wechsel dorthin erlaubt ist.
+      operationId: subCtrl_AptChannels
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: 'Fragt die Paketquellen aller drei Kanäle ab (Enterprise nur mit aktiver
+        Subscription). `lock` nennt den Grund einer Sperre: `behind` (der Kanal liegt bei
+        Major- oder Feature-Nummer hinter der installierten Version, ein Patch-Rückstand
+        zählt nicht), `unknown` (Stand nicht abrufbar) oder `subscription`. Der aktive Kanal
+        ist nie gesperrt. Benötigte Berechtigung: `settings:manage`.'
+      responses:
+        '200':
+          description: Installierte Version und Stand je Kanal.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  installed:
+                    type: string
+                  channels:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        channel:
+                          type: string
+                          enum: [community, beta, enterprise]
+                        latest:
+                          type: string
+                        error:
+                          type: string
+                        lock:
+                          type: string
+                          enum: [behind, unknown, subscription]
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/subscription/verify:
     post:
       tags:

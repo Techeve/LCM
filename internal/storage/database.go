@@ -26,7 +26,14 @@ func Open(path string) (*gorm.DB, error) {
 		dsn = ":memory:?_pragma=foreign_keys(1)"
 	} else {
 		// WAL + busy_timeout für stabilen Betrieb bei parallelen Requests.
-		dsn = fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
+		//
+		// _txlock=immediate: Jede Transaktion holt die Schreibsperre gleich
+		// zu Beginn. Die Repositories lesen fast immer erst und schreiben
+		// dann; in einer verzögerten Transaktion scheitert dieser Wechsel
+		// sofort mit „database is locked", sobald ein anderer schreibt, denn
+		// busy_timeout greift dort nicht. Am Anfang wartet die Transaktion
+		// dagegen geordnet. Leser ohne Transaktion bleiben davon unberührt.
+		dsn = fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate", path)
 	}
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		// ErrRecordNotFound ist bei uns ein normaler Fall (Repositories

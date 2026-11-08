@@ -13,7 +13,7 @@ import '../../components/lcm-status';
 import { toast } from '../../components/lcm-toaster';
 import type { Impact } from '../../components/lcm-dialog';
 import { baseStyles } from '../../components/shared';
-import { APT_CHANNELS, SUBSCRIPTION_URL, enterpriseAllowed, readSubscription, settingsApi, type AptChannel, type Subscription } from '../../api/settings';
+import { APT_CHANNELS, APT_CHANNELS_URL, SUBSCRIPTION_URL, enterpriseAllowed, readAptChannels, readSubscription, settingsApi, type AptChannel, type AptChannels, type ChannelInfo, type Subscription } from '../../api/settings';
 import { I18nController } from '../../lib/controllers';
 import { formatDateTime } from '../../lib/format';
 import { errorText, t } from '../../lib/i18n';
@@ -25,7 +25,7 @@ import './system/copy-field';
 import { helpLabels } from './system/help';
 import { watchJob } from '../../lib/job-watch';
 import { settingsStyles } from './system/settings-styles';
-import { subscriptionState } from './system/subscription-model';
+import { displayVersion, featureLabel, returnBlocked, subscriptionState } from './system/subscription-model';
 
 type Confirm = { kind: 'remove' } | { kind: 'channel'; channel: AptChannel };
 
@@ -84,8 +84,11 @@ export class SettingsSubscription extends LitElement {
         box-shadow: inset 0 0 0 2px var(--accent);
       }
       .choice.locked {
-        opacity: 0.55;
         cursor: not-allowed;
+      }
+      /* Die Begründung bleibt voll lesbar, nur der Kanal selbst tritt zurück. */
+      .choice.locked :is(input, .name, .hint:not(.why)) {
+        opacity: 0.55;
       }
       .choice:focus-within {
         outline: 2px solid var(--focus-ring);
@@ -108,6 +111,9 @@ export class SettingsSubscription extends LitElement {
         color: var(--text-2);
         font-size: var(--fs-s);
       }
+      .choice .why {
+        color: var(--warn-text);
+      }
     `,
   ];
 
@@ -120,6 +126,8 @@ export class SettingsSubscription extends LitElement {
   declare _error: string;
 
   readonly #data = new LiveData<Subscription>(this, { url: () => SUBSCRIPTION_URL, transform: readSubscription });
+  /** Stand der Kanäle: eigener Abruf, weil er die Paketquellen fragt und Sekunden dauern kann. */
+  readonly #channelData = new LiveData<AptChannels>(this, { url: () => (this.#data.data?.aptAvailable ? APT_CHANNELS_URL : null), transform: readAptChannels });
   #stopWatching: Array<() => void> = [];
 
   constructor() {
@@ -211,6 +219,8 @@ export class SettingsSubscription extends LitElement {
           if (status === 'success') toast({ tone: 'ok', title: t('settings.subscription.apt.done', { what: label }), background: true, ...jobLink(jobId) });
           else toast({ tone: 'crit', title: t('settings.subscription.apt.failed', { what: label }), message: t('settings.subscription.apt.failedHint'), ...jobLink(jobId) });
           this._picked = undefined;
+          // Der gespeicherte Kanal wechselt erst mit dem fertigen Job, und mit ihm die Sperren.
+          this.#channelData.reload();
         }),
       );
     });
@@ -319,26 +329,56 @@ export class SettingsSubscription extends LitElement {
     </lcm-card>`;
   }
 
+  #channelInfo(channel: AptChannel): ChannelInfo | undefined {
+    return this.#channelData.data?.channels.find((c) => c.channel === channel);
+  }
+
+  /** Neueste Version des Kanals als kleine Marke; ohne Stand nichts. */
+  #versionBadge(channel: AptChannel) {
+    const latest = this.#channelInfo(channel)?.latest;
+    return latest ? html`<lcm-badge>${displayVersion(latest)}</lcm-badge>` : nothing;
+  }
+
+  /** Warum der Kanal nicht wählbar ist; die fehlende Subscription steht schon unter der Liste. */
+  #lockReason(channel: AptChannel) {
+    const info = this.#channelInfo(channel);
+    if (info?.lock === 'behind') {
+      const installed = this.#channelData.data?.installed ?? '';
+      return html`<span class="hint why">${t('settings.subscription.apt.lock.behind', { installed: displayVersion(installed), feature: featureLabel(installed) })}</span>`;
+    }
+    if (info?.lock === 'unknown') return html`<span class="hint why">${t('settings.subscription.apt.lock.unknown')}</span>`;
+    return nothing;
+  }
+
+  #locked(channel: AptChannel, enterpriseOk: boolean): boolean {
+    const lock = this.#channelInfo(channel)?.lock;
+    return (channel === 'enterprise' && !enterpriseOk) || lock === 'behind' || lock === 'unknown';
+  }
+
   #channels(subscription: Subscription) {
     const allowed = enterpriseAllowed(subscription);
     const picked = this.#picked;
     const same = picked === subscription.aptChannel;
+    // Ohne bekannte Stände bleibt jeder Wechsel zu, wie im Backend; neu anwenden geht immer.
+    const pickedLocked = !same && (!this.#channelData.data || this.#locked(picked, allowed));
     return html`<lcm-card level="2" heading=${t('settings.subscription.apt.title')} subtitle=${t('settings.subscription.apt.subtitle')}>
       ${subscription.aptAvailable
         ? html`<div class="fields">
             <fieldset class="choices" role="radiogroup" aria-label=${t('settings.subscription.apt.title')}>
               ${APT_CHANNELS.map((channel) => {
-                const locked = channel === 'enterprise' && !allowed;
+                const locked = channel !== subscription.aptChannel && this.#locked(channel, allowed);
                 return html`<label class=${`choice${picked === channel ? ' selected' : ''}${locked ? ' locked' : ''}`}>
                   <input type="radio" name="channel" .checked=${picked === channel} ?disabled=${this._busy || locked} @change=${() => (this._picked = channel)} />
                   <span>
-                    <span class="name">${t(CHANNEL_TEXT[channel].label)}${channel === subscription.aptChannel ? html`<lcm-badge tone="ok">${t('settings.subscription.apt.active')}</lcm-badge>` : nothing}</span>
+                    <span class="name">${t(CHANNEL_TEXT[channel].label)}${this.#versionBadge(channel)}${channel === subscription.aptChannel ? html`<lcm-badge tone="ok">${t('settings.subscription.apt.active')}</lcm-badge>` : nothing}</span>
                     <span class="hint">${t(CHANNEL_TEXT[channel].hint)}</span>
+                    ${this.#lockReason(channel)}
                   </span>
                 </label>`;
               })}
             </fieldset>
             ${allowed ? nothing : html`<p class="muted">${subscription.configured ? t('settings.subscription.apt.needsActive') : t('settings.subscription.apt.needsContract')}</p>`}
+            ${this.#channelData.data ? nothing : html`<p class="muted">${this.#channelData.error ? t('settings.subscription.apt.versionsFailed') : t('settings.subscription.apt.versionsLoading')}</p>`}
             <div class="row">
               <lcm-server-action
                 label=${same ? t('settings.subscription.apt.reapply') : t('settings.subscription.apt.apply', { channel: t(CHANNEL_TEXT[picked].label) })}
@@ -348,7 +388,7 @@ export class SettingsSubscription extends LitElement {
                 meaning=${t('settings.subscription.apt.meaning')}
                 .labels=${helpLabels()}
                 ?busy=${this._busy}
-                ?disabled=${picked === 'enterprise' && !allowed}
+                ?disabled=${pickedLocked}
                 @click=${() => this.#askChannel(picked)}
               ></lcm-server-action>
             </div>
@@ -386,12 +426,17 @@ export class SettingsSubscription extends LitElement {
       ></lcm-dialog>`;
     }
     if (confirm?.kind === 'channel') {
+      const channel = confirm.channel;
+      const active = subscription.aptChannel;
+      const oneWay = returnBlocked(this.#channelData.data, active, channel);
+      const targetLatest = this.#channelInfo(channel)?.latest ?? '';
       const impacts: Impact[] = [
         { label: t('settings.subscription.apt.impactTarget'), value: t('settings.subscription.apt.impactTargetValue') },
         { label: t('settings.subscription.apt.impactDowntime'), value: t('settings.subscription.apt.impactDowntimeValue'), tone: 'ok' },
-        { label: t('settings.subscription.apt.impactReversible'), value: t('settings.subscription.apt.impactReversibleValue'), tone: 'ok' },
+        oneWay
+          ? { label: t('settings.subscription.apt.impactReversible'), value: t('settings.subscription.apt.impactOneWay', { channel: t(CHANNEL_TEXT[active].label), feature: featureLabel(targetLatest) }), tone: 'warn' }
+          : { label: t('settings.subscription.apt.impactReversible'), value: t('settings.subscription.apt.impactReversibleValue'), tone: 'ok' },
       ];
-      const channel = confirm.channel;
       return html`<lcm-dialog
         open
         heading=${t('settings.subscription.apt.confirmTitle', { channel: t(CHANNEL_TEXT[channel].label) })}

@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.0.0-beta.12 - 2026-11-08
+
+### 🐛 Bugfixes
+
+- **db**: Gleichzeitige Schreibvorgänge warten aufeinander statt mit „database is locked“ abzubrechen (09bb2a3c)
+- **subscription**: Kein Wechsel auf einen Paketkanal, der eine Feature-Version zurückliegt (45109883)
+
 ## v2.0.0-beta.11 - 2026-11-07
 
 ### 🐛 Bugfixes

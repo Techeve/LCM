@@ -8083,7 +8083,50 @@ paths:
         '403':
           description: No permission.
         '409':
-          description: A job is already running on the LCM host.
+          description: A job is already running on the LCM host, or the target channel is behind the installed version in its major or feature number (`subscription.channel_behind`) or its state cannot be retrieved (`subscription.channel_unknown`).
+  /api/v1/subscription/apt/channels:
+    get:
+      tags:
+      - Settings
+      summary: Latest LCM version per package channel and whether switching to it is allowed.
+      operationId: subCtrl_AptChannels
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: 'Queries the package sources of all three channels (enterprise only with
+        an active subscription). `lock` names the reason for a lock: `behind` (the channel
+        is behind the installed version in its major or feature number; a patch gap does
+        not count), `unknown` (state cannot be retrieved) or `subscription`. The active
+        channel is never locked. Required permission: `settings:manage`.'
+      responses:
+        '200':
+          description: Installed version and state per channel.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  installed:
+                    type: string
+                  channels:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        channel:
+                          type: string
+                          enum: [community, beta, enterprise]
+                        latest:
+                          type: string
+                        error:
+                          type: string
+                        lock:
+                          type: string
+                          enum: [behind, unknown, subscription]
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
   /api/v1/subscription/verify:
     post:
       tags:

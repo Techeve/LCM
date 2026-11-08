@@ -652,7 +652,14 @@
         "started": "{what} is running",
         "done": "{what}: done",
         "failed": "{what}: failed",
-        "failedHint": "Details are in the job log."
+        "failedHint": "Details are in the job log.",
+        "lock": {
+          "behind": "Locked: this channel is behind the installed version {installed}. Switching is possible once it reaches {feature}.",
+          "unknown": "Locked while the state of this channel cannot be retrieved."
+        },
+        "versionsLoading": "Fetching the latest versions of the channels …",
+        "versionsFailed": "The channel versions cannot be retrieved. Switching stays locked until they can.",
+        "impactOneWay": "Only once the {channel} reaches {feature}"
       },
       "instance": {
         "title": "Instance ID",
@@ -2035,7 +2042,9 @@
       "channel_switch_failed": "The package channel could not be switched: {detail}",
       "invalid_service_url": "Invalid service address: {detail}",
       "none": "No subscription is stored",
-      "unknown_channel": "Unknown package channel – allowed: community, beta, enterprise"
+      "unknown_channel": "Unknown package channel – allowed: community, beta, enterprise",
+      "channel_behind": "The package channel is behind the installed version, switching to it is locked",
+      "channel_unknown": "The state of the package channel cannot be retrieved, switching to it is locked"
     },
     "terminal": {
       "disabled": "The web console is disabled",

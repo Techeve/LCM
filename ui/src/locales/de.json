@@ -652,7 +652,14 @@
         "started": "{what} läuft",
         "done": "{what}: fertig",
         "failed": "{what}: fehlgeschlagen",
-        "failedHint": "Details stehen im Job-Protokoll."
+        "failedHint": "Details stehen im Job-Protokoll.",
+        "lock": {
+          "behind": "Gesperrt: Der Kanal liegt hinter der installierten Version {installed}. Wechseln geht erst, wenn er {feature} erreicht hat.",
+          "unknown": "Gesperrt, solange der Stand des Kanals nicht abrufbar ist."
+        },
+        "versionsLoading": "Die neuesten Versionen der Kanäle werden abgefragt …",
+        "versionsFailed": "Die Versionen der Kanäle sind nicht abrufbar. Wechsel bleiben gesperrt, bis sie es wieder sind.",
+        "impactOneWay": "Erst wieder, wenn der {channel} {feature} erreicht hat"
       },
       "instance": {
         "title": "Instanz-Kennung",
@@ -2035,7 +2042,9 @@
       "channel_switch_failed": "Der Paketkanal ließ sich nicht umstellen: {detail}",
       "invalid_service_url": "Ungültige Dienst-Adresse: {detail}",
       "none": "Es ist keine Subscription hinterlegt",
-      "unknown_channel": "Unbekannter Paketkanal – erlaubt sind community, beta und enterprise"
+      "unknown_channel": "Unbekannter Paketkanal – erlaubt sind community, beta und enterprise",
+      "channel_behind": "Der Paketkanal liegt hinter der installierten Version, ein Wechsel dorthin ist gesperrt",
+      "channel_unknown": "Der Stand des Paketkanals ist nicht abrufbar, ein Wechsel dorthin ist gesperrt"
     },
     "terminal": {
       "disabled": "Die Web-Konsole ist abgeschaltet",

@@ -124,6 +124,38 @@ export function readSubscription(raw: unknown): Subscription {
   };
 }
 
+/** Warum ein Wechsel auf den Kanal gesperrt ist; leer heißt frei. */
+export type ChannelLock = '' | 'behind' | 'unknown' | 'subscription';
+
+export interface ChannelInfo {
+  channel: AptChannel;
+  /** Neueste LCM-Version im Kanal, leer wenn unbekannt. */
+  latest: string;
+  error: string;
+  lock: ChannelLock;
+}
+
+export interface AptChannels {
+  installed: string;
+  channels: ChannelInfo[];
+}
+
+export const APT_CHANNELS_URL = `${SUBSCRIPTION_URL}/apt/channels`;
+
+const CHANNEL_LOCKS: ChannelLock[] = ['behind', 'unknown', 'subscription'];
+
+export function readAptChannels(raw: unknown): AptChannels {
+  const r = isRecord(raw) ? raw : {};
+  const channels: ChannelInfo[] = [];
+  for (const entry of Array.isArray(r.channels) ? r.channels : []) {
+    if (!isRecord(entry)) continue;
+    const channel = APT_CHANNELS.find((c) => c === entry.channel);
+    if (!channel) continue;
+    channels.push({ channel, latest: text(entry.latest), error: text(entry.error), lock: CHANNEL_LOCKS.find((l) => l === entry.lock) ?? '' });
+  }
+  return { installed: text(r.installed), channels };
+}
+
 /** Gilt der Vertrag und erlaubt damit den Enterprise-Paketkanal? */
 export function enterpriseAllowed(subscription: Subscription): boolean {
   return subscription.configured && subscription.status === 'active';

@@ -651,6 +651,7 @@ func New(deps Deps) *fiber.App {
 		api.Get("/subscription", middlewares.RequirePermission(domain.PermSettingsManage), subCtrl.Status)
 		api.Post("/subscription/activate", middlewares.RequirePermission(domain.PermSettingsManage), subCtrl.Activate)
 		api.Post("/subscription/verify", middlewares.RequirePermission(domain.PermSettingsManage), subCtrl.Verify)
+		api.Get("/subscription/apt/channels", middlewares.RequirePermission(domain.PermSettingsManage), subCtrl.AptChannels)
 		api.Post("/subscription/apt", middlewares.RequirePermission(domain.PermSettingsManage), subCtrl.SetAptChannel)
 		api.Delete("/subscription", middlewares.RequirePermission(domain.PermSettingsManage), subCtrl.Remove)
 	}

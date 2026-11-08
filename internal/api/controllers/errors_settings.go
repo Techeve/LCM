@@ -63,6 +63,8 @@ var (
 	errUnknownAptChannel  = apierr.Define(400, "subscription.unknown_channel", "unknown package channel, allowed: community, beta, enterprise")
 	errAptSwitchOff       = apierr.Define(400, "subscription.apt_switch_unavailable", "the apt switch is not available, the LCM host is not registered as an apt server")
 	errChannelSwitchFails = apierr.Define(400, "subscription.channel_switch_failed", "the package channel could not be switched")
+	errChannelBehind      = apierr.Define(409, "subscription.channel_behind", "the package channel is behind the installed version")
+	errChannelUnknown     = apierr.Define(409, "subscription.channel_unknown", "the state of the package channel cannot be retrieved")
 	errAdvisoryOff        = apierr.Define(409, "advisory.disabled", "the early warning is not enabled")
 	errAdvisoryNoMirror   = apierr.Define(409, "advisory.no_local_copy", "no local copy is configured")
 	errAdvisoryNotFound   = apierr.Define(404, "advisory.not_found", "finding not found")
@@ -83,5 +85,7 @@ var subscriptionChannelErrors = []sentinelCode{
 	{services.ErrNoSubscription, errNoSubscription},
 	{services.ErrUnknownAptChannel, errUnknownAptChannel},
 	{services.ErrAptSwitchUnavailable, errAptSwitchOff},
+	{services.ErrChannelBehind, errChannelBehind},
+	{services.ErrChannelUnknown, errChannelUnknown},
 	{services.ErrServerBusy, errServerBusy},
 }
