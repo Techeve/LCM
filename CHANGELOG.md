@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.0-beta.15 - 2026-11-08
+
+### 🔧 Sonstiges
+
+- **release**: Text für LCM 2.0 nennt die Neuerungen und Korrekturen aus den Betas (03980db0)
+
 ## v2.0.0-beta.14 - 2026-11-08
 
 ### 🚀 Features
