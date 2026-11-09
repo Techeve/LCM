@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"LCM/internal/dbmetrics"
+	"LCM/internal/probe/host"
 	"LCM/internal/probe/journal"
 )
 
@@ -119,7 +120,7 @@ func TestHTMLBerichtIstEineDateiOhneNetz(t *testing.T) {
 		t.Errorf("Punkte %d, Lücken %d, Läufe %d, ohne LCM %d", len(p.Host.X), len(p.Gaps), len(p.Ops), len(p.Outages))
 	}
 	// Die Linie bricht an der Lücke ab, statt sie zu überbrücken.
-	ioSome := p.Host.Series["io_some"].([]any)
+	ioSome := p.Host.Series["io_some"]
 	nulls := 0
 	for _, v := range ioSome {
 		if v == nil {
@@ -207,5 +208,70 @@ func TestSnapshotPasstZuDbmetrics(t *testing.T) {
 		got.Errors.Busy != 2 || got.Operations[0].Kind != "vacuum" || got.TableRows.Tables["jobs"] != 9 ||
 		got.File.FreelistCount != 2 || got.RowsWritten != 11 {
 		t.Errorf("Felder gehen verloren: %+v", got)
+	}
+}
+
+// Am 08.11.2026 um 20:35 zog lcm-prod auf einen anderen Host um und war nach
+// neun Sekunden wieder da. Die Lücke liegt unter der Schwelle, der Umzug
+// gehört trotzdem in den Bericht.
+func TestKurzerUmzugDesContainers(t *testing.T) {
+	at := time.Date(2026, 11, 8, 20, 35, 17, 0, time.Local)
+	head := func(typ string, wall time.Time, mono int64) journal.Head {
+		return journal.Head{Type: typ, Wall: wall.UnixMilli(), Mono: mono}
+	}
+	d := &Data{
+		Starts: []journal.StartLine{
+			{Head: head(journal.TypeStart, at.Add(-time.Hour), 1000), BootID: "alt"},
+			{Head: head(journal.TypeStart, at.Add(9*time.Second), 500), BootID: "neu"},
+		},
+		Stops:   []journal.StopLine{{Head: head(journal.TypeStop, at.Add(time.Second/2), 3601500)}},
+		Sources: []journal.SourcesLine{{Head: head(journal.TypeSources, at.Add(9*time.Second), 501), Sources: host.Sources{Container: true}}},
+		Hosts: []journal.HostLine{
+			{Head: head(journal.TypeHost, at, 3601000)},
+			{Head: head(journal.TypeHost, at.Add(9*time.Second), 550)},
+		},
+	}
+	gaps, _ := findGaps(d, 2*time.Second)
+	if len(gaps) != 1 || gaps[0].Kind != "Container neu gestartet, Host neu gestartet oder gewechselt" {
+		t.Fatalf("Lücken %+v", gaps)
+	}
+}
+
+// Auf lcm-prod begannen die Momentaufnahmen drei Stunden nach den
+// Hostwerten. Alle Diagramme zeigen trotzdem den ganzen Zeitraum.
+func TestDiagrammeZeigenDenGanzenZeitraum(t *testing.T) {
+	from := time.Date(2026, 11, 8, 15, 31, 0, 0, time.Local)
+	to := from.Add(16 * time.Hour)
+	c := chartData{X: []float64{float64(from.Add(3 * time.Hour).Unix())}, Series: map[string][]any{"db": {1.5}}}
+	c = spanRange(c, from, to)
+	if len(c.X) != 3 || c.X[0] != float64(from.Unix()) || c.X[2] != float64(to.Unix()) {
+		t.Fatalf("Zeitachse %v", c.X)
+	}
+	if got := c.Series["db"]; len(got) != 3 || got[0] != nil || got[1] != 1.5 || got[2] != nil {
+		t.Errorf("Werte %v", got)
+	}
+}
+
+func TestKurzeLaeufeNurGezaehlt(t *testing.T) {
+	at := time.Date(2026, 11, 9, 3, 0, 0, 0, time.Local)
+	r := &Report{Operations: []operation{
+		{Kind: "job", Name: "Alarm-Auswertung", Started: at, DurationMS: 20},
+		{Kind: "job", Name: "Alarm-Auswertung", Started: at.Add(30 * time.Minute), DurationMS: 25},
+		{Kind: "job", Name: "Log-Bereinigung", Started: at.Add(30 * time.Minute), DurationMS: 1800, RowsWritten: 2960},
+		{Kind: "job", Name: "Anwendungs-Check", Started: at.Add(time.Hour), DurationMS: 5, Error: "exit 1"},
+	}}
+	var buf bytes.Buffer
+	(&textWriter{w: &buf}).operations(r)
+	out := buf.String()
+	for _, want := range []string{"Log-Bereinigung", "Anwendungs-Check", "dazu unter einer Sekunde: Alarm-Auswertung 2-mal"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q fehlt in\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "Alarm-Auswertung") != 1 {
+		t.Errorf("kurze Läufe einzeln aufgeführt:\n%s", out)
+	}
+	if got := len(opBands(r.Operations)); got != 2 {
+		t.Errorf("%d Läufe markiert, erwartet 2", got)
 	}
 }

@@ -65,7 +65,8 @@ its own.
 
 **Where:** one file per day under `/var/lib/lcm-probe/`, one JSON line per
 measurement, `fdatasync` after every line. Finished days are compressed and
-deleted after 90 days. The files can be copied at any time.
+deleted after 90 days. A compressed day takes about 3 MB, so 90 days take
+about 300 MB. The files can be copied at any time.
 
 **Container or VM:** inside LXC not every source reports the container's
 values. `lcm-probe check` shows where each value comes from:

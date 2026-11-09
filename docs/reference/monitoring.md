@@ -66,7 +66,8 @@ steht das als eigene Zeile da.
 
 **Wohin:** eine Datei je Tag unter `/var/lib/lcm-probe/`, eine Zeile JSON je
 Messung, nach jeder Zeile `fdatasync`. Fertige Tage werden gepackt, nach 90
-Tagen gelöscht. Die Dateien lassen sich jederzeit kopieren.
+Tagen gelöscht. Ein Tag braucht gepackt rund 3 MB, 90 Tage also rund 300 MB.
+Die Dateien lassen sich jederzeit kopieren.
 
 **Container oder VM:** Im LXC liefern nicht alle Quellen Werte des Containers.
 `lcm-probe check` zeigt, woher jeder Wert kommt:

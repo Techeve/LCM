@@ -76,6 +76,12 @@ type operation struct {
 	Error       string    `json:"error"`
 }
 
+// shortRun ist die Dauer, unter der ein Lauf ohne Fehler nur gezählt wird.
+const shortRun = time.Second
+
+// short sagt, ob der Lauf kurz und fehlerfrei war.
+func (o operation) short() bool { return ms(o.DurationMS) < shortRun && o.Error == "" }
+
 // end ist das Ende des Laufs.
 func (o operation) end() time.Time {
 	return o.Started.Add(time.Duration(o.DurationMS * float64(time.Millisecond)))

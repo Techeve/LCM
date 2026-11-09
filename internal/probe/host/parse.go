@@ -61,7 +61,7 @@ func parseIOStat(text string) map[string]ioCounters {
 }
 
 // cpuTicks ist die Summenzeile aus /proc/stat.
-type cpuTicks struct{ user, system, idle, iowait, steal, total uint64 }
+type cpuTicks struct{ user, system, idle, iowait, steal uint64 }
 
 func parseCPU(text string) (cpuTicks, bool) {
 	line, _, _ := strings.Cut(text, "\n")
@@ -71,11 +71,9 @@ func parseCPU(text string) (cpuTicks, bool) {
 	}
 	n := func(i int) uint64 { v, _ := strconv.ParseUint(f[i], 10, 64); return v }
 	// user nice system idle iowait irq softirq steal; guest steckt in user.
-	t := cpuTicks{
+	return cpuTicks{
 		user: n(1) + n(2), system: n(3) + n(6) + n(7), idle: n(4), iowait: n(5), steal: n(8),
-	}
-	t.total = t.user + t.system + t.idle + t.iowait + t.steal
-	return t, true
+	}, true
 }
 
 // psiTotals liest die total-Werte (Mikrosekunden) aus einer pressure-Datei.

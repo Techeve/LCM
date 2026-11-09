@@ -20,15 +20,15 @@ type column struct {
 
 // chartData ist eine Gruppe von Zeitreihen auf einer Zeitachse (Sekunden).
 type chartData struct {
-	X      []float64      `json:"x"`
-	Series map[string]any `json:"series"`
+	X      []float64        `json:"x"`
+	Series map[string][]any `json:"series"`
 }
 
 // downsample fasst Punkte in Zeitscheiben zusammen. Liegen zwei Punkte
 // weiter als gap auseinander, folgt ein leerer Punkt: Die Linie bricht dort
 // ab, statt die Lücke zu überbrücken.
 func downsample(ts []int64, cols []column, gap time.Duration) chartData {
-	out := chartData{Series: map[string]any{}}
+	out := chartData{Series: map[string][]any{}}
 	if len(ts) == 0 {
 		return out
 	}
@@ -73,6 +73,29 @@ func downsample(ts []int64, cols []column, gap time.Duration) chartData {
 		out.Series[c.name] = nullable(acc[j])
 	}
 	return out
+}
+
+// spanRange setzt leere Punkte an Anfang und Ende des Berichts. So zeigen
+// alle Diagramme denselben Zeitraum, auch wenn die Momentaufnahmen erst
+// später beginnen als die Hostwerte.
+func spanRange(c chartData, from, to time.Time) chartData {
+	if len(c.X) == 0 {
+		return c
+	}
+	start, end := float64(from.UnixMilli())/1000, float64(to.UnixMilli())/1000
+	if c.X[0] > start {
+		c.X = append([]float64{start}, c.X...)
+		for name, vals := range c.Series {
+			c.Series[name] = append([]any{nil}, vals...)
+		}
+	}
+	if c.X[len(c.X)-1] < end {
+		c.X = append(c.X, end)
+		for name, vals := range c.Series {
+			c.Series[name] = append(vals, nil)
+		}
+	}
+	return c
 }
 
 // combine nimmt einen Wert in das Aggregat auf: das Maximum der Scheibe,

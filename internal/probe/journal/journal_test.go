@@ -157,3 +157,41 @@ func jsonOf(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestMomentaufnahmeNurGeaenderteAnweisungen(t *testing.T) {
+	var c Compactor
+	var e Expander
+	snaps := []string{
+		`{"started_at":"a","statements":[{"table":"jobs","kind":"SELECT","count":1},{"table":"servers","kind":"UPDATE","count":4}]}`,
+		`{"started_at":"a","statements":[{"table":"jobs","kind":"SELECT","count":2},{"table":"servers","kind":"UPDATE","count":4}]}`,
+		`{"started_at":"a","statements":[{"table":"api_keys","kind":"UPDATE","count":1},{"table":"jobs","kind":"SELECT","count":2},{"table":"servers","kind":"UPDATE","count":4}]}`,
+		`{"started_at":"a","statements":[{"table":"api_keys","kind":"UPDATE","count":1},{"table":"jobs","kind":"SELECT","count":2},{"table":"servers","kind":"UPDATE","count":4}]}`,
+		`{"started_at":"a","statements":[{"table":"jobs","kind":"SELECT","count":3}]}`,
+	}
+	wantCompact := []string{
+		`{"started_at":"a","statements":[{"table":"jobs","kind":"SELECT","count":1},{"table":"servers","kind":"UPDATE","count":4}]}`,
+		`{"started_at":"a","statements_changed":[{"table":"jobs","kind":"SELECT","count":2}]}`,
+		`{"started_at":"a","statements_changed":[{"table":"api_keys","kind":"UPDATE","count":1}]}`,
+		`{"started_at":"a"}`,
+		`{"started_at":"a","statements":[{"table":"jobs","kind":"SELECT","count":3}]}`,
+	}
+	for i, s := range snaps {
+		compact, err := c.Compact([]byte(s))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(compact) != wantCompact[i] {
+			t.Errorf("%d: %s, erwartet %s", i, compact, wantCompact[i])
+		}
+		full, err := e.Expand(compact)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var a, b map[string]any
+		json.Unmarshal(full, &a)
+		json.Unmarshal([]byte(s), &b)
+		if jsonOf(a) != jsonOf(b) {
+			t.Errorf("%d: wiederhergestellt %s, erwartet %s", i, full, s)
+		}
+	}
+}

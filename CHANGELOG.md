@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.0.0-beta.17 - 2026-11-09
+
+### 🐛 Bugfixes
+
+- **probe**: Der Bericht von lcm-probe nennt auch einen Umzug des Containers auf einen anderen Host, der nur Sekunden dauert (0abacb84)
+- **probe**: Die CPU-Anteile im Container stimmen in lcm-probe, zusammen nie mehr über 100 % (60e3536b)
+- **probe**: Die Diagramme im HTML-Bericht von lcm-probe zeigen den ganzen Zeitraum, kurze Läufe wie die Alarm-Auswertung stehen nur noch als Zahl darin (d4bed69d)
+
+### ⚡ Performance
+
+- **probe**: Ein Tag braucht in lcm-probe gepackt rund 3 statt 9 MB (579b3867)
+
+### 🔧 Sonstiges
+
+- **plan**: erster Tageslauf auf lcm-prod und CT 120 (ea024edb)
+- **renovate**: CI-Images, indirekte Go-Abhängigkeiten und Go-Toolchain erfassen (4d618c79)
+
 ## v2.0.0-beta.16 - 2026-11-08
 
 ### 🚀 Features

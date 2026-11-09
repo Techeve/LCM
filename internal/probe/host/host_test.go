@@ -144,3 +144,20 @@ func diskLine(d diskCounters, writes, sectors, ms uint64) string {
 }
 
 func itoa(v uint64) string { return strconv.FormatUint(v, 10) }
+
+// Am 08.11.2026 um 20:32:09 lief auf lcm-prod die Summe von user und system
+// unter lxcfs rückwärts; der Bericht zeigte danach iowait 457 %.
+func TestCPUAnteileBeiRueckwaertsZaehler(t *testing.T) {
+	a := cpuTicks{user: 5000, system: 3000, idle: 90000, iowait: 100}
+	b := cpuTicks{user: 4000, system: 2500, idle: 90200, iowait: 300}
+	cpu := cpuShares(a, b)
+	if cpu == nil {
+		t.Fatal("keine Anteile")
+	}
+	if cpu.User != 0 || cpu.System != 0 || cpu.IOWait != 50 || cpu.Idle != 50 {
+		t.Errorf("Anteile %+v, erwartet iowait 50 und idle 50", *cpu)
+	}
+	if sum := cpu.User + cpu.System + cpu.IOWait + cpu.Steal + cpu.Idle; sum != 100 {
+		t.Errorf("Summe %v statt 100", sum)
+	}
+}

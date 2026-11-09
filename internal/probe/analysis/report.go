@@ -182,8 +182,12 @@ func findGaps(d *Data, iv time.Duration) ([]Gap, []ClockJump) {
 		a, b := d.Hosts[i-1].Head, d.Hosts[i].Head
 		if start, ok := startBetween(d.Starts, a, b); ok {
 			wall := time.Duration(b.Wall-a.Wall) * time.Millisecond
-			if wall > threshold {
-				gaps = append(gaps, Gap{Start: a.Time(), Duration: wall, Kind: restartKind(d, a, start)})
+			kind, reboot := restartKind(d, a, start)
+			// Ein neuer Systemstart zählt auch, wenn er schnell ging: Ein
+			// Container, der auf einen anderen Host umzieht, ist nach
+			// Sekunden wieder da.
+			if wall > threshold || reboot {
+				gaps = append(gaps, Gap{Start: a.Time(), Duration: wall, Kind: kind})
 			}
 			continue
 		}
@@ -213,7 +217,10 @@ func startBetween(starts []journal.StartLine, a, b journal.Head) (journal.StartL
 	return journal.StartLine{}, false
 }
 
-func restartKind(d *Data, a journal.Head, start journal.StartLine) string {
+// restartKind sagt, warum lcm-probe neu anfing. reboot ist wahr, wenn sich
+// die boot_id geändert hat. Im Container ist das die des Hosts: Der Host
+// startete neu, oder der Container zog auf einen anderen um.
+func restartKind(d *Data, a journal.Head, start journal.StartLine) (kind string, reboot bool) {
 	var prevBoot string
 	for _, s := range d.Starts {
 		if s.Wall <= a.Wall {
@@ -221,14 +228,33 @@ func restartKind(d *Data, a journal.Head, start journal.StartLine) string {
 		}
 	}
 	if prevBoot != "" && start.BootID != "" && prevBoot != start.BootID {
-		return "Neustart des Rechners"
+		if inContainer(d, start) {
+			return "Container neu gestartet, Host neu gestartet oder gewechselt", true
+		}
+		return "Neustart des Rechners", true
 	}
 	for _, s := range d.Stops {
 		if s.Wall >= a.Wall && s.Wall <= start.Wall {
-			return "lcm-probe sauber neu gestartet"
+			return "lcm-probe sauber neu gestartet", false
 		}
 	}
-	return "lcm-probe abgebrochen"
+	return "lcm-probe abgebrochen", false
+}
+
+// inContainer liest die Quellen, die dem Start zeitlich am nächsten stehen.
+// Eine Quellenzeile steht am Anfang jeder Tagesdatei, nicht bei jedem Start.
+func inContainer(d *Data, start journal.StartLine) bool {
+	container, best := false, int64(-1)
+	for _, s := range d.Sources {
+		dist := s.Wall - start.Wall
+		if dist < 0 {
+			dist = -dist
+		}
+		if best < 0 || dist < best {
+			container, best = s.Sources.Container, dist
+		}
+	}
+	return container
 }
 
 // describeBefore nennt, was in den fünf Minuten vor einer Lücke lief: Läufe
@@ -294,7 +320,7 @@ func maxima(hosts []journal.HostLine, from, to time.Time) (string, bool) {
 	if !found {
 		return "", false
 	}
-	return fmt.Sprintf("Spitzen davor: I/O-Druck %s %%, iowait %s %%, Last %s, frei %s, Plattenwartezeit %s ms, fdatasync %s ms",
+	return fmt.Sprintf("Spitzen davor: I/O-Druck %s %%, iowait %s %%, Last %s, Speicher frei %s, Plattenwartezeit %s ms, fdatasync %s ms",
 		num(ioSome, 1), num(iowait, 1), num(load, 2), bytesText(minAvail), num(await, 1), num(sync, 1)), true
 }
 

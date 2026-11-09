@@ -164,7 +164,7 @@ steht, denn genau dann sind seine Zeilen am wertvollsten.
   atomar, nach einem Absturz fehlt höchstens die angefangene letzte Zeile, und der Leser
   überspringt eine unvollständige Zeile. Die Datei ist jederzeit kopierbar, sie ist
   reiner Text ohne Sperre. Fertige Tage packt das Werkzeug mit gzip, Standard 90 Tage
-  Aufbewahrung, rund 25 MB je Monat.
+  Aufbewahrung. Gemessen sind es rund 100 MB je Monat, siehe Tageslauf unten.
 - **Aufwand:** 2-Sekunden-Takt mit `fdatasync` sind 43.200 kleine Schreibvorgänge am
   Tag, auf SSD oder ZFS kein Thema. Das Werkzeug misst seinen eigenen Verbrauch mit und
   schreibt ihn in die Zeile.
@@ -242,6 +242,61 @@ oben abweicht, und warum:
 Der Testlauf auf CT 120 lief mit einem Testbuild: der dort eingespielte
 Release-C-Stand `71b01a72` plus die Commits dieses Zweigs, damit der Teststand
 von Release C unverändert bleibt.
+
+## Erster Tageslauf (08. und 09.11.2026)
+
+Gemessen auf CT 120 ab 08.11. 13:57 und auf lcm-prod ab 08.11. 15:31,
+ausgewertet am 09.11. um 07:24.
+
+- **CT 120 lief keinen vollen Tag.** Am 08.11. um 20:24 startete vmh03 neu und
+  mit ihm pve-test, das dort als VM 3000 lief. pve-test kam erst um 22:33 auf
+  vmh02 zurück, und CT 120 startet nicht von selbst. Der Bericht nennt die
+  Lücke von 10 h 55 min richtig als Neustart. Beim Start am 09.11. hat
+  lcm-probe die Datei des Vortags gepackt, wie vorgesehen.
+- **Tageswechsel auf lcm-prod:** um 00:00 neue Datei, der Vortag gepackt, keine
+  Lücke. Abdeckung über 15 h 52 min 100 %.
+- **Ein Umzug in neun Sekunden.** lcm-prod zog am 08.11. um 20:35 auf vmh03 um.
+  Die boot_id des Hosts wechselte, die Lücke war 9,6 s lang.
+
+Größe je Tag auf lcm-prod, hochgerechnet aus 7,4 Stunden am 09.11.:
+
+| | roh | gepackt |
+|---|---|---|
+| vor der Korrektur | 60 MB | 9,3 MB |
+| mit geänderten Einträgen | 34 MB | 3,3 MB |
+
+Eine Hostzeile hat auf lcm-prod 670 Byte. Eine Momentaufnahme der Datenbank
+hatte 21 KB, davon 20 KB Histogramme je Tabelle und Art. Mit den geänderten
+Einträgen sind es 3,6 KB. 90 Tage Aufbewahrung brauchen damit rund 300 MB.
+
+Drei Fehler im Werkzeug, behoben auf `fix/lcm-probe-tageslauf`:
+
+- **iowait 457 %.** Unter lxcfs liefen user und system um 20:32 rückwärts.
+  Der Nenner war die Differenz der Summen, jetzt ist er die Summe der
+  Differenzen. Die alte Zeile bleibt in der Datei falsch.
+- **Der Umzug fehlte im Bericht**, weil er unter der Schwelle von 10 s lag. Ein
+  Wechsel der boot_id steht jetzt immer drin, im Container als „Container neu
+  gestartet, Host neu gestartet oder gewechselt“.
+- **Die Histogramme standen in jeder Zeile ganz.** Jetzt stehen nur die
+  geänderten Einträge unter `statements_changed`. Alte Dateien bleiben lesbar.
+
+Was lcm-prod in der ersten Nacht zeigt:
+
+- **Kein Stillstand um 04:03.** In dieser Nacht gab es keine Lücke über 10 s.
+  Um 04:05 begann der Docker-Check, er lief 26 min 45 s und schrieb 13.405
+  Zeilen.
+- **Schreibsperre:** 18.884 Transaktionen, 95 % warten höchstens 0,1 ms. Das
+  Maximum war 1,7 s um 03:30:01, in der Log-Bereinigung. Ihre längste
+  Transaktion löschte 788 ms lang SSH-Befehle. Keine Fehler durch Sperren.
+- **I/O des Hosts:** I/O-Druck bis 99 % um 21:10, 18:07 und 15:34, Wartezeit
+  der Platte bis 1,5 s um 03:10, `fdatasync` von lcm-probe bis 3,3 s um 22:25.
+  Am Abend lief die Wartung des Clusters, vmh02 startete um 21:59 neu. Die
+  Spitze um 03:10 ist ungeklärt.
+- **Datei 460 MB, WAL 86 MB, keine freien Seiten.** Die größten Tabellen sind
+  `jobs` mit 224.000, `ssh_sessions` mit 167.000 und `ssh_commands` mit
+  153.000 Zeilen. Sie wachsen um rund 1.000 Zeilen am Tag.
+- **Teuerste Anweisungen:** Lesen aus `jobs` mit 19,5 s in Summe, Lesen aus
+  `packages` mit 13,7 s, Schreiben in `ssh_commands` mit 10 s.
 
 ## Was die Zahlen entscheiden sollen
 

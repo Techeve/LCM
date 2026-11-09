@@ -1,8 +1,10 @@
 package analysis
 
 import (
+	"cmp"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -148,11 +150,38 @@ func (t *textWriter) operations(r *Report) {
 		return
 	}
 	var rows [][]string
+	short := map[string]int{}
 	for _, op := range r.Operations {
+		if op.short() {
+			short[op.label()]++
+			continue
+		}
 		rows = append(rows, []string{clock(op.Started), op.label(), duration(ms(op.DurationMS)),
 			count(op.RowsWritten) + " Zeilen", strings.TrimPrefix(failed(op.Error), ", ")})
 	}
 	t.table(rows)
+	if len(short) > 0 {
+		t.printf("  dazu unter einer Sekunde: %s\n", shortRuns(short))
+	}
+}
+
+// shortRuns zählt die kurzen Läufe je Name, die häufigsten zuerst.
+func shortRuns(short map[string]int) string {
+	names := make([]string, 0, len(short))
+	for name := range short {
+		names = append(names, name)
+	}
+	slices.SortFunc(names, func(a, b string) int {
+		if c := cmp.Compare(short[b], short[a]); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	parts := make([]string, len(names))
+	for i, name := range names {
+		parts[i] = fmt.Sprintf("%s %d-mal", name, short[name])
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (t *textWriter) growth(r *Report) {

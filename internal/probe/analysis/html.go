@@ -57,7 +57,8 @@ func WriteHTML(w io.Writer, r *Report, d *Data) error {
 	}
 	gap := gapThreshold(r.Interval)
 	data, err := json.Marshal(payload{
-		Host: hostChart(d.Hosts, gap), DB: dbChart(d, 3*dbEvery(d)),
+		Host: spanRange(hostChart(d.Hosts, gap), r.From, r.To),
+		DB:   spanRange(dbChart(d, 3*dbEvery(d)), r.From, r.To),
 		Gaps: gapBands(r.Gaps), Outages: outageBands(r.Outages, dbEvery(d)), Ops: opBands(r.Operations),
 	})
 	if err != nil {
@@ -134,9 +135,14 @@ func outageBands(outages []Outage, every time.Duration) [][2]int64 {
 	return out
 }
 
+// opBands markiert die Läufe, die zählen; die kurzen ohne Fehler, etwa die
+// Alarm-Auswertung alle 30 Minuten, verdecken sonst die Diagramme.
 func opBands(ops []operation) [][3]any {
 	out := [][3]any{}
 	for _, op := range ops {
+		if op.short() {
+			continue
+		}
 		out = append(out, [3]any{unix(op.Started), unix(op.end()), op.label()})
 	}
 	return out

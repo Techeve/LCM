@@ -174,15 +174,21 @@ func (s *Sampler) fillDeltas(out *Sample, prev, cur *counters) {
 	}
 }
 
+// cpuShares teilt die Ticks seit der vorigen Probe auf. Unter lxcfs laufen
+// einzelne Zähler gelegentlich rückwärts, etwa wenn ein Prozess den Container
+// verlässt. Ein solcher Zähler zählt als 0, und die Summe der übrigen ist der
+// Nenner, damit die Anteile zusammen 100 % bleiben.
 func cpuShares(a, b cpuTicks) *CPU {
-	total := float64(sub(b.total, a.total))
+	user, system := sub(b.user, a.user), sub(b.system, a.system)
+	iowait, steal, idle := sub(b.iowait, a.iowait), sub(b.steal, a.steal), sub(b.idle, a.idle)
+	total := float64(user + system + iowait + steal + idle)
 	if total == 0 {
 		return nil
 	}
-	share := func(x, y uint64) float64 { return round(pct(float64(sub(y, x)), total)) }
+	share := func(x uint64) float64 { return round(pct(float64(x), total)) }
 	return &CPU{
-		User: share(a.user, b.user), System: share(a.system, b.system),
-		IOWait: share(a.iowait, b.iowait), Steal: share(a.steal, b.steal), Idle: share(a.idle, b.idle),
+		User: share(user), System: share(system),
+		IOWait: share(iowait), Steal: share(steal), Idle: share(idle),
 	}
 }
 
