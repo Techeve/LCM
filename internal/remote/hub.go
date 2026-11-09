@@ -73,6 +73,8 @@ type Hub struct {
 	// Mehr-Kommando-Ablauf (z.B. Scan) beim nächsten Kommando bis zum
 	// vollen Timeout auf den toten Agenten warten, statt sofort zu scheitern.
 	conns map[string]map[*agentConn]struct{}
+	// sockets hält die Verbindungen in HandleConn, auch solche ohne CONNECT.
+	sockets map[net.Conn]struct{}
 }
 
 // pendingReq ist ein wartender Kommando-Aufruf (Korrelation über die
@@ -98,6 +100,7 @@ func New(servers *repositories.ServerRepository, log *slog.Logger) *Hub {
 		online:  map[string]*mqtt.Client{},
 		pending: map[string]*pendingReq{},
 		conns:   map[string]map[*agentConn]struct{}{},
+		sockets: map[net.Conn]struct{}{},
 	}
 }
 
@@ -141,16 +144,33 @@ func (h *Hub) Start() error {
 	return nil
 }
 
-// Close fährt den Broker herunter (trennt alle Agents).
+// Close fährt den Broker herunter. Die Verbindungen trennt es selbst: Sie kommen
+// über HandleConn, an keinem Listener des Brokers. Dessen Close trennt sie deshalb
+// nicht, wartet aber auf ihr Ende und käme nie zurück. Das gilt auch für eine
+// Verbindung ohne CONNECT, die der Broker noch gar nicht als Client führt.
 func (h *Hub) Close() {
-	if h.broker != nil {
-		_ = h.broker.Close()
+	if h.broker == nil {
+		return
 	}
+	h.mu.Lock()
+	for c := range h.sockets {
+		_ = c.Close()
+	}
+	h.mu.Unlock()
+	_ = h.broker.Close()
 }
 
 // HandleConn reicht eine (bereits als WebSocket-net.Conn adaptierte)
 // Verbindung in den Broker - blockiert bis zum Disconnect des Clients.
 func (h *Hub) HandleConn(c net.Conn) error {
+	h.mu.Lock()
+	h.sockets[c] = struct{}{}
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		delete(h.sockets, c)
+		h.mu.Unlock()
+	}()
 	return h.broker.EstablishConnection(listenerID, c)
 }
 

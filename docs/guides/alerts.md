@@ -16,8 +16,15 @@ Unter *Einstellungen → Benachrichtigungen* legst du Kanäle an. Ein Kanal wird
 von Alarm-Regeln referenziert und ist gegen Löschen geschützt, solange ihn
 eine Regel nutzt.
 
-- **E-Mail (SMTP)** - eigener Postausgang je Kanal (Host, Port, Absender,
-  Empfänger; Passwort verschlüsselt gespeichert).
+- **E-Mail (SMTP)** - eigener Postausgang je Kanal (Host, Port,
+  Verschlüsselung, Absender, Empfänger; Passwort verschlüsselt gespeichert).
+  Die **Verschlüsselung** wählst du aus: *TLS* (verschlüsselt ab dem
+  Verbindungsaufbau, üblich Port 465), *STARTTLS* (Pflicht, üblich Port 587;
+  bietet der Server es nicht an, wird nichts gesendet) oder *Keine* (üblich
+  Port 25; Passwort und Inhalt gehen im Klartext durchs Netz, nur in
+  vertrauenswürdigen Netzen). Der **Absender** darf einen Anzeigenamen
+  tragen, etwa `LCM <lcm@example.com>`. Dieselben Angaben gelten für den
+  E-Mail-Versand unter *Einstellungen → Allgemein*.
 - **Webhook** - HTTPS-POST an eine Ziel-URL, wahlweise als **generisches
   JSON** (für eigene Automationen) oder als **Microsoft-Teams-Format**
   (Adaptive Card). Für Teams legst du dort einen Workflow „Bei Empfang einer
@@ -92,54 +99,60 @@ wird trotzdem nur einmal ausgewertet.
 
 | Typ | Auslöser |
 |---|---|
-| **Festplatten-Kapazität** | Belegung erreicht den prozentualen Schwellenwert |
-| **Speicher-Prognose** | die lineare Hochrechnung überschreitet das Limit innerhalb der Frist |
-| **Security/CVE** | CVE-Funde ab der konfigurierten Mindest-Schwere |
-| **Überfällige Updates** | Zahl offener Paket-Updates übersteigt den Schwellenwert |
-| **Heartbeat** | letzter Server-Kontakt liegt länger als *n* Stunden zurück |
+| **Speicherplatz knapp** | Belegung erreicht den prozentualen Schwellenwert |
+| **Speicherplatz-Prognose** | die lineare Hochrechnung überschreitet das Limit innerhalb der Frist |
+| **Sicherheitslücken (CVE)** | CVE-Funde ab der konfigurierten Mindest-Schwere |
+| **Ausstehende Updates** | Zahl offener Paket-Updates übersteigt den Schwellenwert |
+| **Kein Kontakt (Heartbeat)** | letzter Server-Kontakt liegt länger als *n* Stunden zurück |
 | **Neustart erforderlich** | das System fordert nach einem Update selbst einen Neustart an (z.&nbsp;B. neuer Kernel) - reines Ja/Nein-Kriterium ohne Schwellenwert |
 | **APT-Cache nicht erreichbar** | einer der [APT-Caches](/guides/apt-cache/) antwortet nicht; die Meldung nennt jeden betroffenen. Bleibt stumm, solange unter *Einstellungen → APT-Cache* kein Cache hinterlegt ist |
-| **Deep Scan** | der letzte [Deep Scan](/guides/deep-scan/) hat Warnungen oder kritische Befunde ergeben (Härtung/Fehlkonfiguration oder eine Kernel-Reboot-Lücke) - reines Ja/Nein-Kriterium ohne Schwellenwert |
+| **Tiefenprüfung mit Befunden** | der letzte [Deep Scan](/guides/deep-scan/) hat Warnungen oder kritische Befunde ergeben (Härtung/Fehlkonfiguration oder eine Kernel-Reboot-Lücke) - reines Ja/Nein-Kriterium ohne Schwellenwert |
 | **CrowdSec-LAPI nicht erreichbar** | eine der zentralen CrowdSec-LAPIs antwortet nicht oder lehnt den hinterlegten Maschinen-Login ab; die Meldung nennt jede betroffene. Greift nur auf dem LCM-Host und bleibt stumm, solange unter *Einstellungen → CrowdSec* keine LAPI hinterlegt ist |
 | **CVE-Datenbank veraltet** | die Schwachstellen-Datenbank des CVE-Scanners ist älter als 48&nbsp;Stunden oder wurde nie geladen. Wichtig, weil eine alte Datenbank keinen Fehler meldet, sondern veraltete Ergebnisse liefert - nach außen sieht das wie „keine Sicherheitslücken" aus. Greift nur auf dem LCM-Host |
 | **System-Backup überfällig** | automatische Backups sind aktiviert, aber das jüngste Backup ist älter als das **Doppelte des Intervalls** - oder es existiert noch gar keines. Misst bewusst das Ergebnis statt einzelner Fehlversuche: egal, auf welchem Weg das Backup ausblieb, gemeldet wird der fehlende Stand. Greift nur auf dem LCM-Host |
+| **Frühwarnung: neue Befunde** | offene Befunde der [Frühwarnung](/guides/security-cve/#frühwarnung-osv) ab der konfigurierten Mindest-Schwere. Schadpakete lösen immer aus; Befunde, die unter *Sicherheit* zur Kenntnis genommen wurden, lösen nicht mehr aus |
+| **Aktion fehlgeschlagen** | LCM kann auf einem Server nicht mehr handeln: Updates scheitern, die Verbindung ist weg, Regeln oder der CVE-Scan schlagen fehl, oder die Paketläufe sind stillschweigend ausgeblieben (Stillstand). Löst **sofort** aus, wenn eine Kategorie der Betriebsfähigkeit ausfällt, meldet die Rückkehr als **Entwarnung** (Schwere *info*) und erinnert nach Ablauf des Cooldowns, solange der Fehler besteht. Jede Kategorie wird für sich entprellt. Eine belegte dpkg-Sperre zählt erst ab dem zweiten Fehlschlag in Folge. Der Stillstand meldet erst auf der roten Stufe (Einstellungen → Allgemein); die gelbe bleibt ein Hinweis in der Ampel. Die Meldung nennt Kategorie, Fehlerklasse und Hinweis, **nie die Rohausgabe** des Servers |
 
 ## Beispiele je Alarmtyp
 
 Alle Beispiele werden unter *Einstellungen → Alarme* als Regel angelegt. Wo
 kein Schwellenwert angegeben ist, greift der eingebaute Standard.
 
-- **Festplatten-Kapazität** - „Root-Partition wird eng": Schwellenwert
+- **Speicherplatz knapp** - „Root-Partition wird eng": Schwellenwert
   **85&nbsp;%**, Gruppe *Datenbanken*, Schwere *warning*. Ohne Schwellenwert
   gilt der Default **90&nbsp;%**.
-- **Speicher-Prognose** - „Volläuft in Kürze": Frist **7 Tage**, alle Server,
+- **Speicherplatz-Prognose** - „Volläuft in Kürze": Frist **7 Tage**, alle Server,
   Schwere *warning*. Die lineare Hochrechnung aus dem
   [Speicher-Verlauf](/guides/monitoring/) meldet, bevor die Platte tatsächlich
   voll ist (Default-Frist: 10 Tage).
-- **Security/CVE** - „Kritische Lücken sofort": Mindest-Schwere **critical**,
+- **Sicherheitslücken (CVE)** - „Kritische Lücken sofort": Mindest-Schwere **critical**,
   alle Server, Schwere *critical*. Eine zweite, lockerere Regel mit
   Mindest-Schwere **high** nur für die Gruppe *Produktion* (Default: `high`).
-- **Überfällige Updates** - „Patch-Rückstand": erlaubte Zahl offener Updates
+- **Ausstehende Updates** - „Patch-Rückstand": erlaubte Zahl offener Updates
   **0** (jedes ausstehende Update meldet), Gruppe *Produktion*. Für Staging
   großzügiger, z.&nbsp;B. **20**.
-- **Heartbeat** - „Server meldet sich nicht": Timeout **6 Stunden**, alle
+- **Kein Kontakt (Heartbeat)** - „Server meldet sich nicht": Timeout **6 Stunden**, alle
   Server, Schwere *critical* (Default: 24 Stunden).
 - **Neustart erforderlich** - „Kernel wartet auf Reboot": kein Schwellenwert,
   Gruppe *Produktion*, Schwere *warning*. Löst aus, sobald der Server nach
   einem Update selbst einen Neustart anfordert.
 - **APT-Cache nicht erreichbar** - kein Schwellenwert; nur sinnvoll, wenn
   unter *Einstellungen → APT-Cache* mindestens ein Cache hinterlegt ist.
-- **Deep Scan** - „Härtungsbefunde melden": kein Schwellenwert, Schwere
+- **Tiefenprüfung mit Befunden** - „Härtungsbefunde melden": kein Schwellenwert, Schwere
   *warning*. Löst aus, sobald ein Deep Scan Warnungen oder kritische Befunde
   liefert.
+- **Aktion fehlgeschlagen** - „Server nicht mehr pflegbar": kein Schwellenwert,
+  alle Server, Schwere *critical*. Der Cooldown ist die Erinnerungsfrist (z.&nbsp;B.
+  1440 Minuten für eine tägliche Erinnerung).
 
 ## Schwere & Cooldown
 
-Jede Regel hat eine **Schwere** und einen **Cooldown**: Der jüngste Alarm je
-(Regel, Server) entprellt weitere Benachrichtigungen, damit kein Alarm-Spam
-entsteht. **`0` bedeutet dabei nicht „keine Sperre"**, sondern den eingebauten
-Standard von **360&nbsp;Minuten (6&nbsp;h)** - eine kürzere Sperre muss
-ausdrücklich eingetragen werden (Minimum&nbsp;1). Ausgelöste Alarme landen in der **Alarm-Historie**
+Jede Regel hat eine **Schwere** (in der Oberfläche *Dringlichkeit*) und einen
+**Cooldown** (*Sperrfrist*, in Minuten): Der jüngste Alarm je (Regel, Server)
+entprellt weitere Benachrichtigungen, damit kein Alarm-Spam entsteht. **`0`
+bedeutet „keine Sperre"**: Jede Auswertung (alle 30&nbsp;Minuten) meldet
+erneut. Neue Regeln starten mit **360&nbsp;Minuten (6&nbsp;h)** als sichtbarem
+Vorgabewert. Ausgelöste Alarme landen in der **Alarm-Historie**
 (inkl. Versand-Status); sie wird nach der Log-Aufbewahrungsfrist bereinigt.
 
 ## Zusammenspiel

@@ -2,7 +2,7 @@
 //
 // Beim Start wird nach einer config.json im Verzeichnis des Binaries gesucht.
 // Fehlt sie, wird sie mit Standardwerten erzeugt. Geheimnisse stehen nicht
-// darin: Der Signaturschlüssel der Sitzungen entsteht bei jedem Start neu im
+// darin: Der Signaturschlüssel der 2FA-Challenge entsteht bei jedem Start neu im
 // Speicher, der Master-Key liegt in lcm.key oder in einem systemd-Credential.
 // Ein `jwt_secret` aus älteren Fassungen wird beim Laden ignoriert und beim
 // nächsten Schreiben der Datei entfernt.
@@ -42,7 +42,9 @@ type Config struct {
 	// DatabasePath ist der Pfad zur SQLite-Datei (relativ zum Binary oder absolut).
 	DatabasePath string `json:"database_path"`
 
-	// AccessTokenTTLMinutes bestimmt die Lebensdauer eines JWT in Minuten.
+	// AccessTokenTTLMinutes ist die Leerlauf-Frist einer Browser-Sitzung in Minuten,
+	// solange die Einstellung "Sitzungsdauer" nichts anderes sagt. Der Name stammt
+	// aus der Zeit des JWT-Logins und bleibt, damit bestehende config.json laden.
 	AccessTokenTTLMinutes int `json:"access_token_ttl_minutes"`
 
 	// AdminInitialPassword wird nur beim allerersten Seeding verwendet.
@@ -144,7 +146,7 @@ type Config struct {
 	TrustedProxies []string `json:"trusted_proxies"`
 }
 
-// AccessTokenTTL liefert die Token-Lebensdauer als time.Duration.
+// AccessTokenTTL liefert die Leerlauf-Frist einer Browser-Sitzung als time.Duration.
 func (c *Config) AccessTokenTTL() time.Duration {
 	return time.Duration(c.AccessTokenTTLMinutes) * time.Minute
 }

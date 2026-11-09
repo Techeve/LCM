@@ -54,3 +54,35 @@ func TestLiveScan(t *testing.T) {
 		t.Errorf("erwartete openssl/libssl-Funde, bekam nur: %+v", vulns[:min(3, len(vulns))])
 	}
 }
+
+// TestLiveDBRefresh prüft den Abgleich gegen das echte Trivy und die echten
+// Registries: Der erste Lauf lädt in ein leeres Verzeichnis, der zweite lädt
+// nichts. Er kostet rund 140 MB Download und läuft nur mit LCM_TRIVY_LIVE=1.
+func TestLiveDBRefresh(t *testing.T) {
+	if os.Getenv("LCM_TRIVY_LIVE") == "" {
+		t.Skip("nur mit LCM_TRIVY_LIVE=1")
+	}
+	scanner := New("trivy", t.TempDir())
+	if !scanner.Available() {
+		t.Skip("trivy nicht installiert")
+	}
+	first, err := scanner.UpdateDB(context.Background())
+	if err != nil {
+		t.Fatalf("erster Abgleich: %v\n%s", err, first.Output)
+	}
+	if !first.Updated {
+		t.Fatalf("erster Abgleich hat nichts übernommen: %s", first.Output)
+	}
+	info := scanner.Info(context.Background())
+	if info.UpdatedAt == nil {
+		t.Fatalf("Trivy liest die getauschte Datenbank nicht: %+v", info)
+	}
+	second, err := scanner.UpdateDB(context.Background())
+	if err != nil {
+		t.Fatalf("zweiter Abgleich: %v", err)
+	}
+	if second.Updated {
+		t.Errorf("zweiter Abgleich hat neu geladen: %s", second.Output)
+	}
+	t.Logf("Stand %s, zweiter Lauf: %s", info.UpdatedAt, second.Output)
+}

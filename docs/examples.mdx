@@ -34,8 +34,8 @@ Ziel: Auf allen Webservern sind dauerhaft nur 80, 443 (und SSH) offen.
 <Steps>
 
 1. Gruppe „Webserver“ anlegen, Server zuweisen.
-2. Neue Regel: Typ **Firewall**, Ziel **Grundsatz-Regel (Enforce)**, Ports
-   `80,443`.
+2. Im Reiter *Regeln* der Gruppe an der Karte **Grundsatz-Regeln** eine neue
+   Regel hinzufügen: Typ **Firewall**, Ports `80,443`.
 3. Beim nächsten Health-Ping wird ufw geprüft und - falls abweichend -
    angewendet. Ändert später jemand die Firewall am Server, stellt der nächste
    Ping den Soll-Zustand wieder her.
@@ -48,9 +48,10 @@ Ziel: Auf allen Webservern sind dauerhaft nur 80, 443 (und SSH) offen.
 
 1. Auf dem LCM-Host `apt-cacher-ng` installieren und `PassThroughPattern: .*`
    in der `acng.conf` setzen (siehe [APT-Cache](/guides/apt-cache/)).
-2. In LCM unter *Einstellungen → Repositories → APT-Cache* die URL
-   `http://<host>:3142` eintragen und „Verbindung prüfen“.
-3. Als Gruppen-Regel „**APT-Cache erzwingen**“ hinzufügen - alle Server der
+2. In LCM unter *Einstellungen → APT-Cache* die URL
+   `http://<host>:3142` eintragen und „Prüfen“.
+3. Als Gruppen-Regel „**APT-Cache anbinden**“ hinzufügen (als Grundsatz-Regel
+   wird die Anbindung bei Abweichung wiederhergestellt) - alle Server der
    Gruppe leiten ihre APT-Anfragen künftig über den Cache.
 
 </Steps>
@@ -62,8 +63,9 @@ Ziel: Auf allen Webservern sind dauerhaft nur 80, 443 (und SSH) offen.
 1. `LCM_BACKUP_PASSPHRASE` setzen und unter *Einstellungen → Backups* ein
    Backup erstellen (oder Intervall aktivieren).
 2. Das `.lcmbak` herunterladen und sicher ablegen.
-3. Auf einer **neuen** Instanz das Archiv unter *Backups → Wiederherstellen*
-   hochladen und (mit derselben Passphrase) anwenden - die Instanz übernimmt
+3. Auf einer **neuen** Instanz das Archiv unter *Einstellungen → Backups →
+   Aus Datei wiederherstellen* hochladen und (mit derselben Passphrase)
+   anwenden - die Instanz übernimmt
    Daten, Schlüssel, Konfiguration und Zertifikat.
 
 </Steps>
@@ -74,13 +76,13 @@ Für Monitoring-Skripte, die nur lesen dürfen:
 
 <Steps>
 
-1. *Einstellungen → API-Keys* → neuen Key mit Scope **read** anlegen. Der
+1. *Einstellungen → API-Schlüssel* → neuen Key mit Scope **read** anlegen. Der
    Klartext-Key (`lcm_…`) erscheint **nur einmal** - kopieren.
 2. Abfragen mit dem `X-API-Key`-Header:
 
    ```sh
    curl -s https://<host>:9310/api/v1/servers \
-     -H "X-API-Key: lcm_dein_key" | jq '.[].name'
+     -H "X-API-Key: lcm_dein_key" | jq '.items[].name'
    ```
 
 3. Schreibende Requests (POST/PUT/DELETE) werden mit einem read-Key serverseitig

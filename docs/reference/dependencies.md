@@ -29,9 +29,9 @@ Veröffentlichungsprozess zu bekommen?
 
 | Stufe | Merkmal | Beispiele im Bestand |
 |:-:|---|---|
-| 5 | Go-Team/Google oder vergleichbar: mehrstufiges Review, öffentliche Historie, Security-Team | `golang.org/x/*`, `google/uuid`, `svelte`, `vite`, `@playwright/test` |
-| 4 | Organisation mit mehreren aktiven Maintainern und Release-Prozess | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `bootstrap` |
-| 3 | Kleine Organisation oder renommierte Einzelperson, nachweislich aktiv | `mochi-mqtt/server`, `fasthttp/websocket`, `svelte-spa-router`, `filippo.io/age`, `go-landlock`, `klauspost/compress`, `modernc.org/sqlite` |
+| 5 | Go-Team/Google oder vergleichbar: mehrstufiges Review, öffentliche Historie, Security-Team | `golang.org/x/*`, `google/uuid`, `lit`, `vite`, `@playwright/test` |
+| 4 | Organisation mit mehreren aktiven Maintainern und Release-Prozess | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `@xterm/xterm` |
+| 3 | Kleine Organisation oder renommierte Einzelperson, nachweislich aktiv | `mochi-mqtt/server`, `fasthttp/websocket`, `simple-icons`, `filippo.io/age`, `go-landlock`, `klauspost/compress`, `modernc.org/sqlite` |
 | 2 | Einzelperson, sporadische Releases, Bus-Faktor 1 | `glebarez/sqlite`, `alexedwards/argon2id`; transitiv `molecule-man/go-brrr` (über fasthttp) |
 | 1 | Einzelperson, seit Jahren inaktiv, kein Release-Prozess, ungetaggte Versionen | `robfig/cron` (letzter Tag 2020) - wird abgelöst, siehe unten |
 
@@ -111,7 +111,7 @@ unbekannt. Beide Gates niemals deaktivieren, um eine Pipeline grün zu bekommen.
 
 ## Build-Zeit zählt genauso wie Laufzeit
 
-Vite, Svelte und Playwright landen nie im ausgelieferten Binary - sie laufen auf
+Vite, TypeScript und Playwright landen nie im ausgelieferten Binary - sie laufen auf
 dem CI-Runner, mit Zugriff auf Registry-Tokens, Signaturschlüssel und
 CI-Variablen. Für Build-Werkzeuge gelten dieselben Regeln wie für
 Laufzeitabhängigkeiten.
@@ -152,6 +152,16 @@ Agent-Kanal über WebSocket (`fasthttp/websocket` ist ohnehin im Bestand).
 **`molecule-man/go-brrr` beobachten:** kommt seit fasthttp 1.75 transitiv
 (ersetzt `andybalholm/brotli`). Reines Go, fuzz-getestet, vom
 fasthttp-Maintainer mitgepflegt, aber jung und mit Bus-Faktor 1.
+
+**uPlot steckt als Datei in `lcm-probe`** (1.6.32, MIT, Leon Sorokin, Stufe 3):
+die Diagramme des HTML-Berichts. Es läuft nur im Browser dessen, der den Bericht
+öffnet, nie in LCM und nie auf einem verwalteten Server, und liest nur Zahlen,
+die `lcm-probe` selbst geschrieben hat. Weil es unter
+`internal/probe/analysis/assets/` liegt und nicht in einer `package.json`, sieht
+Renovate es nicht: Aktualisieren von Hand mit `npm pack uplot@<version>`, dann
+`dist/uPlot.iife.min.js`, `dist/uPlot.min.css` und `LICENSE` ersetzen. Eigenbau
+lohnt nicht: gekoppelter Zoom über mehrere Zeitreihen sind einige hundert Zeilen
+für ein Werkzeug, dessen Fehler harmlos wären.
 
 ## Abhängigkeit entfernen
 

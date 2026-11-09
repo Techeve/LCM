@@ -151,7 +151,7 @@ func (s *ServerService) CreateAgentServer(name, actor string) (*domain.Server, s
 
 	now := time.Now()
 	job := &domain.Job{
-		ServerID: &server.ID, Type: "join", Name: "Agent-Onboarding: " + name,
+		ServerID: &server.ID, Type: domain.JobTypeJoin, Name: "Agent-Onboarding: " + name,
 		Status: domain.JobStatusSuccess, TriggeredBy: actor,
 		StartedAt: &now, FinishedAt: &now,
 		Output: "Agent-Server angelegt (Transport: MQTT über WebSocket).\n" +

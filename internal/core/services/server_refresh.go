@@ -19,11 +19,20 @@ const (
 	JobTypeFullRefresh     = "full-refresh"
 )
 
+// Job-Typen der Paket-Reparaturen (ServerService.RepairPackages). Sie gehören
+// zu keiner Kategorie der Betriebsfähigkeit (domain.CapabilityCategoryFor
+// liefert ""): Eine Reparatur behebt die Ursache, belegt aber nicht, dass die
+// fehlgeschlagene Aktion wieder läuft - das beweist erst deren Wiederholung.
+const (
+	JobTypeRepairDpkg = "repair-dpkg"
+	JobTypeRepairDeps = "repair-deps"
+)
+
 // sshHardenedProbe meldet „yes" nur, wenn LCMs Härtungs-Drop-in liegt und die
 // effektive sshd-Konfiguration die Passwort-Anmeldung abschaltet.
 // `mkdir -p /run/sshd` wie in verifyPasswordAuthDisabled: ohne das Verzeichnis
 // bricht `sshd -T` auf socket-aktiviertem sshd ab.
-const sshHardenedProbe = "if test -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf && " +
+const sshHardenedProbe = "if test -f " + sshHardeningDropin + " && " +
 	"{ mkdir -p /run/sshd 2>/dev/null; sshd -T 2>/dev/null | grep -qi '^passwordauthentication no'; }; " +
 	"then echo yes; else echo no; fi"
 
@@ -71,7 +80,7 @@ func (s *ServerService) RefreshAll(scope repositories.AccessScope, id uint, acto
 // Live-Status von Firewall/SSH-Härtung.
 func (s *ServerService) runRefreshJob(job *domain.Job, server *domain.Server, actor string, full bool) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "demo-server: datenerfassung simuliert (kein ssh-kontakt)", ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, "demo-server: datenerfassung simuliert (kein ssh-kontakt)")
 		return
 	}
 	// Synology DSM: eigener Erfassungspfad über die DSM-Web-API - es gibt
@@ -132,6 +141,7 @@ func (s *ServerService) runRefreshJob(job *domain.Job, server *domain.Server, ac
 		_ = s.servers.ReplaceSnapPackages(server.ID, scan.Snaps)
 		_ = s.servers.ReplaceRepositories(server.ID, scan.Repositories)
 		s.updateHTTPSRevertURLs(conn, server, scan.Repositories)
+		s.pruneHTTPSUnavailableURLs(server, scan.Repositories)
 		s.rescanApps(conn, server)
 		_ = s.servers.ReplaceDiskVolumes(server.ID, scan.DiskVolumes)
 		_ = s.servers.ReplaceStorageHealth(server.ID, scan.StorageHealth)
@@ -209,7 +219,7 @@ func readServerLiveStatus(conn sshx.Conn, server *domain.Server) map[string]any 
 			fields["firewall_allowed_ports"] = ""
 		}
 		if tool != "" {
-			be := firewallBackendByName(tool)
+			be := firewallBackendOf(server, tool)
 			if out, c, e := conn.Run(privRun(server, be.statusCmd)); e == nil && c == 0 {
 				active := be.activeFrom(out)
 				fields["firewall_active"] = active

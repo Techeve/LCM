@@ -34,23 +34,23 @@ and Lynis. The Deep Scan complements Trivy, it does not replace it.
 `needrestart` and `lynis` are not preinstalled on many servers. LCM does **not**
 install them automatically: if a tool is missing, the Deep Scan still runs and
 honestly reports that part as "not checked". Use the **"Install tools"** button
-(server detail → **Deep Scan** tab) to add both tools per package manager
+(server detail → **Deep scan** tab) to add both tools per package manager
 (apt/dnf/zypper/pacman/apk; where a distribution doesn't offer a tool - e.g.
 needrestart on Alpine - that is reported).
 
 ## Running
 
-- **Single server**: server detail → **Deep Scan** tab → **"Run deep scan"**. The
+- **Single server**: server detail → **Deep scan** tab → **"Start deep scan"**. The
   run may take ~30-60 s due to Lynis and appears as a job in the history.
-- **Whole group**: a group rule of type **"Deep Scan"** (scheduled or triggered
+- **Whole group**: a group rule of type **"Deep scan"** (scheduled or triggered
   manually).
 
 The Deep Scan is read-only and therefore also works in restricted-sudo mode.
 
 ## Result
 
-The **Deep Scan** tab shows the hardening index, the kernel-related CVEs and the
-**reports**.
+The **Deep scan** tab shows the hardening index, the kernel-related CVEs and the
+**history** of reports.
 
 ### Reports instead of one endless list
 
@@ -78,13 +78,13 @@ The result also feeds the traffic light and alerts:
 - a **kernel reboot gap** sets "reboot required" (yellow),
 - **hardening/configuration warnings** turn the server yellow - plain **Lynis
   suggestions** deliberately stay informational (no "all yellow"),
-- the alert rule **"Deep Scan: findings"** actively reports warnings/kernel reboot.
+- the alert rule **"Deep scan with findings"** actively reports warnings/kernel reboot.
 
 ## When the "root login permitted" finding will not go away
 
 The deep scan reads the root login via `sshd -T` - the **effective**
 configuration, not the contents of one particular file. If it reports the
-access as open even though "disable root login" is set in LCM, the scan is
+access as open even though "Block root login" is set in LCM, the scan is
 right and the setting genuinely does not take effect.
 
 The reason is a peculiarity of sshd: with multiple definitions, the **FIRST**

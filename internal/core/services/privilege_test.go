@@ -61,21 +61,39 @@ func TestEnsureFullSudo(t *testing.T) {
 }
 
 // TestRestrictedAllowsRule: Paketverwaltung/Docker/Firewall/Health sowie
-// Sync und apt-proxy (beide über den LCM-Helper) sind erlaubt; beliebige
-// Skripte, Custom-Aktionen und Reboot nicht.
+// Sync, apt-proxy und Neustart (alle über den LCM-Helper) sind erlaubt; beliebige
+// Skripte und Custom-Aktionen nicht.
 func TestRestrictedAllowsRule(t *testing.T) {
 	allowed := []string{domain.RuleTypeUpdate, domain.RuleTypePackages, domain.RuleTypeSecurity,
 		domain.RuleTypeDockerPrune, domain.RuleTypeFirewall, domain.RuleTypeHealth,
-		domain.RuleTypeSync, domain.RuleTypeAptProxy}
+		domain.RuleTypeSync, domain.RuleTypeAptProxy, domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded}
 	for _, rt := range allowed {
 		if !restrictedAllowsRule(rt) {
 			t.Errorf("%q sollte im eingeschränkten modus erlaubt sein", rt)
 		}
 	}
-	blocked := []string{domain.RuleTypeScript, domain.RuleTypeCustom, domain.RuleTypeReboot}
+	blocked := []string{domain.RuleTypeScript, domain.RuleTypeCustom}
 	for _, rt := range blocked {
 		if restrictedAllowsRule(rt) {
 			t.Errorf("%q sollte im eingeschränkten modus gesperrt sein", rt)
 		}
+	}
+}
+
+// sudo-rs (Standard ab Ubuntu 25.10) kennt `requiretty` nicht; bliebe die Zeile
+// stehen, lehnte visudo die ganze Whitelist ab.
+func TestRestrictedProvisionDropsRequirettyOnSudoRs(t *testing.T) {
+	script := strings.Join(restrictedProvisionScript("lcm-svc"), " && ")
+	write := strings.Index(script, "/etc/sudoers.d/lcm-svc.tmp")
+	drop := strings.Index(script, "grep -q sudo-rs")
+	check := strings.Index(script, "visudo -cf")
+	if write < 0 || drop < write || check < drop {
+		t.Fatalf("Reihenfolge Schreiben, Bereinigen, Prüfen stimmt nicht: %d %d %d", write, drop, check)
+	}
+}
+
+func TestRestrictedRollbackRemovesTempFile(t *testing.T) {
+	if !strings.Contains(restrictedRollbackScript("lcm-svc"), "rm -f /etc/sudoers.d/lcm-svc.tmp") {
+		t.Fatal("die Rücknahme muss die temporäre sudoers-Datei entfernen")
 	}
 }

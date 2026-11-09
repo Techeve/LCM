@@ -10,6 +10,7 @@ import (
 
 	"LCM/internal/api/middlewares"
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/core/services"
 	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
@@ -59,6 +60,26 @@ type OpsController struct {
 	// selfUpdate spielt das eigene Debian-Paket auf dem LCM-Host ein.
 	// Optional (nil = Endpunkte melden „nicht verfügbar").
 	selfUpdate *services.SelfUpdateService
+	// auth und events beenden beim Wechsel von browser_session_mode alle
+	// Browser-Sitzungen und ihre Ereignis-Verbindungen. Optional.
+	auth   *services.AuthService
+	events *EventHub
+	// releaseNotes liefert die Hinweise zum letzten Update. Optional.
+	releaseNotes *services.ReleaseNotesService
+}
+
+// WithReleaseNotes verdrahtet die Hinweise zum letzten Update.
+func (ctrl *OpsController) WithReleaseNotes(notes *services.ReleaseNotesService) *OpsController {
+	ctrl.releaseNotes = notes
+	return ctrl
+}
+
+// WithBrowserSessions verdrahtet, was beim Wechsel von browser_session_mode die
+// Browser-Sitzungen beendet.
+func (ctrl *OpsController) WithBrowserSessions(auth *services.AuthService, events *EventHub) *OpsController {
+	ctrl.auth = auth
+	ctrl.events = events
+	return ctrl
 }
 
 // WithSelfUpdate verdrahtet das Selbst-Update.
@@ -102,7 +123,7 @@ func (ctrl *OpsController) TriggerGlobalSchedule(c fiber.Ctx) error {
 func (ctrl *OpsController) TriggerSystemSchedule(c fiber.Ctx) error {
 	kind := c.Params("kind")
 	if err := ctrl.scheduler.TriggerSystem(kind, actor(c)); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return errScheduleTriggerFails.With("detail", err.Error())
 	}
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "triggered", "kind": kind})
 }
@@ -127,15 +148,18 @@ func (ctrl *OpsController) TriggerBackup(c fiber.Ctx) error {
 	if err := bindOptionalBody(c, &req); err != nil {
 		return err
 	}
+	if err := checkLine("passphrase", req.Passphrase, maxPasswordLen); err != nil {
+		return err
+	}
 	backup, err := ctrl.backups.Create(actor(c), req.Passphrase)
 	if err != nil {
 		if errors.Is(err, services.ErrBackupNoPassphrase) {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return errBackupNoPassphrase
 		}
 		if errors.Is(err, services.ErrWeakBackupPassphrase) {
-			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+			return errBackupWeakSecret
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "backup fehlgeschlagen")
+		return errBackupFailed
 	}
 	return c.Status(fiber.StatusCreated).JSON(backup)
 }
@@ -146,7 +170,7 @@ func (ctrl *OpsController) DownloadBackup(c fiber.Ctx) error {
 	name := c.Params("name")
 	path, err := ctrl.backups.BackupPath(name)
 	if err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "backup nicht gefunden")
+		return errBackupNotFound
 	}
 	return c.Download(path, name)
 }
@@ -158,7 +182,7 @@ func (ctrl *OpsController) DeleteBackup(c fiber.Ctx) error {
 	name := c.Params("name")
 	if err := ctrl.backups.Delete(name); err != nil {
 		if errors.Is(err, services.ErrBackupNotFound) {
-			return fiber.NewError(fiber.StatusNotFound, "backup nicht gefunden")
+			return errBackupNotFound
 		}
 		return err
 	}
@@ -176,6 +200,9 @@ func (ctrl *OpsController) RestoreBackup(c fiber.Ctx) error {
 		Passphrase string `json:"passphrase"`
 	}
 	if err := bindOptionalBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"name", name, maxNameLen}, lineField{"passphrase", req.Passphrase, maxPasswordLen}); err != nil {
 		return err
 	}
 	if err := ctrl.backups.StageRestoreFromHistory(name, req.Passphrase); err != nil {
@@ -204,14 +231,14 @@ func (ctrl *OpsController) GenerateBackupRecipient(c fiber.Ctx) error {
 func (ctrl *OpsController) RestoreUpload(c fiber.Ctx) error {
 	fh, err := c.FormFile("archive")
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "keine Backup-Datei (Feld 'archive')")
+		return errBackupUploadMissing
 	}
 	if fh.Size > maxRestoreUpload {
-		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "Backup-Datei zu groß")
+		return errBackupUploadSize
 	}
 	f, err := fh.Open()
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Backup-Datei nicht lesbar")
+		return errBackupUnreadable
 	}
 	defer f.Close()
 	// Streamend entpacken statt erst komplett in den Speicher zu laden: Ein
@@ -248,24 +275,12 @@ func (ctrl *OpsController) respondStaged(c fiber.Ctx) error {
 	})
 }
 
-// mapRestoreError bildet Restore-Fehler auf HTTP-Status ab.
+// mapRestoreError bildet Restore-Fehler auf API-Fehler ab.
 func mapRestoreError(err error) error {
-	switch {
-	case errors.Is(err, services.ErrBackupNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "backup nicht gefunden")
-	case errors.Is(err, services.ErrBackupNoPassphrase):
-		return fiber.NewError(fiber.StatusBadRequest, "Passphrase erforderlich")
-	case errors.Is(err, services.ErrBackupNoIdentity):
-		return fiber.NewError(fiber.StatusBadRequest, "Das Archiv ist an Empfänger-Schlüssel verschlüsselt - der private Schlüssel eines Empfängers ist erforderlich")
-	case errors.Is(err, services.ErrBackupPassphrase):
-		return fiber.NewError(fiber.StatusBadRequest, "Passphrase oder Schlüssel falsch, oder Datei beschädigt")
-	case errors.Is(err, services.ErrBackupFormat):
-		return fiber.NewError(fiber.StatusBadRequest, "kein gültiges LCM-Backup-Archiv")
-	case errors.Is(err, services.ErrBackupIncomplete):
-		return fiber.NewError(fiber.StatusBadRequest, "Archiv enthält keine Datenbank")
-	default:
-		return fiber.NewError(fiber.StatusInternalServerError, "wiederherstellung fehlgeschlagen")
+	if mapped := matchSentinel(err, restoreErrors); mapped != nil {
+		return mapped
 	}
+	return errRestoreFailed
 }
 
 type backupSettingsRequest struct {
@@ -286,8 +301,20 @@ type backupSettingsRequest struct {
 // ConfigureBackups - PATCH /api/v1/system/backups/settings (backups:manage)
 func (ctrl *OpsController) ConfigureBackups(c fiber.Ctx) error {
 	var req backupSettingsRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"time", req.Time, maxNameLen}, lineField{"dir", req.Dir, maxPathLen}, lineField{"passphrase", req.Passphrase, maxPasswordLen}); err != nil {
+		return err
+	}
+	if err := checkText("recipients", req.Recipients, maxListLen); err != nil {
+		return err
+	}
+	if err := checkRange("interval_hours", req.IntervalHours, 0, maxTTLHours); err != nil {
+		return err
+	}
+	if err := checkRange("retention", req.Retention, 0, maxAPIKeyDays); err != nil {
+		return err
 	}
 	// Feld-scharfes Teil-Update: nur die Backup-Felder anfassen - das
 	// Durchreichen an UpdateGlobal hat früher alle nicht mitgereichten
@@ -303,12 +330,17 @@ func (ctrl *OpsController) ConfigureBackups(c fiber.Ctx) error {
 		Recipients:    req.Recipients,
 	}, actor(c))
 	if err != nil {
-		if errors.Is(err, services.ErrBackupNeedsPassphrase) ||
-			errors.Is(err, services.ErrSettingInvalid) {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		if errors.Is(err, services.ErrBackupNeedsPassphrase) {
+			return errBackupNeedsSecret
+		}
+		if errors.Is(err, services.ErrInvalidBackupRecipient) {
+			return errBackupRecipient.With("detail", err.Error())
+		}
+		if errors.Is(err, services.ErrSettingInvalid) {
+			return errSettingInvalid.With("detail", err.Error())
 		}
 		if errors.Is(err, services.ErrWeakBackupPassphrase) {
-			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+			return errBackupWeakSecret
 		}
 		return err
 	}
@@ -399,18 +431,18 @@ func (ctrl *OpsController) Vulnerabilities(c fiber.Ctx) error {
 // gefunden" wäre dann nicht von „seit Wochen nicht nachgesehen" zu
 // unterscheiden.
 func (ctrl *OpsController) ScannerStatus(c fiber.Ctx) error {
-	return c.JSON(ctrl.servers.CVEDBStatus())
+	return c.JSON(ctrl.servers.ScannerStatus())
 }
 
 // UpdateCVEDB - POST /api/v1/security/scanner/update-db (settings:manage)
-// Lädt die Schwachstellen-Datenbank herunter, ohne zu scannen. Asynchroner
-// Job - damit ein Fehlschlag (Proxy, Rate-Limit, kein Netz) samt Ausgabe im
+// Holt einen neueren Stand der Schwachstellen-Datenbank im Hintergrund, ohne
+// zu scannen. Asynchroner Job - damit ein Fehlschlag (Proxy, Rate-Limit, kein Netz) samt Ausgabe im
 // Protokoll landet statt still zu verpuffen.
 func (ctrl *OpsController) UpdateCVEDB(c fiber.Ctx) error {
 	job, err := ctrl.servers.UpdateCVEDB(actor(c))
 	if err != nil {
 		if errors.Is(err, services.ErrScannerUnavailable) {
-			return fiber.NewError(fiber.StatusConflict, err.Error())
+			return errScannerUnavailable
 		}
 		return mapServerError(err)
 	}
@@ -420,9 +452,11 @@ func (ctrl *OpsController) UpdateCVEDB(c fiber.Ctx) error {
 }
 
 // BulkUpdateStatus - GET /api/v1/security/update-all (packages:read)
-// Liefert den Fortschritt eines laufenden „Alle VMs aktualisieren"-Laufs.
+// Liefert den Fortschritt eines laufenden „Alle VMs aktualisieren"-Laufs - nur
+// vollständig für Admins und den, dessen Sichtbereich der Lauf betrifft (siehe
+// BulkUpdateStatus.VisibleTo).
 func (ctrl *OpsController) BulkUpdateStatus(c fiber.Ctx) error {
-	return c.JSON(ctrl.servers.BulkUpdateStatus())
+	return c.JSON(ctrl.servers.BulkUpdateStatus().VisibleTo(scopeFor(c)))
 }
 
 // StartBulkUpdate - POST /api/v1/security/update-all (servers:write)
@@ -432,7 +466,7 @@ func (ctrl *OpsController) StartBulkUpdate(c fiber.Ctx) error {
 	status, err := ctrl.servers.StartBulkUpdate(scopeFor(c), actor(c))
 	if err != nil {
 		if errors.Is(err, services.ErrBulkUpdateRunning) {
-			return c.Status(fiber.StatusConflict).JSON(status)
+			return c.Status(fiber.StatusConflict).JSON(status.VisibleTo(scopeFor(c)))
 		}
 		return err
 	}
@@ -488,16 +522,23 @@ func (ctrl *OpsController) ListKnownRepos(c fiber.Ctx) error {
 // Legt einen Katalog-Eintrag an (ohne id) oder aktualisiert ihn (mit id).
 func (ctrl *OpsController) SaveKnownRepo(c fiber.Ctx) error {
 	var req domain.KnownRepo
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"key", req.Key, maxNameLen}, lineField{"name", req.Name, maxNameLen}, lineField{"key_url", req.KeyURL, maxPathLen},
+		lineField{"package_manager", req.PackageManager, maxNameLen}, lineField{"line", req.Line, maxPathLen}); err != nil {
+		return err
+	}
+	if err := checkText("description", req.Description, maxDescriptionLen); err != nil {
+		return err
 	}
 	repo, err := ctrl.settings.SaveKnownRepo(req, actor(c))
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrKnownRepoInvalid):
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return errKnownRepoInvalid.With("detail", err.Error())
 		case errors.Is(err, repositories.ErrNotFound):
-			return fiber.NewError(fiber.StatusNotFound, "katalog-eintrag nicht gefunden")
+			return errKnownRepoNotFound
 		}
 		return err
 	}
@@ -512,7 +553,7 @@ func (ctrl *OpsController) DeleteKnownRepo(c fiber.Ctx) error {
 	}
 	if err := ctrl.settings.DeleteKnownRepo(id, actor(c)); err != nil {
 		if errors.Is(err, repositories.ErrNotFound) {
-			return fiber.NewError(fiber.StatusNotFound, "katalog-eintrag nicht gefunden")
+			return errKnownRepoNotFound
 		}
 		return err
 	}
@@ -536,16 +577,25 @@ func (ctrl *OpsController) ListIPAllowlists(c fiber.Ctx) error {
 // Legt eine Allowlist an (ohne id) oder aktualisiert sie (mit id).
 func (ctrl *OpsController) SaveIPAllowlist(c fiber.Ctx) error {
 	var req domain.IPAllowlist
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
+	}
+	if err := checkText("description", req.Description, maxDescriptionLen); err != nil {
+		return err
+	}
+	if err := checkText("entries", req.Entries, maxScriptLen); err != nil {
+		return err
 	}
 	list, err := ctrl.settings.SaveIPAllowlist(req, actor(c))
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrIPAllowlistInvalid):
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return errAllowlistInvalid.With("detail", err.Error())
 		case errors.Is(err, repositories.ErrNotFound):
-			return fiber.NewError(fiber.StatusNotFound, "allowlist nicht gefunden")
+			return errAllowlistNotFound
 		}
 		return err
 	}
@@ -560,10 +610,10 @@ func (ctrl *OpsController) DeleteIPAllowlist(c fiber.Ctx) error {
 	}
 	if err := ctrl.settings.DeleteIPAllowlist(id, actor(c)); err != nil {
 		if errors.Is(err, repositories.ErrNotFound) {
-			return fiber.NewError(fiber.StatusNotFound, "allowlist nicht gefunden")
+			return errAllowlistNotFound
 		}
 		if errors.Is(err, services.ErrAllowlistInUse) {
-			return fiber.NewError(fiber.StatusConflict, err.Error())
+			return errAllowlistInUse
 		}
 		return err
 	}
@@ -578,6 +628,7 @@ func (ctrl *OpsController) GetSettings(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	settings.NTPServerPresets = settings.NTPServerPresetsOrDefault()
 	// Geheimnisse bleiben verborgen (json:"-"); für die UI zusätzlich abgeleitete
 	// „konfiguriert?"-Flags mitgeben, ohne die Werte preiszugeben.
 	return c.JSON(struct {
@@ -585,9 +636,13 @@ func (ctrl *OpsController) GetSettings(c fiber.Ctx) error {
 		CrowdSecConsoleConfigured bool `json:"crowdsec_console_configured"`
 		BackupPassphraseSet       bool `json:"backup_passphrase_set"`
 		BackupRecipientsSet       bool `json:"backup_recipients_set"`
+		// BrowserSessionCookieAvailable: Diese Anfrage kam über HTTPS, die
+		// Cookie-Variante ist also wählbar.
+		BrowserSessionCookieAvailable bool `json:"browser_session_cookie_available"`
 	}{settings, settings.CrowdSecConsoleConfigured(),
 		services.BackupPassphraseSet() || ctrl.settings.BackupPassphraseStored(),
-		strings.TrimSpace(settings.BackupRecipients) != ""})
+		strings.TrimSpace(settings.BackupRecipients) != "",
+		middlewares.RequestIsHTTPS(c)})
 }
 
 // SetMCP - PUT /api/v1/settings/mcp (settings:manage)
@@ -599,14 +654,20 @@ func (ctrl *OpsController) SetMCP(c fiber.Ctx) error {
 		BindHost string `json:"bind_host"`
 		Port     int    `json:"port"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkHost("bind_host", req.BindHost); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
 	}
 	if req.Port == 0 {
 		req.Port = 9330
 	}
 	if err := ctrl.settings.SetMCP(req.Enabled, req.BindHost, req.Port, actor(c)); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return errSettingInvalid.With("detail", err.Error())
 	}
 	settings, err := ctrl.settings.Get()
 	if err != nil {
@@ -626,6 +687,28 @@ func (ctrl *OpsController) UpdateInfo(c fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(status)
+}
+
+// ReleaseNotes - GET /api/v1/system/release-notes (settings:manage)
+// Die Hinweise zum letzten Update, solange dieser Benutzer sie nicht geschlossen
+// hat. Ein leeres Objekt heißt: nichts zu zeigen.
+func (ctrl *OpsController) ReleaseNotes(c fiber.Ctx) error {
+	notes, err := ctrl.releaseNotes.Pending(middlewares.CurrentUser(c))
+	if err != nil {
+		return err
+	}
+	if notes == nil {
+		return c.JSON(fiber.Map{})
+	}
+	return c.JSON(notes)
+}
+
+// ReleaseNotesSeen - POST /api/v1/system/release-notes/seen (settings:manage)
+func (ctrl *OpsController) ReleaseNotesSeen(c fiber.Ctx) error {
+	if err := ctrl.releaseNotes.MarkSeen(middlewares.CurrentUser(c)); err != nil {
+		return err
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 // CheckUpdateNow - POST /api/v1/system/update-check (settings:manage)
@@ -662,23 +745,47 @@ func (ctrl *OpsController) SelfUpdateStatus(c fiber.Ctx) error {
 // im Fehlerfall kein zweites, das ihm hilft.
 func (ctrl *OpsController) StartSelfUpdate(c fiber.Ctx) error {
 	if ctrl.selfUpdate == nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "Selbst-Update ist auf dieser Installation nicht eingerichtet.")
+		return errSelfUpdateOff
 	}
 	req := struct {
 		WithBackup *bool `json:"with_backup"`
 	}{}
 	if len(c.Body()) > 0 {
-		if err := c.Bind().Body(&req); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+		if err := bindBody(c, &req); err != nil {
+			return err
 		}
 	}
 	withBackup := req.WithBackup == nil || *req.WithBackup
 
 	status, err := ctrl.selfUpdate.Start(actor(c), withBackup)
 	if err != nil {
-		return fiber.NewError(fiber.StatusConflict, err.Error())
+		return errSelfUpdateRejected.With("detail", err.Error())
 	}
 	return c.JSON(status)
+}
+
+// CancelSelfUpdate - DELETE /api/v1/system/self-update (settings:manage)
+// Bricht das angeforderte Update ab, solange es noch auf laufende Jobs wartet,
+// und hebt die Sperre auf.
+func (ctrl *OpsController) CancelSelfUpdate(c fiber.Ctx) error {
+	if ctrl.selfUpdate == nil {
+		return errSelfUpdateOff
+	}
+	status, err := ctrl.selfUpdate.Cancel(actor(c))
+	if err != nil {
+		return errSelfUpdateNotCancelable
+	}
+	return c.JSON(status)
+}
+
+// Maintenance - GET /api/v1/system/maintenance (angemeldet)
+// Sagt jedem Benutzer, ob LCM gerade wegen des Updates gesperrt ist. Ohne
+// Selbst-Update gibt es keine Sperre.
+func (ctrl *OpsController) Maintenance(c fiber.Ctx) error {
+	if ctrl.selfUpdate == nil {
+		return c.JSON(events.SystemMaintenanceData{Phase: services.SelfUpdateIdle})
+	}
+	return c.JSON(ctrl.selfUpdate.Maintenance())
 }
 
 // globalSettingsRequest ist der PATCH-Rumpf für die globalen Einstellungen.
@@ -707,8 +814,12 @@ type globalSettingsRequest struct {
 	AdvisoryCacheTTLMinutes     *int    `json:"advisory_cache_ttl_minutes"`
 	CVEHighWeightPackages       *string `json:"cve_high_weight_packages"`
 	SessionTTLMinutes           *int    `json:"session_ttl_minutes"`
+	BrowserSessionMode          *string `json:"browser_session_mode"` // memory | cookie
+	BrowserSessionModeConfirmed *bool   `json:"browser_session_mode_confirmed"`
 	JobIdleTimeoutMinutes       *int    `json:"job_idle_timeout_minutes"`
 	JobIdleTimeoutSlowMinutes   *int    `json:"job_idle_timeout_slow_minutes"`
+	PackagesStaleWarnHours      *int    `json:"packages_stale_warn_hours"`
+	PackagesStaleCriticalDays   *int    `json:"packages_stale_critical_days"`
 	Require2FARoles             *string `json:"require_2fa_roles"`
 	PublicBaseURL               *string `json:"public_base_url"`
 	DNSServerPresets            *string `json:"dns_server_presets"`
@@ -727,7 +838,8 @@ type globalSettingsRequest struct {
 	MailUsername        *string `json:"mail_username"`
 	MailPassword        *string `json:"mail_password"`
 	MailFrom            *string `json:"mail_from"`
-	MailUseTLS          *bool   `json:"mail_use_tls"`
+	MailSecurity        *string `json:"mail_security"` // tls | starttls | none
+	MailUseTLS          *bool   `json:"mail_use_tls"`  // alt; gilt nur ohne mail_security
 	MailAdminRecipients *string `json:"mail_admin_recipients"`
 }
 
@@ -758,8 +870,12 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		AdvisoryLocalCopy:           req.AdvisoryLocalCopy,
 		AdvisoryCacheTTLMinutes:     req.AdvisoryCacheTTLMinutes,
 		SessionTTLMinutes:           req.SessionTTLMinutes,
+		BrowserSessionMode:          req.BrowserSessionMode,
+		BrowserSessionModeConfirmed: req.BrowserSessionModeConfirmed,
 		JobIdleTimeoutMinutes:       req.JobIdleTimeoutMinutes,
 		JobIdleTimeoutSlowMinutes:   req.JobIdleTimeoutSlowMinutes,
+		PackagesStaleWarnHours:      req.PackagesStaleWarnHours,
+		PackagesStaleCriticalDays:   req.PackagesStaleCriticalDays,
 		Require2FARoles:             req.Require2FARoles,
 		PublicBaseURL:               req.PublicBaseURL,
 		DNSServerPresets:            req.DNSServerPresets,
@@ -773,6 +889,7 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		MailUsername:                req.MailUsername,
 		MailPassword:                req.MailPassword,
 		MailFrom:                    req.MailFrom,
+		MailSecurity:                req.MailSecurity,
 		MailUseTLS:                  req.MailUseTLS,
 		MailAdminRecipients:         req.MailAdminRecipients,
 	}
@@ -781,9 +898,20 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 // UpdateSettings - PATCH /api/v1/settings/global (settings:manage)
 func (ctrl *OpsController) UpdateSettings(c fiber.Ctx) error {
 	var req globalSettingsRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
+	if err := checkGlobalSettings(req); err != nil {
+		return err
+	}
+	if err := checkBrowserSessionMode(c, req.BrowserSessionMode); err != nil {
+		return err
+	}
+	before, err := ctrl.settings.Get()
+	if err != nil {
+		return err
+	}
+	modeBefore := before.SessionMode()
 	updated, err := ctrl.settings.UpdateGlobal(req.toInput(), actor(c))
 	if err != nil {
 		// Eingabevalidierung gehört als 4xx beantwortet - eine unbekannte
@@ -794,21 +922,59 @@ func (ctrl *OpsController) UpdateSettings(c fiber.Ctx) error {
 		// mitgepflegt werden, und wer das vergaß, lieferte für eine schlichte
 		// Fehleingabe „interner Serverfehler" aus. Alle Validierungsfehler
 		// wickeln jetzt ErrSettingInvalid ein.
-		if errors.Is(err, services.ErrSettingInvalid) || errors.Is(err, services.ErrMailerIncomplete) {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		if errors.Is(err, services.ErrMailerIncomplete) {
+			return errMailerIncomplete
+		}
+		if errors.Is(err, services.ErrSettingInvalid) {
+			return errSettingInvalid.With("detail", err.Error())
 		}
 		return err
 	}
+	ctrl.endSessionsOnModeChange(c, modeBefore, updated.SessionMode())
+	updated.NTPServerPresets = updated.NTPServerPresetsOrDefault()
 	return c.JSON(updated)
+}
+
+// checkBrowserSessionMode prüft den Wunsch nach einem Sitzungsweg: nur die zwei
+// bekannten Werte, und "cookie" nur über HTTPS - das Cookie ist Secure, über
+// reines HTTP käme keine Anmeldung zustande.
+func checkBrowserSessionMode(c fiber.Ctx, mode *string) error {
+	if mode == nil {
+		return nil
+	}
+	if !domain.ValidBrowserSessionMode(*mode) {
+		return errBrowserSessionModeInvalid
+	}
+	if *mode == domain.BrowserSessionCookie && !middlewares.RequestIsHTTPS(c) {
+		return errSessionCookieNeedsHTTPS
+	}
+	return nil
+}
+
+// endSessionsOnModeChange beendet beim Wechsel des Sitzungswegs ALLE Browser-
+// Sitzungen aller Benutzer, auch die des Aufrufers, samt ihren Ereignis-
+// Verbindungen: Eine Sitzung gilt nur über den Weg, für den sie ausgestellt wurde.
+func (ctrl *OpsController) endSessionsOnModeChange(c fiber.Ctx, before, after string) {
+	if before == after {
+		return
+	}
+	middlewares.SecurityEvent(c, "session.mode.changed", "from", before, "to", after, "user", actor(c))
+	if ctrl.auth != nil {
+		ctrl.auth.RevokeAllSessions()
+	}
+	ctrl.events.CloseBrowserSessions()
 }
 
 // TestSystemMail - POST /api/v1/settings/global/test-mail (settings:manage)
 // Verschickt eine Testnachricht an die Admin-Empfänger des System-Mailers.
 func (ctrl *OpsController) TestSystemMail(c fiber.Ctx) error {
 	if err := ctrl.settings.TestSystemMail(actor(c)); err != nil {
-		// Konfigurations- wie Versandfehler landen als 422 beim Aufrufer -
-		// der Test-Button soll die Ursache anzeigen, nicht ein generisches 500.
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+		// Fehlende Konfiguration hat eigene Codes, der eigentliche Versand
+		// scheitert als 422 - der Test-Button zeigt so die Ursache an.
+		if mapped := matchSentinel(err, mailerErrors); mapped != nil {
+			return mapped
+		}
+		return errMailTestFailed.With("detail", err.Error())
 	}
 	return c.JSON(fiber.Map{"status": "sent"})
 }
@@ -829,8 +995,11 @@ func (ctrl *OpsController) ListCrowdSecLapis(c fiber.Ctx) error {
 // unverändert).
 func (ctrl *OpsController) SaveCrowdSecLapi(c fiber.Ctx) error {
 	var req services.CrowdSecLapiInput
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"url", req.URL, maxPathLen}, lineField{"login", req.Login, maxLoginUserLen}, lineField{"password", req.Password, maxPasswordLen}); err != nil {
+		return err
 	}
 	lapi, err := ctrl.settings.SaveCrowdSecLapi(req, actor(c))
 	if err != nil {
@@ -869,9 +1038,9 @@ func (ctrl *OpsController) CrowdSecLapiStatus(c fiber.Ctx) error {
 func mapLapiError(err error) error {
 	switch {
 	case errors.Is(err, services.ErrCrowdSecLapiInvalid):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return errLapiInvalid.With("detail", err.Error())
 	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "crowdsec-lapi nicht gefunden")
+		return errLapiNotFound
 	}
 	return err
 }
@@ -890,8 +1059,11 @@ func (ctrl *OpsController) ListAptCaches(c fiber.Ctx) error {
 // Legt einen Cache an (ohne id) oder aktualisiert ihn (mit id).
 func (ctrl *OpsController) SaveAptCache(c fiber.Ctx) error {
 	var req services.AptCacheInput
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"url", req.URL, maxPathLen}); err != nil {
+		return err
 	}
 	cache, err := ctrl.settings.SaveAptCache(req, actor(c))
 	if err != nil {
@@ -930,9 +1102,90 @@ func (ctrl *OpsController) AptCacheStatus(c fiber.Ctx) error {
 func mapAptCacheError(err error) error {
 	switch {
 	case errors.Is(err, services.ErrAptCacheInvalid), errors.Is(err, services.ErrAptCacheURLInvalid):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return errAptCacheInvalid.With("detail", err.Error())
 	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "apt-cache nicht gefunden")
+		return errAptCacheNotFound
 	}
 	return err
+}
+
+// checkGlobalSettings prüft die Textfelder des PATCH-Rumpfs der globalen
+// Einstellungen. Zahlen und Bedeutung prüft der Service; hier geht es um
+// Länge, Steuerzeichen und die Form von Hosts, Ports und Adressen.
+// checkSettingsNumbers lehnt Zahlen außerhalb des Sinnvollen ab, statt sie still
+// auf die nächste Grenze zu setzen: Wer 5 Tage Verlauf einträgt, soll erfahren,
+// dass es mindestens 90 sind, und nicht später 90 vorfinden.
+func checkSettingsNumbers(req globalSettingsRequest) error {
+	for _, f := range []struct {
+		name     string
+		value    *int
+		min, max int
+	}{
+		{"storage_history_retention_days", req.StorageHistoryRetentionDays, domain.StorageHistoryRetentionMin, domain.StorageHistoryRetentionMax},
+		{"job_idle_timeout_minutes", req.JobIdleTimeoutMinutes, domain.JobIdleTimeoutMin, domain.JobIdleTimeoutMax},
+		{"job_idle_timeout_slow_minutes", req.JobIdleTimeoutSlowMinutes, domain.JobIdleTimeoutMin, domain.JobIdleTimeoutMax},
+		{"backup_interval_hours", req.BackupIntervalHours, 1, maxTTLHours},
+		{"backup_retention", req.BackupRetention, 0, maxAPIKeyDays},
+	} {
+		if err := checkOptionalRange(f.name, f.value, f.min, f.max); err != nil {
+			return err
+		}
+	}
+	// 0 hat in beiden Feldern eine eigene Bedeutung (Cache aus, Vorgabe aus der Konfiguration).
+	if v := derefInt(req.AdvisoryCacheTTLMinutes); v != 0 {
+		if err := checkRange("advisory_cache_ttl_minutes", v, domain.AdvisoryCacheTTLMin, domain.AdvisoryCacheTTLMax); err != nil {
+			return err
+		}
+	}
+	if v := derefInt(req.SessionTTLMinutes); v != 0 {
+		return checkRange("session_ttl_minutes", v, minSessionMinutes, maxSessionMinutes)
+	}
+	return nil
+}
+
+func checkGlobalSettings(req globalSettingsRequest) error {
+	if err := checkLines(
+		lineField{"default_ssh_user", deref(req.DefaultSSHUser), maxLoginUserLen},
+		lineField{"default_ssh_password", deref(req.DefaultSSHPassword), maxPasswordLen},
+		lineField{"backup_time", deref(req.BackupTime), maxNameLen},
+		lineField{"backup_dir", deref(req.BackupDir), maxPathLen},
+		lineField{"cve_scan_cron", deref(req.CVEScanCron), maxCronLen},
+		lineField{"require_2fa_roles", deref(req.Require2FARoles), maxListLen},
+		lineField{"public_base_url", deref(req.PublicBaseURL), maxPathLen},
+		lineField{"default_timezone", deref(req.DefaultTimezone), maxNameLen},
+		lineField{"crowdsec_console_key", deref(req.CrowdSecConsoleKey), maxPasswordLen},
+		lineField{"mail_username", deref(req.MailUsername), maxLoginUserLen},
+		lineField{"mail_password", deref(req.MailPassword), maxPasswordLen},
+	); err != nil {
+		return err
+	}
+	for _, f := range []lineField{
+		{"cve_high_weight_packages", deref(req.CVEHighWeightPackages), maxListLen},
+		{"dns_server_presets", deref(req.DNSServerPresets), maxListLen},
+		{"dns_test_domains", deref(req.DNSTestDomains), maxListLen},
+		{"ntp_server_presets", deref(req.NTPServerPresets), maxListLen},
+	} {
+		if err := checkText(f.name, f.value, f.max); err != nil {
+			return err
+		}
+	}
+	if err := checkHost("mail_host", strings.TrimSpace(deref(req.MailHost))); err != nil {
+		return err
+	}
+	if err := checkPort("mail_port", derefInt(req.MailPort)); err != nil {
+		return err
+	}
+	if err := checkPort("default_ssh_port", derefInt(req.DefaultSSHPort)); err != nil {
+		return err
+	}
+	if err := checkSender("mail_from", deref(req.MailFrom)); err != nil {
+		return err
+	}
+	if err := checkDNSPresets("dns_server_presets", deref(req.DNSServerPresets)); err != nil {
+		return err
+	}
+	if err := checkSettingsNumbers(req); err != nil {
+		return err
+	}
+	return checkEmailList("mail_admin_recipients", deref(req.MailAdminRecipients))
 }

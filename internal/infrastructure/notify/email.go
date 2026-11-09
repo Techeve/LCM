@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"os"
 	"strings"
 	"text/template"
 	"time"
+	"unicode"
 
 	"LCM/internal/core/domain"
 )
@@ -26,13 +28,27 @@ type EmailConfig struct {
 	Username   string   `json:"username"`
 	From       string   `json:"from"`
 	Recipients []string `json:"recipients"`
-	// UseTLS aktiviert STARTTLS beim Versand (Standard bei Port 587).
+	// Security ist die Verschlüsselung: domain.MailSecurityTLS (implizit,
+	// Port 465), MailSecurityStartTLS (Pflicht, Port 587) oder MailSecurityNone
+	// (Port 25). Leer bei Kanälen vor der Auswahl - dann gilt UseTLS.
+	Security string `json:"security"`
+	// UseTLS ist das alte Ja/Nein (true = starttls, false = none); nur
+	// maßgeblich, solange Security leer ist.
 	UseTLS bool `json:"use_tls"`
+}
+
+// security liefert den wirksamen Modus.
+func (c EmailConfig) security() string {
+	if c.Security != "" {
+		return c.Security
+	}
+	return domain.MailSecurityFromLegacy(c.UseTLS)
 }
 
 // parseEmailConfig liest die JSON-Konfiguration eines E-Mail-Kanals.
 func parseEmailConfig(raw string) (EmailConfig, error) {
-	// Fehlt der Schlüssel, bleibt die Verschlüsselung an (nie stiller Klartext).
+	// Fehlen security und use_tls, bleibt die Verschlüsselung an (nie stiller
+	// Klartext).
 	cfg := EmailConfig{UseTLS: true}
 	if strings.TrimSpace(raw) == "" {
 		return cfg, nil
@@ -44,7 +60,7 @@ func parseEmailConfig(raw string) (EmailConfig, error) {
 }
 
 // sendMailFunc ist die Versand-Funktion (in Tests austauschbar).
-type sendMailFunc func(addr string, useTLS bool, auth smtp.Auth, from string, to []string, msg []byte) error
+type sendMailFunc func(addr, security string, auth smtp.Auth, from string, to []string, msg []byte) error
 
 // EmailProvider ist die konkrete E-Mail-Implementierung der Kanal-
 // Schnittstelle: SMTP-Konfiguration, Authentifizierung und Templating der
@@ -66,22 +82,40 @@ func NewEmailProvider(cfg EmailConfig, password string) *EmailProvider {
 // (R2-033; der Versand selbst läuft zusätzlich asynchron).
 const smtpTimeout = 15 * time.Second
 
-// errKeinSTARTTLS: Die Anmeldung ist mit aktivem STARTTLS verlangt, der Server
-// bietet aber kein STARTTLS an.
-var errKeinSTARTTLS = errors.New("server bietet kein STARTTLS an, die Anmeldung ist aber nur verschlüsselt erlaubt - STARTTLS am Server aktivieren oder den Haken „STARTTLS verwenden“ abwählen")
+// errKeinSTARTTLS: Der Modus STARTTLS verlangt Verschlüsselung, der Server
+// bietet sie aber nicht an.
+var errKeinSTARTTLS = errors.New("server bietet kein STARTTLS an - STARTTLS am Server aktivieren, die Verschlüsselung „TLS“ wählen (üblich Port 465) oder „Keine“ wählen, wenn der Server unverschlüsselt arbeiten soll")
+
+// tlsConfigFor liefert die TLS-Einstellungen für die Verbindung zu host (in
+// Tests austauschbar, etwa um ein selbst signiertes Zertifikat zu vertrauen).
+var tlsConfigFor = func(host string) *tls.Config {
+	return &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+}
+
+// dialSMTP baut die Verbindung auf: bei „tls“ mit implizitem TLS ab dem
+// ersten Byte, sonst als einfache TCP-Verbindung.
+func dialSMTP(addr, host, security string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: smtpTimeout}
+	if security == domain.MailSecurityTLS {
+		return tls.DialWithDialer(dialer, "tcp", addr, tlsConfigFor(host))
+	}
+	return dialer.Dial("tcp", addr)
+}
 
 // sendMail ist der eigene Versandkern anstelle von smtp.SendMail: dessen
 // EHLO meldete sich wortwörtlich als „localhost" - Spam-Filter werten das
 // als Verdachtsmoment, und im Server-Log der Gegenstelle ist der Absender
 // nicht zuzuordnen (R2-031). Hier: EHLO mit dem tatsächlichen Hostnamen,
-// STARTTLS nur wenn useTLS gesetzt ist, Deadline über die gesamte Sitzung.
-func sendMail(addr string, useTLS bool, auth smtp.Auth, from string, to []string, msg []byte) error {
-	conn, err := net.DialTimeout("tcp", addr, smtpTimeout)
+// Verschlüsselung nach security (tls: implizit; starttls: Pflicht, sonst
+// Abbruch; none: keine), Deadline über die gesamte Sitzung. Nie stiller
+// Klartext, wenn Verschlüsselung gewählt ist.
+func sendMail(addr, security string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	host, _, _ := net.SplitHostPort(addr)
+	conn, err := dialSMTP(addr, host, security)
 	if err != nil {
 		return err
 	}
 	_ = conn.SetDeadline(time.Now().Add(smtpTimeout))
-	host, _, _ := net.SplitHostPort(addr)
 	c, err := smtp.NewClient(conn, host)
 	if err != nil {
 		conn.Close()
@@ -91,20 +125,16 @@ func sendMail(addr string, useTLS bool, auth smtp.Auth, from string, to []string
 	if err := c.Hello(heloName()); err != nil {
 		return err
 	}
-	secured := false
-	if useTLS {
-		if ok, _ := c.Extension("STARTTLS"); ok {
-			if err := c.StartTLS(&tls.Config{ServerName: host}); err != nil {
-				return err
-			}
-			secured = true
+	if security == domain.MailSecurityStartTLS {
+		if ok, _ := c.Extension("STARTTLS"); !ok {
+			return errKeinSTARTTLS
+		}
+		if err := c.StartTLS(tlsConfigFor(host)); err != nil {
+			return err
 		}
 	}
 	if auth != nil {
 		if ok, _ := c.Extension("AUTH"); ok {
-			if useTLS && !secured {
-				return errKeinSTARTTLS
-			}
 			if err := c.Auth(auth); err != nil {
 				return err
 			}
@@ -145,14 +175,15 @@ func (p *EmailProvider) withSender(fn sendMailFunc) *EmailProvider {
 	return p
 }
 
-// auth liefert die Anmeldung am Server, nil ohne Benutzer. Mit TLS schützt
-// STARTTLS das Passwort. Ohne TLS hat der Nutzer die Verschlüsselung
-// ausdrücklich abgewählt, dann geht das Passwort im Klartext.
+// auth liefert die Anmeldung am Server, nil ohne Benutzer. Mit tls und
+// starttls schützt die Verschlüsselung das Passwort. Mit none hat der Nutzer
+// die Verschlüsselung ausdrücklich abgewählt, dann geht das Passwort im
+// Klartext.
 func (p *EmailProvider) auth() smtp.Auth {
 	if p.cfg.Username == "" {
 		return nil
 	}
-	if p.cfg.UseTLS {
+	if p.cfg.security() != domain.MailSecurityNone {
 		return smtp.PlainAuth("", p.cfg.Username, p.password, p.cfg.Host)
 	}
 	return plainAuthKlartext{username: p.cfg.Username, password: p.password}
@@ -178,21 +209,82 @@ func (a plainAuthKlartext) Next(_ []byte, more bool) ([]byte, error) {
 // Type liefert den Kanal-Typ.
 func (p *EmailProvider) Type() string { return domain.ChannelTypeEmail }
 
-// Validate prüft die SMTP-Konfiguration auf Vollständigkeit.
+// Validate prüft die SMTP-Konfiguration: vollständig, Verschlüsselung einer
+// der drei Modi, Host nur aus den Zeichen eines Hostnamens, Absender eine
+// Adresse mit oder ohne Anzeigenamen, Empfänger je eine einzelne Adresse. Die
+// Adressen landen in den Kopfzeilen der Nachricht - ein Zeilenumbruch darin
+// ließe zusätzliche Kopfzeilen einschmuggeln.
 func (p *EmailProvider) Validate() error {
-	if strings.TrimSpace(p.cfg.Host) == "" {
+	host := strings.TrimSpace(p.cfg.Host)
+	if host == "" {
 		return errors.New("smtp-host fehlt")
+	}
+	if !validSMTPHost(host) {
+		return errors.New("smtp-host enthält unzulässige Zeichen")
 	}
 	if p.cfg.Port <= 0 || p.cfg.Port > 65535 {
 		return errors.New("smtp-port ungültig")
 	}
+	if !domain.ValidMailSecurity(p.cfg.security()) {
+		return fmt.Errorf("verschlüsselung (security) ungültig: %q, erlaubt sind tls, starttls und none", p.cfg.Security)
+	}
 	if strings.TrimSpace(p.cfg.From) == "" {
 		return errors.New("absenderadresse (from) fehlt")
 	}
-	if len(p.recipients()) == 0 {
+	if _, err := parseSender(p.cfg.From); err != nil {
+		return fmt.Errorf("absenderadresse (from) ungültig: %q", p.cfg.From)
+	}
+	recipients := p.recipients()
+	if len(recipients) == 0 {
 		return errors.New("mindestens ein empfänger ist erforderlich")
 	}
+	if len(recipients) > maxRecipients {
+		return fmt.Errorf("zu viele empfänger (höchstens %d)", maxRecipients)
+	}
+	for _, r := range recipients {
+		if !singleAddress(r) {
+			return fmt.Errorf("empfängeradresse ungültig: %q", r)
+		}
+	}
 	return nil
+}
+
+// maxRecipients begrenzt die Empfänger eines Kanals.
+const maxRecipients = 50
+
+// validSMTPHost: Hostname oder IP-Adresse, nichts mit Bedeutung in Shell oder URL.
+func validSMTPHost(host string) bool {
+	if len(host) > 253 {
+		return false
+	}
+	for _, r := range host {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			r == '.' || r == '-' || r == ':' || r == '[' || r == ']' || r == '_'
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// parseSender liest den Absender: eine Adresse, mit oder ohne Anzeigenamen
+// (`lcm@example.com`, `LCM <lcm@example.com>`), ohne Steuerzeichen. Für den
+// SMTP-Umschlag gilt nur Address, für die From-Kopfzeile String().
+func parseSender(v string) (*mail.Address, error) {
+	v = strings.TrimSpace(v)
+	for _, r := range v {
+		if unicode.IsControl(r) {
+			return nil, errors.New("steuerzeichen im absender")
+		}
+	}
+	return mail.ParseAddress(v)
+}
+
+// singleAddress ist wahr für genau eine Adresse ohne Anzeigenamen.
+func singleAddress(v string) bool {
+	v = strings.TrimSpace(v)
+	addr, err := mail.ParseAddress(v)
+	return err == nil && addr.Address == v && !strings.ContainsAny(v, "\r\n")
 }
 
 // recipients liefert die getrimmten, nicht-leeren Empfängeradressen.
@@ -216,14 +308,7 @@ func (p *EmailProvider) Send(event domain.NotificationEvent) error {
 	if err != nil {
 		return err
 	}
-	recipients := p.recipients()
-	msg := buildMessage(p.cfg.From, recipients, subject, body)
-
-	addr := fmt.Sprintf("%s:%d", p.cfg.Host, p.cfg.Port)
-	if err := p.send(addr, p.cfg.UseTLS, p.auth(), p.cfg.From, recipients, msg); err != nil {
-		return fmt.Errorf("smtp-versand: %w", err)
-	}
-	return nil
+	return p.deliver(subject, body, p.recipients())
 }
 
 // SendRaw versendet eine transaktionale Mail (Betreff + Klartext-Rumpf) an
@@ -240,9 +325,20 @@ func (p *EmailProvider) SendRaw(subject, body string, to []string) error {
 	if len(recipients) == 0 {
 		return errors.New("mindestens ein empfänger ist erforderlich")
 	}
-	msg := buildMessage(p.cfg.From, recipients, subject, body)
+	return p.deliver(subject, body, recipients)
+}
+
+// deliver baut die Nachricht und übergibt sie dem Versandkern. Im Umschlag
+// (MAIL FROM) steht nur die Adresse, in der From-Kopfzeile der Absender mit
+// Anzeigenamen.
+func (p *EmailProvider) deliver(subject, body string, recipients []string) error {
+	sender, err := parseSender(p.cfg.From)
+	if err != nil {
+		return fmt.Errorf("absenderadresse (from) ungültig: %q", p.cfg.From)
+	}
+	msg := buildMessage(sender, recipients, subject, body)
 	addr := fmt.Sprintf("%s:%d", p.cfg.Host, p.cfg.Port)
-	if err := p.send(addr, p.cfg.UseTLS, p.auth(), p.cfg.From, recipients, msg); err != nil {
+	if err := p.send(addr, p.cfg.security(), p.auth(), sender.Address, recipients, msg); err != nil {
 		return fmt.Errorf("smtp-versand: %w", err)
 	}
 	return nil
@@ -330,18 +426,24 @@ func RenderBody(event domain.NotificationEvent) (string, error) {
 // zusammen (UTF-8, CRLF-Zeilenenden). Date und Message-ID sind Pflicht der
 // RFC - ohne sie stempeln Gegenstellen die Mail nach Empfangszeit und
 // Spam-Filter werten das Fehlen als Verdachtsmoment (R2-031).
-func buildMessage(from string, to []string, subject, body string) []byte {
+func buildMessage(from *mail.Address, to []string, subject, body string) []byte {
 	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\r\n", from)
-	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
-	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
+	fmt.Fprintf(&b, "From: %s\r\n", headerValue(from.String()))
+	fmt.Fprintf(&b, "To: %s\r\n", headerValue(strings.Join(to, ", ")))
+	fmt.Fprintf(&b, "Subject: %s\r\n", headerValue(subject))
 	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
-	fmt.Fprintf(&b, "Message-ID: <%s@%s>\r\n", messageToken(), messageDomain(from))
+	fmt.Fprintf(&b, "Message-ID: <%s@%s>\r\n", messageToken(), messageDomain(from.Address))
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	b.WriteString("\r\n")
 	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
 	return []byte(b.String())
+}
+
+// headerValue macht aus einem Wert eine einzelne Kopfzeile: Zeilenumbrüche
+// werden zu Leerzeichen, damit kein Wert eine weitere Kopfzeile eröffnen kann.
+func headerValue(v string) string {
+	return strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(v)
 }
 
 // messageToken erzeugt den eindeutigen linken Teil der Message-ID.
@@ -355,9 +457,9 @@ func messageToken() string {
 
 // messageDomain leitet die Message-ID-Domain aus der Absenderadresse ab;
 // Rückfall ist der eigene Hostname.
-func messageDomain(from string) string {
-	if i := strings.LastIndex(from, "@"); i >= 0 && i < len(from)-1 {
-		return strings.TrimRight(strings.TrimSpace(from[i+1:]), ">")
+func messageDomain(address string) string {
+	if i := strings.LastIndex(address, "@"); i >= 0 && i < len(address)-1 {
+		return address[i+1:]
 	}
 	return heloName()
 }

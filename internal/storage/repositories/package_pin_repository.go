@@ -19,15 +19,6 @@ func NewPackagePinRepository(db *gorm.DB) *PackagePinRepository {
 	return &PackagePinRepository{db: db}
 }
 
-// ListGlobal liefert nur die globalen Pins.
-func (r *PackagePinRepository) ListGlobal() ([]domain.PackagePin, error) {
-	var pins []domain.PackagePin
-	if err := r.db.Where("server_id = 0").Order("name").Find(&pins).Error; err != nil {
-		return nil, err
-	}
-	return pins, nil
-}
-
 // ListForServer liefert die Pins, die fuer DIESEN Server gelten: die globalen
 // und die serverspezifischen zusammen. Genau diese Vereinigung wird auf dem
 // Ziel angewendet - der globale Kernel-Schutz laesst sich damit einmal setzen

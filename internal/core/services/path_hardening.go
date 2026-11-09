@@ -105,10 +105,8 @@ func (s *ServerService) HardenPath(scope repositories.AccessScope, id uint, path
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureNotRouterOS(server); err != nil {
-		return nil, err
-	}
-	if err := domain.ValidateHardenTarget(path, group, unit); err != nil {
+	scripts, err := planHardenPaths(server, []HardenTarget{{Path: path, Group: group, Unit: unit}})
+	if err != nil {
 		return nil, err
 	}
 	conn, err := s.connectRec(server, "path-harden", actor)
@@ -117,7 +115,7 @@ func (s *ServerService) HardenPath(scope repositories.AccessScope, id uint, path
 	}
 	defer conn.Close()
 
-	out, code, runErr := conn.Run(privRun(server, hardenScript(path, group, unit)))
+	out, code, runErr := conn.Run(privRun(server, scripts[0]))
 	if runErr != nil {
 		return nil, runErr
 	}
@@ -136,6 +134,24 @@ func (s *ServerService) HardenPath(scope repositories.AccessScope, id uint, path
 	s.audit.Log(actor, "server.path-harden", "server", server.ID,
 		fmt.Sprintf("%s: %s - %s %s → %s %s", server.Name, path, prevMode, prevGroup, mode, nowGroup))
 	return hardened, nil
+}
+
+// planHardenPaths prüft Server und Ziele und baut je Verzeichnis das Skript
+// - für den Lauf und die Befehlsvorschau gleich.
+func planHardenPaths(server *domain.Server, targets []HardenTarget) ([]string, error) {
+	if err := ensureNotRouterOS(server); err != nil {
+		return nil, err
+	}
+	for _, target := range targets {
+		if err := domain.ValidateHardenTarget(target.Path, target.Group, target.Unit); err != nil {
+			return nil, err
+		}
+	}
+	scripts := make([]string, 0, len(targets))
+	for _, target := range targets {
+		scripts = append(scripts, hardenScript(target.Path, target.Group, target.Unit))
+	}
+	return scripts, nil
 }
 
 // RestorePath nimmt eine Härtung zurück.
@@ -309,13 +325,9 @@ func (s *ServerService) HardenPathsBulk(scope repositories.AccessScope, id uint,
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureNotRouterOS(server); err != nil {
+	scripts, err := planHardenPaths(server, targets)
+	if err != nil {
 		return nil, err
-	}
-	for _, target := range targets {
-		if err := domain.ValidateHardenTarget(target.Path, target.Group, target.Unit); err != nil {
-			return nil, err
-		}
 	}
 	conn, err := s.connectRec(server, "path-harden", actor)
 	if err != nil {
@@ -324,8 +336,8 @@ func (s *ServerService) HardenPathsBulk(scope repositories.AccessScope, id uint,
 	defer conn.Close()
 
 	results := make([]HardenResult, 0, len(targets))
-	for _, target := range targets {
-		out, code, runErr := conn.Run(privRun(server, hardenScript(target.Path, target.Group, target.Unit)))
+	for i, target := range targets {
+		out, code, runErr := conn.Run(privRun(server, scripts[i]))
 		res := HardenResult{Path: target.Path, OK: runErr == nil && code == 0}
 		switch {
 		case runErr != nil:

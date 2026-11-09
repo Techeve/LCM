@@ -239,8 +239,12 @@ serversTransports:
 
 ### Die Weboberfläche hinter dem Proxy
 
-Der UI-Port ist ein gewöhnlicher HTTPS-Dienst und braucht keine
-WebSocket-Sonderbehandlung. Zwei Dinge gehören trotzdem eingestellt:
+Der UI-Port ist ein gewöhnlicher HTTPS-Dienst, braucht aber an zwei Pfaden
+WebSocket-Weiterleitung: für die Web-Konsole (`/api/v1/servers/<id>/terminal`)
+und den Ereigniskanal (`/api/v1/events`), über den die Oberfläche live bleibt.
+Ohne die Weiterleitung fehlen Konsole und Live-Anzeige (die nginx-Beispiele
+stehen unter [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/#nginx)).
+Zwei weitere Dinge gehören eingestellt:
 
 - **`public_base_url`** unter *Einstellungen → Allgemein*. Aktivierungs- und
   Rücksetz-Links werden daraus gebaut - ohne die Angabe zeigen sie auf die
@@ -271,16 +275,19 @@ statt ihn im Dienst-Log zu vergraben.
 ## Web-Konsole
 
 Eine interaktive Shell auf einem Server, im Browser - erreichbar über die
-Schaltfläche **Konsole** ganz links in der Aktionsleiste der Server-Detailseite.
+Schaltfläche **Terminal** ganz links in der Aktionsleiste der Server-Detailseite.
 
-Die Konsole ist an drei Stellen begrenzt, und alle drei greifen unabhängig
+Die Konsole ist an zwei Stellen begrenzt, und beide greifen unabhängig
 voneinander:
 
 | Ebene | Wirkung |
 |---|---|
-| **Einstellungen → Sicherheit** | globaler Schalter - nimmt die Fähigkeit aus dem ganzen Haus |
 | **Berechtigung `servers:console`** | regelt, WER sie benutzen darf; im Auslieferungszustand allein `admin` |
-| **Server-Einstellungen → Web-Konsole** | schaltet sie für EINEN Server ab |
+| **Servereinstellungen → Zugang → „Konsole abschalten“** | schaltet sie für EINEN Server ab |
+
+Einen dritten, globalen Schalter gibt es nur in den gespeicherten Einstellungen
+(`terminal_enabled`, Vorgabe an): Weder die Oberfläche noch die REST-API
+bieten ihn an.
 
 Die Berechtigung ist bewusst von `servers:write` getrennt: Wer Server
 konfigurieren darf, soll damit nicht automatisch eine Root-Shell auf allen
@@ -296,7 +303,7 @@ Konsole gar nicht erst angeboten.
 
 ### Sitzungen
 
-- **Offene Konsolen sind sichtbar**: Server-Detail und Dashboard zeigen das
+- **Offene Konsolen sind sichtbar**: Serverliste und Server-Detail zeigen das
   Kennzeichen **„Konsole offen"** samt Benutzer und Beginn - so weiß jeder,
   dass dort gerade jemand von Hand arbeitet.
 - **LCM arbeitet weiter**: Eine Konsole hat eigene Verbindungsplätze (zwei je
@@ -365,9 +372,9 @@ startet automatisch (sobald der Agent sein Kommando-Topic abonniert hat). Trennt
 sich der Agent, geht der Server offline und laufende Kommandos scheitern sofort
 (statt in einen Timeout zu laufen).
 
-## Token neu erzeugen
+## Agent-Token erneuern
 
-Über **Token neu erzeugen** lässt sich das Credential ersetzen (z. B. bei Verlust
+Über **Agent-Token erneuern** lässt sich das Credential ersetzen (z. B. bei Verlust
 oder Verdacht auf Kompromittierung): Das alte Secret wird **sofort** ungültig, die
 aktive Sitzung getrennt, und der Agent muss mit dem neuen Token erneut enrollt
 werden. Der neue Klartext wird wieder nur einmal angezeigt.

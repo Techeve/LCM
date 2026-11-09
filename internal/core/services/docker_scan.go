@@ -3,9 +3,11 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
@@ -24,7 +26,7 @@ const (
 	// daher der Umweg über inspect mit festem Template. `index` toleriert
 	// fehlende Labels (leerer String statt Fehler), xargs -r toleriert
 	// null Container.
-	dockerInspectCmd = `docker ps -aq | xargs -r docker inspect --format '{{.Id}}{{"\t"}}{{index .Config.Labels "com.docker.compose.project"}}{{"\t"}}{{index .Config.Labels "com.docker.compose.service"}}{{"\t"}}{{index .Config.Labels "com.docker.compose.project.working_dir"}}{{"\t"}}{{index .Config.Labels "com.docker.compose.project.config_files"}}{{"\t"}}{{.Image}}' 2>/dev/null`
+	dockerInspectCmd = `docker ps -aq | xargs -r docker inspect --format '{{.Id}}{{"\t"}}{{index .Config.Labels "com.docker.compose.project"}}{{"\t"}}{{index .Config.Labels "com.docker.compose.service"}}{{"\t"}}{{index .Config.Labels "com.docker.compose.project.working_dir"}}{{"\t"}}{{index .Config.Labels "com.docker.compose.project.config_files"}}{{"\t"}}{{.Image}}{{"\t"}}{{.Config.Image}}' 2>/dev/null`
 	// dockerImagesCmd listet Images mit Manifest-Digest - die
 	// Vergleichsbasis für den zentralen Registry-Update-Check.
 	dockerImagesCmd = `docker images --no-trunc --digests --format '{{json .}}' 2>/dev/null`
@@ -114,6 +116,11 @@ func applyComposeLabels(containers []domain.DockerContainer, out string) {
 		c.ComposeWorkingDir = cleanTemplateValue(cols[3])
 		c.ComposeConfigFiles = cleanTemplateValue(cols[4])
 		c.ImageID = strings.TrimSpace(cols[5])
+		// `docker ps` nennt nur noch die ID, sobald der Tag weitergezogen ist.
+		// Die Konfiguration behält den Namen, unter dem der Container startete.
+		if len(cols) > 6 && strings.TrimSpace(cols[6]) != "" {
+			c.Image = strings.TrimSpace(cols[6])
+		}
 	}
 }
 
@@ -150,11 +157,14 @@ func parseDockerImages(out string, untagged map[string]untaggedImage) []domain.D
 			ID         string `json:"ID"`
 			Digest     string `json:"Digest"`
 			Size       string `json:"Size"`
+			CreatedAt  string `json:"CreatedAt"`
 		}
 		if err := json.Unmarshal([]byte(line), &row); err != nil || row.Repository == "" {
 			continue
 		}
-		img := domain.DockerImage{Repository: row.Repository, ImageID: row.ID, SizeText: row.Size}
+		img := domain.DockerImage{
+			Repository: row.Repository, ImageID: row.ID, SizeText: row.Size, BuiltAt: parseDockerTime(row.CreatedAt),
+		}
 		if row.Repository == "<none>" {
 			img.Repository = untagged[row.ID].Repository
 		}
@@ -165,6 +175,8 @@ func parseDockerImages(out string, untagged map[string]untaggedImage) []domain.D
 		}
 		if row.Digest != "" && row.Digest != "<none>" {
 			img.RepoDigest = row.Digest
+		} else if img.Tag == "" {
+			img.RepoDigest = untagged[row.ID].Digest
 		}
 		if img.RepoDigest == "" || img.Tag == "" {
 			img.CheckStatus = domain.DockerCheckLocal
@@ -195,8 +207,8 @@ func unlistedUntagged(listed []domain.DockerImage, untagged map[string]untaggedI
 	out := make([]domain.DockerImage, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, domain.DockerImage{
-			Repository: untagged[id].Repository, ImageID: id, SizeText: dockerSize(untagged[id].Bytes),
-			Superseded: true, CheckStatus: domain.DockerCheckLocal,
+			Repository: untagged[id].Repository, RepoDigest: untagged[id].Digest, ImageID: id,
+			SizeText: dockerSize(untagged[id].Bytes), Superseded: true, CheckStatus: domain.DockerCheckLocal,
 		})
 	}
 	return out
@@ -205,7 +217,19 @@ func unlistedUntagged(listed []domain.DockerImage, untagged map[string]untaggedI
 // untaggedImage ist, was `dockerUntaggedCmd` über ein Image ohne Tag weiß.
 type untaggedImage struct {
 	Repository string
+	Digest     string
 	Bytes      int64
+}
+
+// parseDockerTime liest das CreatedAt von `docker images`; nil, wenn Docker
+// es anders schreibt. Das Baudatum entscheidet nur, welches ungenutzte Image
+// gescannt wird, und ohne Datum wird eher zu viel als zu wenig geprüft.
+func parseDockerTime(value string) *time.Time {
+	t, err := time.Parse("2006-01-02 15:04:05 -0700 MST", strings.TrimSpace(value))
+	if err != nil {
+		return nil
+	}
+	return &t
 }
 
 // parseUntaggedImages liest "<image-id>\t<bytes>\t<repodigest> …" je Zeile.
@@ -220,7 +244,7 @@ func parseUntaggedImages(out string) map[string]untaggedImage {
 		img := untaggedImage{}
 		img.Bytes, _ = strconv.ParseInt(strings.TrimSpace(cols[1]), 10, 64)
 		if digests := strings.Fields(cols[2]); len(digests) > 0 {
-			img.Repository, _, _ = strings.Cut(digests[0], "@")
+			img.Repository, img.Digest, _ = strings.Cut(digests[0], "@")
 		}
 		images[strings.TrimSpace(cols[0])] = img
 	}
@@ -240,25 +264,42 @@ func dockerSize(b int64) string {
 	return fmt.Sprintf("%dB", b)
 }
 
-// markImagesInUse markiert Images, die von mindestens einem Container
-// referenziert werden (Zuordnung primär über die Image-ID aus inspect,
-// zur Sicherheit auch über die Ref, falls inspect nichts lieferte). Eine
-// überholte Fassung hat keinen Tag; ihre Ref wäre nur der Repo-Name und
-// würde das aktuelle latest treffen - sie zählt daher nur über die ID.
+// markImagesInUse markiert die Images, mit denen Container wirklich laufen.
+// Es zählt die Image-ID aus inspect: Der Name zeigt nach einem Pull schon auf
+// das neue Image, der Container läuft aber bis zum Neuerstellen mit dem alten.
+// Nur wenn inspect keine ID lieferte, bleibt der Name als Notbehelf; er gilt
+// nicht für überholte Fassungen, deren Ref nur der Repo-Name ist.
 func markImagesInUse(images []domain.DockerImage, containers []domain.DockerContainer) {
 	usedID := make(map[string]bool, len(containers))
 	usedRef := make(map[string]bool, len(containers))
+	startedAs := make(map[string][]string, len(containers))
 	for _, c := range containers {
-		if c.ImageID != "" {
-			usedID[c.ImageID] = true
+		if c.ImageID == "" {
+			usedRef[c.Image] = c.Image != ""
+			continue
 		}
-		if c.Image != "" {
-			usedRef[c.Image] = true
-		}
+		usedID[c.ImageID] = true
+		ref := withDefaultTag(c.Image)
+		startedAs[ref] = append(startedAs[ref], c.ImageID)
 	}
 	for i := range images {
-		images[i].InUse = usedID[images[i].ImageID] || (!images[i].Superseded && usedRef[images[i].Ref()])
+		img := &images[i]
+		img.InUse = usedID[img.ImageID] || (!img.Superseded && usedRef[img.Ref()])
+		img.RestartPending = !img.Superseded && slices.ContainsFunc(startedAs[img.Ref()], func(id string) bool {
+			return id != img.ImageID
+		})
 	}
+}
+
+// withDefaultTag ergänzt das „latest", das Docker bei einer Referenz ohne Tag
+// annimmt. Ein Doppelpunkt zählt nur nach dem letzten Schrägstrich, davor
+// gehört er zum Port der Registry.
+func withDefaultTag(ref string) string {
+	name := ref[strings.LastIndexByte(ref, '/')+1:]
+	if ref == "" || strings.ContainsAny(name, ":@") {
+		return ref
+	}
+	return ref + ":latest"
 }
 
 // rescanDockerInto liest das Docker-Inventar eines Servers über eine
@@ -280,14 +321,12 @@ func rescanDockerInto(servers *repositories.ServerRepository, conn sshx.Conn, se
 	}
 	_ = servers.ReplaceDockerContainers(server.ID, res.DockerContainers)
 	_ = servers.ReplaceDockerImages(server.ID, res.DockerImages)
-	// CVE-Funde von Images, die jetzt nicht mehr genutzt werden (ersetzt,
-	// entfernt, Container gestoppt), sofort abräumen - nicht erst beim
-	// nächsten täglichen Docker-Check. Nur genutzte Images tragen CVEs.
-	var inUse []string
-	for i := range res.DockerImages {
-		if img := &res.DockerImages[i]; img.InUse && !img.Superseded {
-			inUse = append(inUse, img.Ref())
-		}
+	// CVE-Funde von Images, die der Scan nicht mehr prüft (ersetzt, entfernt,
+	// Container gestoppt), sofort abräumen - nicht erst beim nächsten
+	// täglichen Docker-Check.
+	var scanned []string
+	for _, img := range imagesToScan(res.DockerImages) {
+		scanned = append(scanned, img.VulnRef())
 	}
-	_ = servers.DeleteDockerVulnerabilitiesExcept(server.ID, inUse)
+	_ = servers.DeleteDockerVulnerabilitiesExcept(server.ID, scanned)
 }

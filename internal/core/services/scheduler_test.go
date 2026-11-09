@@ -11,16 +11,20 @@ import (
 
 // waitFor pollt eine Bedingung bis zu 2 Sekunden (für asynchron laufende
 // Jobs). Schlägt fehl, wenn die Bedingung nicht eintritt.
+// waitForLimit ist großzügig: Ist die Bedingung erfüllt, kehrt waitFor sofort
+// zurück. Zwei Sekunden reichten auf ausgelasteten Runnern nicht immer.
+const waitForLimit = 10 * time.Second
+
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(waitForLimit)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("bedingung nicht innerhalb von 2s erfüllt")
+	t.Fatalf("bedingung nicht innerhalb von %s erfüllt", waitForLimit)
 }
 
 // TestSchedulerSystemSchedulesFromSettings prüft, dass Backup und
@@ -104,6 +108,9 @@ func TestJederSystemScheduleIstAusloesbar(t *testing.T) {
 	}
 	if !kinds[services.KindUpdate] {
 		t.Error("die Update-Prüfung fehlt in der Übersicht, obwohl sie verdrahtet ist")
+	}
+	if !kinds[services.KindCVEDB] {
+		t.Error("der Datenbank-Abgleich fehlt in der Übersicht, obwohl ein Scanner bereitsteht")
 	}
 	// Und die Update-Prüfung muss wirklich gelaufen sein, nicht nur
 	// fehlerfrei angenommen worden sein.

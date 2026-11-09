@@ -42,8 +42,17 @@ func (r *GroupRepository) FindByName(name string) (*domain.ServerGroup, error) {
 }
 
 func (r *GroupRepository) FindAll(scope AccessScope) ([]domain.ServerGroup, error) {
+	return r.FindMatching(scope, "")
+}
+
+// FindMatching liefert die sichtbaren Gruppen, deren Name den Suchtext enthält
+// (leer = alle), nach Namen sortiert.
+func (r *GroupRepository) FindMatching(scope AccessScope, text string) ([]domain.ServerGroup, error) {
 	var groups []domain.ServerGroup
 	q := scope.scopeGroups(r.db.Preload("Servers")).Order("server_groups.name")
+	if text != "" {
+		q = q.Where("server_groups.name LIKE ? ESCAPE '\\'", likeContains(text))
+	}
 	if err := q.Find(&groups).Error; err != nil {
 		return nil, err
 	}
@@ -311,6 +320,21 @@ func (r *GroupRepository) FindSchedulesForGroup(groupID uint) ([]domain.Schedule
 	err := r.db.Preload("Rules", orderRules).
 		Where("group_id = ?", groupID).Order("id").Find(&schedules).Error
 	if err != nil {
+		return nil, err
+	}
+	return schedules, nil
+}
+
+// FindSchedulesForScope liefert die Schedules der sichtbaren Gruppen samt Regeln
+// und Gruppe - für die Vorschau der nächsten Läufe im Dashboard.
+func (r *GroupRepository) FindSchedulesForScope(scope AccessScope) ([]domain.Schedule, error) {
+	q := r.db.Preload("Rules", orderRules).Preload("Group")
+	if !scope.All {
+		q = q.Where("schedules.group_id IN (SELECT server_group_id FROM server_group_managers WHERE user_id = ?)",
+			scope.UserID)
+	}
+	var schedules []domain.Schedule
+	if err := q.Order("schedules.id").Find(&schedules).Error; err != nil {
 		return nil, err
 	}
 	return schedules, nil

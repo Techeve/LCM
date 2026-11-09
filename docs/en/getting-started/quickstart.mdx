@@ -60,8 +60,8 @@ import { Steps } from '@astrojs/starlight/components';
      **Close it again afterwards:** after onboarding, LCM no longer needs root
      login (it uses its own service user). Either remove the drop-in
      (`sudo rm /etc/ssh/sshd_config.d/00-root-onboarding.conf` and restart the
-     SSH service) - or more conveniently use the server action **“Disable SSH
-     root login”** in LCM.
+     SSH service) - or more conveniently use **“Block root login”** in LCM under
+     *Server settings → Access*.
 
      </details>
    - LCM shows the **SSH host key fingerprint** - confirm it to guard against
@@ -78,8 +78,8 @@ import { Steps } from '@astrojs/starlight/components';
 
    The server appears with a 🟢🟡🔴 status in the overview. A click opens the
    detail page with hardware, packages, repositories, Docker inventory and
-   storage history. The ⓘ next to the status explains *why* a server is amber
-   or red.
+   storage history. Hover over the status in the server list (in the detail
+   view, click it) to see *why* a server is amber or red.
 
 4. **Put it in a group and automate.**
 
@@ -89,7 +89,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 5. **Optional: harden your account.**
 
-   Enable **2FA** for your account (My account → Two-factor) and set up the
+   Enable **2FA** for your account (My account → Security) and set up the
    [CVE scan](/en/guides/security-cve/) for central vulnerability checking
    (Trivy required).
 

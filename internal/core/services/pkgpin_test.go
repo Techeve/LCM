@@ -14,20 +14,12 @@ func kernelPins() []domain.PackagePin {
 	}
 }
 
-// TestPinRegex prueft die Uebersetzung der Pin-Namen in verankerte
-// APT-Regexe - inklusive der Maskierung von Sonderzeichen. Ohne die Maskierung
-// wuerde "libstdc++6" als Regex "libstdc(+)(+)6" gelesen und traefe nichts.
-func TestPinRegex(t *testing.T) {
-	cases := map[string]string{
-		"linux-image-*": `^linux-image-.*$`,
-		"nginx":         `^nginx$`,
-		"libstdc++6":    `^libstdc\+\+6$`,
-		"python3.11":    `^python3\.11$`,
-	}
-	for in, want := range cases {
-		if got := pinRegex(in); got != want {
-			t.Errorf("pinRegex(%q) = %q, erwartet %q", in, got, want)
-		}
+// TestPinNamesUebergehtAlteEintraege: Ein gespeicherter Name, den die Prüfung
+// heute ablehnt, darf die übrigen Pins nicht mitreißen.
+func TestPinNamesUebergehtAlteEintraege(t *testing.T) {
+	got := pinNames([]domain.PackagePin{{Name: "-o", NoRemove: true}, {Name: "nginx", NoRemove: true}}, false)
+	if len(got) != 1 || got[0] != "nginx" {
+		t.Errorf("pinNames = %v", got)
 	}
 }
 
@@ -64,7 +56,7 @@ func TestPinScriptProPaketverwaltung(t *testing.T) {
 		{pkgApk, "apk kennt keinen Autoremove"},
 	}
 	for _, c := range cases {
-		got := pkgPinScript(c.mgr, kernelPins())
+		got := pkgPinScript(false, c.mgr, kernelPins())
 		if !strings.Contains(got, c.want) {
 			t.Errorf("pkgPinScript(%q) enthaelt %q nicht:\n%s", c.mgr, c.want, got)
 		}
@@ -77,16 +69,17 @@ func TestPinScriptProPaketverwaltung(t *testing.T) {
 // TestAptPinScriptHold: Holds werden zuerst komplett geloest und dann neu
 // gesetzt - sonst blieben in LCM entfernte Pins auf dem Server aktiv.
 func TestAptPinScriptHold(t *testing.T) {
-	s := pkgPinScript(pkgApt, []domain.PackagePin{{Name: "nginx", Hold: true}})
+	s := pkgPinScript(false, pkgApt, []domain.PackagePin{{Name: "nginx", Hold: true}})
 	if !strings.Contains(s, "apt-mark unhold $(apt-mark showhold)") {
 		t.Errorf("apt-Pin-Skript sollte bestehende Holds loesen:\n%s", s)
 	}
 	if !strings.Contains(s, "apt-mark hold $hold") {
 		t.Errorf("apt-Pin-Skript sollte Holds setzen:\n%s", s)
 	}
-	// Ein reiner Hold-Pin darf keine NeverAutoRemove-Datei schreiben.
-	if strings.Contains(s, "APT::NeverAutoRemove\\n{") {
-		t.Errorf("Hold-Pin sollte keine Schutzdatei schreiben:\n%s", s)
+	// Ein reiner Hold-Pin hat keine Schutz-Muster: $NOREMOVE bleibt leer,
+	// und der Rumpf schreibt dann keine NeverAutoRemove-Datei.
+	if !strings.Contains(s, "NOREMOVE=''") || !strings.Contains(s, "HOLD='nginx'") {
+		t.Errorf("Hold-Pin gehoert nur in $HOLD:\n%s", s)
 	}
 	if !strings.Contains(s, "rm -f "+aptPinFile) {
 		t.Errorf("ohne Schutz-Pins sollte die Schutzdatei entfernt werden:\n%s", s)
@@ -130,7 +123,7 @@ func TestValidPinName(t *testing.T) {
 			t.Errorf("validPinName(%q) sollte zulaessig sein: %v", n, err)
 		}
 	}
-	bad := []string{"", "   ", "*", "ngin x", "nginx;rm -rf /", "$(id)", "a`b`", "nginx\nrm", "../etc/passwd"}
+	bad := []string{"", "   ", "*", "ngin x", "nginx;rm -rf /", "$(id)", "a`b`", "nginx\nrm", "../etc/passwd", "-o", "--", ".hidden"}
 	for _, n := range bad {
 		if _, err := validPinName(n); err == nil {
 			t.Errorf("validPinName(%q) sollte abgelehnt werden", n)

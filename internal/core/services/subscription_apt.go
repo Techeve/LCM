@@ -108,8 +108,8 @@ func keyringSnippet(globs string) string {
 // Community-Quelle des Hosts - der Beta-Kanal liegt auf demselben Server,
 // nur in einer anderen Suite. Damit sind eigene Repository-Server
 // mitgedacht; erst wenn sich dort nichts findet, greift die vom Dienst
-// bekannte Adresse (fallback).
-func baseURLSnippet(fallback string) string {
+// bekannte Adresse ($FALLBACK).
+func baseURLSnippet() string {
 	return "BASE=\n" +
 		// Klassische Quelle: „deb [optionen] <URL> <suite> <komponenten>" -
 		// die URL ist das erste Feld mit Schema. Jede Datei einzeln, ein
@@ -119,7 +119,7 @@ func baseURLSnippet(fallback string) string {
 		"  if [ -n \"$BASE\" ]; then break; fi\n" +
 		"done\n" +
 		"[ -n \"$BASE\" ] || BASE=$(sed -n 's/^[Uu][Rr][Ii][Ss]:[[:space:]]*//p' \"$COMS\" 2>/dev/null | awk '{print $1}' | head -1)\n" +
-		"[ -n \"$BASE\" ] || BASE='" + fallback + "'\n" +
+		"[ -n \"$BASE\" ] || BASE=\"$FALLBACK\"\n" +
 		"[ -n \"$BASE\" ] || { echo 'Adresse des Paket-Servers nicht ermittelbar - ist das TechEve-Repository eingerichtet?'; exit 1; }\n"
 }
 
@@ -204,11 +204,11 @@ const candidateSnippet = "CAND=$(LC_ALL=C apt-cache policy lcm 2>/dev/null | sed
 // welcher Quelle käme lcm jetzt? Das ist die Frage, um die es geht - schärfer
 // als „ist die Community-Quelle weg", und sie stimmt für beide Wege der
 // Kanaltrennung.
-func channelProofSnippet(repoURL string) string {
+func channelProofSnippet() string {
 	return candidateSnippet +
 		"if [ -n \"$SRC\" ]; then\n" +
 		"  case \"$SRC\" in\n" +
-		"    '" + repoURL + "'*) echo \"Gegenprobe: lcm $CAND kommt aus $SRC.\" ;;\n" +
+		"    \"$REPO\"*) echo \"Gegenprobe: lcm $CAND kommt aus $SRC.\" ;;\n" +
 		"    *) echo \"WARNUNG: lcm $CAND käme weiterhin aus $SRC statt aus dem Enterprise-Kanal - bitte die apt-Quellen des LCM-Hosts prüfen.\" ;;\n" +
 		"  esac\n" +
 		"fi\n"
@@ -227,25 +227,35 @@ const betaProofSnippet = candidateSnippet +
 	"  esac\n" +
 	"fi\n"
 
+// Die drei Umstell-Skripte gibt es einmal, als Rumpf mit Shell-Variablen
+// statt eingesetzter Werte. Im Voll-Modus setzt LCM die Variablen vor den
+// Rumpf (…Script), im eingeschränkten Modus trägt der Helper denselben Rumpf
+// und setzt sie aus seinen geprüften Parametern (host-apt-channel,
+// lcm_helper.go). So können beide Wege nicht auseinanderlaufen.
+
 // enterpriseChannelScript baut das Umstell-Skript. login/secret sind
-// Instanz-ID (UUID) und Zugangsschlüssel (hex) - beide shell-harmlos,
-// werden aber trotzdem single-quoted. repoURL kommt vom Dienst
-// (z. B. https://repo.techeve.de/enterprise).
+// Instanz-ID (UUID) und Zugangsschlüssel (hex), repoURL kommt vom Dienst
+// (z. B. https://repo.techeve.de/enterprise). Alle drei werden quotiert.
 func enterpriseChannelScript(repoURL, login, secret string) string {
 	return enterpriseChannelScriptIn(defaultAptChannelPaths(), repoURL, login, secret)
 }
 
 func enterpriseChannelScriptIn(p aptChannelPaths, repoURL, login, secret string) string {
+	return "REPO=" + shellQuote(repoURL) + "\nLOGIN=" + shellQuote(login) + "\nSECRET=" + shellQuote(secret) + "\n" +
+		p.vars() + enterpriseChannelBody(p)
+}
+
+// enterpriseChannelBody erwartet $REPO, $LOGIN und $SECRET.
+func enterpriseChannelBody(p aptChannelPaths) string {
 	return "set -e\n" +
-		p.vars() +
 		// Signatur-Keyring aus der Community-Quelle übernehmen - alle Kanäle
 		// sind mit demselben Schlüssel signiert.
 		keyringSnippet(p.KeyringGlobs) +
 		"umask 077\n" +
 		"mkdir -p \"$(dirname \"$AUTH\")\"\n" +
-		"printf 'machine %s\\nlogin %s\\npassword %s\\n' '" + repoURL + "' '" + login + "' '" + secret + "' > \"$AUTH\"\n" +
+		"printf 'machine %s\\nlogin %s\\npassword %s\\n' \"$REPO\" \"$LOGIN\" \"$SECRET\" > \"$AUTH\"\n" +
 		"chmod 0600 \"$AUTH\"\n" +
-		"printf 'deb [signed-by=%s] %s " + subAptSuite + " main\\n' \"$KEYRING\" '" + repoURL + "' > \"$ENT\"\n" +
+		"printf 'deb [signed-by=%s] %s " + subAptSuite + " main\\n' \"$KEYRING\" \"$REPO\" > \"$ENT\"\n" +
 		// Prüfung NUR gegen die neue Quelle - ein falscher Schlüssel muss
 		// laut scheitern und rückgebaut werden, nicht im Rauschen eines
 		// vollen apt-get update untergehen.
@@ -264,7 +274,7 @@ func enterpriseChannelScriptIn(p aptChannelPaths, repoURL, login, secret string)
 		// immer die höhere Version - und die kommt früher oder später aus
 		// dem freien Kanal.
 		channelSeparationSnippet +
-		channelProofSnippet(repoURL) +
+		channelProofSnippet() +
 		"echo 'Enterprise-Paketkanal aktiv - Updates kommen ab jetzt aus dem abgehangenen Kanal.'\n"
 }
 
@@ -278,8 +288,12 @@ func betaChannelScript(fallbackBase string) string {
 }
 
 func betaChannelScriptIn(p aptChannelPaths, fallbackBase string) string {
+	return "FALLBACK=" + shellQuote(fallbackBase) + "\n" + p.vars() + betaChannelBody(p)
+}
+
+// betaChannelBody erwartet $FALLBACK.
+func betaChannelBody(p aptChannelPaths) string {
 	return "set -e\n" +
-		p.vars() +
 		// Die Community-Quelle gehört im Beta-Kanal wieder eingeschaltet:
 		// sie kann von einer früheren Enterprise-Umstellung stillgelegt sein,
 		// und ohne sie fehlten dem Host das fertige Release und alle anderen
@@ -287,7 +301,7 @@ func betaChannelScriptIn(p aptChannelPaths, fallbackBase string) string {
 		comEnableSnippet +
 		"if [ ! -e \"$COM\" ] && [ ! -e \"$COMS\" ]; then echo 'Hinweis: auf diesem Host ist keine Community-Paketquelle eingerichtet - dann liefert allein die Beta-Suite LCM-Pakete, fertige Releases kämen erst nach dem Rückweg auf den Community-Kanal.'; fi\n" +
 		keyringSnippet(p.KeyringGlobs) +
-		baseURLSnippet(fallbackBase) +
+		baseURLSnippet() +
 		"umask 022\n" +
 		"printf 'deb [signed-by=%s] %s " + subAptSuiteBeta + " main\\n' \"$KEYRING\" \"$BASE\" > \"$BETA\"\n" +
 		"chmod 0644 \"$BETA\"\n" +
@@ -316,8 +330,11 @@ func communityRevertScript() string {
 }
 
 func communityRevertScriptIn(p aptChannelPaths) string {
+	return p.vars() + communityRevertBody()
+}
+
+func communityRevertBody() string {
 	return "set -e\n" +
-		p.vars() +
 		"if [ ! -e \"$COM\" ] && [ ! -e \"$COM.disabled\" ] && [ ! -e \"$COMS\" ]; then\n" +
 		"  echo 'Community-Quelle nicht gefunden - Umstellung abgebrochen, die bisherige Quelle bleibt aktiv (sonst stünde der Server ohne LCM-Paketquelle da).'\n" +
 		"  exit 1\n" +
@@ -362,11 +379,15 @@ func (s *SubscriptionService) SetAptChannel(channel, actor string) (*domain.Job,
 	if !domain.ValidAptChannel(channel) {
 		return nil, ErrUnknownAptChannel
 	}
-	if s.runLcmHostScript == nil || s.lcmHostAptServer() == nil {
+	host := s.lcmHostAptServer()
+	if s.runLcmHostScript == nil || host == nil {
 		return nil, ErrAptSwitchUnavailable
 	}
 	settings, err := s.settings.Get()
 	if err != nil {
+		return nil, err
+	}
+	if err := s.checkChannelSwitch(settings, channel); err != nil {
 		return nil, err
 	}
 
@@ -387,11 +408,15 @@ func (s *SubscriptionService) SetAptChannel(channel, actor string) (*domain.Job,
 		if repoURL == "" {
 			return nil, errors.New("keine Repository-Adresse gespeichert - Subscription neu aktivieren")
 		}
-		name, script = subAptJobEnable, enterpriseChannelScript(repoURL, settings.InstanceID, accessKey)
+		// Im eingeschränkten Modus geht der Zugangsschlüssel base64-kodiert an
+		// den Helper, wie jeder Freitext-Parameter.
+		name, script = subAptJobEnable, hostScript(host, enterpriseChannelScript(repoURL, settings.InstanceID, accessKey),
+			"host-apt-channel", "enterprise", repoURL, settings.InstanceID, helperB64(accessKey))
 	case domain.AptChannelBeta:
-		name, script = subAptJobBeta, betaChannelScript(settings.SubscriptionServiceBase())
+		base := settings.SubscriptionServiceBase()
+		name, script = subAptJobBeta, hostScript(host, betaChannelScript(base), "host-apt-channel", "beta", base)
 	default:
-		name, script = subAptJobRevert, communityRevertScript()
+		name, script = subAptJobRevert, hostScript(host, communityRevertScript(), "host-apt-channel", "community")
 	}
 
 	job, err := s.runLcmHostScript(name, script, actor, func(ok bool) {

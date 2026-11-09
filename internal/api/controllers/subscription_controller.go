@@ -39,17 +39,20 @@ func (ctrl *SubscriptionController) Activate(c fiber.Ctx) error {
 		SubscriptionKey string `json:"subscription_key"`
 		ServiceURL      string `json:"service_url"`
 	}
-	if err := c.Bind().Body(&in); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &in); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"subscription_key", in.SubscriptionKey, maxTokenLen}, lineField{"service_url", in.ServiceURL, maxPathLen}); err != nil {
+		return err
 	}
 	// Optional zuerst die Dienst-Adresse übernehmen (ein Formular, ein Klick).
 	if in.ServiceURL != "" {
 		if err := ctrl.subs.SetServiceURL(in.ServiceURL, actor(c)); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return errSubscriptionURL.With("detail", err.Error())
 		}
 	}
 	if _, err := ctrl.subs.Activate(in.SubscriptionKey, actor(c)); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return errActivationFailed.With("detail", err.Error())
 	}
 	view, err := ctrl.subs.Status()
 	if err != nil {
@@ -63,7 +66,7 @@ func (ctrl *SubscriptionController) Activate(c fiber.Ctx) error {
 func (ctrl *SubscriptionController) Verify(c fiber.Ctx) error {
 	if _, err := ctrl.subs.Verify(actor(c)); err != nil {
 		if errors.Is(err, services.ErrNoSubscription) {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return errNoSubscription
 		}
 		return err
 	}
@@ -88,6 +91,17 @@ func (ctrl *SubscriptionController) Remove(c fiber.Ctx) error {
 	return c.JSON(view)
 }
 
+// AptChannels - GET /api/v1/subscription/apt/channels (settings:manage)
+// Neueste Version je Paketkanal und ob ein Wechsel dorthin erlaubt ist. Eigener
+// Aufruf, weil er die Paketquellen abfragt und damit Sekunden dauern kann.
+func (ctrl *SubscriptionController) AptChannels(c fiber.Ctx) error {
+	view, err := ctrl.subs.ChannelVersions()
+	if err != nil {
+		return err
+	}
+	return c.JSON(view)
+}
+
 // SetAptChannel - POST /api/v1/subscription/apt (settings:manage)
 // Stellt den LCM-Host per Job auf einen Paketkanal um (channel=community,
 // beta oder enterprise). Antwortet mit dem Job - die Oberfläche verfolgt ihn
@@ -100,8 +114,8 @@ func (ctrl *SubscriptionController) SetAptChannel(c fiber.Ctx) error {
 		Channel string `json:"channel"`
 		Enable  bool   `json:"enable"`
 	}
-	if err := c.Bind().Body(&in); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &in); err != nil {
+		return err
 	}
 	channel := in.Channel
 	if channel == "" {
@@ -112,15 +126,10 @@ func (ctrl *SubscriptionController) SetAptChannel(c fiber.Ctx) error {
 	}
 	job, err := ctrl.subs.SetAptChannel(channel, actor(c))
 	if err != nil {
-		switch {
-		case errors.Is(err, services.ErrNoSubscription),
-			errors.Is(err, services.ErrUnknownAptChannel),
-			errors.Is(err, services.ErrAptSwitchUnavailable):
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
-		case errors.Is(err, services.ErrServerBusy):
-			return fiber.NewError(fiber.StatusConflict, err.Error())
+		if mapped := matchSentinel(err, subscriptionChannelErrors); mapped != nil {
+			return mapped
 		}
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return errChannelSwitchFails.With("detail", err.Error())
 	}
 	return c.Status(fiber.StatusAccepted).JSON(job)
 }

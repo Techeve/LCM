@@ -18,7 +18,7 @@ Konto gebunden, nicht an den Rechner, von dem aus du dich verbindest.
   zeitbasierte Einmalcodes (TOTP) beherrscht - etwa Google Authenticator, Aegis,
   2FAS, Microsoft Authenticator oder ein Passwortmanager mit TOTP-Funktion.
 - Einen funktionierenden **SSH-Zugang** zum Server (siehe
-  [SSH-Schlüssel einrichten](/#/doku/ssh-schluessel)).
+  [SSH-Schlüssel einrichten](/docs/ssh-schluessel)).
 
 ## Schritt für Schritt
 

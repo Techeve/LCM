@@ -1,7 +1,7 @@
 ---
 sidebar:
   order: 12
-title: Sicherheit-Tools (fail2ban / CrowdSec / SSH-2FA)
+title: Sicherheits-Tools (fail2ban / CrowdSec / SSH-2FA)
 description: fail2ban, CrowdSec oder SSH-2FA per Knopfdruck installieren und einrichten.
 ---
 
@@ -30,7 +30,7 @@ IP-Wechsel des LCM-Hosts (z. B. nach Umzug) den Aussperr-Schutz nicht aushebelt.
 
 ## Installieren
 
-Server-Detail → **Aktionen → „Sicherheit-Tools"**. Im Modal das Tool wählen:
+Server-Detail → **Aktionen → „Sicherheits-Tools"**. Im Modal das Tool wählen:
 
 - **fail2ban** - nur die Allowlist-IPs abfragen. LCM installiert fail2ban, schreibt
   sein eigenes Drop-in `/etc/fail2ban/jail.d/99-lcm.local` (`backend = systemd`,
@@ -45,10 +45,12 @@ Server-Detail → **Aktionen → „Sicherheit-Tools"**. Im Modal das Tool wähl
     CrowdSec* hinterlegten Zugangsdaten.
   - **Allowlist-IPs** (LCM-IP vorbelegt).
 
-Die Aktion braucht **vollen Sudo-Zugriff**; auf Servern im eingeschränkten
-Sudo-Modus ist sie gesperrt. Sie läuft als **asynchroner, protokollierter Job**;
-danach liest LCM den Ist-Zustand (installiert + aktiv) frisch nach und speichert
-ihn.
+Pakete installiert LCM über die Paketverwaltung; Herstellerrepo, Konfiguration
+und Dienststart brauchen root. Im Voll-Modus laufen sie als Skript, auf Servern
+im eingeschränkten Sudo-Modus über den validierenden `lcm-helper` (mit
+denselben Skriptteilen, Parameter streng geprüft). Die Aktion läuft als
+**asynchroner, protokollierter Job**; danach liest LCM den Ist-Zustand
+(installiert + aktiv) frisch nach und speichert ihn.
 
 ### Was fail2ban schreibt
 
@@ -97,8 +99,8 @@ Danach richtet LCM je nach Auswahl ein:
   `crowdsec-firewall-bouncer-nftables`, wenn `nft` vorhanden ist, sonst
   `crowdsec-firewall-bouncer-iptables`,
 - die **Allowlist als Parser-Whitelist** unter
-  `/etc/crowdsec/parsers/s02-enrich/lcm-whitelist.yaml` (versionsrobust über alle
-  CrowdSec-Stände):
+  `/etc/crowdsec/parsers/s02-enrich/lcm-whitelist.yaml`. Einzelne Adressen und
+  Netze darfst du gemischt eingeben, LCM trennt sie für CrowdSec:
 
   ```yaml
   name: lcm/whitelist
@@ -106,10 +108,11 @@ Danach richtet LCM je nach Auswahl ein:
   whitelist:
     reason: "LCM management"
     ip:
-      - 127.0.0.1/8
-      - ::1
-      - 203.0.113.10
-      - 198.51.100.0/24
+      - "::1"
+      - "203.0.113.10"
+    cidr:
+      - "127.0.0.1/8"
+      - "198.51.100.0/24"
   ```
 
 Geheimnisse (LAPI-Passwort, Console-Key) werden **base64-kodiert übertragen** und
@@ -155,8 +158,8 @@ API direkt auf dem LCM-Host** einrichten und die Zugangsdaten **selbsttätig**
 verdrahten. Schritt für Schritt:
 
 1. Server-Detail des **LCM-Hosts** (localhost) öffnen → Karte
-   **„LCM-Host-Einrichtung"** → **CrowdSec LAPI** → *Einrichten* (optional den
-   lokalen Firewall-Bouncer mitinstallieren).
+   **„LCM-Host"** → **„CrowdSec-LAPI einrichten"** (optional den lokalen
+   Firewall-Bouncer mitinstallieren).
 2. LCM installiert CrowdSec, öffnet die LAPI auf `0.0.0.0:8080`
    (`/etc/crowdsec/config.yaml.local`), erzeugt ein zufälliges Passwort und legt
    das Maschinen-Konto **`lcm-managed`** an (idempotent - ein bestehendes Konto
@@ -167,7 +170,7 @@ verdrahten. Schritt für Schritt:
    zeigt auf die erste Nicht-Loopback-IP des Hosts, z. B.
    `http://203.0.113.5:8080`, Login `lcm-managed`.
 4. Ab jetzt können verwaltete Server ohne weitere Eingaben im **Remote-Modus**
-   enrollen: einfach *Aktionen → Sicherheit-Tools → CrowdSec → Zentrale LAPI*.
+   enrollen: einfach *Aktionen → Sicherheits-Tools → CrowdSec → Zentrale LAPI*.
 
 Das Klartext-Passwort wird im Job-Protokoll durch `LCM-LAPI-PW: ********`
 ersetzt - es steht danach nur noch verschlüsselt in den Einstellungen. (Nur auf
@@ -187,7 +190,7 @@ standardmäßig auf **9310** (UI/API), die LAPI behält ihren CrowdSec-Standard
 
 Die Seite **Einstellungen → CrowdSec** bietet je LAPI:
 
-- **Jetzt prüfen** - eine Login-Probe vom LCM-Host aus (POST
+- **Prüfen** - eine Login-Probe vom LCM-Host aus (POST
   `/v1/watchers/login` mit den hinterlegten Maschinen-Zugangsdaten). Sie
   unterscheidet drei Zustände: *erreichbar + Login OK*, *erreichbar, aber Login
   abgelehnt* (Zugangsdaten veraltet) und *nicht erreichbar*.
@@ -227,12 +230,13 @@ gerade erreicht - auch wenn das Feld leer bleibt. Die Quell-IP wird dafür ohne
 `sudo` gelesen (`$SSH_CONNECTION`), weil `sudo` diese Variable verwirft.
 :::
 
-:::warning[Nicht im eingeschränkten Modus]
-Alle Verwaltungs-Aktionen greifen in Dienste und Systemkonfiguration ein und
-sind deshalb im [eingeschränkten Sudo-Modus](/reference/security-model) gesperrt - die
-Karte weist darauf hin, statt in einen Fehler zu laufen. Ist das Werkzeug auf
-dem Server gar nicht (mehr) installiert, endet der Job mit einem Fehler statt
-mit einer irreführenden Erfolgsmeldung.
+:::note[Eingeschränkter Sudo-Modus]
+Auch im [eingeschränkten Sudo-Modus](/reference/security-model) stehen alle
+Verwaltungs-Aktionen zur Verfügung: Dienststeuerung, Allowlist, Entsperren, die
+Sperrliste und das Entfernen laufen über den `lcm-helper`. Gesperrt bleibt nur
+die SSH-2FA (Eingriff in PAM und sshd). Ist das Werkzeug auf dem Server gar nicht
+(mehr) installiert, endet der Job mit einem Fehler statt mit einer
+irreführenden Erfolgsmeldung.
 :::
 
 ## Anzeige & Erkennung
@@ -240,7 +244,7 @@ mit einer irreführenden Erfolgsmeldung.
 Der **Hardware-Scan** erkennt ein bereits installiertes fail2ban/CrowdSec (über
 `fail2ban-client` bzw. `cscli`/`crowdsec` im Pfad) und ob der Dienst **aktiv**
 ist (systemd **und** OpenRC werden geprüft). Auf der Server-Detailseite steht
-unter **System & Security** die Zeile **„Sicherheits-Tool"** mit dem erkannten
+unter **System & Sicherheit** die Zeile **„Sicherheits-Tool"** mit dem erkannten
 Werkzeug und dem Aktiv-Status.
 
 ## Allowlists auswählen
@@ -269,8 +273,9 @@ vermutet niemand Schutz, den es nicht gibt.
 
 ## SSH-2FA (TOTP neben dem SSH-Key)
 
-Unter **Server → Sicherheit** lässt sich zusätzlich **SSH-2FA** aktivieren:
-SSH-Logins verlangen dann **Schlüssel + TOTP-Einmalcode**
+Über **Aktionen → „Sicherheits-Tools" → SSH-2FA** lässt sich zusätzlich
+**SSH-2FA** aktivieren (voller Sudo-Zugriff nötig, die Aktion läuft als
+protokollierter Job): SSH-Logins verlangen dann **Schlüssel + TOTP-Einmalcode**
 (`google-authenticator-libpam`, funktioniert mit jeder Authenticator-App).
 
 Was LCM dabei einrichtet:
@@ -299,45 +304,11 @@ Zwei eingebaute Aussperr-Sicherungen:
 - Nach dem Aktivieren prüft LCM mit einer **frischen Verbindung**, dass der
   Zugang noch trägt; scheitert sie, wird alles automatisch **zurückgerollt**.
 
+Bestehende Sitzungen bleiben offen - den eigenen Code also einrichten, bevor
+man sich abmeldet.
+
 Distributions-Abdeckung: apt, dnf/yum (RHEL-Klone brauchen EPEL), zypper und
 pacman. Auf **Alpine (apk)** ist die Option nicht verfügbar - dessen sshd ist
 standardmäßig ohne PAM gebaut. Beim Entfernen bleiben die TOTP-Secrets der
 Benutzer (`~/.google_authenticator`) liegen; beim erneuten Aktivieren gelten
 sie sofort wieder.
-
-## SSH-2FA (Einmalcode neben dem SSH-Key)
-
-Verlangt beim SSH-Login **zusätzlich zum Schlüssel einen TOTP-Einmalcode**,
-umgesetzt mit `google-authenticator-libpam` - dem in allen relevanten
-Distributionen paketierten PAM-Modul für TOTP (RFC 6238, funktioniert mit jeder
-Authenticator-App). sshd verlangt danach `publickey` **und**
-`keyboard-interactive`; der Passwort-Stack ist im auth-Bereich stillgelegt -
-**reine Passwort-Logins per SSH sind damit nicht mehr möglich**.
-
-Aktiviert wird wie bei den übrigen Tools: Server-Detail → **Aktionen →
-„Sicherheit-Tools" → SSH-2FA**. Die Aktion braucht vollen Sudo-Zugriff und
-läuft als protokollierter Job.
-
-**Sanfter Rollout.** Benutzer **ohne** eingerichtetes TOTP kommen weiterhin mit
-ihrem Key herein (`nullok`); wer eingerichtet ist, braucht den Code. Das
-Einrichten macht jeder Benutzer selbst: auf dem Server `google-authenticator`
-ausführen und den QR-Code mit der Authenticator-App scannen. Wer schon so weit
-ist, zeigt die Benutzer-Übersicht des Servers.
-
-**Aussperr-Schutz.** Der LCM-Zugangsbenutzer ist per `Match`-Block ausgenommen
-(reine Key-Anmeldung) - LCMs SSH-Client beantwortet keine Code-Abfragen, ohne
-die Ausnahme sperrte sich LCM mit dem Aktivieren selbst aus. Zusätzlich beweist
-eine **frische Verbindung nach dem Umbau**, dass der Zugang noch trägt;
-scheitert sie, wird alles zurückgerollt (fail-closed). Bestehende Sitzungen
-bleiben offen - den eigenen Code also einrichten, bevor man sich abmeldet.
-
-**Entfernen** stellt die ursprüngliche PAM-Konfiguration wieder her und nimmt
-das Drop-in zurück; die TOTP-Secrets der Benutzer bleiben erhalten - ein
-späteres Wieder-Aktivieren braucht kein neues Einrichten.
-
-Distributionen: Debian/Ubuntu und Arch (`libpam-google-authenticator`),
-Fedora direkt und RHEL-Klone über EPEL (`google-authenticator`), openSUSE
-(`google-authenticator-libpam`). **Alpine wird nicht unterstützt** - dessen
-sshd ist standardmäßig ohne PAM gebaut. Technisch landet die sshd-Anpassung im
-Drop-in `/etc/ssh/sshd_config.d/55-lcm-2fa.conf` (bewusst alphabetisch vor dem
-Härtungs-Drop-in), `/etc/pam.d/sshd` wird vor dem Umbau gesichert.

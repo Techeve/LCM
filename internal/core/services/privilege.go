@@ -1,9 +1,12 @@
 package services
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 
 	"LCM/internal/core/domain"
@@ -21,7 +24,10 @@ const restrictSelfTestExit = 9
 // führt Skripte als root über `sudo sh -c '<script>'` aus. Im eingeschränkten
 // Modus darf der Benutzer per sudoers-Whitelist nur eine feste Auswahl an
 // Binaries ausführen (Paketverwaltung, Docker, ufw und den validierenden
-// LCM-Helper) - KEINE Root-Shell und keinen beliebigen Befehl.
+// LCM-Helper) - KEINE Root-Shell und keinen beliebigen Befehl. Was darüber
+// hinaus root braucht (Dienste, Dateien unter /etc, fail2ban, CrowdSec,
+// firewalld, nftables, Neustart), geht über Helper-Unterkommandos; gesperrt
+// bleiben eigene Skripte, Custom-Aktionen und SSH-2FA.
 //
 // Damit die bestehenden (mehrschrittigen) Skript-Generatoren unverändert
 // bleiben, nutzt der eingeschränkte Modus einen PATH-Shim: LCM legt im Home
@@ -43,9 +49,17 @@ type sudoBinary struct {
 
 // allowedSudoBinaries ist die Whitelist des eingeschränkten Service-Users:
 // Paketverwaltung (Updates + Lese-Abfragen), Docker, ufw und der LCM-Helper
-// (fest umrissene Verwaltungsaktionen wie Repositories, sshd-Drop-ins und
-// Benutzer-Sync mit strenger Parameter-Validierung - siehe lcm_helper.go).
-// Bewusst NICHT enthalten: sh/bash, tee, systemctl, beliebige Editoren.
+// (fest umrissene Verwaltungsaktionen wie Repositories, sshd-Drop-ins,
+// Benutzer-Sync, Firewall, fail2ban und CrowdSec mit strenger
+// Parameter-Validierung - siehe lcm_helper.go).
+// Bewusst NICHT enthalten: sh/bash, tee, systemctl, beliebige Editoren und
+// firewall-cmd, nft, fail2ban-client, cscli, apt-mark. Jedes davon kann Code
+// ausführen oder frei wählbare Dateien lesen/schreiben: firewall-cmd --direct
+// reicht beliebige iptables-Argumente durch, fail2ban-client set … actionstart
+// startet einen Befehl, cscli machines add -f schreibt eine Datei, apt-mark -o
+// kann Dir::Bin::dpkg umbiegen, nft -f liest jede Datei. Sie laufen deshalb nur
+// als fester Rumpf im Helper. Eine Erweiterung dieser Liste braucht dieselbe
+// Prüfung - und eine Begründung hier, je Eintrag.
 //
 // WAS DIESE LISTE NICHT LEISTET - bitte vor Änderungen lesen:
 //
@@ -165,6 +179,42 @@ func writeFileB64(content, path string) string {
 	return fmt.Sprintf("printf '%%s' %s | base64 -d > %s", b64, path)
 }
 
+// writeGzipFileB64 ist writeFileB64 mit gzip davor. Der Helper allein wäre
+// base64-kodiert rund 100 KB groß, und das Einschränken läuft als EIN
+// `sudo sh -c '<skript>'`: Linux erlaubt einem einzelnen Argument höchstens
+// 128 KiB (MAX_ARG_STRLEN). Komprimiert bleibt Luft für neue Unterkommandos.
+func writeGzipFileB64(content, path string) string {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, _ = zw.Write([]byte(content))
+	_ = zw.Close()
+	return fmt.Sprintf("printf '%%s' %s | base64 -d | gzip -dc > %s", base64.StdEncoding.EncodeToString(buf.Bytes()), path)
+}
+
+// dropRequirettyOnSudoRs nimmt `!requiretty` aus der Datei, wenn das System
+// sudo-rs benutzt (Standard ab Ubuntu 25.10): dessen visudo verwirft die
+// Einstellung als unbekannt, und eine TTY verlangt sudo-rs ohnehin nie.
+func dropRequirettyOnSudoRs(path string) string {
+	return fmt.Sprintf("{ ! sudo --version 2>/dev/null | grep -q sudo-rs || sed -i '/ !requiretty$/d' %s; }", path)
+}
+
+// reServiceUser prüft den Benutzernamen, der in das Provisionierungs-Skript
+// (läuft als root) eingesetzt wird.
+var reServiceUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+// RestrictedProvisionScript liefert das Provisionierungs-Skript des
+// eingeschränkten Modus (Helper, sudoers-Whitelist, Shims) für den Benutzer
+// svcUser, ein Schritt je Zeile - zum Einspeisen in `sh -e`. `lcm
+// restricted-provision` gibt es aus: Das Paket erneuert damit beim Update, was
+// LCM auf entfernten Servern nur beim Einschränken schreibt, und auf dem
+// LCM-Host käme sonst nie ein neuer Helper an.
+func RestrictedProvisionScript(svcUser string) (string, error) {
+	if !reServiceUser.MatchString(svcUser) {
+		return "", fmt.Errorf("ungültiger Benutzername %q", svcUser)
+	}
+	return strings.Join(restrictedProvisionScript(svcUser), "\n") + "\n", nil
+}
+
 // restrictedProvisionScript liefert die Shell-Schritte, die beim Onboarding im
 // eingeschränkten Modus zusätzlich zum User die sudoers-Whitelist und die
 // Shim-Wrapper anlegen. Ersetzt die NOPASSWD:ALL-Zeile des Voll-Modus.
@@ -179,13 +229,14 @@ func restrictedProvisionScript(svcUser string) []string {
 		// LCM-Helper zuerst installieren (root:root, 755 - der Service-User
 		// kann ihn nicht verändern), damit die sudoers-Whitelist nie auf ein
 		// fehlendes Binary zeigt.
-		writeFileB64(lcmHelperScript, lcmHelperPath+".tmp"),
+		writeGzipFileB64(lcmHelperScript, lcmHelperPath+".tmp"),
 		fmt.Sprintf("chmod 755 %s.tmp", lcmHelperPath),
 		fmt.Sprintf("mv %s.tmp %s", lcmHelperPath, lcmHelperPath),
 		// Eingeschränkte sudoers-Whitelist: erst in eine .tmp schreiben, per
 		// visudo prüfen, dann atomar an ihren Platz verschieben (nie eine
 		// kaputte sudoers-Datei hinterlassen).
 		writeFileB64(restrictedSudoersContent(svcUser), fmt.Sprintf("/etc/sudoers.d/%s.tmp", svcUser)),
+		dropRequirettyOnSudoRs(fmt.Sprintf("/etc/sudoers.d/%s.tmp", svcUser)),
 		fmt.Sprintf("visudo -cf /etc/sudoers.d/%s.tmp >/dev/null", svcUser),
 		fmt.Sprintf("chmod 440 /etc/sudoers.d/%s.tmp", svcUser),
 		fmt.Sprintf("mv /etc/sudoers.d/%s.tmp /etc/sudoers.d/%s", svcUser, svcUser),
@@ -255,6 +306,7 @@ func restrictedRollbackScript(svcUser string) string {
 	return strings.Join([]string{
 		fmt.Sprintf("printf '%%s ALL=(ALL) NOPASSWD:ALL\\n' %s > /etc/sudoers.d/%s", svcUser, svcUser),
 		fmt.Sprintf("chmod 440 /etc/sudoers.d/%s", svcUser),
+		fmt.Sprintf("rm -f /etc/sudoers.d/%s.tmp", svcUser),
 		fmt.Sprintf("rm -rf %s", sudoShimDir(svcUser)),
 	}, "; ")
 }
@@ -267,11 +319,11 @@ func privRun(server *domain.Server, cmd string) string {
 }
 
 // restrictedAllowsRule meldet, ob ein Rule-Typ mit dem eingeschränkten
-// Service-User ausführbar ist: Paketverwaltung, Docker-Prune, Firewall,
-// Benutzer-Sync und apt-Cache-Anbindung (beide über den validierenden
+// Service-User ausführbar ist: Paketverwaltung, Docker-Prune, Firewall (ufw
+// direkt, firewalld und nftables über den Helper),
+// Benutzer-Sync, apt-Cache-Anbindung und Neustart (alle über den validierenden
 // LCM-Helper) sowie der reine Verfügbarkeits-Check. Gesperrt bleiben
-// script/custom (beliebige Kommandos) und reboot - sie brauchen eine
-// Root-Shell bzw. volle Systemrechte.
+// script/custom (beliebige Kommandos) - sie brauchen eine Root-Shell.
 func restrictedAllowsRule(ruleType string) bool {
 	switch ruleType {
 	case domain.RuleTypeUpdate, domain.RuleTypePackages, domain.RuleTypeSecurity,
@@ -279,6 +331,7 @@ func restrictedAllowsRule(ruleType string) bool {
 		domain.RuleTypeDockerUpdateUnused,
 		domain.RuleTypeFirewall, domain.RuleTypeHealth,
 		domain.RuleTypeSync, domain.RuleTypeAptProxy,
+		domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
 		domain.RuleTypeDNSTest, domain.RuleTypeDeepScan,
 		// ACL-Einrichtung laeuft ueber die Paketverwaltung (Whitelist), der
 		// Rechte-Abgleich ueber setfacl/chmod auf von LCM verwalteten Pfaden.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/storage/repositories"
@@ -45,6 +46,33 @@ func demoSimulatePackageUpdate(servers *repositories.ServerRepository, server *d
 		_ = servers.UpdateFields(server.ID, map[string]any{"reboot_required": true})
 	}
 	return demoPkgOutput(server.PackageManager, updated)
+}
+
+// demoPackageJobOutput simuliert einen Paket-Job auf einem Demo-Server.
+// Skript-Jobs (Einrichtungen wie Trivy, apt-cacher-ng, Deep-Scan-Werkzeuge)
+// heben keine Paketstände an - sonst spielte „Trivy einrichten" nebenbei alle
+// ausstehenden Updates ein.
+func demoPackageJobOutput(servers *repositories.ServerRepository, server *domain.Server, jobType string) string {
+	if jobType == domain.RuleTypeScript {
+		return "Demo-Server - Einrichtung simuliert (kein SSH-Kontakt), Exit 0."
+	}
+	return demoSimulatePackageUpdate(servers, server)
+}
+
+// demoAddPackage nimmt ein Paket in den Bestand eines Demo-Servers auf, falls
+// es dort noch fehlt - die Wirkung einer simulierten Einrichtung.
+func demoAddPackage(servers *repositories.ServerRepository, serverID uint, name, version string) {
+	pkgs, err := servers.FindPackages(serverID)
+	if err != nil {
+		return
+	}
+	for i := range pkgs {
+		if pkgs[i].Name == name {
+			return
+		}
+	}
+	pkgs = append(pkgs, domain.Package{ServerRef: domain.ServerRef(serverID), Name: name, Version: version})
+	_ = servers.ReplacePackages(serverID, pkgs)
 }
 
 // demoDropFixedCVEs entfernt OS-CVEs, deren Paket soeben auf eine Version mit
@@ -222,4 +250,22 @@ func demoRuleOutput(servers *repositories.ServerRepository, server *domain.Serve
 	default:
 		return "demo-server: ausführung simuliert (kein ssh-kontakt)"
 	}
+}
+
+// demoTrivyVersion ist die Scanner-Fassung, die der Demo-LCM-Host meldet.
+const demoTrivyVersion = "0.67.2"
+
+// demoLcmHostStatus füllt den Einrichtungszustand des Demo-LCM-Hosts: Trivy
+// ist eingerichtet und eingesperrt, die Datenbank einen knappen Tag alt.
+// apt-cacher-ng und CrowdSec folgen wie beim echten Host dem Paketbestand.
+// Ohne das zeigte die Demo den Zustand des Rechners, auf dem sie läuft.
+func demoLcmHostStatus(st *LcmHostStatus, now time.Time) {
+	updated := now.Add(-20 * time.Hour)
+	scanner := domain.CVEDBStatus{
+		Available: true, Version: demoTrivyVersion, UpdatedAt: &updated,
+		Sandboxed: true, SandboxBackend: "bubblewrap",
+	}
+	scanner.EvaluateCVEDB(now)
+	st.TrivyInstalled = true
+	st.Scanner = &scanner
 }

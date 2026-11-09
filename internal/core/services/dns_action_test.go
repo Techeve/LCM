@@ -60,7 +60,7 @@ func TestConfigureDNSRejectsInvalid(t *testing.T) {
 	if _, err := env.Servers.ConfigureDNS(repositories.ScopeAll(), id, []string{"kein-ip"}, "admin"); err == nil {
 		t.Fatal("ungültige IP hätte abgelehnt werden müssen")
 	}
-	if _, err := env.Servers.ConfigureDNS(repositories.ScopeAll(), id, []string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "8.8.4.4"}, "admin"); err == nil {
+	if _, err := env.Servers.ConfigureDNS(repositories.ScopeAll(), id, []string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "8.8.4.4", "149.112.112.112"}, "admin"); err == nil {
 		t.Fatal("zu viele DNS-Server hätten abgelehnt werden müssen")
 	}
 }

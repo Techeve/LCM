@@ -9,8 +9,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/inputcheck"
 )
 
 // parseFirewallPorts normalisiert eine kommagetrennte Portliste: nur gültige
@@ -85,11 +87,20 @@ func parseFirewallRuleSpec(s string) ([]domain.FirewallRule, error) {
 // explizite JSON-Regeln streng: jeder Fehler bricht ab - eine still
 // verworfene Freigabe wäre schwer zu diagnostizieren.
 func normalizeFirewallRules(rules []domain.FirewallRule) ([]domain.FirewallRule, error) {
+	if len(rules) > firewallMaxRules {
+		return nil, fmt.Errorf("zu viele Regeln: %d (erlaubt: höchstens %d)", len(rules), firewallMaxRules)
+	}
 	seen := map[string]bool{}
 	out := []domain.FirewallRule{}
 	for _, r := range rules {
 		if r.Port < 1 || r.Port > 65535 {
 			return nil, fmt.Errorf("ungültiger Port %d (erlaubt: 1-65535)", r.Port)
+		}
+		if utf8.RuneCountInString(r.Comment) > firewallCommentMax {
+			return nil, fmt.Errorf("Regel Port %d: Bemerkung länger als %d Zeichen", r.Port, firewallCommentMax)
+		}
+		if len(r.AllowlistIDs) > firewallMaxSources {
+			return nil, fmt.Errorf("Regel Port %d: zu viele Allowlists (erlaubt: höchstens %d)", r.Port, firewallMaxSources)
 		}
 		proto := strings.ToLower(strings.TrimSpace(r.Proto))
 		if proto == "" {
@@ -173,6 +184,9 @@ func normalizeSourceIPs(ips []string) ([]string, error) {
 	if len(ips) == 0 {
 		return nil, nil
 	}
+	if len(ips) > firewallMaxSources {
+		return nil, fmt.Errorf("zu viele Quell-Adressen: %d (erlaubt: höchstens %d je Regel)", len(ips), firewallMaxSources)
+	}
 	seen := map[string]bool{}
 	var out []string
 	for _, raw := range ips {
@@ -182,7 +196,7 @@ func normalizeSourceIPs(ips []string) ([]string, error) {
 		}
 		canon, _, err := canonicalAddr(s)
 		if err != nil {
-			return nil, fmt.Errorf("ungültige Quell-IP %q (IP oder CIDR erwartet)", s)
+			return nil, fmt.Errorf("ungültige Quell-IP: %w", err)
 		}
 		if !seen[canon] {
 			seen[canon] = true
@@ -295,13 +309,17 @@ func sourcesByFamily(sources []string) (v4, v6 []string) {
 // Schreibweise plus die Adressfamilie. Die Werte landen in Firewall-
 // Konfigurationen - nur geparste Adressen sind zulässig.
 func canonicalAddr(s string) (canon string, v4 bool, err error) {
+	if reason := inputcheck.AddressOrNetProblem(s); reason != "" {
+		return "", false, fmt.Errorf("ungültige Adresse %q: %s", s, inputcheck.Describe(reason))
+	}
 	if ip := net.ParseIP(s); ip != nil {
 		return ip.String(), ip.To4() != nil, nil
 	}
-	if ip, ipnet, cidrErr := net.ParseCIDR(s); cidrErr == nil {
-		return ipnet.String(), ip.To4() != nil, nil
+	ip, ipnet, err := net.ParseCIDR(s)
+	if err != nil {
+		return "", false, fmt.Errorf("ungültige Adresse %q (IP oder CIDR erwartet)", s)
 	}
-	return "", false, fmt.Errorf("ungültige Adresse %q (IP oder CIDR erwartet)", s)
+	return ipnet.String(), ip.To4() != nil, nil
 }
 
 // firewallRulesJSON serialisiert normalisierte Regeln kanonisch (leer = "[]").
@@ -430,6 +448,14 @@ func expandSSHAndRules(ssh domain.FirewallRule, rules []domain.FirewallRule,
 // langen Werte, und als Notiz reicht eine Zeile.
 const firewallCommentMax = 120
 
+// Obergrenzen der Regel-Eingabe: großzügig für echte Regelsätze, aber so eng,
+// dass eine Anfrage das Zielsystem nicht mit Zehntausenden Zeilen flutet
+// (jede Quelle wird eine eigene ufw-/nft-Regel).
+const (
+	firewallMaxRules   = 500 // Regeln je Server oder Gruppen-Regel
+	firewallMaxSources = 100 // Quell-Adressen (und Allowlists) je Regel
+)
+
 // firewallCommentClean macht aus der freien Eingabe einen Wert, der gefahrlos
 // in einen Regelsatz wandert: eine Zeile, keine Steuerzeichen, keine
 // Anführungszeichen (die würden die nft-Syntax zerlegen), begrenzte Länge.
@@ -444,8 +470,8 @@ func firewallCommentClean(s string) string {
 		return r
 	}, s)
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > firewallCommentMax {
-		s = strings.TrimSpace(s[:firewallCommentMax])
+	if runes := []rune(s); len(runes) > firewallCommentMax {
+		s = strings.TrimSpace(string(runes[:firewallCommentMax]))
 	}
 	return s
 }

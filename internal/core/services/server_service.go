@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/safego"
@@ -35,12 +36,13 @@ var (
 	// den Fehlschlag sichtbar machen (BUG-024).
 	ErrFirewallToolMissing = errors.New("das vorgesehene Firewall-Werkzeug (ufw, firewalld oder nftables - je nach Distribution) ist auf diesem System nicht installiert")
 	// ErrRestrictedSudo: Der Server wurde mit einem eingeschränkten
-	// Management-Benutzer angelegt (sudoers-Whitelist + LCM-Helper). Die
-	// Kernfunktionen (Updates, Speicher, CVE-Scan, Repositories, apt-Cache,
-	// Firewall, SSH-Konfiguration/-Port, Benutzer-Sync) laufen weiter;
-	// gesperrt bleiben nur Aktionen mit freier Root-Shell (eigene Skripte,
-	// Custom-Aktionen) und der Neustart.
-	ErrRestrictedSudo = errors.New("im eingeschränkten Modus nicht verfügbar - diese Aktion braucht eine Root-Shell (frei definierte Kommandos/Neustart), die der Management-Benutzer dieses Servers nicht mehr hat")
+	// Management-Benutzer angelegt (sudoers-Whitelist + LCM-Helper). Alles, was
+	// LCM selbst verwaltet, läuft weiter (Updates, Speicher, CVE-Scan,
+	// Repositories, apt-Cache, Firewall, Sicherheits-Tools, Paket-Pins, alte
+	// Kernel, Neustart, SSH-Konfiguration/-Port, Benutzer-Sync, LCM-Host-Aktionen);
+	// gesperrt bleiben nur Aktionen mit freier Root-Shell: eigene Skripte,
+	// Custom-Aktionen und SSH-2FA.
+	ErrRestrictedSudo = errors.New("im eingeschränkten Modus nicht verfügbar - diese Aktion braucht eine Root-Shell (eigene Skripte und Aktionen, SSH-2FA), die der Management-Benutzer dieses Servers nicht mehr hat")
 	// ErrUserSyncDisabled: Für diesen Server ist der Linux-Benutzer-Sync in
 	// den Server-Einstellungen deaktiviert.
 	ErrUserSyncDisabled = errors.New("der linux-benutzer-sync ist für diesen server deaktiviert")
@@ -104,9 +106,22 @@ type ServerService struct {
 	// settings sind die globalen Einstellungen (nur für den Konsolen-Schalter
 	// gebraucht; optional verdrahtet, siehe WithSettings).
 	settings *repositories.SettingsRepository
+	// capabilities hält die Betriebsfähigkeit je Server (Ampel, Handlungs-
+	// unfähigkeit). Optional - ohne sie gelten alle Fähigkeiten als in
+	// Ordnung (schlanke Tests).
+	capabilities *repositories.CapabilityRepository
+	// bus meldet verworfene Ampeln und den Fortschritt des Sammel-Updates
+	// (siehe server_status.go, bulk_update.go). Optional - nil = keine Ereignisse.
+	bus *events.Bus
+	// retry löst „Erneut versuchen" der Betriebsfähigkeit aus (der Executor).
+	// Optional - ohne ihn ist nichts wiederholbar.
+	retry CapabilityRetryRunner
 	// apps ist der Anwendungskatalog samt der Funde je Server. Optional -
 	// ohne ihn entfällt die Erkennung (schlanke Tests).
 	apps *repositories.AppRepository
+	// customActions hält die Command-Listen der Custom-Aktionen - nur für die
+	// Befehlsvorschau. Optional; ohne sie bleibt die Vorschau dafür aus.
+	customActions *repositories.CustomActionRepository
 	// aptCacheURL liefert die Adresse eines APT-Caches aus Einstellungen →
 	// APT-Cache (0 = der einzige; ErrNoAptCacheURL, wenn keiner). Optional.
 	aptCacheURL func(cacheID uint) (string, error)
@@ -134,6 +149,9 @@ type ServerService struct {
 	// gewählte LAPI und den Console-Key - für die Aktion „Sicherheit-Tools".
 	// Optional.
 	crowdsecConfig func(lapiID uint) (CrowdSecConfig, error)
+	// userPlans baut die Skripte der Konten-Aktionen (ProvisioningService);
+	// nur die Befehlsvorschau braucht sie hier.
+	userPlans *ProvisioningService
 	// pins ist der Speicher der Paket-Pins (Schutz vor Autoremove, optionale
 	// Versions-Fixierung). Optional - ohne ihn sind die Pin-Aktionen nicht
 	// verfügbar und paketbezogene Jobs laufen ohne Pin-Schutz.
@@ -216,6 +234,12 @@ func (s *ServerService) WithAptCacheURL(fn func(cacheID uint) (string, error)) *
 // der nicht paketverwalteten Anwendungen nicht mit.
 func (s *ServerService) WithApps(repo *repositories.AppRepository) *ServerService {
 	s.apps = repo
+	return s
+}
+
+// WithCustomActions verdrahtet die Custom-Aktionen für die Befehlsvorschau.
+func (s *ServerService) WithCustomActions(repo *repositories.CustomActionRepository) *ServerService {
+	s.customActions = repo
 	return s
 }
 
@@ -320,9 +344,9 @@ func (s *ServerService) CVEDBStatus() domain.CVEDBStatus {
 	return st
 }
 
-// UpdateCVEDB laedt die Schwachstellen-Datenbank herunter - als Job, damit ein
-// Fehlschlag (Proxy, Rate-Limit, kein Netz) samt Ausgabe im Protokoll landet
-// statt still zu verpuffen. Der Job haengt an keinem Server: Scanner und
+// UpdateCVEDB holt einen neueren Stand der Schwachstellen-Datenbank - als Job,
+// damit ein Fehlschlag (Proxy, Rate-Limit, kein Netz) samt Ausgabe im Protokoll
+// landet statt still zu verpuffen. Der Job haengt an keinem Server: Scanner und
 // Datenbank liegen zentral auf dem LCM-Host.
 func (s *ServerService) UpdateCVEDB(actor string) (*domain.Job, error) {
 	if s.scanner == nil || !s.scanner.Available() {
@@ -334,7 +358,8 @@ func (s *ServerService) UpdateCVEDB(actor string) (*domain.Job, error) {
 	}
 	s.audit.Log(actor, "system.cve-db-update", "system", 0, "CVE-Datenbank aktualisieren")
 	safego.GoCleanup("job:cve-db-update", jobPanicCleanup(s.jobs, job), func() {
-		out, err := s.scanner.UpdateDB(context.Background())
+		update, err := s.scanner.UpdateDB(context.Background())
+		out := update.Output
 		if err != nil {
 			s.jobs.Complete(job, out, nil, err)
 			return
@@ -385,6 +410,13 @@ func (s *ServerService) dnsTestDomainList() []string {
 		return s.dnsTestDomains()
 	}
 	return (&domain.GlobalSettings{}).DNSTestDomainList()
+}
+
+// WithServerUserPlans verdrahtet die Konten-Aktionen der Provisionierung für
+// die Befehlsvorschau (Sperren, Freigeben, Entfernen gescannter Konten).
+func (s *ServerService) WithServerUserPlans(p *ProvisioningService) *ServerService {
+	s.userPlans = p
+	return s
 }
 
 // WithCrowdSecConfig verdrahtet den entschlüsselten CrowdSec-Zugang (LAPI/Console).
@@ -594,7 +626,7 @@ func (s *ServerService) Join(req JoinRequest) (*domain.Server, error) {
 
 	// Onboarding als Job protokollieren (mit vollem Konsolen-Output).
 	job := &domain.Job{
-		ServerID: &server.ID, Type: "join", Name: "Server-Onboarding: " + req.Name,
+		ServerID: &server.ID, Type: domain.JobTypeJoin, Name: "Server-Onboarding: " + req.Name,
 		Status: domain.JobStatusSuccess, TriggeredBy: req.Actor,
 		StartedAt: &now, FinishedAt: &now,
 		Output: acc.Log + "\n### System-Scan\n" + acc.Scan.Output,
@@ -748,7 +780,7 @@ func (s *ServerService) Reconnect(scope repositories.AccessScope, req ReconnectR
 	_ = s.servers.ReplaceDockerImages(server.ID, acc.Scan.DockerImages)
 
 	job := &domain.Job{
-		ServerID: &server.ID, Type: "reconnect", Name: "Reconnect: " + server.Name,
+		ServerID: &server.ID, Type: domain.JobTypeReconnect, Name: "Reconnect: " + server.Name,
 		Status: domain.JobStatusSuccess, TriggeredBy: req.Actor,
 		StartedAt: &now, FinishedAt: &now,
 		Output: acc.Log + "\n### System-Scan\n" + acc.Scan.Output,
@@ -1085,6 +1117,7 @@ func scanFields(fresh *domain.Server) map[string]any {
 		"mem_total_mb": fresh.MemTotalMB, "mem_used_mb": fresh.MemUsedMB,
 		"disk_total_mb": fresh.DiskTotalMB, "disk_used_mb": fresh.DiskUsedMB,
 		"ip_addresses":       fresh.IPAddresses,
+		"update_check_error": fresh.UpdateCheckError,
 		"fail2ban_installed": fresh.Fail2banInstalled, "crowdsec_installed": fresh.CrowdSecInstalled,
 		"ssh_2fa_enabled": fresh.SSH2FAEnabled,
 		"firewall_tool":   fresh.FirewallTool, "listening_ports": fresh.ListeningPorts,
@@ -1172,6 +1205,7 @@ func applyScan(server *domain.Server, scan *scanResult) {
 	server.DiskTotalMB = scan.DiskTotalMB
 	server.DiskUsedMB = scan.DiskUsedMB
 	server.IPAddresses = scan.IPAddresses
+	server.UpdateCheckError = scan.UpdateCheckError
 	// RouterOS-spezifische Felder (beim Linux-Scan leer → unverändert).
 	server.RouterBoardModel = scan.RouterBoardModel
 	server.RouterOSChannel = scan.RouterOSChannel
@@ -1441,9 +1475,9 @@ func (s *ServerService) Decommission(scope repositories.AccessScope, id uint, ac
 	if opts.PurgeTarget && !server.IsDemo {
 		out, err := s.purgeTarget(server, actor)
 		if err != nil {
-			// Bereinigung war ausdrücklich gewünscht, aber der Server ist nicht
-			// erreichbar - klar melden, statt still nur lokal zu löschen.
-			return "", fmt.Errorf("bereinigung fehlgeschlagen (server nicht erreichbar?): %w", err)
+			// Bereinigung war ausdrücklich gewünscht - klar melden, statt still
+			// nur lokal zu löschen. Der Server bleibt dann in LCM stehen.
+			return "", fmt.Errorf("bereinigung fehlgeschlagen: %w", err)
 		}
 		output = out
 	}
@@ -1486,39 +1520,59 @@ func (s *ServerService) Decommission(scope repositories.AccessScope, id uint, ac
 // die provisionierten Linux-Benutzer (Account + sudoers) sowie die Zugänge
 // des Service-Users (authorized_keys zuerst - damit die Credentials selbst
 // dann garantiert weg sind, falls userdel den eingeloggten User nicht
-// entfernen kann).
+// entfernen kann). Bleibt das Konto des Service-Users bestehen, ist das ein
+// Fehler: Der Aufrufer soll nicht „bereinigt" melden, während es noch da ist.
 func (s *ServerService) purgeTarget(server *domain.Server, actor string) (string, error) {
 	conn, err := s.connectRec(server, "decommission (bereinigung)", actor)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("server nicht erreichbar: %w", err)
 	}
 	defer conn.Close()
 
-	var steps []string
-	// 1. Von LCM provisionierte Linux-Benutzer entfernen. Distributions-
-	// bewusst (BusyBox hat kein userdel - R2-040); der Abschied bleibt
-	// best effort, aber ein zurückbleibendes Konto wird im Protokoll
-	// benannt statt still verschwiegen.
+	var users []domain.LinuxUser
 	if s.linux != nil {
-		if users, err := s.linux.AssignedForServer(server.ID); err == nil {
-			for _, u := range users {
-				steps = append(steps,
-					fmt.Sprintf("{ userdel -r %s || deluser --remove-home %s; } >/dev/null 2>&1 || true", u.Username, u.Username),
-					fmt.Sprintf("if id -u %s >/dev/null 2>&1; then echo 'WARNUNG: konto %s konnte nicht entfernt werden'; fi", u.Username, u.Username),
-					fmt.Sprintf("rm -f /etc/sudoers.d/lcm-%s", u.Username))
-			}
-		}
+		users, _ = s.linux.AssignedForServer(server.ID)
 	}
-	// 2. Zugänge des LCM-Service-Users entfernen. authorized_keys zuerst
-	// (garantiert Credential-Widerruf), dann sudoers, dann der Account.
-	steps = append(steps,
-		fmt.Sprintf("rm -f /home/%s/.ssh/authorized_keys", server.ServiceUser),
-		fmt.Sprintf("rm -f /etc/sudoers.d/%s", server.ServiceUser),
-		fmt.Sprintf("userdel -rf %s 2>/dev/null || true", server.ServiceUser),
-	)
-
-	out, _, runErr := conn.Run(privRun(server, strings.Join(steps, "; ")))
+	out, code, runErr := conn.Run(privRun(server, strings.Join(purgeSteps(server, users), "; ")))
+	if runErr == nil && code != 0 {
+		runErr = fmt.Errorf("unvollständig (exit %d): %s", code, summarize(out))
+	}
 	return out, runErr
+}
+
+// purgeSteps baut die Schritte der Ziel-Bereinigung. Der eingeschränkte
+// Service-User darf weder userdel noch /etc/sudoers.d anfassen, dort geht alles
+// über den Helper. Von LCM provisionierte Benutzer bleiben best effort, ein
+// zurückbleibendes Konto wird im Protokoll benannt statt still verschwiegen
+// (R2-040).
+func purgeSteps(server *domain.Server, users []domain.LinuxUser) []string {
+	var steps []string
+	for _, u := range users {
+		warn := fmt.Sprintf("echo 'WARNUNG: konto %s konnte nicht entfernt werden'", u.Username)
+		if server.RestrictedSudo {
+			steps = append(steps, helperCmd("user-remove", u.Username)+" >/dev/null 2>&1 || "+warn)
+			continue
+		}
+		steps = append(steps,
+			fmt.Sprintf("{ userdel -r %s || deluser --remove-home %s; } >/dev/null 2>&1 || true", u.Username, u.Username),
+			fmt.Sprintf("if id -u %s >/dev/null 2>&1; then %s; fi", u.Username, warn),
+			fmt.Sprintf("rm -f /etc/sudoers.d/lcm-%s", u.Username))
+	}
+	svc := server.ServiceUser
+	switch {
+	case svc == "":
+		return steps
+	case server.RestrictedSudo:
+		return append(steps, helperCmd("self-remove"))
+	}
+	// authorized_keys zuerst (garantierter Credential-Widerruf), dann sudoers,
+	// dann der Account.
+	return append(steps,
+		fmt.Sprintf("rm -f /home/%s/.ssh/authorized_keys", svc),
+		fmt.Sprintf("rm -f /etc/sudoers.d/%s", svc),
+		fmt.Sprintf("{ userdel -rf %s || deluser --remove-home %s; } >/dev/null 2>&1", svc, svc),
+		fmt.Sprintf("if id -u %s >/dev/null 2>&1; then echo 'FEHLER: konto %s besteht weiterhin'; exit 1; fi", svc, svc),
+	)
 }
 
 // RotateKey erzeugt ein neues SSH-Keypair, hinterlegt es auf dem Server
@@ -1613,10 +1667,8 @@ func (s *ServerService) HardenSSH(scope repositories.AccessScope, id uint, actor
 	if err != nil {
 		return "", err
 	}
-	if err := ensureSSHTransport(server); err != nil {
-		return "", err
-	}
-	if err := ensureNotRouterOS(server); err != nil {
+	script, err := planHardenSSH(server)
+	if err != nil {
 		return "", err
 	}
 	conn, err := s.connectRec(server, "harden-ssh", actor)
@@ -1624,22 +1676,6 @@ func (s *ServerService) HardenSSH(scope repositories.AccessScope, id uint, actor
 		return "", fmt.Errorf("verbindung: %w", err)
 	}
 	defer conn.Close()
-
-	dropin := "PasswordAuthentication no\\nChallengeResponseAuthentication no\\n" +
-		"PubkeyAuthentication yes\\nPermitRootLogin prohibit-password\\n"
-	script := strings.Join([]string{
-		sshdEnsureIncludeScript,
-		"install -d -m 755 /etc/ssh/sshd_config.d",
-		fmt.Sprintf("printf '%s' > /etc/ssh/sshd_config.d/60-lcm-hardening.conf", dropin),
-		// Konfiguration prüfen, bevor der Dienst neu geladen wird.
-		"sshd -t",
-		sshdReloadScript,
-	}, " && ")
-	// Eingeschränkter Modus: das Drop-in schreibt der LCM-Helper (fester
-	// Inhalt, mit Rollback bei sshd-Fehler).
-	if server.RestrictedSudo {
-		script = helperCmd("ssh-harden", "on")
-	}
 
 	output, code, runErr := conn.Run(privRun(server, script))
 	if runErr != nil {
@@ -1687,10 +1723,13 @@ func (s *ServerService) HardenSSH(scope repositories.AccessScope, id uint, actor
 // (R2-015). Fehlt die Include-Zeile in einer /usr/etc-Vorgabe, entsteht die
 // Ergänzung als neue Datei unter /etc - das ist bei stateless /etc der
 // vorgesehene Weg, die Vorgabe zu überschreiben.
+// Geprüft wird die erste wirksame Zeile, nicht bloß, ob irgendwo ein Include
+// steht: Hinter einem „PasswordAuthentication yes" aus der Hauptdatei bliebe
+// jedes Drop-in wirkungslos. Ein zweites Include schadet nicht.
 const sshdEnsureIncludeScript = `SSHDCONF=/etc/ssh/sshd_config; ` +
 	`[ -f "$SSHDCONF" ] || SSHDCONF=/usr/etc/ssh/sshd_config; ` +
 	`[ -f "$SSHDCONF" ] || { echo "sshd_config weder unter /etc/ssh noch unter /usr/etc/ssh gefunden" >&2; exit 1; }; ` +
-	`if ! grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$SSHDCONF"; then ` +
+	`if ! grep -vE '^[[:space:]]*(#|$)' "$SSHDCONF" | head -n1 | grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/'; then ` +
 	`cp -f "$SSHDCONF" /etc/ssh/sshd_config.lcm-backup && ` +
 	`{ echo '# von LCM ergänzt: Drop-ins einlesen (muss oben stehen)'; ` +
 	`echo 'Include /etc/ssh/sshd_config.d/*.conf'; cat /etc/ssh/sshd_config.lcm-backup; } > /etc/ssh/sshd_config; fi`
@@ -1733,25 +1772,87 @@ const sshdSocketActiveScript = "systemctl is-active --quiet ssh.socket 2>/dev/nu
 	"systemctl is-active --quiet sshd.socket 2>/dev/null"
 
 const sshdReloadScript = "{ if " + sshdSocketActiveScript + "; then " +
-	"if systemctl is-active --quiet ssh.service 2>/dev/null; then systemctl restart ssh; " +
-	"elif systemctl is-active --quiet sshd.service 2>/dev/null; then systemctl restart sshd; fi; " +
+	"if systemctl is-active --quiet ssh.service 2>/dev/null; then systemctl reset-failed ssh 2>/dev/null; systemctl restart ssh; " +
+	"elif systemctl is-active --quiet sshd.service 2>/dev/null; then systemctl reset-failed sshd 2>/dev/null; systemctl restart sshd; fi; " +
 	"else " +
 	"systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || " +
 	"rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || " +
 	"service ssh reload 2>/dev/null || service sshd reload; fi; }"
 
+// sshHardeningDropin trägt die Härtung. Es liegt bewusst hinten: LCMs eigene
+// Drop-ins für Root-Login (10-) und 2FA (55-) sollen sich dagegen durchsetzen.
+const sshHardeningDropin = "/etc/ssh/sshd_config.d/60-lcm-hardening.conf"
+
+// sshKeysOnlyDropin liegt vor allen anderen Drop-ins: OpenSSH nimmt je Option
+// den zuerst gefundenen Wert, und ein fremdes Drop-in wie 50-cloud-init.conf
+// (cloud-init auf Ubuntu) ließ die Passwort-Anmeldung sonst offen. Es enthält
+// nur, was keinem anderen LCM-Drop-in widerspricht. Pubkey steht mit darin,
+// damit ein fremdes „PubkeyAuthentication no" nicht zum Aussperren führt.
+const (
+	sshKeysOnlyDropin = "/etc/ssh/sshd_config.d/00-lcm-hardening.conf"
+	sshKeysOnlyLines  = "PasswordAuthentication no\\nPubkeyAuthentication yes\\n"
+)
+
+// planHardenSSH prüft den Server und baut das Skript der SSH-Härtung - für
+// den Lauf und die Befehlsvorschau gleich.
+func planHardenSSH(server *domain.Server) (string, error) {
+	if err := ensureSSHTransport(server); err != nil {
+		return "", err
+	}
+	if err := ensureNotRouterOS(server); err != nil {
+		return "", err
+	}
+	// Eingeschränkter Modus: das Drop-in schreibt der LCM-Helper (fester
+	// Inhalt, mit Rollback bei sshd-Fehler).
+	if server.RestrictedSudo {
+		return helperCmd("ssh-harden", "on"), nil
+	}
+	dropin := "PasswordAuthentication no\\nChallengeResponseAuthentication no\\n" +
+		"PubkeyAuthentication yes\\nPermitRootLogin prohibit-password\\n"
+	return strings.Join([]string{
+		sshdEnsureIncludeScript,
+		"install -d -m 755 /etc/ssh/sshd_config.d",
+		fmt.Sprintf("printf '%s' > %s", dropin, sshHardeningDropin),
+		fmt.Sprintf("printf '%s' > %s", sshKeysOnlyLines, sshKeysOnlyDropin),
+		// Konfiguration prüfen, bevor der Dienst neu geladen wird.
+		"sshd -t",
+		sshdReloadScript,
+	}, " && "), nil
+}
+
+// planUnhardenSSH baut das Skript, das die SSH-Härtung aufhebt.
+func planUnhardenSSH(server *domain.Server) (string, error) {
+	if err := ensureSSHTransport(server); err != nil {
+		return "", err
+	}
+	if err := ensureNotRouterOS(server); err != nil {
+		return "", err
+	}
+	if server.RestrictedSudo {
+		return helperCmd("ssh-harden", "off"), nil
+	}
+	return strings.Join([]string{
+		fmt.Sprintf("rm -f %s %s", sshHardeningDropin, sshKeysOnlyDropin),
+		// Konfiguration prüfen, bevor der Dienst neu geladen wird.
+		"sshd -t",
+		sshdReloadScript,
+	}, " && "), nil
+}
+
+// passwordAuthProbe liest die wirksame Einstellung der Passwort-Anmeldung.
+// `mkdir -p /run/sshd` vorweg: auf socket-aktiviertem sshd (Debian 13)
+// existiert das Verzeichnis nur für die Lebensdauer einer Verbindung,
+// weshalb `sshd -T` in unserer eigenen, späteren Sitzung mit „Missing
+// privilege separation directory" abbrach - die Prüfung lief also
+// ergebnislos ins Leere (R2-014). Die Fehlerausgabe wird nicht mehr
+// verworfen, sondern in die Meldung übernommen.
+const passwordAuthProbe = "mkdir -p /run/sshd 2>/dev/null; sshd -T 2>&1 | grep -i '^passwordauthentication'"
+
 // verifyPasswordAuthDisabled liest die effektive sshd-Konfiguration (sshd -T
 // wertet Includes und Match-Blöcke aus) und besteht darauf, dass die
 // Passwort-Anmeldung tatsächlich abgeschaltet ist.
 func (s *ServerService) verifyPasswordAuthDisabled(conn sshx.Conn, server *domain.Server) error {
-	// `mkdir -p /run/sshd` vorweg: auf socket-aktiviertem sshd (Debian 13)
-	// existiert das Verzeichnis nur für die Lebensdauer einer Verbindung,
-	// weshalb `sshd -T` in unserer eigenen, späteren Sitzung mit „Missing
-	// privilege separation directory" abbrach - die Prüfung lief also
-	// ergebnislos ins Leere (R2-014). Die Fehlerausgabe wird nicht mehr
-	// verworfen, sondern in die Meldung übernommen.
-	const probe = "mkdir -p /run/sshd 2>/dev/null; sshd -T 2>&1 | grep -i '^passwordauthentication'"
-	out, _, err := conn.Run(privRun(server, probe))
+	out, _, err := conn.Run(privRun(server, passwordAuthProbe))
 	if err != nil {
 		return fmt.Errorf("wirkung der ssh-härtung nicht prüfbar: %w", err)
 	}
@@ -1775,8 +1876,8 @@ func (s *ServerService) verifyPasswordAuthDisabled(conn sshx.Conn, server *domai
 		return nil
 	default:
 		return fmt.Errorf("die SSH-Härtung wurde geschrieben, wirkt aber nicht: der Dienst meldet weiterhin %q. "+
-			"Prüfe, ob /etc/ssh/sshd_config eigene Einträge für PasswordAuthentication enthält, "+
-			"die vor dem Drop-in stehen - OpenSSH nimmt jeweils den zuerst gefundenen Wert", value)
+			"Prüfe mit `sshd -T | grep -i passwordauth`, woher der Wert kommt, etwa aus einem Match-Block "+
+			"oder einer eigenen Startoption des Dienstes", value)
 	}
 }
 
@@ -1789,10 +1890,8 @@ func (s *ServerService) UnhardenSSH(scope repositories.AccessScope, id uint, act
 	if err != nil {
 		return "", err
 	}
-	if err := ensureSSHTransport(server); err != nil {
-		return "", err
-	}
-	if err := ensureNotRouterOS(server); err != nil {
+	script, err := planUnhardenSSH(server)
+	if err != nil {
 		return "", err
 	}
 	conn, err := s.connectRec(server, "unharden-ssh", actor)
@@ -1800,16 +1899,6 @@ func (s *ServerService) UnhardenSSH(scope repositories.AccessScope, id uint, act
 		return "", fmt.Errorf("verbindung: %w", err)
 	}
 	defer conn.Close()
-
-	script := strings.Join([]string{
-		"rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf",
-		// Konfiguration prüfen, bevor der Dienst neu geladen wird.
-		"sshd -t",
-		sshdReloadScript,
-	}, " && ")
-	if server.RestrictedSudo {
-		script = helperCmd("ssh-harden", "off")
-	}
 
 	output, code, runErr := conn.Run(privRun(server, script))
 	if runErr != nil {
@@ -1830,49 +1919,26 @@ func (s *ServerService) UnhardenSSH(scope repositories.AccessScope, id uint, act
 
 // UpgradeAllPackages spielt alle verfügbaren Paket-Updates ein (apt upgrade).
 func (s *ServerService) UpgradeAllPackages(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	return s.startPackageJob(scope, id, domain.RuleTypeUpdate,
-		"Alle Pakete aktualisieren", pkgUpgradeAllScript, actor)
+	return s.runPlanned(scope, id, actor, s.planUpgradeAll)
 }
 
 // RefreshPackages aktualisiert die Paketliste eines Servers: apt-get update
 // (Metadaten auffrischen) und anschließend Neu-Erfassung des installierten
 // Bestands samt verfügbarer Updates. Es wird NICHTS installiert.
 func (s *ServerService) RefreshPackages(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	return s.startPackageJob(scope, id, domain.RuleTypePackageScan,
-		"Paketliste aktualisieren", pkgRefreshScript, actor)
+	return s.runPlanned(scope, id, actor, s.planRefresh)
 }
 
 // UpgradeSecurityPackages spielt nur Security-/Bugfix-Updates ein.
 func (s *ServerService) UpgradeSecurityPackages(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	return s.startPackageJob(scope, id, domain.RuleTypeSecurity,
-		"Security-Updates einspielen", pkgSecurityUpgradeScript, actor)
+	return s.runPlanned(scope, id, actor, s.planUpgradeSecurity)
 }
 
 // AutoremovePackages entfernt nicht mehr benötigte Pakete (verwaiste
 // Abhängigkeiten) - `apt autoremove` und die Pendants der übrigen
-// Paketverwaltungen.
-//
-// Die gesetzten Paket-Pins werden dabei durchgesetzt: Bei apt und dnf schreibt
-// der Lauf zuerst die Schutzdatei (die Paketverwaltung respektiert sie dann
-// selbst), bei zypper und pacman - die keine solche Datei kennen - wird die
-// Kandidatenliste um die geschützten Pakete gekürzt. Ohne das räumte der Lauf
-// weiterhin ältere Kernel weg.
+// Paketverwaltungen. Die Pins werden dabei durchgesetzt, siehe planAutoremove.
 func (s *ServerService) AutoremovePackages(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	server, err := s.servers.FindByID(scope, id)
-	if err != nil {
-		return nil, err
-	}
-	pins := s.effectivePins(server)
-	build := func(mgr string) string {
-		if len(pins) == 0 {
-			return pkgAutoremoveScript(mgr)
-		}
-		// Erst schützen, dann aufräumen - in dieser Reihenfolge, sonst ist die
-		// Schutzdatei beim Lauf noch nicht da.
-		return pkgPinScript(mgr, pins) + "\n" + pkgAutoremoveScriptWithPins(mgr, pins)
-	}
-	return s.startPackageJob(scope, id, domain.RuleTypeAutoremove,
-		"Nicht mehr benötigte Pakete entfernen", build, actor)
+	return s.runPlanned(scope, id, actor, s.planAutoremove)
 }
 
 // RemovePackages deinstalliert gezielt die genannten Pakete. Kritische
@@ -1880,62 +1946,18 @@ func (s *ServerService) AutoremovePackages(scope repositories.AccessScope, id ui
 // werden abgelehnt - ihr Entfernen würde den Server oder den LCM-Zugang
 // unbrauchbar machen (Aussperr-/Selbstschuss-Schutz).
 func (s *ServerService) RemovePackages(scope repositories.AccessScope, id uint, names []string, actor string) (*domain.Job, error) {
-	clean, err := parsePackageNames(strings.Join(names, " "))
-	if err != nil {
-		return nil, err
-	}
-	for _, n := range clean {
-		if isProtectedPackage(n) {
-			return nil, fmt.Errorf("%w: %s", ErrProtectedPackage, n)
-		}
-	}
-	// Ein Pin mit „nicht entfernen" gilt auch für das gezielte Entfernen -
-	// sonst schützte er nur gegen den Aufräum-Lauf und der Klick daneben
-	// entfernte das Paket doch.
-	if server, ferr := s.servers.FindByID(scope, id); ferr == nil {
-		for _, pin := range s.effectivePins(server) {
-			if !pin.NoRemove {
-				continue
-			}
-			for _, n := range clean {
-				if pin.Matches(n) {
-					return nil, fmt.Errorf("%w: %s (Pin: %s)", ErrPinnedPackage, n, pin.Name)
-				}
-			}
-		}
-	}
-	build := func(mgr string) string { return pkgRemovePackagesScript(mgr, clean) }
-	name := "Pakete entfernen: " + strings.Join(clean, ", ")
-	return s.startPackageJob(scope, id, domain.RuleTypeAutoremove, name, build, actor)
+	return s.runPlanned(scope, id, actor, func(server *domain.Server) (packagePlan, error) {
+		return s.planRemove(server, names)
+	})
 }
 
 // UpdatePackages aktualisiert gezielt Pakete. Ist version gesetzt, wird genau
 // EIN Paket auf diese exakte Version gebracht (Downgrades erlaubt); sonst
 // werden alle genannten Pakete auf die neueste Version aktualisiert.
 func (s *ServerService) UpdatePackages(scope repositories.AccessScope, id uint, names []string, version, actor string) (*domain.Job, error) {
-	var build func(mgr string) string
-	var name string
-	if version != "" {
-		if len(names) != 1 {
-			return nil, ErrVersionOnePkg
-		}
-		if !rePackageName.MatchString(names[0]) {
-			return nil, ErrInvalidPackage
-		}
-		if !rePackageVersion.MatchString(version) {
-			return nil, ErrInvalidVersion
-		}
-		build = func(mgr string) string { return pkgInstallVersionScript(mgr, names[0], version) }
-		name = fmt.Sprintf("Paket %s → %s", names[0], version)
-	} else {
-		clean, err := parsePackageNames(strings.Join(names, " "))
-		if err != nil {
-			return nil, err
-		}
-		build = func(mgr string) string { return pkgUpgradePackagesScript(mgr, clean) }
-		name = "Pakete aktualisieren: " + strings.Join(clean, ", ")
-	}
-	return s.startPackageJob(scope, id, domain.RuleTypePackages, name, build, actor)
+	return s.runPlanned(scope, id, actor, func(server *domain.Server) (packagePlan, error) {
+		return s.planUpdate(server, names, version)
+	})
 }
 
 // PackageVersions liefert die installierbaren Versionen eines Pakets
@@ -1967,36 +1989,16 @@ func (s *ServerService) PackageVersions(scope repositories.AccessScope, id uint,
 // Paketverwaltung des Servers, legt einen Job an (Concurrency-Lock pro
 // Server) und führt die Paket-Aktion asynchron aus.
 func (s *ServerService) startPackageJob(scope repositories.AccessScope, id uint, jobType, name string, build func(mgr string) string, actor string) (*domain.Job, error) {
-	server, err := s.servers.FindByID(scope, id)
-	if err != nil {
-		return nil, err
-	}
-	// RouterOS hat keine (Linux-)Paketverwaltung - alle paketbasierten Aktionen
-	// (Updates, Tool-Installationen) sind dort nicht anwendbar. Zentraler
-	// Sperrpunkt, bevor ein sinnloser Job startet.
-	if err := ensureNotRouterOS(server); err != nil {
-		return nil, err
-	}
-	script := build(server.PackageManager)
-	if jobType == domain.RuleTypeUpdate {
-		script = aptUpgradeEnv(s.settings, s.servers, server) + script
-	}
-	job, err := s.jobs.Start(&server.ID, nil, jobType, name+" @ "+server.Name, actor)
-	if err != nil {
-		return nil, err // u.a. ErrServerBusy → der Controller mappt auf 409
-	}
-	s.audit.Log(actor, "server.package-update", "server", id, name)
-	safego.GoCleanup("job:package", jobPanicCleanup(s.jobs, job), func() {
-		s.runPackageJob(job, server, script, actor)
+	return s.runPlanned(scope, id, actor, func(server *domain.Server) (packagePlan, error) {
+		return s.newPackagePlan(server, jobType, name, build)
 	})
-	return job, nil
 }
 
 // runPackageJob führt das Paket-Skript auf dem Server aus (protokolliert,
 // mit dem Job verknüpft) und liest danach den Paketbestand neu ein.
 func (s *ServerService) runPackageJob(job *domain.Job, server *domain.Server, script, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, demoSimulatePackageUpdate(s.servers, server), ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, demoPackageJobOutput(s.servers, server, job.Type))
 		return
 	}
 	conn, err := s.connect(server)
@@ -2012,9 +2014,7 @@ func (s *ServerService) runPackageJob(job *domain.Job, server *domain.Server, sc
 	defer conn.Close()
 
 	output, code, runErr := conn.Run(privRun(server, script))
-	if runErr == nil && code != 0 {
-		runErr = fmt.Errorf("paket-update endete mit exit-code %d", code)
-	}
+	code, runErr = packageRunResult(job.Type, server.PackageManager, output, code, runErr)
 	if runErr == nil {
 		rescanPackagesInto(s.servers, conn, server)
 		_ = s.servers.UpdateFields(server.ID, map[string]any{
@@ -2038,6 +2038,11 @@ func (s *ServerService) List(scope repositories.AccessScope) ([]domain.Server, e
 		s.fillAgentState(&servers[i])
 	}
 	return servers, nil
+}
+
+// VisibleServerIDs liefert die Kennungen der Server, die der Scope sehen darf.
+func (s *ServerService) VisibleServerIDs(scope repositories.AccessScope) ([]uint, error) {
+	return s.servers.VisibleIDs(scope)
 }
 
 func (s *ServerService) Get(scope repositories.AccessScope, id uint) (*domain.Server, error) {
@@ -2098,63 +2103,27 @@ func (s *ServerService) Snaps(scope repositories.AccessScope, id uint) ([]domain
 
 // RefreshAllSnaps aktualisiert alle Snaps eines Servers.
 func (s *ServerService) RefreshAllSnaps(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	if err := s.requireSnapd(scope, id); err != nil {
-		return nil, err
-	}
-	return s.startPackageJob(scope, id, domain.RuleTypeUpdate, "Alle Snaps aktualisieren",
-		func(string) string { return snapRefreshAllScript() }, actor)
+	return s.runPlanned(scope, id, actor, s.planSnapRefreshAll)
 }
 
 // RefreshSnaps aktualisiert die genannten Snaps.
 func (s *ServerService) RefreshSnaps(scope repositories.AccessScope, id uint, names []string, actor string) (*domain.Job, error) {
-	clean, err := parseSnapNames(strings.Join(names, " "))
-	if err != nil {
-		return nil, err
-	}
-	if err := s.requireSnapd(scope, id); err != nil {
-		return nil, err
-	}
-	return s.startPackageJob(scope, id, domain.RuleTypePackages,
-		"Snap aktualisieren: "+strings.Join(clean, ", "),
-		func(string) string { return snapRefreshScript(clean) }, actor)
+	return s.runPlanned(scope, id, actor, func(server *domain.Server) (packagePlan, error) {
+		return s.planSnapRefresh(server, names)
+	})
 }
 
 // RemoveSnaps entfernt die genannten Snaps. Die Grundlagen der
 // Snap-Verwaltung (snapd, die core-Basen) sind ausgenommen - sie zu entfernen
 // nähme allen übrigen Snaps die Laufzeit.
 func (s *ServerService) RemoveSnaps(scope repositories.AccessScope, id uint, names []string, actor string) (*domain.Job, error) {
-	clean, err := parseSnapNames(strings.Join(names, " "))
-	if err != nil {
-		return nil, err
-	}
-	for _, n := range clean {
-		if isProtectedSnap(n) {
-			return nil, fmt.Errorf("%w: %s", ErrProtectedSnap, n)
-		}
-	}
-	if err := s.requireSnapd(scope, id); err != nil {
-		return nil, err
-	}
-	return s.startPackageJob(scope, id, domain.RuleTypePackages,
-		"Snap entfernen: "+strings.Join(clean, ", "),
-		func(string) string { return snapRemoveScript(clean) }, actor)
+	return s.runPlanned(scope, id, actor, func(server *domain.Server) (packagePlan, error) {
+		return s.planSnapRemove(server, names)
+	})
 }
 
 // ErrNoSnapd: Auf dem Server gibt es keine Snap-Verwaltung.
 var ErrNoSnapd = errors.New("auf diesem Server ist snapd nicht vorhanden")
-
-// requireSnapd weist Snap-Aktionen auf Servern ohne snapd ab, statt ein
-// Kommando abzusetzen, das mit „command not found" endet.
-func (s *ServerService) requireSnapd(scope repositories.AccessScope, id uint) error {
-	server, err := s.servers.FindByID(scope, id)
-	if err != nil {
-		return err
-	}
-	if !server.HasSnap {
-		return ErrNoSnapd
-	}
-	return nil
-}
 
 // VulnerabilityView ist ein CVE-Fund samt der Frage, ob er überhaupt zählt.
 type VulnerabilityView struct {

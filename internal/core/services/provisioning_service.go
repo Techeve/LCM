@@ -493,6 +493,12 @@ func (s *ProvisioningService) SyncUsers(server *domain.Server, actor string) (st
 		return "", fmt.Errorf("verbindung: %w", err)
 	}
 	defer conn.Close()
+	// Liegt ein Rückstand, arbeitet ihn der Abgleich gleich mit ab: Er enthält
+	// das Verteilen, und ohne das bliebe „Abgleich steht aus" stehen, obwohl
+	// der Server eben abgeglichen wurde.
+	if report, err := s.DrainOnConn(conn, server, actor); report != "" || err != nil {
+		return report, err
+	}
 	return s.distributeUsers(conn, server)
 }
 

@@ -10,7 +10,7 @@ checkout: for apt or dnf none of this exists. Yet these are exactly the
 applications that are reachable from outside, carry vulnerabilities and want
 updating - and without deliberate effort none of them appears on any list.
 
-The **Applications** tab on the server detail page closes that gap. It has two
+The **Apps** tab on the server detail page closes that gap. It has two
 parts with different ambitions.
 
 ## Detected applications
@@ -38,7 +38,7 @@ there in the row.
 
 ## The application catalog
 
-**Settings → Applications.** LCM ships entries for common software (AdGuard
+**Settings → Apps.** LCM ships entries for common software (AdGuard
 Home, Nextcloud, mailcow, Seafile, MinIO, RustDesk, Odoo, Intrexx and the
 Techeve products); your own can be added. An entry consists of:
 

@@ -21,6 +21,7 @@ func (r *SettingsRepository) Get() (*domain.GlobalSettings, error) {
 	if err := r.db.First(&settings, 1).Error; err != nil {
 		return nil, translate(err)
 	}
+	settings.NormalizeMail()
 	return &settings, nil
 }
 

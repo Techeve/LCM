@@ -165,6 +165,35 @@ func TestNichtErreichbarerServerHoltDenAbgleichNach(t *testing.T) {
 	}
 }
 
+// Der Abgleich von Hand zählt wie der Health-Check: Danach darf „Abgleich steht
+// aus" nicht mehr stehen, nur weil niemand den Rückstand geleert hat.
+func TestManuellerAbgleichLeertDenRueckstand(t *testing.T) {
+	env := newTestEnv(t)
+	server, group, userID := setupGroupUser(t, env, "web05", "spaeter")
+
+	env.Dialer.FailKey = errors.New("connection refused")
+	if err := env.LinuxUsers.AssignToGroup(repositories.ScopeAll(), userID, group.ID, nil, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		entries, err := env.Pending.ForServer(server.ID)
+		return err == nil && len(entries) == 1 && entries[0].Attempts > 0
+	})
+
+	env.Dialer.FailKey = nil
+	env.Dialer.Reset()
+	if _, err := env.Prov.SyncUsers(server, "admin"); err != nil {
+		t.Fatalf("Abgleich fehlgeschlagen: %v", err)
+	}
+	entries, err := env.Pending.ForServer(server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("Rückstand nicht geleert: %+v", entries)
+	}
+}
+
 // Auch ein entzogener Zugang darf nicht im Rückstand verhungern: Er ist der
 // Grund, warum es den Rückstand überhaupt gibt.
 func TestEntzogenerZugangBleibtImRueckstand(t *testing.T) {

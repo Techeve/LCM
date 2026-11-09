@@ -2,7 +2,7 @@
 sidebar:
   order: 21
 title: Sicherheitsmodell
-description: Authentifizierung, JWT, RBAC, API-Keys und die weiteren Härtungsmaßnahmen von LCM.
+description: Authentifizierung, Browser-Sitzung, RBAC, API-Keys und die weiteren Härtungsmaßnahmen von LCM.
 ---
 
 ## Überblick
@@ -10,7 +10,7 @@ description: Authentifizierung, JWT, RBAC, API-Keys und die weiteren Härtungsma
 | Baustein | Technologie | Ort |
 |---|---|---|
 | Passwort-Hashing | argon2id (OWASP-Parameter) | `internal/core/services/auth_service.go` |
-| User-Auth | JWT (HS256), 60 min TTL | `AuthService` + `middlewares.Authenticate` |
+| User-Auth | Server-Sitzung (Arbeitsspeicher oder Cookie), Leerlauf 60 min, höchstens 12 h | `AuthService` + `middlewares.Authenticate` |
 | Service-Auth | API-Keys (SHA-256-gehasht) | `APIKeyService` |
 | Autorisierung | RBAC: User → Rollen → Permissions | `middlewares.RequirePermission` |
 | Secrets | generierte `config.json` (0600) | `internal/config/config.go` |
@@ -58,7 +58,7 @@ bleiben gültig, bis sie das nächste Mal geändert werden.
 Erst-Seeding einer frischen Datenbank setzt LCM `require_2fa_roles = admin`.
 Grund: das Admin-Konto verwaltet SSH-Zugänge und Root-Rechte der gesamten
 Flotte - ein alleiniges Passwort ist dafür zu wenig. Die Einstellung ist unter
-*Einstellungen → Allgemein* änderbar; unbekannte Rollennamen werden dabei
+*Einstellungen → Sicherheit* (Karte „Anmeldung“, *Zwei-Faktor-Pflicht für*) änderbar; unbekannte Rollennamen werden dabei
 **abgelehnt**, damit ein Tippfehler die Pflicht nicht lautlos aushebelt.
 
 Im **Entwicklungs- (`--dev`) und Demo-Modus (`--demo`)** bleibt die Pflicht
@@ -97,8 +97,10 @@ Angreifers hätten die Anmeldung der gesamten Installation gesperrt; und ohne di
 Liste könnte jeder, der den Port direkt erreicht, seine Adresse selbst wählen.
 
 Ein angenommener **TOTP-Code gilt genau einmal** (RFC 6238): derselbe Code wird
-innerhalb des Prüffensters nicht ein zweites Mal akzeptiert, und die Challenge
-des zweistufigen Logins ist nach dem zweiten Schritt widerrufen. Beim Login
+innerhalb des Prüffensters nicht ein zweites Mal akzeptiert. Die Anmeldung sagt
+das als eigener Fehler (`auth.totp_reused`), damit niemand einen richtigen Code
+für falsch hält; die Fehlversuchs-Sperre zählt ihn wie einen falschen Code. Die
+Challenge des zweistufigen Logins ist nach dem zweiten Schritt widerrufen. Beim Login
 werden Passwörter über 1024 Bytes gar nicht erst gehasht - argon2id ist
 absichtlich teuer, und der Endpunkt ist anonym erreichbar.
 
@@ -120,16 +122,88 @@ zurück (Schema, Host und Port des Listeners). Der Link ist dann je nach
 Netzaufbau von außen möglicherweise nicht erreichbar - aber niemals
 irreführend. Für den Produktivbetrieb sollte die Adresse gesetzt werden.
 
-## JWT-Lebenszyklus
+## Anmeldung im Browser
 
-1. **Login** (`POST /api/v1/auth/login`): Nach argon2id-Verifikation stellt der `AuthService` ein HS256-signiertes JWT aus. Claims: User-ID (`sub`), Username, `iat`/`exp`.
-2. **Request**: Das Frontend sendet `Authorization: Bearer <jwt>`. Die `Authenticate`-Middleware validiert Signatur und Ablauf - die Signaturmethode ist explizit auf HS256 festgenagelt (`jwt.WithValidMethods`), was Algorithm-Confusion-Angriffe verhindert.
-3. **Rollenauflösung**: Permissions stehen **nicht** im Token. Bei jedem Request wird der User samt Rollen/Permissions frisch aus der DB geladen - Rollenänderungen und Deaktivierungen greifen sofort, nicht erst beim nächsten Login.
-4. **Ablauf**: Nach `access_token_ttl_minutes` (Default 60) ist das Token ungültig → der Server antwortet 401 → das Frontend loggt automatisch aus (siehe [API-Referenz](/reference/api/)).
+Die Weboberfläche meldet sich über eine **Server-Sitzung** an. Der Browser trägt
+nur einen zufälligen, undurchsichtigen Wert (32 Zufallsbytes); Nutzer, Beginn und
+letzte Aktivität stehen im Arbeitsspeicher des Prozesses. Ein JWT als Anmeldung gibt
+es nicht, auch keinen Bearer-Login: `Authorization: Bearer` gilt an der REST-API nicht
+als Anmeldung. Skripte nutzen `X-API-Key`.
 
-Das JWT-Secret wird beim ersten Start kryptografisch zufällig generiert (48 Bytes aus `crypto/rand`) und liegt nur in der `config.json` (Dateirechte 0600). Secrets unter 32 Zeichen werden beim Laden abgelehnt.
+Wie der Browser den Wert trägt, stellt der Betreiber unter *Einstellungen → Allgemein →
+Anmeldung im Browser* ein (`browser_session_mode`). Die Frage kommt einmalig direkt nach
+den Pflichtschritten der ersten Anmeldung; die Karte erklärt beide Wege.
 
-**Sitzungs-Invalidierung bei jedem Neustart:** Das HS256-Signaturmaterial wird bei jedem Prozessstart neu aus `crypto/rand` gezogen und lebt ausschließlich im Arbeitsspeicher (`newSigningKey` in `auth_service.go`). Ein gespeichertes Geheimnis gibt es dafür nicht mehr - frühere Fassungen mischten ein `jwt_secret` aus der `config.json` hinein, das seit der Bindung an den Prozessstart keinen Zweck mehr hatte; ein noch vorhandener Eintrag wird ignoriert und beim nächsten Schreiben der Datei entfernt. Folge: Bei jedem (Neu-)Start entsteht ein anderer Signaturschlüssel und **alle** zuvor ausgestellten Tokens fallen bei der Signaturprüfung durch - jede Sitzung endet, ein neues Login ist nötig. Das deckt insbesondere den Fall ab, dass eine alte, weiterhin gültige Session sonst einem frisch geseedeten Admin mit derselben ID vertrauen würde (Rebuild, Prozess-Neustart, neu angelegte Datenbank).
+| | Arbeitsspeicher (`memory`, Standard) | Sitzungs-Cookie (`cookie`) |
+|---|---|---|
+| Voraussetzung | keine | nur über HTTPS |
+| Träger | Kopfzeile `X-LCM-Session`; der Wert steht nur in einer Variablen des Tabs | Cookie `__Host-lcm_session` (HttpOnly, Secure, SameSite=Strict, Path=/, ohne Domain) |
+| Cookies | keine | Sitzung und `__Host-lcm_csrf` |
+| CSRF | nicht nötig (ein Browser schickt die Kopfzeile nicht von selbst) | Header `X-CSRF-Token` bei jeder ändernden Anfrage |
+| Neuladen, neuer Tab, Schließen | abgemeldet; beim Schließen beendet ein `keepalive`-Logout die Sitzung auf dem Server | angemeldet, gilt für alle Tabs |
+| Ablauf | Leerlauf-Frist (Einstellung „Sitzungsdauer in Minuten“), spätestens nach 12 Stunden, außer die Leerlauf-Frist ist länger eingestellt | wie links |
+
+**Der Wert gehört zu einem Weg.** Jede Sitzung trägt ihren Transport (`cookie` oder
+`header`) und gilt nur darüber: Ein Cookie, das zu einer Kopfzeilen-Sitzung gehört,
+ist keine Anmeldung, und umgekehrt. `Authenticate` prüft `X-API-Key`, dann
+`X-LCM-Session`, dann das Cookie.
+
+**Cookie nur mit HTTPS.** „HTTPS“ heißt: echte TLS-Verbindung, oder
+`X-Forwarded-Proto: https` von einem vertrauten Proxy (`trust_proxy_header` und
+`trusted_proxies`, dieselbe Regel wie für `X-Forwarded-For`). Die Einstellung auf
+`cookie` lehnt der Server über HTTP mit 422 `settings.session_cookie_needs_https` ab.
+Steht sie auf `cookie` und ein Login kommt trotzdem über reines HTTP (etwa weil HTTPS
+abgebaut wurde), sperrt das niemanden aus: Der Login läuft als `memory`-Sitzung, ohne Cookie.
+Meldet sich jemand im Modus `memory` an und der Browser schickt noch Cookies einer früheren
+Cookie-Sitzung mit, löscht die Login-Antwort sie - das ist die einzige `Set-Cookie`-Zeile,
+die es in dieser Variante gibt.
+
+**Wechsel.** Beim Wechsel des Wegs enden **alle** Browser-Sitzungen aller Benutzer, auch
+die des Betreibers, und offene Ereigniskanäle werden geschlossen. Das Sicherheitsprotokoll
+nennt den Wechsel (`session.mode.changed`). Bleibt der Weg gleich, endet nichts.
+
+**Pflichtschritte und Passwort.** Auch ein Passwortwechsel beendet die Sitzung (sie ist
+älter als die Passwortänderung). Die Oberfläche meldet danach ab und führt zur Anmeldung;
+das gilt für beide Wege. Ebenso enden die Sitzungen bei Deaktivierung und Rollenwechsel.
+
+**WebSockets.** Der Browser kann an einem WebSocket keine Kopfzeile setzen. Der
+Ereigniskanal (`GET /api/v1/events`) und die Konsole verbinden deshalb mit einer
+**Einmal-Fahrkarte** (`POST /api/v1/events/ticket` bzw. `.../terminal/ticket`): 30
+Sekunden gültig, genau einmal, an Benutzer und Sitzung (Konsole: Server und
+Client-Adresse) gebunden. Der Ereigniskanal prüft die Sitzung weiter im Takt (ohne sie
+zu verlängern), begrenzt die Verbindungen je Sitzung, prüft den Origin und schließt bei
+Abmeldung - für beide Wege gleich. Skripte verbinden mit `X-API-Key`. Das Zugriffsprotokoll
+schwärzt den Wert von `ticket`.
+
+**Was die Oberfläche tut, damit `memory` nicht stört:** Downloads laufen über fetch und
+Blob statt über Links, das Live-Log über einen Strom per fetch statt `EventSource`.
+Fehlerzustände laden Daten oder Module neu, statt die Seite neu zu laden. Eine neue
+Version lädt die Seite neu; wer in `memory` angemeldet war, meldet sich dann neu an und
+kommt zur selben Adresse zurück.
+
+Die Content-Security-Policy ist streng: `script-src 'self'`, `style-src 'self'` ohne Inline-Stile, dazu Trusted Types.
+
+## 2FA-Challenge (JWT)
+
+Der zweite Anmeldeschritt braucht ein kurzlebiges Zwischentoken: Nach dem Passwort
+liefert `POST /api/v1/auth/login` bei aktivem 2FA eine **Challenge**, ein HS256-signiertes
+JWT mit dem Claim `twofa_pending`. Es autorisiert ausschließlich `POST /api/v1/auth/login/2fa`,
+nie einen Zugriff, ist kurz gültig und wird mit dem Einlösen widerrufen. Die Signaturmethode
+ist explizit auf HS256 festgenagelt (`jwt.WithValidMethods`), was Algorithm-Confusion verhindert.
+
+Das Signaturmaterial wird bei jedem Prozessstart neu aus `crypto/rand` gezogen und lebt
+ausschließlich im Arbeitsspeicher (`newSigningKey` in `auth_service.go`); aus ihm leitet sich
+auch das CSRF-Geheimnis ab. Ein gespeichertes Geheimnis gibt es nicht - ein `jwt_secret` aus
+älteren Fassungen wird beim Laden ignoriert und beim nächsten Schreiben der Datei entfernt.
+
+**Rollenauflösung:** Permissions stehen **nicht** in der Sitzung. Bei jedem Request wird der
+User samt Rollen/Permissions frisch aus der DB geladen - Rollenänderungen und Deaktivierungen
+greifen sofort.
+
+**Sitzungs-Invalidierung bei jedem Neustart:** Sitzungen liegen nur im Arbeitsspeicher. Jedes
+(Neu-)Start beendet alle - das deckt insbesondere den Fall ab, dass eine alte Sitzung sonst
+einem frisch geseedeten Admin mit derselben ID vertrauen würde (Rebuild, Prozess-Neustart,
+neu angelegte Datenbank).
 
 ## RBAC: User → Rolle → Permission
 
@@ -168,7 +242,7 @@ Für Prozesse ohne Browser (CI, Cron, andere Dienste) gibt es API-Keys (`X-API-K
 
 **Scopes:** Beim Erstellen wählt man `"scope": "read"`, `"readwrite"` (Default) oder `"mcp"`. Ein `read`-Key darf nur `GET`/`HEAD`/`OPTIONS` - jede schreibende Methode wird in der `Authenticate`-Middleware mit **403** abgelehnt, *bevor* Controller-Code läuft und zusätzlich zur RBAC-Prüfung. Damit lassen sich z.B. Monitoring-Keys ausgeben, die selbst im Admin-Kontext nichts verändern können. Ein `mcp`-Key ist strikt isoliert: Er funktioniert **ausschließlich** auf dem separaten MCP-Listener (siehe unten) und wird auf der regulären REST-API/UI abgewiesen. Migration 1 setzt Keys aus älteren Versionen automatisch auf `readwrite` (bisheriges Verhalten).
 
-**Rate-Limiting:** `api_key_rate_limit_per_minute` in der config.json (Default 120, `0` = aus) begrenzt Requests **pro API-Key und Minute** (Fixed-Window, in-memory). Das Limit greift vor der Key-Validierung - auch Brute-Force mit ungültigen Keys wird gedrosselt. Bei Überschreitung: **429** mit `Retry-After`-Header. JWT-Browser-Sessions sind nicht betroffen. Für Multi-Instanz-Deployments gehört das Limit in den Reverse-Proxy oder einen geteilten Store.
+**Rate-Limiting:** `api_key_rate_limit_per_minute` in der config.json (Default 120, `0` = aus) begrenzt Requests **pro API-Key und Minute** (Fixed-Window, in-memory). Das Limit greift vor der Key-Validierung - auch Brute-Force mit ungültigen Keys wird gedrosselt. Bei Überschreitung: **429** mit `Retry-After`-Header. Browser-Sitzungen sind nicht betroffen. Für Multi-Instanz-Deployments gehört das Limit in den Reverse-Proxy oder einen geteilten Store.
 
 Der Seeding-User `system` existiert für Hintergrundprozesse ohne User-Kontext; er kann sich nicht per Passwort einloggen (`IsSystem`).
 
@@ -188,7 +262,7 @@ Der zentral in der DB erfasste Paketbestand aller Server wird täglich (Cron ein
 
 - **Status-Wirkung:** kritische CVE → Ampel rot, hohe CVE → gelb (mit Insight-Begründung).
 - **Graceful Degrade:** Ist Trivy auf dem LCM-Host nicht installiert, deaktiviert sich das Feature sauber (Hinweis in UI und Job-Log); alles andere läuft normal. Trivy wird separat eingerichtet (siehe Installation).
-- **Alarme:** Die Alarm-Regel „Security/CVE" benachrichtigt ab einer konfigurierbaren Mindest-Schwere (siehe Einstellungen → Alarme).
+- **Alarme:** Die Alarm-Regel „Sicherheitslücken (CVE)" benachrichtigt ab einer konfigurierbaren Mindest-Schwere (siehe Einstellungen → Alarme).
 - Code: `internal/core/services/cvescan.go` (SBOM/PURL-Bau), `internal/infrastructure/trivy/` (CLI-Anbindung).
 
 ## Eingeschränkter Modus des Management-Benutzers
@@ -197,7 +271,27 @@ Beim Onboarding (oder nachträglich über *Rechte einschränken*) lässt sich de
 LCM-Benutzer von `NOPASSWD:ALL` auf eine sudoers-Whitelist umstellen:
 Paketverwaltung (apt, dnf/yum, zypper, pacman, apk), Docker, ufw und der streng
 validierende `lcm-helper`. Gesperrt sind damit freie Skripte, Custom-Aktionen
-und der Neustart.
+und SSH-2FA.
+
+Der Helper ist die einzige Stelle für alles, was root braucht und nicht auf der
+Whitelist steht: Paketkanal des LCM-Hosts, Repositories, APT-Cache, SSH,
+Benutzer, firewalld und nftables, fail2ban und CrowdSec, Paket-Pins, Neustart. Jedes
+Unterkommando hat feste Parameter (Aufzählungen, IPs, Ports, URLs, Paketnamen;
+Freitext nur base64-kodiert) und schreibt nur Pfade, die LCM verwaltet. Er
+führt dieselben Skriptteile aus wie der Voll-Modus, damit beide Wege nicht
+auseinanderlaufen. Ein Unterkommando, das ein Skript oder einen frei gewählten
+Pfad entgegennähme, gibt es bewusst nicht - es wäre eine Root-Shell. Eine
+bewusste Ausnahme von „keine fremden Skripte“: `crowdsec-repo` führt das
+Einrichtungsskript des Herstellers von packagecloud.io als root aus, wie im
+Voll-Modus. Die Adresse steht fest, der Aufrufer wählt nur `deb` oder `rpm`;
+das Vertrauen liegt bei packagecloud und TLS.
+
+**Helper-Stand.** Der Helper wird beim Einschränken geschrieben. Auf dem
+LCM-Host erneuert ihn `postinstall.sh` bei jedem Paket-Update (`lcm
+restricted-provision`, nur wenn der Host eingeschränkt ist); ein Fehlschlag
+dabei warnt nur. Entfernte eingeschränkte Server erneuert **Neu verbinden**
+mit einem Admin-Login - ein sich selbst aktualisierender Helper wäre ein freier
+Root-Weg. Solange das nicht geschehen ist, zeigt die Ampel „Helper veraltet“.
 
 **Wirkungsprobe statt Annahme.** Nach dem Umschalten prüft LCM als
 eingeschränkter Benutzer, ob der Helper und die Paketverwaltung des Systems
@@ -269,14 +363,14 @@ Rechte zurückgeben, die der Modus verhindern soll.
 
 ## SSH-Härtung: belegt, nicht behauptet
 
-Die Härtung schreibt ein eigenes Drop-in (`60-lcm-hardening.conf`) und liest
+Die Härtung schreibt eigene Drop-ins (`60-lcm-hardening.conf` und, vor allen
+fremden Drop-ins, `00-lcm-hardening.conf`) und liest
 danach die **effektive** Konfiguration zurück (`sshd -T` wertet Includes und
 Match-Blöcke aus). Als gehärtet gilt ein Server nur, wenn `sshd` die
 Passwort-Anmeldung nachweislich als `no` meldet:
 
-- meldet er weiterhin `yes` - etwa wegen einer lexikalisch früheren Drop-in-
-  Datei, die gewinnt -, wird das Drop-in zurückgerollt und der Fehlschlag
-  gemeldet;
+- meldet er weiterhin `yes` - etwa wegen einer eigenen Startoption des Dienstes -,
+  wird das Drop-in zurückgerollt und der Fehlschlag gemeldet;
 - liefert die Prüfung **gar kein Ergebnis**, gilt das ebenfalls nicht als
   Erfolg: `ssh_hardened` bleibt aus und die Antwort benennt den fehlenden
   Nachweis. Bei einer Sicherheitsfunktion ist eine unbelegte Erfolgsmeldung
@@ -285,9 +379,10 @@ Passwort-Anmeldung nachweislich als `no` meldet:
 
 Dieselbe Messung gilt beim **Aktualisieren** des Servers: Das vorhandene
 Drop-in allein reicht nicht, `ssh_hardened` bleibt nur an, solange `sshd -T`
-weiterhin `passwordauthentication no` meldet. Eine nachträglich angelegte,
-lexikalisch frühere Datei - auf Ubuntu-Cloud-Images etwa `50-cloud-init.conf`
-mit `PasswordAuthentication yes` - fällt so beim nächsten Abgleich auf.
+weiterhin `passwordauthentication no` meldet. Drop-ins wie `50-cloud-init.conf`
+auf Ubuntu-Cloud-Images setzen sich nicht mehr gegen `00-lcm-hardening.conf`
+durch; eine später über dem `Include` der Hauptdatei ergänzte Zeile fällt beim
+nächsten Abgleich auf.
 
 Die Konfigurationsdatei wird dabei nicht unter `/etc/ssh` vorausgesetzt:
 openSUSE Leap 16 hat ein stateless `/etc` und liefert sie unter
@@ -306,7 +401,8 @@ manuellem Onboarding erreichbar.
 einen SSH-Schlüssel darauf. **Beim ersten Start beschränkt LCM das Konto auf
 die sudoers-Whitelist** - Paketverwaltung, Docker, ufw und den validierenden
 `lcm-helper`, dessen Unterkommandos `host-install`, `host-apt-cacher`,
-`host-crowdsec-lapi` und `host-self-update` die Host-Funktionen tragen. Eine
+`host-crowdsec-lapi`, `host-self-update` und `host-apt-channel` die
+Host-Funktionen tragen. Eine
 Root-Shell hat das Konto danach nicht mehr; die Wirkungsprobe und der Rückfall
 in den Voll-Modus sind dieselben wie beim Einschränken eines beliebigen Servers.
 Volle Rechte behält das Konto nur mit `LCM_SELF_MANAGE_FULL=1` bei der
@@ -314,7 +410,9 @@ Installation.
 
 **Bestehende Installationen bleiben, wie sie sind.** Ein Upgrade fasst ein
 vorhandenes `lcm-svc` nicht mehr an - weder die sudoers-Regel noch die
-`authorized_keys`. Das ist Absicht: Früher schrieb jedes Paket-Update die
+`authorized_keys`. Einzige Ausnahme: Ist der Host bereits eingeschränkt, erneuert
+`postinstall.sh` Helper, Whitelist und Shims über `lcm restricted-provision` -
+die Whitelist wird dabei nie durch `NOPASSWD:ALL` ersetzt. Das ist Absicht: Früher schrieb jedes Paket-Update die
 Zeile `NOPASSWD:ALL` neu und hätte damit eine eingeschränkte Whitelist still
 wieder aufgehoben. Wer den eigenen Host umstellen will, nutzt die
 Server-Aktion **Rechte einschränken**; beim Start sagt LCM im Protokoll an,
@@ -477,7 +575,8 @@ Der optionale MCP-Listener (`internal/mcp`, Default aus, Bind `127.0.0.1:9330`) 
 
 - **Fehler-Handling:** Interne Fehler erreichen den Client nur als generisches „interner Serverfehler" - keine Stacktraces oder SQL-Details.
 - **Security-Header:** `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` (siehe `middlewares/security.go`).
-- **XSS:** Das Frontend rendert ausschließlich über Svelte-Templating (automatisches Escaping); `{@html}` wird nicht verwendet.
+- **XSS:** Die Oberfläche rendert ausschließlich über Lit-Templates (automatisches Escaping), dazu kommen die strenge CSP und Trusted Types.
+- **Eingabeprüfung:** Das Backend prüft jede Eingabe selbst und verlässt sich nicht allein auf gebundene Parameter. Eine Suchmetrik weist SQL in Strings ab, Zahlen haben feste Grenzen, IP-Adressen, Netze und IPv6 werden streng geprüft (`internal/inputcheck`, `middlewares.InputGuard`).
 - **Build-Gates:** `make build` bricht bei `npm audit`- oder `govulncheck`-Funden ab.
 - **Default-Bind:** `127.0.0.1` - wer nach außen exponiert, setzt bewusst `"host": "0.0.0.0"` und sollte TLS über einen Reverse-Proxy (Caddy, nginx) terminieren.
 - **IP-Allowlist:** `allowed_ips` in der config.json beschränkt den Netzwerk-Zugriff auf zugelassene Client-Adressen (Schlüsselwörter `localhost`/`private` oder IP/CIDR); nicht passende Clients erhalten früh **403** (Middleware `IPAllowlist`, vor Auth/Logging). Gefiltert wird die direkte TCP-Verbindung; hinter einem Reverse-Proxy `trust_proxy_header: true` **plus** `trusted_proxies` (nur von diesen Peers zählt `X-Forwarded-For`). Der Matcher liegt im Paket `internal/netfilter`. Siehe [Sicherheit & CVE-Scans](/guides/security-cve/) und [Reverse-Proxy](/guides/reverse-proxy/).
@@ -485,9 +584,3 @@ Der optionale MCP-Listener (`internal/mcp`, Default aus, Bind `127.0.0.1:9330`) 
 - **E-Mail-Adresse nur mit Passwort:** Die eigene Adresse empfängt den Passwort-Reset. Sie zu ändern verlangt das aktuelle Passwort - eine erbeutete Sitzung allein kann das Konto nicht auf eine fremde Adresse umbiegen.
 - **Konsolen-Fahrkarte im Sichtbereich:** Die Fahrkarte für die Web-Konsole gibt es nur für Server, die der Benutzer sehen darf - das Konsolen-Recht allein reicht nicht.
 - **Sicherheitsprotokoll:** Anmeldungen (`login.ok`, `login.failed`, `login.locked`, `login.2fa.*`), Passwort- und E-Mail-Änderungen, Zweitfaktor, API-Schlüssel und Konsolen-Fahrkarten landen als **eine Journal-Zeile** mit dem festen Text `security` und der Client-Adresse (`middlewares.SecurityEvent`). Erfolge sind INFO, alles andere WARN: `journalctl -u lcm -p warning | grep security`. Anders als das Audit-Log in der Datenbank lässt sich das Journal weiterleiten und ist für fail2ban greifbar (`event=login.failed ip=<HOST>`).
-
-## Bewusste Vereinfachungen des Templates
-
-- **Kein Refresh-Token-Flow:** Nach Token-Ablauf ist ein erneuter Login nötig. Für längere Sessions TTL erhöhen oder einen Refresh-Endpunkt ergänzen.
-- **Token im localStorage:** einfach und für Desktop-/Intranet-Apps angemessen. Wer strikteren XSS-Schutz braucht, stellt auf httpOnly-Cookies um (dann CSRF-Schutz ergänzen, z.B. Fiber-CSRF-Middleware).
-- **Kein Rate-Limiting:** Für exponierte Deployments `limiter`-Middleware von Fiber auf `/auth/login` legen.

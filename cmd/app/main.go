@@ -26,11 +26,12 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"LCM/frontend"
 	"LCM/internal/api/router"
 	"LCM/internal/config"
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/core/services"
+	"LCM/internal/dbmetrics"
 	"LCM/internal/health"
 	"LCM/internal/i18n"
 	"LCM/internal/infrastructure/advisories"
@@ -50,6 +51,7 @@ import (
 	"LCM/internal/storage"
 	"LCM/internal/storage/repositories"
 	"LCM/internal/version"
+	"LCM/ui"
 )
 
 // restoreRestartExitCode ist der Exit-Code, mit dem sich LCM nach einem
@@ -97,6 +99,17 @@ func main() {
 		if err := rotateDBKey(*configPath, *dataDir); err != nil {
 			log.Fatal(err)
 		}
+		return
+	}
+	// Subcommand: lcm restricted-provision <benutzer> - gibt das Skript aus, das
+	// Helper, sudoers-Whitelist und Shims des eingeschränkten Modus schreibt.
+	// Versteckt (nicht in der Hilfe): nur das Paket (postinstall.sh) ruft es auf.
+	if flag.Arg(0) == "restricted-provision" {
+		script, err := services.RestrictedProvisionScript(flag.Arg(1))
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(script)
 		return
 	}
 	// Subcommand: lcm credentials init - Master-Key in ein systemd-Credential
@@ -407,7 +420,16 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	userService := services.NewUserService(userRepo, roleRepo)
 	apiKeyService := services.NewAPIKeyService(apiKeyRepo)
 	systemService := services.NewSystemService().WithAgentPort(cfg.AgentPort)
-	jobService := services.NewJobService(jobRepo)
+	// Ereignisbus: Die Dienste melden darauf, was sich ändert; der WebSocket
+	// GET /api/v1/events reicht es an die Tabs weiter.
+	eventBus := events.NewBus()
+	jobService := services.NewJobService(jobRepo).WithEvents(eventBus)
+	// Betriebsfähigkeit der Server: jedes Jobende (und jeder Watchdog-Abbruch)
+	// schreibt den Zustand seiner Kategorie fort. Vor dem Watchdog verdrahten,
+	// damit dessen Goroutine den Hook nicht mitten im Setzen sieht.
+	capabilityRepo := repositories.NewCapabilityRepository(db)
+	capabilityService := services.NewCapabilityService(capabilityRepo).WithNothingPending(serverRepo.NothingPending)
+	jobService.OnOutcome(capabilityService.RecordJob)
 	// Verwaiste Jobs des letzten Laufs aufräumen: nach einem Neustart kann
 	// kein Job mehr legitim "running" sein - hängengebliebene Einträge würden
 	// die Server-Sperre sonst für immer halten. VOR Scheduler-/API-Start.
@@ -478,7 +500,9 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		WithSettings(settingsRepo).
 		WithKnownRepos(knownRepoRepo).WithCVERescanEnabled(cveScanEnabled).
 		WithCVEWeightList(cveWeightList).WithDNSTestDomains(dnsTestDomains).
-		WithPackagePins(packagePinRepo).WithApps(appRepo)
+		WithPackagePins(packagePinRepo).WithApps(appRepo).WithCapabilities(capabilityRepo).
+		WithEvents(eventBus).
+		WithCustomActions(repositories.NewCustomActionRepository(db))
 	// Endet ein Job, kann sich die Ampel seines Servers geändert haben.
 	jobService.OnFinished(serverService.ForgetStatus)
 
@@ -542,6 +566,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		WithAudit(auditService).WithRecorder(sshRecorder).WithDNSTestDomains(dnsTestDomains).
 		WithPendingUserSyncs(repositories.NewPendingUserSyncRepository(db)).
 		WithSSHLog(sshLogRepo).WithProfiles(profileRepo)
+	serverService.WithServerUserPlans(provService) // Befehlsvorschau der Konten-Aktionen
 	sshLogService := services.NewSSHLogService(sshLogRepo, serverRepo, jobRepo)
 	linuxUserService := services.NewLinuxUserService(linuxRepo, groupRepo, auditService, cipher, provService).
 		WithProfiles(profileRepo)
@@ -561,12 +586,16 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	alertRepo := repositories.NewAlertRepository(db)
 	notificationService := services.NewNotificationService(notificationRepo, alertRepo, cipher, auditService)
 	alertService := services.NewAlertService(alertRepo, serverRepo, groupRepo, notificationService, auditService).
-		WithCVEWeightList(cveWeightList)
+		WithCVEWeightList(cveWeightList).WithCapabilities(capabilityRepo).WithEvents(eventBus)
+	// action_failed: Wechsel der Betriebsfähigkeit lösen den Alarm sofort aus,
+	// nicht erst im 30-Minuten-Lauf.
+	capabilityService.OnTransition(alertService.OnCapabilityTransition)
 	executor := services.NewExecutor(serverRepo, groupRepo, jobService, auditService,
 		provService, backupService, settingsRepo, serverService.Connect).
 		WithRecorder(sshRecorder).WithCustomActions(customActionRepo).WithScanner(cveScanner).
 		WithRegistry(registry.New()).
 		WithAlerts(alertService).WithProfiles(profileRepo).WithApps(appService).
+		WithCapabilities(capabilityService).
 		WithCompactor(func() (string, error) {
 			res, err := storage.CompactDatabase(db, func() (uint64, bool) { return storage.FreeDiskBytes(dataDir) })
 			return res.String(), err
@@ -575,6 +604,8 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Nach Container-/Image-Updates die Docker-CVE-Bewertung sofort
 	// auffrischen: der zentrale Docker-Check läuft als eigener System-Job.
 	serverService.WithDockerCheckTrigger(executor.RunDockerCheck)
+	// „Erneut versuchen" der Betriebsfähigkeit läuft über den Executor.
+	serverService.WithRetryRunner(executor)
 	groupService := services.NewGroupService(groupRepo, serverRepo, auditService, scheduler.Reload).
 		WithCustomActions(customActionRepo).WithUsers(userRepo).WithProvisioning(provService)
 	// Grundsatz-Regeln gleichen Typs aus mehreren Gruppen entscheidet seit
@@ -600,6 +631,12 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	if abs, err := filepath.Abs(defaultBackupDir); err == nil {
 		defaultBackupDir = abs
 	}
+	releaseNotes := services.NewReleaseNotesService(settingsRepo, userRepo)
+	if updateResult.Updated {
+		if err := releaseNotes.NoteUpdate(updateResult.PreviousVersion, version.Version); err != nil {
+			slog.Warn("could not note the update for the release notes", "error", err)
+		}
+	}
 	settingsService := services.NewSettingsService(settingsRepo, cipher, auditService, scheduler.Reload).
 		WithKnownRepos(knownRepoRepo).WithIPAllowlists(ipAllowlistRepo).
 		WithCrowdSecLapis(repositories.NewCrowdSecLapiRepository(db)).
@@ -618,6 +655,8 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Login-Check wie die CrowdSec-Einstellungsseite. (Nachträglich verdrahtet,
 	// weil der SettingsService erst nach dem AlertService entsteht.)
 	alertService.WithCrowdSecLapiChecker(settingsService.CheckCrowdSecLapis)
+	// Frist des Stillstands (action_failed) aus den globalen Einstellungen.
+	alertService.WithSettings(settingsService.Get)
 	// Stand der CVE-Datenbank fuer den cve_db_stale-Alarm (derselbe Wert, den
 	// auch Ampel und Sicherheitsseite zeigen).
 	alertService.WithCVEDBChecker(serverService.CVEDBStatus)
@@ -707,7 +746,11 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// LCM-Host-Selbst-Einrichtung: nach der Installation von Trivy/apt-cacher-ng
 	// den CVE-Scan aktivieren bzw. die lokale APT-Cache-URL eintragen.
 	serverService.WithLcmHostConfig(
-		func() error { return settingsService.SetCVEScanEnabled(true) },
+		// Die Datenbank zuerst: Der Scan lädt nichts nach und bricht ohne sie ab.
+		func() error {
+			executor.RefreshCVEDB("trivy-install")
+			return settingsService.SetCVEScanEnabled(true)
+		},
 		settingsService.AdoptHostAptCache,
 	)
 	// CrowdSec-LAPI auf dem LCM-Host: nach der Installation die erzeugten
@@ -775,7 +818,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 				return "", err
 			}
 			return b.FileName, nil
-		})
+		}).WithMaintenanceGate(jobService).WithEvents(eventBus)
 	safego.Go("subscription-check:initial", subscriptionService.CheckOnStartupIfStale)
 
 	// Den eigenen Rechner in die Verwaltung aufnehmen, sofern das
@@ -853,7 +896,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	}
 	defer scheduler.Stop()
 
-	frontendFS, err := frontend.FS()
+	frontendFS, err := ui.FS()
 	if err != nil {
 		return err
 	}
@@ -927,6 +970,13 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		return nil
 	})
 
+	dashboardService := services.NewDashboardService(serverService, jobRepo, alertRepo, groupRepo, eventBus)
+
+	// Messung der Datenbank (GET /api/v1/system/db, /metrics). Die Zeilen je
+	// Tabelle zählt sie stündlich selbst, alles andere fällt nebenbei an.
+	dbReporter := dbmetrics.NewReporter(dbmetrics.Default, db, dbPath)
+	safego.Go("db-table-counter", func() { dbReporter.CountTablesEvery(context.Background(), time.Hour) })
+
 	app = router.New(router.Deps{
 		LogFile:                  logFile,
 		Restart:                  restart,
@@ -966,6 +1016,10 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		AccessLog:                cfg.AccessLog,
 		APIKeyRateLimitPerMinute: cfg.APIKeyRateLimitPerMinute,
 		AgentBinDirs:             []string{"/usr/share/lcm/agent", "bin"},
+		Events:                   eventBus,
+		Dashboard:                dashboardService,
+		ReleaseNotes:             releaseNotes,
+		DBMetrics:                dbReporter,
 	})
 
 	// LCM Remote: Der Agent-WebSocket (MQTT) läuft auf einem EIGENEN,

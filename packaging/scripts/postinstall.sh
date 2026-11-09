@@ -1,7 +1,7 @@
 #!/bin/sh
 # postinstall - sets up the LCM service after package installation:
-# system user, directories, a production config with a stable JWT secret
-# (only on the very first install) and the enabled systemd service.
+# system user, directories, a production config (only on the very first
+# install) and the enabled systemd service.
 #
 # All output is plain ASCII on purpose: package messages end up in terminals,
 # log files and CI output whose encoding we do not control, and German
@@ -57,7 +57,7 @@ fi
 #    staging directory stayed behind, kept aborting on every following start.
 #    The systemd unit says the same (ReadWritePaths=/var/lib/lcm /etc/lcm);
 #    the permissions now match that intent. Owner stays root, and nobody
-#    outside the group can read the file - it holds the JWT secret.
+#    outside the group can read the file.
 #    The data directory holds the database, the master key and the TLS key:
 #    the service alone (0700). Nothing else on the host needs to read it,
 #    and LCM re-checks these permissions at start and every 15 minutes
@@ -186,6 +186,25 @@ else
 	fi
 fi
 
+# 3c. Restricted mode: refresh the helper. The helper (/usr/local/sbin/lcm-helper)
+#     and the sudoers whitelist are written once, when the account is
+#     restricted. Without this step a package update would never bring new
+#     helper commands to this host - the web interface only refreshes remote
+#     servers (via "Reconnect"). Only runs if the host really is restricted:
+#     the helper exists and the sudoers file grants no NOPASSWD:ALL. Failing
+#     only warns (see the notice below) and never breaks the installation.
+SUDOERS_FILE="/etc/sudoers.d/$SVC_USER"
+if [ -x /usr/local/sbin/lcm-helper ] && [ -f "$SUDOERS_FILE" ] &&
+	! grep -Eq 'NOPASSWD:[[:space:]]*ALL' "$SUDOERS_FILE" 2> /dev/null; then
+	HELPER_REFRESH=failed
+	HELPER_LOG=/var/log/lcm-helper-refresh.log
+	if PROVISION=$(mktemp) && /usr/bin/lcm restricted-provision "$SVC_USER" > "$PROVISION" 2> "$HELPER_LOG" &&
+		[ -s "$PROVISION" ] && sh -e "$PROVISION" >> "$HELPER_LOG" 2>&1; then
+		HELPER_REFRESH=ok
+	fi
+	rm -f "${PROVISION:-}"
+fi
+
 # 4. Register and start the systemd service (only if systemd is running).
 if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload >/dev/null 2>&1 || true
@@ -285,6 +304,28 @@ EOF
   Not wanted? Delete the server in the web interface - it will
   not be re-created. To opt out of future installs up front:
       LCM_NO_SELF_MANAGE=1 apt install lcm
+
+EOF
+	fi
+fi
+
+# 7. The helper could not be refreshed: say so, and say what to do.
+if [ "${HELPER_REFRESH:-}" = "failed" ]; then
+	if [ "$(lcm_lang)" = "de" ]; then
+		cat <<EOF
+  WARNUNG: Der LCM-Helper auf diesem Rechner (/usr/local/sbin/lcm-helper)
+  konnte nicht erneuert werden (Grund: $HELPER_LOG). Neue Aktionen im
+  eingeschraenkten Modus funktionieren erst danach. Abhilfe: in der
+  Weboberflaeche beim Server "lcm-host" "Neu verbinden" mit einem Admin-Login
+  ausfuehren.
+
+EOF
+	else
+		cat <<EOF
+  WARNING: The LCM helper on this machine (/usr/local/sbin/lcm-helper)
+  could not be refreshed (reason: $HELPER_LOG). New actions in restricted
+  mode only work after that. Fix: in the web interface, run "Reconnect" with
+  an admin login on the server "lcm-host".
 
 EOF
 	fi

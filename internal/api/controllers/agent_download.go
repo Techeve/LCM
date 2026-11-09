@@ -18,7 +18,7 @@ func AgentDownload(searchDirs []string) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		arch := c.Params("arch")
 		if arch != "amd64" && arch != "arm64" {
-			return fiber.NewError(fiber.StatusBadRequest, "arch muss amd64 oder arm64 sein")
+			return errAgentArch
 		}
 		name := "lcm-agent-linux-" + arch
 		for _, dir := range searchDirs {
@@ -29,7 +29,6 @@ func AgentDownload(searchDirs []string) fiber.Handler {
 				return c.SendFile(path)
 			}
 		}
-		return fiber.NewError(fiber.StatusNotFound,
-			"agent-binary nicht vorhanden - es wird mit dem lcm-Debian-Paket installiert (/usr/share/lcm/agent); alternativ das lcm-agent-Paket aus dem Repository verwenden")
+		return errAgentBinary
 	}
 }

@@ -19,7 +19,7 @@ Ein `.lcmbak` ist ein verschlüsseltes ZIP. Es bündelt:
 - die **Konfiguration** (`config.json`),
 - das **TLS-Zertifikat**.
 
-Verschlüsselt wird auf eine von zwei Arten - die Spalte *Verschlüsselung* in
+Verschlüsselt wird auf eine von zwei Arten - die Spalte *Verschlüsselt mit* in
 der Backup-Liste zeigt, welche:
 
 | Art | Wie | Zum Wiederherstellen nötig |
@@ -39,9 +39,10 @@ zwei Personen).
 ## Backup jetzt erstellen
 
 Unter *Einstellungen → Backups* legt **„Jetzt sichern"** sofort ein Archiv an.
-Bleibt das Passphrase-Feld daneben leer, gilt dieselbe Reihenfolge wie beim
-geplanten Backup (Empfänger-Schlüssel, sonst hinterlegte Passphrase); eine
-eingetippte Passphrase gewinnt und verschlüsselt genau dieses Archiv damit.
+Das Passphrase-Feld steht im Bestätigungsdialog. Bleibt es leer, gilt dieselbe
+Reihenfolge wie beim geplanten Backup (Empfänger-Schlüssel, sonst hinterlegte
+Passphrase); eine eingetippte Passphrase gewinnt und verschlüsselt genau dieses
+Archiv damit.
 LCM zieht dafür eine **konsistente** Momentaufnahme der Datenbank
 (`VACUUM INTO`) - ein Backup lässt sich also im laufenden Betrieb erstellen.
 
@@ -83,7 +84,7 @@ wiederherstellen - ältere Archive dagegen liest jede neuere Version.
 Damit automatische Backups laufen, braucht es **genau zwei Dinge** - beides
 zeigt die Seite *Einstellungen → Backups* direkt an:
 
-1. **„Automatische Backups aktiv"** ist eingeschaltet (Standard: an, alle
+1. **„Automatische Backups"** ist eingeschaltet (Standard: an, alle
    24 Stunden).
 2. **Ein Schlüssel ist hinterlegt**: Empfänger-Schlüssel (siehe oben) oder
    eine Passphrase - im Feld „Passphrase für geplante Backups"
@@ -122,7 +123,7 @@ services:
 :::caution
 Ohne Empfänger-Schlüssel und ohne Passphrase schlägt ein geplantes Backup mit
 einem Schlüssel-Fehler fehl - es entsteht **nie** ein unverschlüsseltes
-Archiv. Manuelle Backups funktionieren weiterhin (Passphrase im Formular).
+Archiv. Manuelle Backups funktionieren weiterhin (Passphrase im Bestätigungsdialog).
 :::
 
 Weitere Einstellungen:
@@ -134,7 +135,7 @@ Weitere Einstellungen:
   läuft das Backup zu festen, daraus abgeleiteten Zeiten - z.&nbsp;B.
   Intervall 12&nbsp;h und Uhrzeit 03:30 → Läufe um 03:30 und 15:30. Andere
   Intervalle laufen relativ; dort sichert der Nachhol-Watchdog den Takt ab.
-- **Zielverzeichnis** - ist immer gesetzt und mit dem Standard vorbelegt
+- **Verzeichnis** - ist immer gesetzt und mit dem Standard vorbelegt
   (`backup_dir` aus config.json, sonst `<Datenverzeichnis>/backups`). Es lässt
   sich frei ändern - praktisch für ein persistentes/externes Volume; ein
   geleertes Feld setzt beim Speichern den Standard wieder ein.

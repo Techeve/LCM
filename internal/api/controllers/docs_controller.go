@@ -28,7 +28,7 @@ func (ctrl *DocsController) List(c fiber.Ctx) error {
 func (ctrl *DocsController) Get(c fiber.Ctx) error {
 	page, err := appdocs.Get(c.Query("lang"), c.Params("slug"))
 	if err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "seite nicht gefunden")
+		return errDocsNotFound
 	}
 	return c.JSON(page)
 }

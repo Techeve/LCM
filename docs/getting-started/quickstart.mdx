@@ -61,8 +61,8 @@ import { Steps } from '@astrojs/starlight/components';
      **Danach wieder schließen:** Nach der Aufnahme braucht LCM den
      Root-Login nicht mehr (eigener Service-User). Entweder das Drop-in
      entfernen (`sudo rm /etc/ssh/sshd_config.d/00-root-onboarding.conf` und
-     SSH-Dienst neu starten) - oder bequemer die Server-Aktion
-     **„SSH-Root-Login deaktivieren"** in LCM nutzen.
+     SSH-Dienst neu starten) - oder bequemer in LCM unter *Servereinstellungen →
+     Zugang* **„Root-Login sperren"** nutzen.
 
      </details>
    - LCM zeigt den **SSH-Host-Key-Fingerprint** an - bestätige ihn, um
@@ -79,8 +79,9 @@ import { Steps } from '@astrojs/starlight/components';
 
    Der Server erscheint mit Status 🟢🟡🔴 in der Übersicht. Ein Klick öffnet die
    Detailseite mit Hardware, Paketen, Repositories, Docker-Inventar und
-   Speicher-Verlauf. Über das ⓘ am Status siehst du, *warum* ein Server gelb
-   oder rot ist.
+   Speicher-Verlauf. Fährst du in der Serverliste mit der Maus über den Status
+   (in der Detailansicht klickst du darauf), siehst du, *warum* ein Server
+   gelb oder rot ist.
 
 4. **In eine Gruppe stecken und automatisieren.**
 
@@ -91,7 +92,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 5. **Optional: Sicherheit erhöhen.**
 
-   Aktiviere für dein Konto **2FA** (Mein Konto → Zwei-Faktor) und richte für
+   Aktiviere für dein Konto **2FA** (Mein Konto → Sicherheit) und richte für
    die zentrale Schwachstellenprüfung den [CVE-Scan](/guides/security-cve/)
    ein (Trivy vorausgesetzt).
 

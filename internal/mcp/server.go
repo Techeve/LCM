@@ -110,7 +110,7 @@ func (s *Server) buildApp() *fiber.App {
 	// GET /mcp wird für den stateless Request/Response-Betrieb nicht genutzt
 	// (kein server-initiiertes SSE) - klar mit 405 beantworten.
 	app.Get("/mcp", func(c fiber.Ctx) error {
-		return c.Status(fiber.StatusMethodNotAllowed).JSON(fiber.Map{"error": "nutze POST /mcp (JSON-RPC 2.0)"})
+		return c.Status(fiber.StatusMethodNotAllowed).JSON(fiber.Map{"error": "use POST /mcp (JSON-RPC 2.0)"})
 	})
 	return app
 }

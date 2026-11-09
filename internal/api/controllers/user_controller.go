@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/apierr"
 	"LCM/internal/api/middlewares"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
@@ -21,6 +21,15 @@ type UserController struct {
 	users *services.UserService
 	totp  *services.TOTPService // für die 2FA-Prüfung beim Self-Passwortwechsel
 	guard *loginGuard           // geteilt mit dem AuthController (TOTP-Brute-Force)
+	// events schließt die Ereignis-Verbindungen eines Benutzers, wenn sich sein
+	// Zugang ändert. Optional (nil-sicher).
+	events *EventHub
+}
+
+// WithEvents verdrahtet den Ereigniskanal (optional).
+func (ctrl *UserController) WithEvents(hub *EventHub) *UserController {
+	ctrl.events = hub
+	return ctrl
 }
 
 // NewUserController: guard ist der GETEILTE Brute-Force-Zähler (siehe
@@ -71,12 +80,18 @@ func (ctrl *UserController) Create(c fiber.Ctx) error {
 	// STRIKT: unbekannte Felder abweisen. Vorher wurde z.B. role_ids still
 	// verworfen und der Benutzer OHNE jede Rolle angelegt (R2-037).
 	if err := strictJSON(c.Body(), &req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return err
 	}
 	if err := checkLines(lineField{"username", req.Username, maxNameLen}, lineField{"first_name", req.FirstName, maxPersonNameLen}, lineField{"last_name", req.LastName, maxPersonNameLen}); err != nil {
 		return err
 	}
 	if err := checkEmail("email", req.Email); err != nil {
+		return err
+	}
+	if err := checkLine("password", req.Password, maxPasswordLen); err != nil {
+		return err
+	}
+	if err := checkRoleNames(req.Roles); err != nil {
 		return err
 	}
 	user, err := ctrl.users.CreateUser(req.Username, req.Email, req.Password, req.FirstName, req.LastName, req.Roles, actor(c))
@@ -115,11 +130,11 @@ func (ctrl *UserController) UpdateProfile(c fiber.Ctx) error {
 		return err
 	}
 	if !canEditUser(c, id) {
-		return fiber.NewError(fiber.StatusForbidden, "keine Berechtigung, dieses Profil zu bearbeiten")
+		return errProfileForbidden
 	}
 	var req updateProfileRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLines(lineField{"first_name", req.FirstName, maxPersonNameLen}, lineField{"last_name", req.LastName, maxPersonNameLen}); err != nil {
 		return err
@@ -127,13 +142,15 @@ func (ctrl *UserController) UpdateProfile(c fiber.Ctx) error {
 	if err := checkEmail("email", req.Email); err != nil {
 		return err
 	}
+	if err := checkLine("current_password", req.CurrentPassword, maxPasswordLen); err != nil {
+		return err
+	}
 	caller := middlewares.CurrentUser(c)
 	if caller.ID == id && !strings.EqualFold(strings.TrimSpace(req.Email), strings.TrimSpace(caller.Email)) {
 		ok, err := ctrl.users.CheckPassword(id, req.CurrentPassword)
 		if err != nil || !ok {
 			middlewares.SecurityEvent(c, "email.change.denied", "user", caller.Username)
-			return fiber.NewError(fiber.StatusUnauthorized,
-				"zum Ändern der E-Mail-Adresse ist das aktuelle Passwort erforderlich")
+			return errPasswordForEmail
 		}
 		middlewares.SecurityEvent(c, "email.changed", "user", caller.Username)
 	}
@@ -161,11 +178,14 @@ func (ctrl *UserController) ResetPassword(c fiber.Ctx) error {
 		return err
 	}
 	if !canEditUser(c, id) {
-		return fiber.NewError(fiber.StatusForbidden, "keine Berechtigung, dieses Passwort zu ändern")
+		return errPasswordForbidden
 	}
 	var req resetPasswordRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"password", req.Password, maxPasswordLen}, lineField{"current_password", req.CurrentPassword, maxPasswordLen}, lineField{"code", req.Code, maxNameLen}); err != nil {
+		return err
 	}
 
 	caller := middlewares.CurrentUser(c)
@@ -177,7 +197,7 @@ func (ctrl *UserController) ResetPassword(c fiber.Ctx) error {
 		ok, err := ctrl.users.CheckPassword(id, req.CurrentPassword)
 		if err != nil || !ok {
 			middlewares.SecurityEvent(c, "password.change.denied", "user", caller.Username)
-			return fiber.NewError(fiber.StatusUnauthorized, "das aktuelle Passwort ist nicht korrekt")
+			return errPasswordIncorrect
 		}
 		if caller.TOTPEnabled {
 			// Auch hier gegen Brute-Force gesperrt - derselbe kontobezogene
@@ -185,12 +205,11 @@ func (ctrl *UserController) ResetPassword(c fiber.Ctx) error {
 			// die Sperre nicht durch Wechsel des Endpunkts umgehen kann.
 			if locked, retry := ctrl.guard.beginAttempt(totpGuardKey(id), maxLoginFails); locked {
 				c.Set("Retry-After", retryAfterSeconds(retry))
-				return fiber.NewError(fiber.StatusTooManyRequests,
-					"zu viele fehlgeschlagene 2FA-Versuche - bitte später erneut versuchen")
+				return errTOTPLocked
 			}
 			if err := ctrl.totp.Verify(id, req.Code); err != nil {
 				middlewares.SecurityEvent(c, "password.change.denied", "user", caller.Username, "reason", "2fa")
-				return fiber.NewError(fiber.StatusUnauthorized, "ungültiger 2FA-Code")
+				return errTOTPInvalid
 			}
 			ctrl.guard.reset(totpGuardKey(id))
 		}
@@ -199,6 +218,7 @@ func (ctrl *UserController) ResetPassword(c fiber.Ctx) error {
 	if err := ctrl.users.ResetPassword(id, req.Password, selfService, actor(c)); err != nil {
 		return mapServiceError(err)
 	}
+	ctrl.events.CloseUser(id) // das Passwort entwertet alle Tokens
 	if selfService {
 		middlewares.SecurityEvent(c, "password.changed", "user", caller.Username)
 	} else {
@@ -228,12 +248,16 @@ func (ctrl *UserController) UpdateRoles(c fiber.Ctx) error {
 	}
 	var req updateRolesRequest
 	if err := strictJSON(c.Body(), &req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return err
+	}
+	if err := checkRoleNames(req.Roles); err != nil {
+		return err
 	}
 	user, err := ctrl.users.UpdateUserRoles(id, req.Roles, actor(c))
 	if err != nil {
 		return mapServiceError(err)
 	}
+	ctrl.events.CloseUser(id) // der Tab verbindet mit den neuen Rechten neu
 	return c.JSON(user)
 }
 
@@ -248,12 +272,13 @@ func (ctrl *UserController) SetActive(c fiber.Ctx) error {
 		Active *bool `json:"active"`
 	}
 	if err := c.Bind().Body(&req); err != nil || req.Active == nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Feld 'active' (true/false) ist erforderlich")
+		return missingFields("active")
 	}
 	user, err := ctrl.users.SetActive(id, *req.Active, actor(c))
 	if err != nil {
 		return mapServiceError(err)
 	}
+	ctrl.events.CloseUser(id)
 	return c.JSON(user)
 }
 
@@ -266,6 +291,7 @@ func (ctrl *UserController) Delete(c fiber.Ctx) error {
 	if err := ctrl.users.DeleteUser(id, actor(c)); err != nil {
 		return mapServiceError(err)
 	}
+	ctrl.events.CloseUser(id)
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
@@ -297,7 +323,7 @@ func strictJSON(body []byte, out any) error {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
-		return fmt.Errorf("ungültiger Request-Body: %w", err)
+		return apierr.InvalidBody.With("detail", err.Error())
 	}
 	return nil
 }
@@ -306,8 +332,8 @@ func bindOptionalBody(c fiber.Ctx, out any) error {
 	if len(c.Body()) == 0 {
 		return nil
 	}
-	if err := c.Bind().Body(out); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, out); err != nil {
+		return err
 	}
 	return nil
 }
@@ -322,27 +348,29 @@ func paramStrID(c fiber.Ctx) (string, error) {
 func paramNamedID(c fiber.Ctx, name string) (uint, error) {
 	id, err := strconv.ParseUint(c.Params(name), 10, 32)
 	if err != nil {
-		return 0, fiber.NewError(fiber.StatusBadRequest, "ungültige ID")
+		return 0, apierr.InvalidID
 	}
 	return uint(id), nil
 }
 
-// mapServiceError übersetzt Service-/Repository-Fehler in HTTP-Statuscodes.
+// mapServiceError übersetzt Service-/Repository-Fehler in API-Fehler.
 func mapServiceError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "nicht gefunden")
-	case errors.Is(err, services.ErrUsernameTaken),
-		errors.Is(err, services.ErrEmailTaken),
-		errors.Is(err, services.ErrWeakPassword),
-		errors.Is(err, services.ErrInvalidUsername),
-		errors.Is(err, services.ErrReservedUsername),
-		errors.Is(err, services.ErrUnknownRole),
-		errors.Is(err, services.ErrInvalidScope):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, services.ErrProtectedUser), errors.Is(err, services.ErrLastAdmin):
-		return fiber.NewError(fiber.StatusForbidden, err.Error())
-	default:
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errUserNotFound
+	}
+	return mapSentinel(err, userErrors)
+}
+
+// checkRoleNames begrenzt die Rollenliste eines Rumpfs; ob es die Rollen gibt,
+// prüft der Service.
+func checkRoleNames(roles []string) error {
+	if err := checkCount("roles", len(roles), maxItems); err != nil {
 		return err
 	}
+	for _, role := range roles {
+		if err := checkLine("roles", role, maxNameLen); err != nil {
+			return err
+		}
+	}
+	return nil
 }

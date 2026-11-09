@@ -1,0 +1,173 @@
+/*
+ * Design-Tokens für LCM.
+ * Hell und dunkel entstehen nur hier: `color-scheme` plus `light-dark(hell, dunkel)`.
+ * `[data-theme="light|dark"]` am <html> erzwingt, sonst gilt die Systemeinstellung.
+ *
+ * Linie wie ZPO: Systemschrift in einer Grundgröße (15 px), kleine Radien,
+ * dünne Linien statt großer Schatten, kompakte Abstände. Hell ist weiß mit
+ * blauem Akzent, dunkel fast schwarz und neutral (kein Blaustich).
+ */
+
+/* ---- Skalen, Schrift, Bewegung ---- */
+:root {
+  color-scheme: light dark;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.75rem;
+  --space-7: 2.5rem;
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --label-font: var(--font-sans);
+  --label-transform: uppercase;
+  --label-spacing: 0.04em;
+
+  --fs-xs: 0.75rem;
+  --fs-s: 0.85rem;
+  --fs-m: 0.9375rem;
+  --fs-l: 1rem;
+  --fs-xl: 1.2rem;
+  --fs-2xl: 1.5rem;
+  --fs-3xl: 2rem;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --head-weight: 600;
+  --head-tracking: 0;
+
+  --radius-s: 5px;
+  --radius-m: 8px;
+  --radius-l: 10px;
+  --radius-pill: 999px;
+
+  --compact: 0;
+  --control-h: calc(2.25rem - 0.25rem * var(--compact));
+  --row-h: calc(2.6rem - 0.4rem * var(--compact));
+  --space-card: calc(1rem - 0.25rem * var(--compact));
+  --gap: calc(1rem - 0.25rem * var(--compact));
+  --page-pad: clamp(1rem, 2vw, 1.75rem);
+
+  --dur-1: 0.14s;
+  --dur-2: 0.22s;
+  --dur-3: 0.4s;
+  --ease: cubic-bezier(0.25, 0.8, 0.25, 1);
+  /* Endlosschleifen (Drehen, Pulsieren, Schimmern). Sie stehen nicht auf 0s: Bei reduzierter Bewegung hält
+     `animation: none` sie an (baseStyles, base.css), eine 0s-Schleife würde flackern. */
+  --dur-spin: 1s;
+  --dur-pulse: 1.6s;
+  --ease-loop: ease-in-out;
+
+  /* Stapelreihenfolge (Dialoge und Popover liegen im Top Layer und brauchen keine) */
+  --z-raised: 1;
+  --z-sticky: 2;
+  --z-panel: 5;
+  --z-nav: 10;
+  --z-skip: 100;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/* ---- Farben ---- */
+:root {
+  --bg: light-dark(#ffffff, #0d0f12);
+  --bg-wash: none;
+  --surface-1: light-dark(#ffffff, #15181d);
+  --surface-2: light-dark(#f5f6f8, #1b1f25);
+  --surface-3: light-dark(#eaecf0, #252a32);
+  --surface-overlay: light-dark(#ffffff, #1a1d23);
+  --scrim: light-dark(rgb(16 20 26 / 40%), rgb(0 0 0 / 65%));
+
+  --text-1: light-dark(#1a1d21, #e7eaef);
+  --text-2: light-dark(#4f5662, #a3abb7);
+  --text-3: light-dark(#5b6270, #8a929e);
+  /* Im Dunkeln liegt --text-3 zu nah an normalem Text: gedämpfte Zellen etwas tiefer, Kontrast bleibt über 4,5 : 1. */
+  --text-dim: light-dark(var(--text-3), #7d8591);
+  --text-on-accent: #ffffff;
+
+  --accent: light-dark(#1f6feb, #4c8dff);
+  /* Füllung für Knöpfe und Flächen mit weißer Schrift (mind. 4,5 : 1). Hell gleich --accent; im Dunkeln ein tieferes
+     Blau, denn --accent (#4c8dff) trägt weiße Schrift nur mit 3,2 : 1 und bleibt Text- und Linienfarbe auf dunklem Grund. */
+  --accent-solid: light-dark(#1f6feb, #2c6be0);
+  --accent-solid-hover: light-dark(#1a5fcc, #3270e4);
+  --accent-soft: light-dark(#e7f0fd, #172338);
+  --accent-text: light-dark(#1a5fcc, #7aaaff);
+  /* Gedämpfte Kennzeichen (lcm-hover-tip): im Dunkeln nicht in der Tabellenfläche versinken lassen. */
+  --chip-muted-bg: light-dark(var(--surface-3), #353b45);
+  --chip-muted-fg: light-dark(var(--text-2), #d3d8e0);
+  --focus-ring: light-dark(#1f6feb, #4c8dff);
+
+  --line: light-dark(#d8dce2, #2c3139);
+  --line-muted: light-dark(#e8eaee, #22262d);
+  --line-strong: light-dark(#8a909a, #5b6370);
+  --shadow-near: light-dark(rgb(16 20 26 / 6%), rgb(0 0 0 / 40%));
+  --shadow-far: light-dark(rgb(16 20 26 / 5%), rgb(0 0 0 / 30%));
+  --shadow-xl: light-dark(rgb(16 20 26 / 18%), rgb(0 0 0 / 60%));
+  --edge: var(--line-muted);
+  --edge-pop: var(--line);
+  --ring-card: 0 0 0 1px var(--edge);
+  --elev-1: 0 1px 2px var(--shadow-near);
+  --elev-2: 0 1px 2px var(--shadow-near), 0 4px 12px var(--shadow-far), 0 0 0 1px var(--edge-pop);
+  --elev-3: 0 4px 10px var(--shadow-near), 0 20px 48px var(--shadow-xl), 0 0 0 1px var(--edge-pop);
+
+  /* Kachel unter Distributionslogos: bleibt hell, die Markenfarben der Logos brauchen hellen Grund. */
+  --os-tile-bg: light-dark(#ffffff, #eef1f5);
+  --os-tile-edge: light-dark(rgb(0 0 0 / 9%), rgb(255 255 255 / 20%));
+
+  --nav-bg: light-dark(#ffffff, #121418);
+  --nav-fg: var(--text-1);
+  --nav-fg-2: var(--text-2);
+  --nav-hover-bg: var(--surface-2);
+  --nav-active-bg: var(--accent-soft);
+  --nav-active-fg: var(--accent-text);
+  --nav-line: var(--line-muted);
+  --row-sep: 1;
+  --table-head-bg: var(--surface-2);
+  --tab-track-bg: transparent;
+  --tab-track-pad: 0;
+  --tab-track-line: inset 0 -1px 0 var(--line);
+  --tab-radius: 0;
+  --tab-active-bg: transparent;
+  --tab-active-shadow: inset 0 -2px 0 var(--accent);
+  --tab-active-fg: var(--accent-text);
+
+  /* Ampel: Grundfarbe (Punkt), Fläche (Pille) und Textfarbe */
+  --great: light-dark(#0a7f5f, #3fcf9a);
+  --great-soft: light-dark(#e3f4ec, #12291f);
+  --great-text: light-dark(#066247, #6ddcb1);
+  --ok: light-dark(#1a7f37, #4ac26b);
+  --ok-soft: light-dark(#e6f4ea, #16301f);
+  --ok-text: light-dark(#13662b, #7bd693);
+  --warn: light-dark(#9a6700, #e3b341);
+  --warn-soft: light-dark(#fdf5e2, #33280f);
+  --warn-text: light-dark(#7a5200, #ecc66a);
+  --crit: light-dark(#b42318, #f97066);
+  --crit-soft: light-dark(#fdeceb, #3a1a17);
+  --crit-text: light-dark(#931c13, #fb9a92);
+  --info: light-dark(#1f6feb, #4c8dff);
+  --info-soft: light-dark(#e7f0fd, #172338);
+  --info-text: light-dark(#1a5fcc, #7aaaff);
+  --unknown: light-dark(#5b6270, #8a929e);
+  --unknown-soft: light-dark(#eceef1, #23272e);
+  --unknown-text: light-dark(#4f5662, #a3abb7);
+  --running: light-dark(#1f6feb, #4c8dff);
+  --running-soft: light-dark(#e7f0fd, #172338);
+  --running-text: light-dark(#1a5fcc, #7aaaff);
+}
+
+/* ---- Dichte: Standard, überschreibbar über das Attribut ---- */
+[data-density='compact'] {
+  --compact: 1;
+}
+[data-density='comfortable'] {
+  --compact: 0;
+}

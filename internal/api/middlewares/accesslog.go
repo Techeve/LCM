@@ -1,11 +1,13 @@
 package middlewares
 
 import (
-	"errors"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+
+	"LCM/internal/api/apierr"
 )
 
 // AccessLog protokolliert jeden Request über den Log-Service (slog):
@@ -22,12 +24,10 @@ func AccessLog(logger *slog.Logger) fiber.Handler {
 
 		status := c.Response().StatusCode()
 		if err != nil {
-			var fe *fiber.Error
-			if errors.As(err, &fe) {
-				status = fe.Code
-			} else {
-				status = fiber.StatusInternalServerError
-			}
+			status = apierr.StatusOf(err)
+		}
+		if connectionAborted(c, status) {
+			return err
 		}
 
 		attrs := []any{
@@ -58,7 +58,7 @@ func AccessLog(logger *slog.Logger) fiber.Handler {
 		}
 		if logger.Enabled(c.Context(), slog.LevelDebug) {
 			attrs = append(attrs,
-				"query", string(c.RequestCtx().QueryArgs().QueryString()),
+				"query", redactQuery(string(c.RequestCtx().QueryArgs().QueryString())),
 				"user_agent", c.Get("User-Agent"),
 			)
 		}
@@ -66,6 +66,27 @@ func AccessLog(logger *slog.Logger) fiber.Handler {
 		logger.LogAttrs(c.Context(), levelFor(status), "request", toAttrs(attrs)...)
 		return err
 	}
+}
+
+// connectionAborted erkennt den Durchlauf ohne Anfrage: Verwirft ein Browser eine
+// vorab geöffnete Verbindung, führt Fiber die Kette mit leerem Request und Status
+// 502 aus. Jede echte Anfrage trägt einen Host.
+func connectionAborted(c fiber.Ctx, status int) bool {
+	return status == fiber.StatusBadGateway && len(c.Request().Header.Host()) == 0
+}
+
+// redactQuery schwärzt den Wert von ticket: Einmal-Fahrkarten für WebSockets
+// reisen in der URL und gelten zwar nur kurz, gehören aber nicht ins Protokoll.
+// Eine unlesbare Abfrage wird ganz weggelassen.
+func redactQuery(raw string) string {
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return ""
+	}
+	if values.Has("ticket") {
+		values.Set("ticket", "REDACTED")
+	}
+	return values.Encode()
 }
 
 func levelFor(status int) slog.Level {

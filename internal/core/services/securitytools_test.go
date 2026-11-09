@@ -2,6 +2,9 @@ package services
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -63,8 +66,8 @@ func TestAllowlistIPs(t *testing.T) {
 }
 
 func TestFail2banInstallScript(t *testing.T) {
-	s := fail2banInstallScript(pkgApt, "10.0.0.5", []string{"192.168.1.1"})
-	for _, want := range []string{"apt-get install -y", "fail2ban", "ignoreip = 127.0.0.1/8 ::1 10.0.0.5 192.168.1.1", "[sshd]\\nenabled = true", "backend = systemd", "fail2ban-client status sshd"} {
+	s := fail2banInstallScript(false, pkgApt, "10.0.0.5", []string{"192.168.1.1"})
+	for _, want := range []string{"apt-get install -y", "fail2ban", "IGNORE='127.0.0.1/8 ::1 10.0.0.5 192.168.1.1'", "ignoreip = %s", "[sshd]\\nenabled = true", "backend = systemd", "fail2ban-client status sshd"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("fail2ban-Skript enthält %q nicht:\n%s", want, s)
 		}
@@ -73,26 +76,26 @@ func TestFail2banInstallScript(t *testing.T) {
 
 func TestCrowdsecInstallScript(t *testing.T) {
 	// pacman: nicht unterstützt.
-	if _, err := crowdsecInstallScript(pkgPacman, "10.0.0.5", nil, SecurityToolInput{Tool: "crowdsec", Collections: []string{"crowdsecurity/sshd"}, LapiMode: "local"}, CrowdSecConfig{}); !errors.Is(err, ErrCrowdSecUnsupported) {
+	if _, err := crowdsecInstallScript(false, pkgPacman, "10.0.0.5", nil, SecurityToolInput{Tool: "crowdsec", Collections: []string{"crowdsecurity/sshd"}, LapiMode: "local"}, CrowdSecConfig{}); !errors.Is(err, ErrCrowdSecUnsupported) {
 		t.Fatalf("pacman sollte ErrCrowdSecUnsupported liefern, bekam %v", err)
 	}
 	// apt, Bouncer + Collection + lokale LAPI + Allowlist.
 	in := SecurityToolInput{Tool: "crowdsec", Bouncer: true, Collections: []string{"crowdsecurity/sshd"}, LapiMode: "local"}
-	s, err := crowdsecInstallScript(pkgApt, "10.0.0.5", nil, in, CrowdSecConfig{})
+	s, err := crowdsecInstallScript(false, pkgApt, "10.0.0.5", nil, in, CrowdSecConfig{})
 	if err != nil {
 		t.Fatalf("crowdsec apt: %v", err)
 	}
-	for _, want := range []string{"install -y crowdsec", "cscli collections install crowdsecurity/sshd", "crowdsec-firewall-bouncer", "lcm-whitelist.yaml", "- 10.0.0.5"} {
+	for _, want := range []string{"install -y crowdsec", "cscli collections install $COLLS", "COLLS='crowdsecurity/sshd'", "crowdsec-firewall-bouncer", "lcm-whitelist.yaml", "IPS='127.0.0.1/8 ::1 10.0.0.5'"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("crowdsec-Skript enthält %q nicht:\n%s", want, s)
 		}
 	}
 	// remote-LAPI ohne Zugang → Fehler.
-	if _, err := crowdsecInstallScript(pkgApt, "10.0.0.5", nil, SecurityToolInput{Tool: "crowdsec", LapiMode: "remote", Collections: []string{"crowdsecurity/sshd"}}, CrowdSecConfig{}); !errors.Is(err, ErrCrowdSecLapiMissing) {
+	if _, err := crowdsecInstallScript(false, pkgApt, "10.0.0.5", nil, SecurityToolInput{Tool: "crowdsec", LapiMode: "remote", Collections: []string{"crowdsecurity/sshd"}}, CrowdSecConfig{}); !errors.Is(err, ErrCrowdSecLapiMissing) {
 		t.Fatalf("remote ohne Zugang sollte ErrCrowdSecLapiMissing liefern, bekam %v", err)
 	}
 	// remote-LAPI mit Zugang → schreibt credentials.
-	s2, err := crowdsecInstallScript(pkgApt, "10.0.0.5", nil, SecurityToolInput{Tool: "crowdsec", LapiMode: "remote", Collections: []string{"crowdsecurity/sshd"}}, CrowdSecConfig{LapiURL: "http://lapi.example:8080", LapiLogin: "srv1", LapiPassword: "secret"})
+	s2, err := crowdsecInstallScript(false, pkgApt, "10.0.0.5", nil, SecurityToolInput{Tool: "crowdsec", LapiMode: "remote", Collections: []string{"crowdsecurity/sshd"}}, CrowdSecConfig{LapiURL: "http://lapi.example:8080", LapiLogin: "srv1", LapiPassword: "secret"})
 	if err != nil {
 		t.Fatalf("remote mit Zugang: %v", err)
 	}
@@ -100,13 +103,59 @@ func TestCrowdsecInstallScript(t *testing.T) {
 		t.Fatalf("remote-LAPI-Skript unvollständig:\n%s", s2)
 	}
 	// console ohne Key → Fehler.
-	if _, err := crowdsecInstallScript(pkgApt, "10.0.0.5", nil, SecurityToolInput{Tool: "crowdsec", LapiMode: "console", Collections: []string{"crowdsecurity/sshd"}}, CrowdSecConfig{}); !errors.Is(err, ErrCrowdSecConsoleMissing) {
+	if _, err := crowdsecInstallScript(false, pkgApt, "10.0.0.5", nil, SecurityToolInput{Tool: "crowdsec", LapiMode: "console", Collections: []string{"crowdsecurity/sshd"}}, CrowdSecConfig{}); !errors.Is(err, ErrCrowdSecConsoleMissing) {
 		t.Fatalf("console ohne Key sollte ErrCrowdSecConsoleMissing liefern, bekam %v", err)
 	}
 }
 
-func TestShellSafe(t *testing.T) {
-	if got := shellSafe("ok'value$`\n"); got != "okvalue" {
-		t.Fatalf("shellSafe = %q", got)
+// Fehlt das Paket (auf Rocky liegt es in EPEL), darf der Job nicht „eingerichtet“ melden.
+func TestFail2banInstallFailsWithoutPackage(t *testing.T) {
+	script := fail2banInstallScript(false, "dnf", "192.0.2.1", nil)
+	check := strings.Index(script, "command -v fail2ban-client")
+	write := strings.Index(script, "99-lcm.local")
+	if check < 0 || write < check || !strings.Contains(script, "exit 1") {
+		t.Fatalf("Die Prüfung muss vor dem Einrichten stehen und den Job beenden:\n%s", script)
+	}
+}
+
+// TestCrowdSecWhitelistSeparatesAddressesAndNets: Ein Netz unter `ip:` lässt
+// CrowdSec nicht starten. Das Skript läuft hier wirklich, mit einem Zielpfad
+// im Testverzeichnis.
+func TestCrowdSecWhitelistSeparatesAddressesAndNets(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.ReplaceAll(crowdsecWhitelistBody, "/etc/crowdsec/parsers/s02-enrich", dir)
+	script := shellVars("IPS", strings.Join(allowlistIPs("10.0.0.5", []string{"192.168.1.0/24", "2001:db8::/32"}), " ")) + body
+	if out, err := exec.Command("sh", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("skript: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "lcm-whitelist.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `name: lcm/whitelist
+description: "LCM management allowlist"
+whitelist:
+  reason: "LCM management"
+  ip:
+    - "::1"
+    - "10.0.0.5"
+  cidr:
+    - "127.0.0.1/8"
+    - "192.168.1.0/24"
+    - "2001:db8::/32"
+`
+	if string(got) != want {
+		t.Fatalf("allowlist:\n%s", got)
+	}
+}
+
+// TestCrowdSecConfigureChecksBeforeRestart: Eine ungültige Konfiguration muss
+// den Job scheitern lassen, statt „eingerichtet" zu melden und den laufenden
+// Dienst zu stoppen.
+func TestCrowdSecConfigureChecksBeforeRestart(t *testing.T) {
+	check := strings.Index(crowdsecConfigureBody, "crowdsec -c /etc/crowdsec/config.yaml -t -error")
+	reload := strings.Index(crowdsecConfigureBody, "systemctl reload crowdsec")
+	if check < 0 || reload < check {
+		t.Fatalf("Prüfung fehlt oder steht hinter dem Neustart:\n%s", crowdsecConfigureBody)
 	}
 }

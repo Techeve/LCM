@@ -35,7 +35,7 @@ den Zielserver - mit Adresse und Token bereits eingesetzt.
 
 > Das Token wird **nur ein einziges Mal** angezeigt. Danach ist es nicht mehr
 > abrufbar, weil LCM nur seinen Hashwert speichert. Kopiere es gleich; geht es
-> verloren, erzeugst du über **„Token neu erzeugen"** einfach ein neues.
+> verloren, holst du dir über **„Agent-Token erneuern"** einfach ein neues.
 
 ## Schritt 2 - Agent auf dem Server installieren
 
@@ -86,7 +86,7 @@ Betriebssystem, Pakete und Hardware.
 | `enroll` meldet, die Verbindung schlage fehl | Adresse oder Port stimmen nicht - es ist der **Agent-Port**, nicht der der Oberfläche. Prüfe von diesem Server aus, ob der LCM-Server erreichbar ist. |
 | `enroll benötigt root` | Mit `sudo` ausführen. |
 | Server bleibt offline | `systemctl status lcm-agent` und `journalctl -u lcm-agent -n 50` zeigen die Ursache. Häufig: Token abgetippt statt kopiert. |
-| Token verloren | In LCM beim Server **„Token neu erzeugen"**. Das alte wird sofort ungültig, der Agent muss neu angemeldet werden. |
+| Token verloren | In LCM beim Server **„Agent-Token erneuern"**. Das alte wird sofort ungültig, der Agent muss neu angemeldet werden. |
 
 ## Was am Agent-Server anders ist
 

@@ -73,9 +73,9 @@ func (s *ServerService) Docker(scope repositories.AccessScope, id uint) (*Docker
 	}
 	for _, img := range images {
 		view := DockerImageView{DockerImage: img}
+		view.CriticalVulns = crit[img.VulnRef()]
+		view.HighVulns = high[img.VulnRef()]
 		if !img.Superseded {
-			view.CriticalVulns = crit[img.Ref()]
-			view.HighVulns = high[img.Ref()]
 			view.OlderCopies = older[img.Repository]
 		}
 		report.Images = append(report.Images, view)
@@ -95,15 +95,36 @@ func (s *ServerService) UpdateComposeProject(scope repositories.AccessScope, id 
 	if err != nil {
 		return nil, err
 	}
-	if !server.HasCompose && !server.IsDemo {
-		return nil, ErrComposeUnavailable
-	}
-	if server.DockerUpdatesDisabled {
-		return nil, ErrDockerUpdatesDisabled
-	}
-	containers, err := s.servers.FindDockerContainers(id)
+	plan, err := s.planComposeUpdate(server, project, service)
 	if err != nil {
 		return nil, err
+	}
+	return s.startDockerJob(server, plan, actor)
+}
+
+// dockerPlan beschreibt, was eine Docker-Aktion auf dem Server ausführt. Lauf
+// und Befehlsvorschau bauen ihn mit demselben planX-Schritt.
+type dockerPlan struct {
+	name       string // Anzeigename des Jobs (ohne " @ Server")
+	script     string // leer = nur Inventar-Rescan
+	rescanCVEs bool   // nach dem Lauf den zentralen Docker-Check anstoßen
+}
+
+// planComposeUpdate prüft Projekt und Service gegen das gespeicherte Inventar
+// und baut `docker compose pull && up -d` am Ort des Projekts.
+func (s *ServerService) planComposeUpdate(server *domain.Server, project, service string) (dockerPlan, error) {
+	if !reComposeName.MatchString(project) {
+		return dockerPlan{}, ErrInvalidComposeName
+	}
+	if !server.HasCompose && !server.IsDemo {
+		return dockerPlan{}, ErrComposeUnavailable
+	}
+	if server.DockerUpdatesDisabled {
+		return dockerPlan{}, ErrDockerUpdatesDisabled
+	}
+	containers, err := s.servers.FindDockerContainers(server.ID)
+	if err != nil {
+		return dockerPlan{}, err
 	}
 	var match *domain.DockerContainer
 	for i := range containers {
@@ -118,17 +139,17 @@ func (s *ServerService) UpdateComposeProject(scope repositories.AccessScope, id 
 		break
 	}
 	if match == nil {
-		return nil, ErrComposeProjectUnknown
+		return dockerPlan{}, ErrComposeProjectUnknown
 	}
 	script, err := composeUpdateScript(match.ComposeWorkingDir, match.ComposeConfigFiles, service)
 	if err != nil {
-		return nil, err
+		return dockerPlan{}, err
 	}
 	name := "Compose-Update " + project
 	if service != "" {
 		name += "/" + service
 	}
-	return s.startDockerJob(server, name, script, actor, true)
+	return dockerPlan{name: name, script: script, rescanCVEs: true}, nil
 }
 
 // PullDockerImage zieht die neueste Version eines Image-Tags auf den
@@ -142,12 +163,24 @@ func (s *ServerService) PullDockerImage(scope repositories.AccessScope, id uint,
 	if err != nil {
 		return nil, err
 	}
-	if server.DockerUpdatesDisabled {
-		return nil, ErrDockerUpdatesDisabled
-	}
-	images, err := s.servers.FindDockerImages(id)
+	plan, err := s.planPullImage(server, image)
 	if err != nil {
 		return nil, err
+	}
+	return s.startDockerJob(server, plan, actor)
+}
+
+// planPullImage: nur Images aus dem gespeicherten Inventar sind ausführbar.
+func (s *ServerService) planPullImage(server *domain.Server, image string) (dockerPlan, error) {
+	if !reDockerImageRef.MatchString(image) {
+		return dockerPlan{}, ErrInvalidDockerRef
+	}
+	if server.DockerUpdatesDisabled {
+		return dockerPlan{}, ErrDockerUpdatesDisabled
+	}
+	images, err := s.servers.FindDockerImages(server.ID)
+	if err != nil {
+		return dockerPlan{}, err
 	}
 	known := false
 	for i := range images {
@@ -157,9 +190,9 @@ func (s *ServerService) PullDockerImage(scope repositories.AccessScope, id uint,
 		}
 	}
 	if !known {
-		return nil, ErrDockerImageUnknown
+		return dockerPlan{}, ErrDockerImageUnknown
 	}
-	return s.startDockerJob(server, "Image aktualisieren: "+image, dockerPullScript(image), actor, true)
+	return dockerPlan{name: "Image aktualisieren: " + image, script: dockerPullScript(image), rescanCVEs: true}, nil
 }
 
 // PullAllDockerImages zieht die neueste Version ALLER genutzten, getaggten
@@ -171,15 +204,25 @@ func (s *ServerService) PullAllDockerImages(scope repositories.AccessScope, id u
 	if err != nil {
 		return nil, err
 	}
-	if !server.HasDocker && !server.IsDemo {
-		return nil, ErrDockerUnavailable
-	}
-	if server.DockerUpdatesDisabled {
-		return nil, ErrDockerUpdatesDisabled
-	}
-	images, err := s.servers.FindDockerImages(id)
+	plan, _, err := s.planPullAllImages(server)
 	if err != nil {
 		return nil, err
+	}
+	return s.startDockerJob(server, plan, actor)
+}
+
+// planPullAllImages wählt die genutzten, getaggten Registry-Images. Der zweite
+// Rückgabewert sind ihre Referenzen.
+func (s *ServerService) planPullAllImages(server *domain.Server) (dockerPlan, []string, error) {
+	if !server.HasDocker && !server.IsDemo {
+		return dockerPlan{}, nil, ErrDockerUnavailable
+	}
+	if server.DockerUpdatesDisabled {
+		return dockerPlan{}, nil, ErrDockerUpdatesDisabled
+	}
+	images, err := s.servers.FindDockerImages(server.ID)
+	if err != nil {
+		return dockerPlan{}, nil, err
 	}
 	var refs []string
 	for i := range images {
@@ -189,10 +232,10 @@ func (s *ServerService) PullAllDockerImages(scope repositories.AccessScope, id u
 		}
 	}
 	if len(refs) == 0 {
-		return nil, ErrNoImagesToUpdate
+		return dockerPlan{}, nil, ErrNoImagesToUpdate
 	}
 	name := fmt.Sprintf("Alle Images aktualisieren (%d)", len(refs))
-	return s.startDockerJob(server, name, dockerPullAllScript(refs), actor, true)
+	return dockerPlan{name: name, script: dockerPullAllScript(refs), rescanCVEs: true}, refs, nil
 }
 
 // SetContainerCVERelevance markiert einen Container als CVE-relevant - seine
@@ -255,9 +298,21 @@ func (s *ServerService) DeleteDockerImage(scope repositories.AccessScope, id uin
 	if err != nil {
 		return nil, err
 	}
-	images, err := s.servers.FindDockerImages(id)
+	plan, err := s.planDeleteImage(server, image)
 	if err != nil {
 		return nil, err
+	}
+	return s.startDockerJob(server, plan, actor)
+}
+
+// planDeleteImage: nur ungenutzte Images aus dem Inventar sind löschbar.
+func (s *ServerService) planDeleteImage(server *domain.Server, image string) (dockerPlan, error) {
+	if !reDockerImageRef.MatchString(image) {
+		return dockerPlan{}, ErrInvalidDockerRef
+	}
+	images, err := s.servers.FindDockerImages(server.ID)
+	if err != nil {
+		return dockerPlan{}, err
 	}
 	var match *domain.DockerImage
 	for i := range images {
@@ -267,12 +322,12 @@ func (s *ServerService) DeleteDockerImage(scope repositories.AccessScope, id uin
 		}
 	}
 	if match == nil {
-		return nil, ErrDockerImageUnknown
+		return dockerPlan{}, ErrDockerImageUnknown
 	}
-	if match.InUse {
-		return nil, ErrDockerImageInUse
+	if match.InUse || match.RestartPending {
+		return dockerPlan{}, ErrDockerImageInUse
 	}
-	return s.startDockerJob(server, "Image löschen: "+image, dockerRemoveImageScript(image), actor, false)
+	return dockerPlan{name: "Image löschen: " + image, script: dockerRemoveImageScript(image)}, nil
 }
 
 // PruneDockerImages entfernt ALLE ungenutzten Images auf einen Schlag
@@ -283,10 +338,18 @@ func (s *ServerService) PruneDockerImages(scope repositories.AccessScope, id uin
 	if err != nil {
 		return nil, err
 	}
-	if !server.HasDocker && !server.IsDemo {
-		return nil, ErrDockerUnavailable
+	plan, err := planPruneImages(server)
+	if err != nil {
+		return nil, err
 	}
-	return s.startDockerJob(server, "Ungenutzte Images aufräumen", dockerPruneScript(), actor, false)
+	return s.startDockerJob(server, plan, actor)
+}
+
+func planPruneImages(server *domain.Server) (dockerPlan, error) {
+	if !server.HasDocker && !server.IsDemo {
+		return dockerPlan{}, ErrDockerUnavailable
+	}
+	return dockerPlan{name: "Ungenutzte Images aufräumen", script: dockerPruneScript()}, nil
 }
 
 // RefreshDocker liest das Docker-Inventar eines Servers neu ein (reiner
@@ -296,21 +359,21 @@ func (s *ServerService) RefreshDocker(scope repositories.AccessScope, id uint, a
 	if err != nil {
 		return nil, err
 	}
-	return s.startDockerJob(server, "Docker-Inventar aktualisieren", "", actor, false)
+	return s.startDockerJob(server, dockerPlan{name: "Docker-Inventar aktualisieren"}, actor)
 }
 
 // startDockerJob legt den Job an (Concurrency-Lock pro Server) und führt
 // die Docker-Aktion asynchron aus (Muster startPackageJob). rescanCVEs stößt
 // nach erfolgreichem Lauf den zentralen Docker-Check an (Update-Aktionen:
 // Pull/Compose - die CVE-Bewertung soll dem neuen Stand sofort folgen).
-func (s *ServerService) startDockerJob(server *domain.Server, name, script, actor string, rescanCVEs bool) (*domain.Job, error) {
-	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeDockerUpdate, name+" @ "+server.Name, actor)
+func (s *ServerService) startDockerJob(server *domain.Server, plan dockerPlan, actor string) (*domain.Job, error) {
+	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeDockerUpdate, plan.name+" @ "+server.Name, actor)
 	if err != nil {
 		return nil, err // u.a. ErrServerBusy → der Controller mappt auf 409
 	}
-	s.audit.Log(actor, "server.docker-update", "server", server.ID, name)
+	s.audit.Log(actor, "server.docker-update", "server", server.ID, plan.name)
 	safego.GoCleanup("job:docker", jobPanicCleanup(s.jobs, job), func() {
-		s.runDockerJob(job, server, script, actor, rescanCVEs)
+		s.runDockerJob(job, server, plan.script, actor, plan.rescanCVEs)
 	})
 	return job, nil
 }

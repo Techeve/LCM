@@ -24,14 +24,17 @@ All commands below run as `root` (or with `sudo` in front).
 Creates `/etc/ssh/sshd_config.d/60-lcm-hardening.conf` with
 `PasswordAuthentication no`, `ChallengeResponseAuthentication no`,
 `PubkeyAuthentication yes`, `PermitRootLogin prohibit-password`. If the main
-file does not read drop-ins yet, LCM adds the `Include` line. sshd is then
-reloaded and **measured**: if sshd still reports password authentication, LCM
+file does not read drop-ins before its own settings, LCM adds the `Include`
+line at the very top. `00-lcm-hardening.conf` also turns password login off
+ahead of all other drop-ins: OpenSSH uses the first value it finds, and files
+like `50-cloud-init.conf` would otherwise keep it open. sshd is then reloaded
+and **measured**: if sshd still reports password authentication, LCM
 rolls back on its own.
 
-To undo - in the interface via *SSH hardened ✓ - lift*, by hand:
+To undo - in the interface via *Undo hardening*, by hand:
 
 ```sh
-rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf
+rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf /etc/ssh/sshd_config.d/00-lcm-hardening.conf
 systemctl reload sshd
 ```
 
@@ -82,7 +85,9 @@ apt-get remove sudo
 Instead of full rights the management user gets an allowlist:
 `/etc/sudoers.d/<service-user>` with `Cmnd_Alias LCM_ALLOWED = …` and exactly
 those commands without a password. In addition the LCM helper sits on the
-server; the permitted privileged steps run through it.
+server; the permitted privileged steps run through it: package sources,
+package channel, APT cache, SSH, users, firewalld and nftables, fail2ban and
+CrowdSec, and package pins. The files are the same as in full mode.
 
 ```sh
 rm -f /etc/sudoers.d/<service-user>

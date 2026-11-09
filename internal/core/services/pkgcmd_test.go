@@ -257,3 +257,37 @@ func TestJederUpdatePfadFrischtDieListeAuf(t *testing.T) {
 		t.Error("pacman darf bei benannten paketen NICHT synchronisieren (partial upgrade)")
 	}
 }
+
+func TestPkgRepairScript(t *testing.T) {
+	cases := []struct {
+		mgr, action string
+		want        []string // alles muss enthalten sein
+		none        bool     // keine Reparatur vorhanden
+	}{
+		{pkgApt, RepairDpkgConfigure,
+			[]string{"lcm_apt_wait()", "lcm_apt_wait || exit $?", "DEBIAN_FRONTEND=noninteractive dpkg --configure -a"}, false},
+		{pkgApt, RepairFixDeps, []string{"lcm_apt_wait()", "lcm_apt -f install -y"}, false},
+		{pkgZypper, RepairFixDeps, []string{"zypper --non-interactive verify"}, false},
+		{pkgZypper, RepairDpkgConfigure, nil, true},
+		{pkgDnf, RepairFixDeps, nil, true},
+		{pkgYum, RepairDpkgConfigure, nil, true},
+		{pkgPacman, RepairFixDeps, nil, true},
+		{pkgApk, RepairFixDeps, nil, true},
+		{"", RepairFixDeps, nil, true}, // nichts erkannt: kein Fallback auf apt
+		{pkgApt, "rm_rf", nil, true},
+	}
+	for _, c := range cases {
+		got := pkgRepairScript(c.mgr, c.action)
+		if c.none {
+			if got != "" {
+				t.Errorf("pkgRepairScript(%q,%q) = %q, erwartet keine Reparatur", c.mgr, c.action, got)
+			}
+			continue
+		}
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("pkgRepairScript(%q,%q) enthält nicht %q:\n%s", c.mgr, c.action, w, got)
+			}
+		}
+	}
+}

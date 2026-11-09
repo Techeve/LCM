@@ -28,6 +28,25 @@ func (r *SSHLogRepository) AddCommand(c *domain.SSHCommand) error {
 	return r.db.Create(c).Error
 }
 
+// StartCommand legt ein laufendes Kommando an und zählt es in der Session mit,
+// damit das Protokoll nicht erst nach dem Ende etwas zeigt.
+func (r *SSHLogRepository) StartCommand(c *domain.SSHCommand) error {
+	if err := r.db.Create(c).Error; err != nil {
+		return err
+	}
+	return r.db.Model(&domain.SSHSession{}).Where("id = ?", c.SSHSessionID).Update("command_count", c.Seq).Error
+}
+
+// UpdateCommandOutput schreibt die bisherige Ausgabe eines laufenden Kommandos.
+func (r *SSHLogRepository) UpdateCommandOutput(c *domain.SSHCommand) error {
+	return r.db.Model(c).Select("output").Updates(c).Error
+}
+
+// FinishCommand trägt das Ergebnis eines laufenden Kommandos nach.
+func (r *SSHLogRepository) FinishCommand(c *domain.SSHCommand) error {
+	return r.db.Model(c).Select("duration_ms", "output", "exit_code", "err", "running").Updates(c).Error
+}
+
 // FinishSession aktualisiert Abschlusszeit, Kommandozahl und Fehlerflag.
 func (r *SSHLogRepository) FinishSession(id string, closedAt time.Time, commandCount int, hadError bool) error {
 	return r.db.Model(&domain.SSHSession{}).Where("id = ?", id).Updates(map[string]any{

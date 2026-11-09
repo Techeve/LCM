@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/apierr"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
 	"LCM/internal/storage/repositories"
@@ -24,22 +25,10 @@ func NewProvisioningController(prov *services.ProvisioningService, activation *s
 }
 
 func mapProvError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "nicht gefunden")
-	case errors.Is(err, services.ErrWeakPassword):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, services.ErrActivationInvalid), errors.Is(err, services.ErrActivationExpired):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrProxmoxRestricted), errors.Is(err, services.ErrRestrictedSudo),
-		errors.Is(err, services.ErrUserSyncDisabled),
-		errors.Is(err, services.ErrServerUserProtected), errors.Is(err, services.ErrServerUserManaged):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	case errors.Is(err, services.ErrInvalidServerUsername):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return apierr.NotFound
 	}
+	return mapSentinel(err, provisioningErrors)
 }
 
 type generateLinkRequest struct {
@@ -53,8 +42,11 @@ type generateLinkRequest struct {
 // GenerateActivationLink - POST /api/v1/users/activation-links/generate (users:write)
 func (ctrl *ProvisioningController) GenerateActivationLink(c fiber.Ctx) error {
 	var req generateLinkRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkRange("ttl_hours", req.TTLHours, 0, maxTTLHours); err != nil {
+		return err
 	}
 	ttl := time.Duration(req.TTLHours) * time.Hour
 	token, link, err := ctrl.activation.Generate(req.UserID, ttl, actor(c))
@@ -90,8 +82,11 @@ type consumeLinkRequest struct {
 // ConsumeActivationLink - POST /api/v1/users/activation-links/consume (public)
 func (ctrl *ProvisioningController) ConsumeActivationLink(c fiber.Ctx) error {
 	var req consumeLinkRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"token", req.Token, maxTokenLen}, lineField{"password", req.Password, maxPasswordLen}); err != nil {
+		return err
 	}
 	user, err := ctrl.activation.Consume(req.Token, req.Password)
 	if err != nil {
@@ -121,8 +116,8 @@ func (ctrl *ProvisioningController) serverUserAction(c fiber.Ctx, assign bool) e
 	var req struct {
 		LinuxUserID uint `json:"linux_user_id"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	server, err := ctrl.servers.Get(scopeFor(c), id)
 	if err != nil {
@@ -185,7 +180,7 @@ func (ctrl *ProvisioningController) RefreshServerUsers(c fiber.Ctx) error {
 		if mapped := mapProvError(err); mapped != err { //nolint:errorlint - Default liefert err unverändert
 			return mapped
 		}
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return errServerActionFailed.With("detail", err.Error())
 	}
 	return c.JSON(users)
 }
@@ -230,8 +225,8 @@ func (ctrl *ProvisioningController) serverUserOSAction(c fiber.Ctx, action strin
 		return err
 	}
 	var req serverUserActionRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	var out string
 	switch action {
@@ -246,7 +241,7 @@ func (ctrl *ProvisioningController) serverUserOSAction(c fiber.Ctx, action strin
 		if mapped := mapProvError(err); mapped != err { //nolint:errorlint - Default liefert err unverändert
 			return mapped
 		}
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return errServerActionFailed.With("detail", err.Error())
 	}
 	return c.JSON(fiber.Map{"status": "ok", "output": out})
 }
@@ -280,7 +275,7 @@ func (ctrl *ProvisioningController) SyncUsers(c fiber.Ctx) error {
 		if mapped := mapProvError(err); mapped != err { //nolint:errorlint - Default liefert err unverändert
 			return mapped
 		}
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return errServerActionFailed.With("detail", err.Error())
 	}
 	return c.JSON(fiber.Map{"status": "synced", "output": output})
 }

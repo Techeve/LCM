@@ -17,7 +17,7 @@ account there, not to the machine you connect from.
   codes (TOTP) works - Google Authenticator, Aegis, 2FAS, Microsoft
   Authenticator, or a password manager with TOTP support.
 - Working **SSH access** to the server (see
-  [Setting up your SSH key](/#/doku/ssh-schluessel)).
+  [Setting up your SSH key](/docs/ssh-schluessel)).
 
 ## Step by step
 

@@ -3,12 +3,15 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/apierr"
+	"LCM/internal/api/middlewares"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
-	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/storage/repositories"
 )
 
@@ -21,82 +24,12 @@ func NewServerController(servers *services.ServerService) *ServerController {
 	return &ServerController{servers: servers}
 }
 
-// mapServerError übersetzt Server-spezifische Fehler in HTTP-Status.
+// mapServerError übersetzt Server-spezifische Fehler in API-Fehler.
 func mapServerError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "server nicht gefunden")
-	case errors.Is(err, services.ErrServerNameTaken), errors.Is(err, services.ErrServerHostTaken):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	case errors.Is(err, services.ErrFingerprintMismatch), errors.Is(err, sshx.ErrHostKeyMismatch),
-		errors.Is(err, services.ErrLoopbackInContainer):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrServerBusy),
-		errors.Is(err, services.ErrProxmoxRestricted),
-		errors.Is(err, services.ErrPackagePinsUnavailable),
-		errors.Is(err, services.ErrPackagePinsNotWired),
-		errors.Is(err, services.ErrRouterOSUnsupported),
-		errors.Is(err, services.ErrDSMUnsupported),
-		errors.Is(err, services.ErrFirewallToolMissing),
-		errors.Is(err, services.ErrRestrictedSudo),
-		errors.Is(err, services.ErrAgentTransport),
-		errors.Is(err, services.ErrNotAgentServer),
-		errors.Is(err, services.ErrAgentOffline),
-		errors.Is(err, services.ErrNoOldKernels),
-		errors.Is(err, services.ErrNoSnapd),
-		errors.Is(err, services.ErrNoRevertCandidates),
-		errors.Is(err, services.ErrKernelCleanupUnsupported):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	case errors.Is(err, sshx.ErrPasswordAuthUnavailable), errors.Is(err, sshx.ErrPasswordRejected),
-		errors.Is(err, services.ErrNotRevertible),
-		errors.Is(err, services.ErrNoOnboardingKey):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrNotLcmHost), errors.Is(err, services.ErrLcmHostNotApt),
-		errors.Is(err, services.ErrLcmHostInContainer):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrUnknownSecurityTool), errors.Is(err, services.ErrInvalidAllowlistIP),
-		errors.Is(err, services.ErrCrowdSecLapiMissing), errors.Is(err, services.ErrCrowdSecConsoleMissing),
-		errors.Is(err, services.ErrInvalidLapiMode), errors.Is(err, services.ErrSecurityToolAction),
-		errors.Is(err, services.ErrCrowdSecUnsupported):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrInvalidFirewallRules), errors.Is(err, services.ErrFirewallNeedsFullSudo):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrNoAptCacheURL),
-		errors.Is(err, services.ErrTooManyDNSServers), errors.Is(err, services.ErrInvalidDNSServer),
-		errors.Is(err, services.ErrInvalidTimezone), errors.Is(err, services.ErrInvalidNTPServer),
-		errors.Is(err, services.ErrTooManyNTPServers):
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	case errors.Is(err, services.ErrClockFromHost):
-		// Kein Eingabefehler und kein Ziel-Fehler: die Aktion ergibt auf
-		// diesem Server prinzipiell keinen Sinn - dasselbe Muster wie bei
-		// gesperrten Aktionen auf Proxmox.
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	case errors.Is(err, services.ErrNTPNotSynced):
-		// Eigener Zustand, kein Eingabefehler: die Zeitserver stehen, nur der
-		// Nachweis fehlt. 502 sagt „auf dem Zielsystem nicht erreicht" -
-		// dasselbe Muster wie bei der unbelegten SSH-Härtung.
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
-	case errors.Is(err, services.ErrNoSnaps), errors.Is(err, services.ErrInvalidSnap),
-		errors.Is(err, services.ErrProtectedSnap):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, services.ErrNoPackages), errors.Is(err, services.ErrInvalidPackage),
-		errors.Is(err, services.ErrInvalidVersion), errors.Is(err, services.ErrVersionOnePkg),
-		errors.Is(err, services.ErrProtectedPackage),
-		errors.Is(err, services.ErrPinnedPackage),
-		errors.Is(err, services.ErrPackagePinName), errors.Is(err, services.ErrPackagePinEffect),
-		errors.Is(err, services.ErrUnknownRepo),
-		errors.Is(err, services.ErrRepoPackageManagerMismatch):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, services.ErrInvalidComposeName), errors.Is(err, services.ErrInvalidDockerRef),
-		errors.Is(err, services.ErrComposeUnavailable), errors.Is(err, services.ErrComposeProjectUnknown),
-		errors.Is(err, services.ErrDockerImageUnknown), errors.Is(err, services.ErrDockerImageInUse),
-		errors.Is(err, services.ErrDockerUnavailable), errors.Is(err, services.ErrComposePathMissing),
-		errors.Is(err, services.ErrDockerContainerUnknown), errors.Is(err, services.ErrNoImagesToUpdate),
-		errors.Is(err, services.ErrDockerUpdatesDisabled):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errServerNotFound
 	}
+	return mapSentinel(err, serverErrors)
 }
 
 // mapServerActionError mappt Fehler der SSH-Aktions-Handler: bekannte
@@ -109,7 +42,7 @@ func mapServerActionError(err error) error {
 	if mapped := mapServerError(err); mapped != err { //nolint:errorlint - bewusster Identitätsvergleich (Default liefert err unverändert)
 		return mapped
 	}
-	return fiber.NewError(fiber.StatusBadGateway, err.Error())
+	return errServerActionFailed.With("detail", err.Error())
 }
 
 type probeRequest struct {
@@ -121,11 +54,11 @@ type probeRequest struct {
 // Liest den Host-Key-Fingerprint für die Bestätigung im Join-Wizard.
 func (ctrl *ServerController) Probe(c fiber.Ctx) error {
 	var req probeRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Host == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "host ist erforderlich")
+		return missingFields("host")
 	}
 	if err := checkHost("host", req.Host); err != nil {
 		return err
@@ -135,7 +68,7 @@ func (ctrl *ServerController) Probe(c fiber.Ctx) error {
 	}
 	res, err := ctrl.servers.Probe(req.Host, req.Port)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return errServerProbeFailed.With("detail", err.Error())
 	}
 	return c.JSON(res)
 }
@@ -154,11 +87,11 @@ type joinRequest struct {
 // Join - POST /api/v1/servers/join (servers:write)
 func (ctrl *ServerController) Join(c fiber.Ctx) error {
 	var req joinRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Name == "" || req.Host == "" || req.LoginUser == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "name, host und login_user sind erforderlich")
+		return missingFields("name", "host", "login_user")
 	}
 	if err := checkHost("host", req.Host); err != nil {
 		return err
@@ -194,11 +127,11 @@ func (ctrl *ServerController) CreateAgent(c fiber.Ctx) error {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Name == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
+		return missingFields("name")
 	}
 	if err := checkLine("name", req.Name, maxNameLen); err != nil {
 		return err
@@ -223,8 +156,8 @@ func (ctrl *ServerController) CreateRouterOS(c fiber.Ctx) error {
 		AuthMethod           string `json:"auth_method"`
 		ConfirmedFingerprint string `json:"confirmed_fingerprint"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkHost("host", req.Host); err != nil {
 		return err
@@ -260,11 +193,11 @@ func (ctrl *ServerController) ProbeDSM(c fiber.Ctx) error {
 		Host string `json:"host"`
 		Port int    `json:"port"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Host == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "host ist erforderlich")
+		return missingFields("host")
 	}
 	if err := checkHost("host", req.Host); err != nil {
 		return err
@@ -274,7 +207,7 @@ func (ctrl *ServerController) ProbeDSM(c fiber.Ctx) error {
 	}
 	fp, err := ctrl.servers.ProbeDSM(req.Host, req.Port)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return errServerProbeFailed.With("detail", err.Error())
 	}
 	return c.JSON(fiber.Map{"cert_fingerprint": fp})
 }
@@ -290,8 +223,8 @@ func (ctrl *ServerController) CreateDSM(c fiber.Ctx) error {
 		Password             string `json:"password"`
 		ConfirmedFingerprint string `json:"confirmed_fingerprint"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkHost("host", req.Host); err != nil {
 		return err
@@ -381,12 +314,54 @@ func (ctrl *ServerController) Reconnect(c fiber.Ctx) error {
 }
 
 // List - GET /api/v1/servers (servers:read)
+// Filtern, Sortieren und Blättern im Backend. Query: q (Name/Host), name
+// (exakt), status (Kommaliste excellent,green,yellow,red), incapable=1, os,
+// kernel, group_id, ids (Kommaliste), sort (services.ServerSortKeys, Vorgabe
+// name), limit (Vorgabe 100, höchstens 1000), offset.
+// Antwort: {items, total, os_names}; ein Eintrag ist der Server samt Gruppen
+// plus status, insights, os_support, incapable und updates. os_names sind die
+// vorkommenden Betriebssysteme für die Auswahl des OS-Filters.
 func (ctrl *ServerController) List(c fiber.Ctx) error {
-	servers, err := ctrl.servers.List(scopeFor(c))
+	q, err := serverListQuery(c)
 	if err != nil {
 		return err
 	}
-	return c.JSON(servers)
+	page, err := ctrl.servers.ListPage(scopeFor(c), q)
+	if err != nil {
+		return err
+	}
+	return c.JSON(struct {
+		listResponse[services.ServerListItem]
+		OSNames []string `json:"os_names"`
+	}{newListResponse(page.Items, page.Total), page.OSNames})
+}
+
+// serverListQuery liest und prüft die Query-Parameter der Serverliste.
+func serverListQuery(c fiber.Ctx) (services.ServerListQuery, error) {
+	var q services.ServerListQuery
+	if err := checkLines(lineField{"q", c.Query("q"), maxQueryLen}, lineField{"name", c.Query("name"), maxNameLen},
+		lineField{"os", c.Query("os"), maxQueryLen}, lineField{"kernel", c.Query("kernel"), maxQueryLen}); err != nil {
+		return q, err
+	}
+	q.Q, q.Name, q.OS, q.Kernel = c.Query("q"), c.Query("name"), c.Query("os"), c.Query("kernel")
+	q.Incapable = c.Query("incapable") == "1"
+	var err error
+	if q.Statuses, err = enumListQuery(c, "status", []string{
+		domain.ServerStatusExcellent, domain.ServerStatusGreen, domain.ServerStatusYellow, domain.ServerStatusRed,
+	}); err != nil {
+		return q, err
+	}
+	if q.GroupID, err = idQuery(c, "group_id"); err != nil {
+		return q, err
+	}
+	if q.IDs, err = idListQuery(c, "ids"); err != nil {
+		return q, err
+	}
+	if q.Sort, err = sortQuery(c, services.ServerSortKeys, "name"); err != nil {
+		return q, err
+	}
+	q.Limit, q.Offset = pagingOf(c, services.ServerListDefaultLimit, services.ServerListMaxLimit)
+	return q, nil
 }
 
 // Statuses - GET /api/v1/servers/statuses (servers:read)
@@ -421,10 +396,12 @@ func (ctrl *ServerController) Get(c fiber.Ctx) error {
 	}
 	// firewall_backend: das wirksame Firewall-Backend (erkanntes Werkzeug,
 	// sonst das für die Distribution vorgesehene) - für den Badge im Dialog.
+	// is_lcm_host: der Server, auf dem LCM selbst läuft (wie in der Liste).
 	return c.JSON(struct {
 		*domain.Server
 		FirewallBackend string `json:"firewall_backend"`
-	}{server, services.FirewallBackendFor(server)})
+		IsLcmHost       bool   `json:"is_lcm_host"`
+	}{server, services.FirewallBackendFor(server), server.IsLcmHost()})
 }
 
 // ActiveJob - GET /api/v1/servers/:id/active-job (servers:read)
@@ -578,10 +555,38 @@ func (ctrl *ServerController) KnownRepos(c fiber.Ctx) error {
 	return c.JSON(repos)
 }
 
+// CheckRepositoriesHTTPS - POST /api/v1/servers/:id/repositories/https-check
+// (servers:write). Prüft vom Server aus, welche http-Quellen HTTPS sprechen -
+// die Grundlage der Auswahl vor der Umstellung. Synchron.
+func (ctrl *ServerController) CheckRepositoriesHTTPS(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	check, err := ctrl.servers.CheckRepositoriesHTTPS(scopeFor(c), id, actor(c))
+	if err != nil {
+		return mapServerActionError(err)
+	}
+	return c.JSON(check)
+}
+
 // SecureRepositories - POST /api/v1/servers/:id/repositories/secure
-// (servers:write). Stellt alle http-Quellen auf https um (mit Rollback).
+// (servers:write). Stellt http-Quellen auf https um (mit Rollback): die in
+// "uris" genannten, ohne Body alle.
 func (ctrl *ServerController) SecureRepositories(c fiber.Ctx) error {
-	return ctrl.runServerAction(c, "secured", ctrl.servers.SecureRepositories)
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	uris, err := optionalURIs(c)
+	if err != nil {
+		return err
+	}
+	output, err := ctrl.servers.SecureRepositories(scopeFor(c), id, uris, actor(c))
+	if err != nil {
+		return mapServerActionError(err)
+	}
+	return c.JSON(fiber.Map{"status": "secured", "output": output})
 }
 
 // RevertRepositoriesHTTPS - POST /api/v1/servers/:id/repositories/revert-https
@@ -592,21 +597,30 @@ func (ctrl *ServerController) RevertRepositoriesHTTPS(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	var req struct {
-		URIs []string `json:"uris"`
+	uris, err := optionalURIs(c)
+	if err != nil {
+		return err
 	}
-	// Leerer Body ist der Normalfall („alle Kandidaten") - nur ein
-	// vorhandener, aber kaputter Body ist ein Fehler.
-	if len(c.Body()) > 0 {
-		if err := c.Bind().Body(&req); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
-		}
-	}
-	output, err := ctrl.servers.RevertRepositoriesHTTPS(scopeFor(c), id, req.URIs, actor(c))
+	output, err := ctrl.servers.RevertRepositoriesHTTPS(scopeFor(c), id, uris, actor(c))
 	if err != nil {
 		return mapServerActionError(err)
 	}
 	return c.JSON(fiber.Map{"status": "reverted", "output": output})
+}
+
+// optionalURIs liest die Auswahl {"uris": [...]} der Paketquellen-Aktionen.
+// Leerer Body ist der Normalfall („alle") - nur ein vorhandener, aber
+// kaputter Body ist ein Fehler.
+func optionalURIs(c fiber.Ctx) ([]string, error) {
+	var req struct {
+		URIs []string `json:"uris"`
+	}
+	if len(c.Body()) > 0 {
+		if err := bindBody(c, &req); err != nil {
+			return nil, err
+		}
+	}
+	return req.URIs, nil
 }
 
 // AddRepository - POST /api/v1/servers/:id/repositories/add (servers:write)
@@ -619,8 +633,11 @@ func (ctrl *ServerController) AddRepository(c fiber.Ctx) error {
 	var req struct {
 		Key string `json:"key"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("key", req.Key, maxNameLen); err != nil {
+		return err
 	}
 	output, err := ctrl.servers.AddKnownRepository(scopeFor(c), id, req.Key, actor(c))
 	if err != nil {
@@ -641,6 +658,110 @@ func (ctrl *ServerController) PackageVersions(c fiber.Ctx) error {
 		return mapServerActionError(err)
 	}
 	return c.JSON(versions)
+}
+
+// ActionPreview - GET /api/v1/servers/:id/actions/:action/preview (servers:read)
+// Zeigt, was die Aktion auf dem Server ausführen würde: die Befehle (aus
+// demselben Code wie der Lauf, Geheimnisse maskiert), betroffene Pakete,
+// Neustart, Umkehrbarkeit und grobe Dauer. Ohne SSH-Verbindung und ohne Job.
+//
+// Query: package (Namen, kommagetrennt; update/remove/snaps-*), version
+// (update), kind (repair: dpkg_configure|fix_deps), category (retry),
+// id (custom: ID der Custom-Aktion; zusätzlich rules:manage), port (ssh-port),
+// rules und ssh_sources (firewall-apply: JSON wie im Body von POST firewall;
+// ohne rules der gespeicherte Stand), tool/op/ip und die Optionen aus
+// previewSecurityTool (security-tool, security-tool-manage), uri (kommagetrennt,
+// repos-revert-https), key (repos-add), cache_id (apt-cache-connect), servers
+// (kommagetrennt; dns, ntp), timezone, targets (JSON wie im Body von POST
+// hardened-paths/bulk; path-harden), path_id (path-restore), bouncer
+// (lcm-host-crowdsec-lapi), project/service (docker-compose-update), image
+// (docker-pull, docker-image-delete), username (user-*).
+func (ctrl *ServerController) ActionPreview(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	action := c.Params("action")
+	// Eine Custom-Aktion zeigt ihr gespeichertes Skript - das darf nur, wer sie
+	// auch unter /custom-actions lesen darf.
+	if action == services.PreviewCustom && !middlewares.CurrentUser(c).HasPermission(domain.PermRulesManage) {
+		return apierr.Forbidden.With("permission", domain.PermRulesManage)
+	}
+	args := services.PreviewArgs{
+		Packages: []string{c.Query("package")},
+		Version:  c.Query("version"),
+		Kind:     c.Query("kind"),
+		Category: c.Query("category"),
+		CustomID: uint(queryInt(c, "id")),
+
+		Port:          queryInt(c, "port"),
+		FirewallRules: c.Query("rules"),
+		SSHSources:    c.Query("ssh_sources"),
+		SecurityTool:  previewSecurityTool(c),
+		ToolAction:    c.Query("op"),
+		UnbanIP:       c.Query("ip"),
+		URIs:          queryList(c, "uri"),
+		RepoKey:       c.Query("key"),
+		CacheID:       uint(queryInt(c, "cache_id")),
+		Servers:       queryList(c, "servers"),
+		Timezone:      c.Query("timezone"),
+		PathID:        uint(queryInt(c, "path_id")),
+		Bouncer:       c.Query("bouncer") == "true",
+		Project:       c.Query("project"),
+		Service:       c.Query("service"),
+		Image:         c.Query("image"),
+		Username:      c.Query("username"),
+	}
+	if action == services.PreviewPathHarden {
+		if err := json.Unmarshal([]byte(c.Query("targets", "[]")), &args.Paths); err != nil {
+			return apierr.InvalidBody
+		}
+		if len(args.Paths) == 0 {
+			return errNoPathsSelected
+		}
+	}
+	preview, err := ctrl.servers.PreviewAction(scopeFor(c), id, action, args)
+	if err != nil {
+		return mapServerError(err)
+	}
+	return c.JSON(preview)
+}
+
+// previewSecurityTool liest die Optionen von security-tool(-manage) aus der
+// Query: tool, bouncer (Vorgabe true wie bei POST security-tool), lapi_mode,
+// lapi_id und kommagetrennt collections, allowlist_ips, allowlist_ids.
+func previewSecurityTool(c fiber.Ctx) services.SecurityToolInput {
+	return services.SecurityToolInput{
+		Tool:         c.Query("tool"),
+		Bouncer:      c.Query("bouncer") != "false",
+		Collections:  queryList(c, "collections"),
+		LapiMode:     c.Query("lapi_mode"),
+		LapiID:       uint(queryInt(c, "lapi_id")),
+		AllowlistIPs: queryList(c, "allowlist_ips"),
+		AllowlistIDs: queryIDs(c, "allowlist_ids"),
+	}
+}
+
+// queryList liest eine kommagetrennte Liste aus der Query (leer → nil).
+func queryList(c fiber.Ctx, key string) []string {
+	var out []string
+	for _, v := range strings.Split(c.Query(key), ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// queryIDs liest eine kommagetrennte ID-Liste; Ungültiges entfällt.
+func queryIDs(c fiber.Ctx, key string) []uint {
+	var out []uint
+	for _, v := range queryList(c, key) {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil && id > 0 {
+			out = append(out, uint(id))
+		}
+	}
+	return out
 }
 
 // RefreshPackages - POST /api/v1/servers/:id/packages/refresh (servers:write)
@@ -704,6 +825,14 @@ func (ctrl *ServerController) LcmHostStatus(c fiber.Ctx) error {
 func (ctrl *ServerController) InstallSandbox(c fiber.Ctx) error {
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.InstallSandbox(scopeFor(c), id, actor(c))
+	})
+}
+
+// UpdateTrivy - POST /api/v1/servers/:id/lcm-host/update-trivy (servers:write)
+// Spielt die neuere Trivy-Version ein, die apt auf dem LCM-Host anbietet.
+func (ctrl *ServerController) UpdateTrivy(c fiber.Ctx) error {
+	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
+		return ctrl.servers.UpdateTrivy(scopeFor(c), id, actor(c))
 	})
 }
 
@@ -779,8 +908,8 @@ func (ctrl *ServerController) SetAptCacherPermanentCache(c fiber.Ctx) error {
 	var req struct {
 		Enabled bool `json:"enabled"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.SetAptCacherPermanentCache(scopeFor(c), id, req.Enabled, actor(c))
@@ -802,8 +931,14 @@ func (ctrl *ServerController) UpdatePackages(c fiber.Ctx) error {
 		Names   []string `json:"names"`
 		Version string   `json:"version"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkNames("names", req.Names); err != nil {
+		return err
+	}
+	if err := checkLine("version", req.Version, maxNameLen); err != nil {
+		return err
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.UpdatePackages(scopeFor(c), id, req.Names, req.Version, actor(c))
@@ -825,8 +960,11 @@ func (ctrl *ServerController) RemovePackages(c fiber.Ctx) error {
 	var req struct {
 		Names []string `json:"names"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkNames("names", req.Names); err != nil {
+		return err
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.RemovePackages(scopeFor(c), id, req.Names, actor(c))
@@ -879,7 +1017,10 @@ func snapNamesFromBody(c fiber.Ctx) ([]string, error) {
 		Names []string `json:"names"`
 	}
 	if err := c.Bind().Body(&req); err != nil {
-		return nil, fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+		return nil, apierr.InvalidBody
+	}
+	if err := checkNames("names", req.Names); err != nil {
+		return nil, err
 	}
 	return req.Names, nil
 }
@@ -914,8 +1055,14 @@ func (ctrl *ServerController) CreatePackagePin(c fiber.Ctx) error {
 		Note     string `json:"note"`
 		Global   bool   `json:"global"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("name", req.Name, maxNameLen*2); err != nil { // wie validPinName: 128
+		return err
+	}
+	if err := checkLine("note", req.Note, maxDescriptionLen); err != nil {
+		return err
 	}
 	// Ohne Angabe ist „nicht entfernen" gemeint - das ist der Zweck der Pins.
 	noRemove := true
@@ -1004,8 +1151,11 @@ func (ctrl *ServerController) UpdateCompose(c fiber.Ctx) error {
 		Project string `json:"project"`
 		Service string `json:"service"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"project", req.Project, maxNameLen}, lineField{"service", req.Service, maxNameLen}); err != nil {
+		return err
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.UpdateComposeProject(scopeFor(c), id, req.Project, req.Service, actor(c))
@@ -1018,8 +1168,11 @@ func (ctrl *ServerController) PullDockerImage(c fiber.Ctx) error {
 	var req struct {
 		Image string `json:"image"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("image", req.Image, maxPathLen); err != nil {
+		return err
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.PullDockerImage(scopeFor(c), id, req.Image, actor(c))
@@ -1049,7 +1202,10 @@ func (ctrl *ServerController) SetContainerCVERelevance(c fiber.Ctx) error {
 		Relevant bool   `json:"relevant"`
 	}
 	if err := c.Bind().Body(&req); err != nil || req.Name == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+		return apierr.InvalidBody
+	}
+	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
 	}
 	server, err := ctrl.servers.SetContainerCVERelevance(scopeFor(c), id, req.Name, req.Relevant, actor(c))
 	if err != nil {
@@ -1064,8 +1220,11 @@ func (ctrl *ServerController) RemoveDockerImage(c fiber.Ctx) error {
 	var req struct {
 		Image string `json:"image"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("image", req.Image, maxPathLen); err != nil {
+		return err
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.DeleteDockerImage(scopeFor(c), id, req.Image, actor(c))
@@ -1116,8 +1275,8 @@ func (ctrl *ServerController) UpdateSettings(c fiber.Ctx) error {
 		return err
 	}
 	var req updateServerRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkHost("host", req.Host); err != nil {
 		return err
@@ -1126,6 +1285,9 @@ func (ctrl *ServerController) UpdateSettings(c fiber.Ctx) error {
 		return err
 	}
 	if err := checkLine("name", req.Name, maxNameLen); err != nil {
+		return err
+	}
+	if err := checkOptionalRange("unreachable_grace_days", req.UnreachableGraceDays, 0, maxGraceDays); err != nil {
 		return err
 	}
 	server, err := ctrl.servers.UpdateSettings(scopeFor(c), id, services.ServerSettingsInput{
@@ -1207,12 +1369,11 @@ func (ctrl *ServerController) SetSSHRootLogin(c fiber.Ctx) error {
 	req := struct {
 		Disabled *bool `json:"disabled"`
 	}{}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Disabled == nil {
-		return fiber.NewError(fiber.StatusBadRequest,
-			"Feld 'disabled' ist erforderlich (true = Root-Login per SSH sperren, false = erlauben)")
+		return missingFields("disabled")
 	}
 	output, err := ctrl.servers.SetSSHRootLogin(scopeFor(c), id, *req.Disabled, actor(c))
 	if err != nil {
@@ -1231,8 +1392,11 @@ func (ctrl *ServerController) ChangeSSHPort(c fiber.Ctx) error {
 	req := struct {
 		Port int `json:"port"`
 	}{}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkPort("port", req.Port); err != nil {
+		return err
 	}
 	output, err := ctrl.servers.ChangeSSHPort(scopeFor(c), id, req.Port, actor(c))
 	if err != nil {
@@ -1283,8 +1447,13 @@ func (ctrl *ServerController) ConfigureFirewall(c fiber.Ctx) error {
 	// Request) sämtliche Dienst-Ports des Zielservers. Die Absicht muss
 	// ausdrücklich im Body stehen.
 	if req.Enable == nil {
-		return fiber.NewError(fiber.StatusBadRequest,
-			"Feld 'enable' ist erforderlich (true = Firewall aktivieren, false = deaktivieren)")
+		return missingFields("enable")
+	}
+	if err := checkText("ports", req.Ports, maxListLen); err != nil {
+		return err
+	}
+	if err := checkFirewallSources(req.Rules, req.SSHSources); err != nil {
+		return err
 	}
 	enable := *req.Enable
 	spec := req.Ports
@@ -1302,6 +1471,20 @@ func (ctrl *ServerController) ConfigureFirewall(c fiber.Ctx) error {
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
 		"status": "started", "job_id": job.ID, "job_name": job.Name,
 	})
+}
+
+// checkFirewallSources prüft die Quell-Adressen, bevor die Regeln im Job landen.
+// Der Service prüft erneut; hier gibt es den Fehler mit Feldnamen.
+func checkFirewallSources(rules []domain.FirewallRule, ssh *domain.FirewallSSHSources) error {
+	for _, rule := range rules {
+		if err := checkAddressList("source_ips", rule.SourceIPs); err != nil {
+			return err
+		}
+	}
+	if ssh == nil {
+		return nil
+	}
+	return checkAddressList("ssh_sources", ssh.SourceIPs)
 }
 
 // firewallRulesSpecJSON serialisiert die Regel-Eingabe für den Service (der
@@ -1337,7 +1520,7 @@ func (ctrl *ServerController) ConfigureAptProxy(c fiber.Ctx) error {
 }
 
 // ConfigureDNS - POST /api/v1/servers/:id/dns (servers:write)
-// Setzt bis zu drei Nameserver auf dem Server (leere Liste = LCM gibt die
+// Setzt bis zu vier Nameserver auf dem Server (leere Liste = LCM gibt die
 // DNS-Verwaltung frei). Synchron mit Rollback bei gebrochener Auflösung.
 func (ctrl *ServerController) ConfigureDNS(c fiber.Ctx) error {
 	id, err := paramID(c)
@@ -1499,11 +1682,11 @@ func (ctrl *ServerController) HardenPathsBulk(c fiber.Ctx) error {
 	var req struct {
 		Targets []services.HardenTarget `json:"targets"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if len(req.Targets) == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "keine verzeichnisse ausgewählt")
+		return errNoPathsSelected
 	}
 	results, err := ctrl.servers.HardenPathsBulk(scopeFor(c), id, req.Targets, actor(c))
 	if err != nil {
@@ -1525,8 +1708,11 @@ func (ctrl *ServerController) HardenPath(c fiber.Ctx) error {
 		Group string `json:"group"`
 		Unit  string `json:"unit"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"path", req.Path, maxPathLen}, lineField{"group", req.Group, maxNameLen}, lineField{"unit", req.Unit, maxNameLen}); err != nil {
+		return err
 	}
 	hardened, err := ctrl.servers.HardenPath(scopeFor(c), id, req.Path, req.Group, req.Unit, actor(c))
 	if err != nil {
@@ -1553,13 +1739,10 @@ func (ctrl *ServerController) RestorePath(c fiber.Ctx) error {
 
 // mapHardenError bildet Eingabefehler der Härtung auf 422 ab.
 func mapHardenError(err error) error {
-	switch {
-	case errors.Is(err, domain.ErrPathRelative), errors.Is(err, domain.ErrPathMeta),
-		errors.Is(err, domain.ErrPathProtected):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	default:
-		return mapServerError(err)
+	if mapped := matchSentinel(err, pathErrors); mapped != nil {
+		return mapped
 	}
+	return mapServerError(err)
 }
 
 // InstallACLSupport - POST /api/v1/servers/:id/acl/install (servers:write).
@@ -1591,8 +1774,11 @@ func (ctrl *ServerController) ConfigureSecurityTool(c fiber.Ctx) error {
 		LapiMode     string   `json:"lapi_mode"`
 		LapiID       uint     `json:"lapi_id"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkAddressList("allowlist_ips", req.AllowlistIPs); err != nil {
+		return err
 	}
 	// Zeiger statt bool: fehlt das Feld, galt bisher der Go-Nullwert false,
 	// während die Oberfläche das Kästchen vorbelegt anzeigt. Über die API
@@ -1618,8 +1804,8 @@ func (ctrl *ServerController) ConfigureSSH2FA(c fiber.Ctx) error {
 	var req struct {
 		Enable bool `json:"enable"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.ConfigureSSH2FA(scopeFor(c), id, req.Enable, actor(c))
@@ -1638,8 +1824,14 @@ func (ctrl *ServerController) ManageSecurityTool(c fiber.Ctx) error {
 		AllowlistIPs []string `json:"allowlist_ips"`
 		AllowlistIDs []uint   `json:"allowlist_ids"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkAddressList("allowlist_ips", req.AllowlistIPs); err != nil {
+		return err
+	}
+	if err := checkIP("unban_ip", req.UnbanIP); err != nil {
+		return err
 	}
 	in := services.SecurityToolManageInput{
 		Tool: req.Tool, Action: req.Action, UnbanIP: req.UnbanIP,
@@ -1725,15 +1917,48 @@ func (ctrl *ServerController) SetVolumeMonitor(c fiber.Ctx) error {
 		CritPercent      int    `json:"crit_percent"`
 		InodeWarnPercent int    `json:"inode_warn_percent"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültige Anfrage")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("mountpoint", req.Mountpoint, maxPathLen); err != nil {
+		return err
+	}
+	if err := checkVolumeLimits(req.WarnPercent, req.CritPercent, req.InodeWarnPercent); err != nil {
+		return err
 	}
 	if err := ctrl.servers.SetVolumeMonitor(scopeFor(c), id, req.Mountpoint, req.Enabled,
 		req.WarnPercent, req.CritPercent, req.InodeWarnPercent, actor(c)); err != nil {
 		if errors.Is(err, services.ErrVolumeNotMonitorable) {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return errVolumeNotMonitorable
 		}
 		return mapServerError(err)
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// checkVolumeLimits verlangt Prozentwerte; 0 heißt Vorgabe. Warnen muss vor kritisch kommen.
+func checkVolumeLimits(warn, crit, inodeWarn int) error {
+	for name, value := range map[string]int{"warn_percent": warn, "crit_percent": crit, "inode_warn_percent": inodeWarn} {
+		if err := checkRange(name, value, 0, maxPercent); err != nil {
+			return err
+		}
+	}
+	if warn > 0 && crit > 0 && warn >= crit {
+		return checkRange("warn_percent", warn, 1, crit-1)
+	}
+	return nil
+}
+
+// checkNames begrenzt eine Namensliste (Pakete, Snaps) im Rumpf: Zahl der
+// Einträge und je Eintrag eine Zeile. Die Schreibweise prüft der Service.
+func checkNames(field string, names []string) error {
+	if err := checkCount(field, len(names), maxItems); err != nil {
+		return err
+	}
+	for _, name := range names {
+		if err := checkLine(field, name, maxNameLen); err != nil {
+			return err
+		}
+	}
+	return nil
 }

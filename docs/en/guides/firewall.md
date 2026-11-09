@@ -91,9 +91,12 @@ than `8080:80`).
   OpenRC/Alpine). Disabling only removes the LCM table.
 
 :::note[Restricted sudo mode]
-In restricted mode only **ufw** is manageable (it is on the sudo whitelist).
-firewalld and nftables need full root access (service control, files under
-`/etc`) - LCM reports that honestly instead of half-configuring.
+All three tools are manageable in restricted mode too. **ufw** is on the sudo
+whitelist; for **firewalld** and **nftables** (service control, files under
+`/etc`) the validating `lcm-helper` steps in. It runs the same script as full
+mode but checks every parameter: for firewalld only port and rich-rule releases
+in the generated form, for nftables only lines as LCM generates them for its own
+table `inet lcm` - foreign tables, `include` or `flush` are refused.
 :::
 
 ## Group rule

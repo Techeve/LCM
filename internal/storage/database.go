@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/dbmetrics"
 	"LCM/internal/storage/repositories"
 )
 
@@ -26,7 +27,14 @@ func Open(path string) (*gorm.DB, error) {
 		dsn = ":memory:?_pragma=foreign_keys(1)"
 	} else {
 		// WAL + busy_timeout für stabilen Betrieb bei parallelen Requests.
-		dsn = fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
+		//
+		// _txlock=immediate: Jede Transaktion holt die Schreibsperre gleich
+		// zu Beginn. Die Repositories lesen fast immer erst und schreiben
+		// dann; in einer verzögerten Transaktion scheitert dieser Wechsel
+		// sofort mit „database is locked", sobald ein anderer schreibt, denn
+		// busy_timeout greift dort nicht. Am Anfang wartet die Transaktion
+		// dagegen geordnet. Leser ohne Transaktion bleiben davon unberührt.
+		dsn = fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate", path)
 	}
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		// ErrRecordNotFound ist bei uns ein normaler Fall (Repositories
@@ -45,6 +53,11 @@ func Open(path string) (*gorm.DB, error) {
 	// Aufrufstellen: Von denen gibt es über achtzig.
 	if err := registerMapUpdateEncryption(db); err != nil {
 		return nil, fmt.Errorf("feldverschlüsselung einhängen: %w", err)
+	}
+	// Messung für GET /api/v1/system/db und /metrics: Wartezeit auf die
+	// Schreibsperre, Dauer der Anweisungen, Fehler durch Sperren.
+	if err := dbmetrics.Install(db, dbmetrics.Default); err != nil {
+		return nil, fmt.Errorf("messung einhängen: %w", err)
 	}
 	if path != ":memory:" {
 		// Die DB-Datei (samt WAL/SHM) enthält neben feldverschlüsselten
@@ -88,6 +101,9 @@ func Migrate(db *gorm.DB) error {
 		return err
 	}
 	if err := autoMigrateSchema(db); err != nil {
+		return err
+	}
+	if err := ensureJobTimeIndex(db); err != nil {
 		return err
 	}
 	if err := migrateEncryptUserFields(db); err != nil {
@@ -654,6 +670,7 @@ var migratedModels = []any{
 	&domain.AdvisoryCacheEntry{},
 	&domain.AdvisoryDetail{},
 	&domain.AdvisoryCacheStats{},
+	&domain.ServerCapability{},
 }
 
 func autoMigrate(db *gorm.DB) error {

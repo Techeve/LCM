@@ -8,9 +8,9 @@ import (
 	"LCM/internal/storage/repositories"
 )
 
-// TestRefreshCVEDBLeiseBeiErfolg: Der 6-Stunden-Zug der Trivy-Datenbank ist
-// im Erfolgsfall leise - vier Job-Einträge pro Tag wären Rauschen im
-// Protokoll. Es zählt nur, dass der Download tatsächlich angestoßen wurde.
+// TestRefreshCVEDBLeiseBeiErfolg: Der stündliche Abgleich der Trivy-Datenbank
+// ist im Erfolgsfall leise - ein Job je Stunde wäre Rauschen im Protokoll. Es
+// zählt nur, dass der Abgleich tatsächlich angestoßen wurde.
 func TestRefreshCVEDBLeiseBeiErfolg(t *testing.T) {
 	env := newTestEnv(t)
 
@@ -77,7 +77,7 @@ func TestRefreshCVEDBOhneScannerNoop(t *testing.T) {
 
 // TestCVEScanZiehtDatenbankVorab: Der nächtliche Gesamtscan holt sich die
 // Datenbank direkt vor dem Durchlauf - er soll mit der frischesten Ausgabe
-// arbeiten, nicht mit dem Stand des letzten 6-Stunden-Zugs.
+// arbeiten, auch wenn der stündliche Abgleich sie noch nicht geholt hat.
 func TestCVEScanZiehtDatenbankVorab(t *testing.T) {
 	env := newTestEnv(t)
 	joinTestServer(t, env, "web01")
@@ -116,5 +116,39 @@ func TestCVEScanLaeuftTrotzDBFehlerWeiter(t *testing.T) {
 	}
 	if !strings.Contains(jobs[0].Output, "vorhandenen Stand") {
 		t.Errorf("Hinweis auf den DB-Fehlschlag fehlt im Job: %q", jobs[0].Output)
+	}
+}
+
+// TestRefreshCVEDBStartetKeinenScan: Der Abgleich hält nur die Datenbank
+// aktuell. Gescannt wird nach Zeitplan.
+func TestRefreshCVEDBStartetKeinenScan(t *testing.T) {
+	env := newTestEnv(t)
+	joinTestServer(t, env, "web01")
+	env.Scanner.DBUpdated = true
+
+	env.Executor.RefreshCVEDB("scheduler")
+
+	if env.Scanner.Calls != 0 {
+		t.Errorf("der Abgleich hat %d Scans gestartet", env.Scanner.Calls)
+	}
+}
+
+// TestRefreshCVEDBFehlerJobsSindBegrenzt: Ein Host ohne Netz scheitert jede
+// Stunde. Das Protokoll bekommt davon nicht 24 gleiche Einträge am Tag.
+func TestRefreshCVEDBFehlerJobsSindBegrenzt(t *testing.T) {
+	env := newTestEnv(t)
+	env.Scanner.UpdateDBFunc = func() (string, error) {
+		return "", errors.New("kein netz")
+	}
+
+	env.Executor.RefreshCVEDB("scheduler")
+	env.Executor.RefreshCVEDB("scheduler")
+
+	_, total, err := env.Jobs.HistoryFiltered(repositories.ScopeAll(), repositories.JobFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("HistoryFiltered: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("erwartet 1 Fehler-Job, fand %d", total)
 	}
 }

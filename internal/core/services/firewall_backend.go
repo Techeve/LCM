@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"LCM/internal/core/domain"
@@ -25,6 +26,31 @@ type firewallBackend struct {
 	inSync        func(statusOutput string, ssh domain.FirewallRule, rules []domain.FirewallRule) bool
 	allowPortCmd  func(port int) string
 	removePortCmd func(port int) string
+	// applyArgs sind die Parameter, die der Helper statt des Skripts bekommt
+	// (firewall-apply). nil bei ufw: das steht selbst auf der sudo-Whitelist.
+	applyArgs func(ssh domain.FirewallRule, rules []domain.FirewallRule) []string
+}
+
+// firewallBackendOf liefert das Backend zum Werkzeug-Namen für diesen Server.
+// Im eingeschränkten Modus laufen firewalld und nftables über den
+// LCM-Helper: ihre Befehle (firewall-cmd, nft, systemctl, Dateien unter /etc)
+// stehen nicht auf der sudo-Whitelist. Der Helper trägt dieselben Rümpfe wie
+// die Skripte des Voll-Modus, prüft aber jeden Parameter.
+func firewallBackendOf(server *domain.Server, name string) firewallBackend {
+	be := firewallBackendByName(name)
+	if !server.RestrictedSudo || be.applyArgs == nil {
+		return be
+	}
+	tool := be.name
+	apply := be.applyArgs
+	be.enableScript = func(ssh domain.FirewallRule, rules []domain.FirewallRule) string {
+		return helperCmd("firewall-apply", append([]string{tool}, apply(ssh, rules)...)...)
+	}
+	be.disableScript = func() string { return helperCmd("firewall-disable", tool) }
+	be.statusCmd = helperCmd("firewall-status", tool)
+	be.allowPortCmd = func(port int) string { return helperCmd("firewall-port", "allow", tool, strconv.Itoa(port)) }
+	be.removePortCmd = func(port int) string { return helperCmd("firewall-port", "remove", tool, strconv.Itoa(port)) }
+	return be
 }
 
 // firewallBackendByName liefert das Backend zu einem Werkzeug-Namen.
@@ -42,6 +68,7 @@ func firewallBackendByName(name string) firewallBackend {
 			inSync:        firewalldInSync,
 			allowPortCmd:  firewalldAllowPortCmd,
 			removePortCmd: firewalldRemovePortCmd,
+			applyArgs:     firewalldApplyArgs,
 		}
 	case domain.FirewallToolNftables:
 		return firewallBackend{
@@ -53,6 +80,9 @@ func firewallBackendByName(name string) firewallBackend {
 			inSync:        nftablesInSync,
 			allowPortCmd:  nftablesAllowPortCmd,
 			removePortCmd: nftablesRemovePortCmd,
+			applyArgs: func(ssh domain.FirewallRule, rules []domain.FirewallRule) []string {
+				return []string{nftablesApplyArg(ssh, rules)}
+			},
 		}
 	}
 	return firewallBackend{

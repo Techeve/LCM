@@ -6,13 +6,17 @@ info:
     Endpunkte - es gibt keine separate interne API.
 
 
-    **Authentifizierung** (zwei gleichwertige Wege, siehe Sicherheitsschemas):
+    **Authentifizierung** (siehe Sicherheitsschemas):
 
-    - `Authorization: Bearer <jwt>` - Browser-/User-Sessions, ausgestellt von `POST /auth/login` (bzw.
-    `/auth/login/2fa` bei aktivierter 2FA).
+    - `X-API-Key: <key>` - Skripte und Service-zu-Service-Zugriff mit einem unter *Einstellungen → API-Keys*
+    erzeugten, auf Scopes eingeschränkten Schlüssel. Das ist der Weg für alles Automatisierte.
 
-    - `X-API-Key: <key>` - Service-zu-Service-Zugriff mit einem unter *Einstellungen → API-Keys* erzeugten,
-    auf Scopes eingeschränkten Schlüssel.
+    - Browser-Sitzung, ausgestellt von `POST /auth/login` (bzw. `/auth/login/2fa` bei aktivierter 2FA). Wie
+    der Browser sie trägt, stellt der Betreiber unter *Einstellungen → Allgemein → Anmeldung im Browser* ein
+    (`browser_session_mode`): `memory` (Standard, Kopfzeile `X-LCM-Session`) oder `cookie` (nur über HTTPS).
+
+
+    `Authorization: Bearer` gilt an dieser API nicht als Anmeldung.
 
 
     Berechtigungen werden pro Endpunkt per RBAC-Scope geprüft (in der Beschreibung als `bereich:read`/`bereich:write`
@@ -20,8 +24,8 @@ info:
     eingeschränkt.
 
 
-    Diese Referenz ist automatisch aus den Routen- und Handler-Definitionen des Quellcodes erzeugt (`internal/api/router/router.go`
-    + Controller) - Pfade, Methoden und Berechtigungen sind exakt der aktuelle Stand. Nicht jeder Endpunkt
+    Diese Referenz ist von Hand gepflegt; ein Test gleicht ihre Pfade und Methoden bei jedem Lauf mit den Routen des Servers
+    ab (`internal/api/router/router.go`). Nicht jeder Endpunkt
     hat ein vollständig dokumentiertes Response-Schema; die tatsächliche Antwort richtet sich nach dem
     jeweiligen Domain-Modell (siehe Architektur).'
 servers:
@@ -30,10 +34,14 @@ servers:
 components:
   securitySchemes:
     sessionAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: Session-Token aus POST /auth/login.
+      type: apiKey
+      in: header
+      name: X-LCM-Session
+      description: Der `session_token` aus POST /auth/login (Variante `memory`, Standard). Er gilt nur für
+        diese Sitzung und nur über die Kopfzeile. In der Variante `cookie` (nur HTTPS) liefert der Login
+        stattdessen das Cookie `__Host-lcm_session` (HttpOnly, Secure, SameSite=Strict, Path=/); ändernde
+        Anfragen mit Cookie brauchen zusätzlich den Header `X-CSRF-Token` mit dem Wert aus `csrf_token`
+        bzw. dem Cookie `__Host-lcm_csrf`, sonst 403 `auth.csrf_invalid`.
     apiKeyAuth:
       type: apiKey
       in: header
@@ -49,8 +57,10 @@ tags:
 - name: Benutzer (LCM-Login)
 - name: Berechtigungsprofile
 - name: Custom-Aktionen
+- name: Dashboard
 - name: Docker (global)
 - name: Einstellungen
+- name: Ereignisse
 - name: Jobs & Audit
 - name: Linux-Benutzer
 - name: Pakete (global)
@@ -106,15 +116,56 @@ paths:
     get:
       tags:
       - Alarme
-      summary: Events
+      summary: Alarm-Historie, neueste zuerst.
       operationId: alertCtrl_Events
+      description: 'Seitenweise mit Filtern; nur Ereignisse von Servern im Sichtbereich des Aufrufers, Ereignisse ohne Server nur für Admins. Antwort: {items, total}.
+
+
+        Benötigte Berechtigung: `alerts:manage`.'
+      parameters:
+      - name: server_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Nur Ereignisse dieses Servers.'
+      - name: type
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Alarmtyp.'
+      - name: severity
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [info, warning, critical]
+        description: 'Schweregrad.'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Frühester Zeitpunkt (RFC 3339).'
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Seitengröße (Vorgabe 100, höchstens 500).'
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Anzahl zu überspringender Treffer.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []
-      description: 'Benötigte Berechtigung: `alerts:manage`.'
       responses:
         '200':
-          description: Erfolgreich.
+          description: 'Erfolgreich: {items, total}.'
         '401':
           description: Nicht angemeldet.
         '403':
@@ -622,9 +673,15 @@ paths:
       - Auth
       summary: 'Erster Schritt: Prüft Credentials.'
       operationId: authCtrl_Login
-      description: 'Erster Schritt: Prüft Credentials. Hat der User 2FA aktiviert, wird KEIN reguläres
-        Token ausgegeben, sondern eine Challenge - der zweite Schritt (/auth/login/2fa) verifiziert den
+      description: 'Erster Schritt: Prüft Credentials. Hat der User 2FA aktiviert, wird KEINE Sitzung
+        eröffnet, sondern eine Challenge ausgegeben - der zweite Schritt (/auth/login/2fa) verifiziert den
         TOTP-Code.
+
+
+        Bei erfolgreichem Login liefert die Antwort `user`, `must_setup_2fa` und je nach Einstellung
+        `browser_session_mode`: `session_token` (Variante `memory`, kein Cookie) oder `csrf_token`
+        (Variante `cookie`, die Cookies stehen im Set-Cookie). Steht die Einstellung auf `cookie`, die
+        Anfrage kam aber über HTTP, läuft die Sitzung als `memory`.
 
 
         Öffentlicher Endpunkt (keine Authentifizierung nötig).'
@@ -651,11 +708,10 @@ paths:
     post:
       tags:
       - Auth
-      summary: 'Zweiter Schritt: Verifiziert den TOTP-Code gegen die Challenge und liefert das finale
-        JWT.'
+      summary: 'Zweiter Schritt: Verifiziert den TOTP-Code gegen die Challenge und eröffnet die Sitzung.'
       operationId: authCtrl_LoginTOTP
-      description: 'Zweiter Schritt: Verifiziert den TOTP-Code gegen die Challenge und liefert das finale
-        JWT.
+      description: 'Zweiter Schritt: Verifiziert den TOTP-Code gegen die Challenge und eröffnet die Sitzung
+        (Antwort wie bei /auth/login).
 
 
         Öffentlicher Endpunkt (keine Authentifizierung nötig).'
@@ -682,10 +738,10 @@ paths:
     post:
       tags:
       - Auth
-      summary: JWTs sind zustandslos; der Client verwirft das Token.
+      summary: Beendet die Browser-Sitzung serverseitig und schließt ihre Ereignis-Verbindungen.
       operationId: authCtrl_Logout
-      description: JWTs sind zustandslos; der Client verwirft das Token. Der Endpunkt existiert für ein
-        konsistentes API und künftige Token-Sperrlisten.
+      description: Beendet die Browser-Sitzung serverseitig und schließt ihre Ereignis-Verbindungen. Ein
+        Cookie wird nur gelöscht, wenn der Browser eins mitschickt.
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -700,8 +756,12 @@ paths:
     get:
       tags:
       - Auth
-      summary: Me
+      summary: Profil des angemeldeten Benutzers samt Rechten, 2FA- und Pflichtschritt-Zustand, Sprache,
+        Sitzungsweg und CSRF-Token.
       operationId: authCtrl_Me
+      description: 'Felder: id, username, email, first_name, last_name, display_name, roles, permissions,
+        totp_enabled, must_change_password, must_setup_2fa, language (leer = nicht gewählt), bei Browser-Sitzung
+        session_mode (`memory` oder `cookie`) und - bei Cookie-Sitzung - csrf_token.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -712,6 +772,35 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/auth/me/preferences:
+    patch:
+      tags:
+      - Auth
+      summary: Speichert Einstellungen am Konto (derzeit die Oberflächensprache).
+      operationId: authCtrl_UpdatePreferences
+      description: Speichert die Sprache am Benutzerkonto, sie gilt auf allen Geräten. `language` ist ein
+        BCP-47-Tag mit 2 bis 10 Zeichen (`de`, `en`, `en-GB`), sonst 400 `auth.language_invalid`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                language:
+                  type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '400':
+          description: Ungültige Sprachkennung.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung oder CSRF-Token fehlt.
   /api/v1/auth/password-reset:
     post:
       tags:
@@ -846,6 +935,149 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/dashboard:
+    get:
+      tags:
+      - Dashboard
+      summary: Alles für die Startseite in einem Aufruf.
+      operationId: dashboardCtrl_Get
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: 'Benötigte Berechtigung: `servers:read`. Liefert Statuskacheln, Server
+        mit Handlungsbedarf, die letzten Jobs, die nächsten Zeitplan-Läufe und die
+        letzten Alarme - alles im Sichtbereich des Aufrufers (Servergruppen), bis zu
+        fünf Sekunden zwischengespeichert; ein Ereignis (`server.status`, `job.finished`,
+        `alert.fired`) entwertet den Zwischenspeicher. `tiles` zählt je Ampelstufe
+        (`excellent`, `green`, `yellow`, `red`); `incapable` zählt zusätzlich die Server,
+        deren Paketverwaltung oder Verbindung ausgefallen ist. `attention` nennt rote vor
+        gelben Servern (höchstens 20) mit dem wichtigsten Befund (`key` und `params` wie
+        unter `/servers/statuses`). `recent_jobs` sind die 15 zuletzt beendeten Jobs ohne
+        Health-Checks. `upcoming` sind die nächsten 10 Läufe der Gruppen-Zeitpläne (ohne
+        System-Zeitpläne), berechnet aus den Cron-Ausdrücken. `recent_alerts` enthält die
+        letzten 10 Alarme nur mit dem Recht `alerts:manage`, sonst eine leere Liste.'
+      responses:
+        '200':
+          description: Das Dashboard.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at:
+                    type: string
+                    format: date-time
+                  tiles:
+                    type: object
+                    properties:
+                      excellent:
+                        type: integer
+                      green:
+                        type: integer
+                      yellow:
+                        type: integer
+                      red:
+                        type: integer
+                      incapable:
+                        type: integer
+                      total:
+                        type: integer
+                  attention:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        server_id:
+                          type: integer
+                        name:
+                          type: string
+                        level:
+                          type: string
+                          enum:
+                          - red
+                          - yellow
+                        insight:
+                          type: object
+                          nullable: true
+                          properties:
+                            severity:
+                              type: string
+                              enum:
+                              - info
+                              - warning
+                              - critical
+                            key:
+                              type: string
+                            params:
+                              type: object
+                              additionalProperties:
+                                type: string
+                            message:
+                              type: string
+                  recent_jobs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        server_id:
+                          type: integer
+                          nullable: true
+                        server_name:
+                          type: string
+                        kind:
+                          type: string
+                        name:
+                          type: string
+                        status:
+                          type: string
+                        started_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        finished_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        duration_seconds:
+                          type: integer
+                          nullable: true
+                  upcoming:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        schedule_id:
+                          type: integer
+                        schedule_name:
+                          type: string
+                        group_id:
+                          type: integer
+                        group_name:
+                          type: string
+                        next_run:
+                          type: string
+                          format: date-time
+                        rules:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: integer
+                              name:
+                                type: string
+                              kind:
+                                type: string
+                  recent_alerts:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/docker/compose:
     get:
       tags:
@@ -952,6 +1184,70 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/events:
+    get:
+      tags:
+      - Ereignisse
+      summary: Ereigniskanal (WebSocket) - meldet, was sich im Hintergrund ändert.
+      operationId: eventHub_Connect
+      security:
+      - apiKeyAuth: []
+      description: 'Upgrade auf WebSocket. Der Browser kann keine Kopfzeile setzen und holt
+        deshalb vor jedem Verbindungsaufbau mit `POST /events/ticket` eine Fahrkarte
+        (einmalig, 30 Sekunden, an Benutzer und Sitzung gebunden) und verbindet mit
+        `?ticket=...`; Skripte verbinden mit `X-API-Key` ohne Fahrkarte. Die API bleibt
+        REST - der Kanal
+        meldet nur, DASS sich etwas geändert hat; Einzelheiten holt der Client per REST
+        nach. Pflicht ist die Origin-Prüfung: Der Host des Origin-Headers muss dem Host
+        der Anfrage oder der öffentlichen Basis-Adresse entsprechen, sonst 403. Ohne
+        Origin (kein Browser) ist nur ein API-Schlüssel zugelassen. Höchstens 20
+        Verbindungen je Sitzung (Sitzungs-ID bzw. SHA-256 des API-Schlüssels); die
+        21. wird nach dem Upgrade mit Code 4429 geschlossen. Alle 60 Sekunden wird die
+        Anmeldung neu geprüft; bei Abmeldung, Passwort-, Rollen- oder Statuswechsel
+        schließt der Server mit Code 4401.
+
+
+        Client → Server (JSON, höchstens 4 KiB, höchstens 64 Themen):
+        `{"type":"subscribe","topics":[...]}` und `{"type":"unsubscribe","topics":[...]}`.
+        Themen: `servers`, `server:<id>`, `jobs`, `job:<uuid>`, `alerts`, `bulk`, `system`,
+        `dashboard`.
+
+
+        Server → Client: `{"type":"hello","version","build"}` nach dem Verbinden;
+        `{"type":"subscribed","topics":[...]}` als Antwort auf subscribe/unsubscribe;
+        `{"type":"event","event":"server.busy|server.status|job.progress|job.finished|alert.fired|bulk.progress|system.build","topic":"...","data":{...}}`;
+        `{"type":"resync"}`, wenn Ereignisse verloren gingen (alles neu laden);
+        `{"type":"ping"}` alle 30 Sekunden (zusätzlich zum WebSocket-Ping);
+        `{"type":"error","code","error","topic"}` bei ungültigen Nachrichten.
+
+
+        Jedes Ereignis wird nach Rechten und Servergruppen des Benutzers gefiltert.'
+      responses:
+        '101':
+          description: Verbindung aufgebaut.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Origin nicht zugelassen.
+  /api/v1/events/ticket:
+    post:
+      tags:
+      - Ereignisse
+      summary: Stellt die Einmal-Fahrkarte für den Ereigniskanal aus.
+      operationId: eventHub_Ticket
+      description: 'Nur mit Browser-Sitzung (X-LCM-Session oder Cookie); mit API-Key 400
+        `events.ticket_needs_session`, denn Skripte verbinden direkt mit `X-API-Key`. Die
+        Antwort enthält `ticket` und `expires_in_seconds` (30). Die Fahrkarte gilt einmal, für
+        Benutzer und Sitzung, die sie geholt haben.'
+      security:
+      - sessionAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '400':
+          description: Nur mit Browser-Sitzung.
+        '401':
+          description: Nicht angemeldet.
   /api/v1/health:
     get:
       tags:
@@ -971,22 +1267,91 @@ paths:
                   status:
                     type: string
                     example: ok
-  /api/v1/jobs/filter-options:
+  /api/v1/jobs:
     get:
       tags:
       - Jobs & Audit
-      summary: Distinkte Typen und Auslöser für die Filter-Dropdowns.
-      operationId: jobCtrl_FilterOptions
-      description: 'Distinkte Typen und Auslöser für die Filter-Dropdowns.
+      summary: Job-Liste mit Filtern, Sortierung und Blättern.
+      operationId: jobCtrl_List
+      description: 'Gefiltert, sortiert und seitenweise. Antwort: {items, total}; ein Eintrag ist der Job ohne Ausgabe plus server_name und duration_seconds.
 
 
         Benötigte Berechtigung: `jobs:read`.'
+      parameters:
+      - name: server_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Nur Jobs dieses Servers.'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Kommaliste von pending, running, success, failed, blocked, aborted.'
+      - name: kind
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Kommaliste der Job-Typen (Alias type).'
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Teilstring im Job-Namen.'
+      - name: triggered_by
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Genauer Auslöser (Benutzername oder scheduler).'
+      - name: hide_health
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: 'Health-Check-Jobs ausblenden.'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Frühester Zeitpunkt (RFC 3339).'
+      - name: until
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Spätester Zeitpunkt, exklusiv (RFC 3339).'
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [-started_at, started_at, -duration]
+          default: -started_at
+        description: 'Sortierung nach Startzeit oder Laufzeit.'
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Seitengröße (Vorgabe 50, höchstens 500).'
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Anzahl zu überspringender Treffer.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []
       responses:
         '200':
-          description: Erfolgreich.
+          description: 'Erfolgreich: {items, total}.'
         '401':
           description: Nicht angemeldet.
         '403':
@@ -995,11 +1360,98 @@ paths:
     get:
       tags:
       - Jobs & Audit
-      summary: Gefiltert und seitenweise.
-      operationId: jobCtrl_History
-      description: 'Gefiltert und seitenweise. Query-Parameter: server_id, status, type, q (Namenssuche),
-        triggered_by, hide_health, from, to (Datum YYYY-MM-DD), page, page_size. Antwort: {items, total,
-        page, page_size}.
+      summary: Alter Name von GET /api/v1/jobs.
+      operationId: jobCtrl_ListAlias
+      description: 'Gefiltert, sortiert und seitenweise. Antwort: {items, total}; ein Eintrag ist der Job ohne Ausgabe plus server_name und duration_seconds.
+
+
+        Benötigte Berechtigung: `jobs:read`.'
+      parameters:
+      - name: server_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Nur Jobs dieses Servers.'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Kommaliste von pending, running, success, failed, blocked, aborted.'
+      - name: kind
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Kommaliste der Job-Typen (Alias type).'
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Teilstring im Job-Namen.'
+      - name: triggered_by
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Genauer Auslöser (Benutzername oder scheduler).'
+      - name: hide_health
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: 'Health-Check-Jobs ausblenden.'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Frühester Zeitpunkt (RFC 3339).'
+      - name: until
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Spätester Zeitpunkt, exklusiv (RFC 3339).'
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [-started_at, started_at, -duration]
+          default: -started_at
+        description: 'Sortierung nach Startzeit oder Laufzeit.'
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Seitengröße (Vorgabe 50, höchstens 500).'
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Anzahl zu überspringender Treffer.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: 'Erfolgreich: {items, total}.'
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/jobs/filter-options:
+    get:
+      tags:
+      - Jobs & Audit
+      summary: Distinkte Typen und Auslöser für die Filter-Dropdowns.
+      operationId: jobCtrl_FilterOptions
+      description: 'Distinkte Typen und Auslöser für die Filter-Dropdowns.
 
 
         Benötigte Berechtigung: `jobs:read`.'
@@ -2745,8 +3197,8 @@ paths:
       - Sicherheit (global)
       summary: Schwachstellen-Datenbank nachladen.
       operationId: opsCtrl_UpdateCVEDB
-      description: 'Lädt die Schwachstellen-Datenbank herunter, ohne zu scannen
-        (`trivy --download-db-only`). Asynchroner Job (202 {status, job_id,
+      description: 'Holt einen neueren Stand der Schwachstellen-Datenbank im
+        Hintergrund, ohne zu scannen. Asynchroner Job (202 {status, job_id,
         job_name}) - damit ein Fehlschlag samt Ausgabe des Werkzeugs im
         Protokoll landet statt still zu verpuffen. Genau dort steht dann auch
         die Ursache (kein Netz, Proxy, Rate-Limit der Registry).
@@ -2833,15 +3285,25 @@ paths:
     get:
       tags:
       - Servergruppen
-      summary: List
+      summary: Liste der sichtbaren Servergruppen.
       operationId: groupCtrl_List
+      description: 'Ungeblättert, optional nach Namen gefiltert. Antwort: {items, total}.
+
+
+        Benötigte Berechtigung: `groups:read`.'
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Teilstring im Gruppennamen.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []
-      description: 'Benötigte Berechtigung: `server-groups:read`.'
       responses:
         '200':
-          description: Erfolgreich.
+          description: 'Erfolgreich: {items, total}.'
         '401':
           description: Nicht angemeldet.
         '403':
@@ -3132,7 +3594,7 @@ paths:
   /api/v1/server-groups/{id}/rules/order:
     put:
       tags:
-      - Gruppen
+      - Servergruppen
       summary: Legt die Ausführungsreihenfolge der Regeln eines Auslösers fest.
       operationId: groupCtrl_ReorderRules
       description: 'Die Liste nennt alle Regeln genau eines Auslösers (ein Zeitplan oder die Grundsatz-Regeln der Gruppe), jede einmal; die erste läuft zuerst.
@@ -3269,15 +3731,87 @@ paths:
     get:
       tags:
       - Server
-      summary: List
+      summary: Serverliste mit Filtern, Sortierung und Blättern.
       operationId: serverCtrl_List
+      description: 'Gefiltert, sortiert und seitenweise. Antwort: {items, total}; ein Eintrag ist der Server samt Gruppen plus status, insights, os_support, incapable und updates (überfällige Paket-Updates).
+
+
+        Benötigte Berechtigung: `servers:read`.'
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Teilstring in Name oder Host (ohne Groß-/Kleinschreibung).'
+      - name: name
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Genauer Servername (ohne Groß-/Kleinschreibung).'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Kommaliste der Ampelstufen excellent, green, yellow, red.'
+      - name: incapable
+        in: query
+        required: false
+        schema:
+          type: string
+        description: '"1" - nur Server, die LCM nicht mehr pflegen kann.'
+      - name: os
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Teilstring in OS-Name, -Version oder -Kennung.'
+      - name: kernel
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Teilstring in der Kernel-Version.'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Nur Server dieser Servergruppe.'
+      - name: ids
+        in: query
+        required: false
+        schema:
+          type: string
+        description: 'Kommaliste von Server-Kennungen.'
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [name, -name, status, -status, last_seen, -last_seen, os, -os, kernel, -kernel, updates, -updates]
+          default: name
+        description: 'Sortierung; status = schlechtester Zustand zuerst, -status = bester zuerst.'
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Seitengröße (Vorgabe 100, höchstens 1000).'
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: 'Anzahl zu überspringender Treffer.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []
-      description: 'Benötigte Berechtigung: `servers:read`.'
       responses:
         '200':
-          description: Erfolgreich.
+          description: 'Erfolgreich: {items, total}.'
         '401':
           description: Nicht angemeldet.
         '403':
@@ -3909,6 +4443,288 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/actions/{action}/preview:
+    get:
+      tags:
+      - Server
+      summary: Befehlsvorschau einer Server-Aktion - was der Lauf ausführen würde.
+      operationId: serverCtrl_ActionPreview
+      description: 'Zeigt, was eine Aktion auf dem Server ausführen würde, ohne sie auszulösen: die Befehle
+        (aus demselben Code, der sie später ausführt; Passwörter, Tokens und Schlüssel sind durch •••• ersetzt),
+        die betroffenen Pakete (aus dem gespeicherten Paketstand, kein SSH-Zugriff), ob ein Neustart nötig
+        ist, ob die Aktion umkehrbar ist und die ungefähre Dauer. Es wird weder eine Verbindung aufgebaut
+        noch ein Job angelegt.
+
+
+        Aktionen (action): refresh, upgrade-all, upgrade-security, update, remove, autoremove, repair,
+        kernels-cleanup, reboot, retry, snaps-refresh-all, snaps-refresh, snaps-remove, custom. Sie folgen den
+        Pfaden der eigentlichen Endpunkte (packages/upgrade-all, kernels/cleanup, snaps/refresh-all, …).
+
+
+        Die Dauer ist eine Schätzung aus Grundzeit und Zeit je betroffenem Paket (höchstens eine Stunde).
+        reboot ist no, maybe (Bibliotheken, Systemdienste) oder yes (Kernel, Microcode, Neustart-Aktion).
+        notes sind Codes, die die Oberfläche übersetzt. Aktionen, deren Befehle erst beim Ausführen feststehen
+        (etwa die CVE-Neubewertung bei „Erneut versuchen“), antworten mit 409 server.preview_unavailable.
+
+
+        Benötigte Berechtigung: `servers:read` (für custom zusätzlich `rules:manage`).'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: action
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [refresh, upgrade-all, upgrade-security, update, remove, autoremove, repair, kernels-cleanup,
+            reboot, retry, snaps-refresh-all, snaps-refresh, snaps-remove, custom]
+      - name: package
+        in: query
+        required: false
+        description: Paket- bzw. Snap-Namen, kommagetrennt (update, remove, snaps-refresh, snaps-remove).
+        schema:
+          type: string
+      - name: version
+        in: query
+        required: false
+        description: Exakte Version für genau ein Paket (update).
+        schema:
+          type: string
+      - name: kind
+        in: query
+        required: false
+        description: Art der Reparatur (repair).
+        schema:
+          type: string
+          enum: [dpkg_configure, fix_deps]
+      - name: category
+        in: query
+        required: false
+        description: Kategorie der Betriebsfähigkeit (retry).
+        schema:
+          type: string
+          enum: [connection, packages, rules, cve_scan]
+      - name: id
+        in: query
+        required: false
+        description: ID der Custom-Aktion (custom).
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Die Vorschau.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action:
+                    type: string
+                  commands:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        run:
+                          type: string
+                        as:
+                          type: string
+                          enum: [root, service_user]
+                  packages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        from:
+                          type: string
+                        to:
+                          type: string
+                  services:
+                    type: array
+                    items:
+                      type: string
+                  reboot:
+                    type: string
+                    enum: [no, maybe, 'yes']
+                  reversible:
+                    type: boolean
+                  duration:
+                    type: object
+                    properties:
+                      min_seconds:
+                        type: integer
+                      max_seconds:
+                        type: integer
+                  notes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code:
+                          type: string
+                        params:
+                          type: object
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden oder außerhalb des Zugriffsbereichs, unbekannte Aktion oder unbekannte
+            Custom-Aktion.
+        '409':
+          description: Die Aktion ist auf diesem Server nicht möglich (RouterOS, DSM, eingeschränktes sudo, keine
+            alten Kernel, …) oder ihre Befehle stehen vorher nicht fest.
+        '422':
+          description: Ungültige Paket- oder Snap-Namen, geschütztes Paket.
+  /api/v1/servers/{id}/capabilities:
+    get:
+      tags:
+      - Server
+      summary: Betriebsfähigkeit des Servers - immer alle vier Kategorien.
+      operationId: serverCtrl_Capabilities
+      description: 'Liefert die Betriebsfähigkeit des Servers: immer vier Einträge in der Reihenfolge connection,
+        packages, rules, cve_scan, auch ohne Verlauf. Jeder Eintrag enthält den gespeicherten Zustand (state: ok
+        oder failed, failing_since, consecutive_failures, last_success_at, last_error_class, last_error_message,
+        last_job_id, last_job_type, last_job_name, warning_class, warning_message) und berechnete Felder:
+        effective (critical, warning oder leer), stale (nur packages: Stillstand der Paketaktualisierung,
+        warning, critical oder leer), repair (dpkg_configure, fix_deps oder leer - die Reparatur, die zur
+        Fehlerklasse und Paketverwaltung des Servers passt) und retryable (ob die fehlgeschlagene Aktion
+        erneut ausgelöst werden kann).
+
+
+        Benötigte Berechtigung: `servers:read`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Liste der vier Kategorien.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    server_id:
+                      type: integer
+                    category:
+                      type: string
+                      enum: [connection, packages, rules, cve_scan]
+                    state:
+                      type: string
+                      enum: [ok, failed]
+                    failing_since:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    consecutive_failures:
+                      type: integer
+                    last_success_at:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    last_error_class:
+                      type: string
+                    last_error_message:
+                      type: string
+                    last_error_params:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    last_job_id:
+                      type: string
+                    last_job_type:
+                      type: string
+                    last_job_name:
+                      type: string
+                    warning_class:
+                      type: string
+                    warning_message:
+                      type: string
+                    effective:
+                      type: string
+                      enum: ['', critical, warning]
+                    stale:
+                      type: string
+                      enum: ['', critical, warning]
+                    repair:
+                      type: string
+                      enum: ['', dpkg_configure, fix_deps]
+                    retryable:
+                      type: boolean
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden oder außerhalb des Zugriffsbereichs.
+  /api/v1/servers/{id}/capabilities/{category}/retry:
+    post:
+      tags:
+      - Server
+      summary: Löst die fehlgeschlagene Aktion einer Kategorie erneut aus.
+      operationId: serverCtrl_RetryCapability
+      description: 'Löst die fehlgeschlagene Aktion der Kategorie erneut aus und liefert den gestarteten Job.
+        Stammt der Fehlschlag aus einer Regel, läuft dieselbe Regel nur für diesen Server; sonst die passende
+        Ad-hoc-Aktion (Updates, Security-Updates, Paketliste, CVE-Scan). Die Kategorie connection prüft die
+        Verbindung. Erst der Erfolg dieser Aktion setzt die Kategorie zurück.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: category
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [connection, packages, rules, cve_scan]
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job gestartet.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  job_id:
+                    type: string
+                  job_name:
+                    type: string
+        '400':
+          description: Unbekannte Kategorie.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden oder außerhalb des Zugriffsbereichs.
+        '409':
+          description: Die Kategorie ist nicht fehlgeschlagen, die Aktion lässt sich nicht erneut auslösen oder der Server ist belegt.
   /api/v1/servers/{id}/console:
     put:
       tags:
@@ -5105,7 +5921,7 @@ paths:
         '202':
           description: Job gestartet ({status, job_id, job_name}).
         '400':
-          description: Ungültige Regeln oder Backend im eingeschränkten Modus nicht verwaltbar.
+          description: Ungültige Regeln.
         '401':
           description: Nicht angemeldet.
         '403':
@@ -5235,6 +6051,32 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/lcm-host/update-trivy:
+    post:
+      tags:
+      - Server
+      summary: Trivy aktualisieren
+      operationId: serverCtrl_UpdateTrivy
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: 'Spielt die neuere Trivy-Version ein, die apt auf dem LCM-Host anbietet (`update_version` im Scanner-Stand). Läuft als Paket-Job.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/servers/{id}/lcm-host/status:
     get:
       tags:
@@ -5333,6 +6175,63 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/packages/repair:
+    post:
+      tags:
+      - Server
+      summary: Repariert die Paketverwaltung (dpkg --configure -a oder Abhängigkeiten).
+      operationId: serverCtrl_RepairPackages
+      description: 'Repariert die Paketverwaltung als Job. dpkg_configure schließt angebrochene
+        dpkg-Installationen ab (nur apt), fix_deps zieht fehlende Abhängigkeiten nach (apt: apt-get -f install,
+        zypper: zypper verify). Die Reparatur setzt keine Kategorie der Betriebsfähigkeit zurück - das
+        tut erst der Erfolg der erneut versuchten Aktion.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [dpkg_configure, fix_deps]
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job gestartet.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  job_id:
+                    type: string
+                  job_name:
+                    type: string
+        '400':
+          description: Unbekannte Aktion oder für die Paketverwaltung des Servers nicht unterstützt.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden oder außerhalb des Zugriffsbereichs.
+        '409':
+          description: Der Server ist belegt oder für dieses Gerät nicht verfügbar.
   /api/v1/servers/{id}/packages/update:
     post:
       tags:
@@ -5574,7 +6473,7 @@ paths:
         (202 {status, job_id, job_name}).
 
 
-        Braucht vollen Sudo-Zugriff (schreibt unter /etc).
+        Im eingeschränkten Modus schreibt der LCM-Helper die Schutzdateien.
 
 
         Benötigte Berechtigung: `servers:write`.'
@@ -5595,7 +6494,7 @@ paths:
         '403':
           description: Keine Berechtigung.
         '409':
-          description: Auf Proxmox-Systemen ausgenommen oder eingeschränkter Modus.
+          description: Auf Proxmox-Systemen ausgenommen.
   /api/v1/servers/{id}/packages/pins/kernel:
     post:
       tags:
@@ -6032,13 +6931,13 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
-  /api/v1/servers/{id}/repositories/secure:
+  /api/v1/servers/{id}/repositories/https-check:
     post:
       tags:
       - Server
-      summary: Stellt alle http-Quellen auf https um (mit Rollback).
-      operationId: serverCtrl_SecureRepositories
-      description: 'Stellt alle http-Quellen auf https um (mit Rollback).
+      summary: Vor der https-Umstellung prüfen, welche http-Quellen HTTPS sprechen.
+      operationId: serverCtrl_CheckRepositoriesHTTPS
+      description: 'Ruft vom Server aus je unverschlüsselter apt-Quelle die Release-Datei über https ab (apt-helper, ohne root, alle Quellen gleichzeitig mit kurzer Frist). Je Quelle ein Ergebnis: ok, no_https (HTTPS scheitert) oder unknown (nicht prüfbar). Für Quellen ohne HTTPS nennt alternative einen Spiegel derselben Distribution mit HTTPS, sofern LCM einen kennt. Die Quellen ohne HTTPS merkt sich LCM am Server (https_unavailable_urls). Synchron.
 
 
         Benötigte Berechtigung: `servers:write`.'
@@ -6053,7 +6952,70 @@ paths:
       - apiKeyAuth: []
       responses:
         '200':
+          description: Prüfergebnis.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        uri:
+                          type: string
+                          description: Die Quelle in ihrer http-Form.
+                        state:
+                          type: string
+                          enum:
+                          - ok
+                          - no_https
+                          - unknown
+                        alternative:
+                          type: string
+                          description: Spiegel mit HTTPS als Empfehlung; fehlt, wenn LCM keinen kennt.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '504':
+          description: Der Server hat die Prüfung nicht rechtzeitig beendet.
+  /api/v1/servers/{id}/repositories/secure:
+    post:
+      tags:
+      - Server
+      summary: Stellt http-Quellen auf https um (mit Rollback).
+      operationId: serverCtrl_SecureRepositories
+      description: 'Stellt die in uris genannten http-Quellen auf https um, ohne Body alle. Jede URL muss eine unverschlüsselte Quelle des Servers sein (in der http-Form, wie sie die Prüfung liefert), sonst 400 server.repo_not_securable. Ohne Auswahl werden alle http-Quellen umgestellt, auch solche, die die Prüfung als ohne HTTPS gemeldet hat; scheitert eine, wird alles zurückgerollt. Sicherung vor der Änderung, Probe mit apt-get update, bei Fehlschlag alles zurück.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                uris:
+                  type: array
+                  items:
+                    type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
           description: Erfolgreich.
+        '400':
+          description: Eine URL ist keine unverschlüsselte Quelle des Servers.
         '401':
           description: Nicht angemeldet.
         '403':
@@ -6130,9 +7092,9 @@ paths:
         Job-Output - niemand soll Schutz vermuten, den es nicht gibt.
 
 
-        Die Einrichtung greift in Dienste und Systemkonfiguration ein und ist
-        deshalb im eingeschränkten Modus (sudo-Whitelist) gesperrt. Für die
-        Bedienung eines bereits installierten Werkzeugs siehe
+        Die Einrichtung greift in Dienste und Systemkonfiguration ein; im
+        eingeschränkten Modus (sudo-Whitelist) läuft sie über den LCM-Helper.
+        Für die Bedienung eines bereits installierten Werkzeugs siehe
         /security-tool/manage.
 
 
@@ -6213,7 +7175,6 @@ paths:
           description: Keine Berechtigung.
         '409':
           description: >-
-            Eingeschränkter Modus (die Einrichtung braucht vollen Sudo-Zugriff),
             RouterOS-Gerät, oder CrowdSec ist auf dieser Distribution nicht
             verfügbar (pacman).
   /api/v1/servers/{id}/security-tool/bans:
@@ -6292,10 +7253,10 @@ paths:
         Asynchroner Job (202 {status, job_id, job_name}).
 
 
-        Die Aktionen greifen in Dienste und Systemkonfiguration ein und sind
-        deshalb im eingeschränkten Modus (sudo-Whitelist) gesperrt. Ist das
-        Werkzeug auf dem Server nicht installiert, endet der Job mit einem
-        Fehler statt einer irreführenden Erfolgsmeldung.
+        Die Aktionen greifen in Dienste und Systemkonfiguration ein; im
+        eingeschränkten Modus (sudo-Whitelist) laufen sie über den LCM-Helper.
+        Ist das Werkzeug auf dem Server nicht installiert, endet der Job mit
+        einem Fehler statt einer irreführenden Erfolgsmeldung.
 
 
         Benötigte Berechtigung: `servers:write`.'
@@ -6353,7 +7314,7 @@ paths:
         '401':
           description: Nicht angemeldet.
         '403':
-          description: Keine Berechtigung (im eingeschränkten Modus gesperrt).
+          description: Keine Berechtigung.
         '422':
           description: Unbekanntes Werkzeug, unbekannte Aktion oder fehlende/ungültige IP.
   /api/v1/servers/{id}/settings:
@@ -7445,7 +8406,50 @@ paths:
         '403':
           description: Keine Berechtigung.
         '409':
-          description: Auf dem LCM-Host läuft bereits ein Job.
+          description: Auf dem LCM-Host läuft bereits ein Job, oder der Zielkanal liegt bei Major- oder Feature-Nummer hinter der installierten Version (`subscription.channel_behind`) oder sein Stand nicht abrufbar ist (`subscription.channel_unknown`).
+  /api/v1/subscription/apt/channels:
+    get:
+      tags:
+      - Einstellungen
+      summary: Neueste LCM-Version je Paketkanal und ob ein Wechsel dorthin erlaubt ist.
+      operationId: subCtrl_AptChannels
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      description: 'Fragt die Paketquellen aller drei Kanäle ab (Enterprise nur mit aktiver
+        Subscription). `lock` nennt den Grund einer Sperre: `behind` (der Kanal liegt bei
+        Major- oder Feature-Nummer hinter der installierten Version, ein Patch-Rückstand
+        zählt nicht), `unknown` (Stand nicht abrufbar) oder `subscription`. Der aktive Kanal
+        ist nie gesperrt. Benötigte Berechtigung: `settings:manage`.'
+      responses:
+        '200':
+          description: Installierte Version und Stand je Kanal.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  installed:
+                    type: string
+                  channels:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        channel:
+                          type: string
+                          enum: [community, beta, enterprise]
+                        latest:
+                          type: string
+                        error:
+                          type: string
+                        lock:
+                          type: string
+                          enum: [behind, unknown, subscription]
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/subscription/verify:
     post:
       tags:
@@ -7476,7 +8480,8 @@ paths:
       security:
       - sessionAuth: []
       - apiKeyAuth: []
-      description: 'Benötigte Berechtigung: `settings:manage`.'
+      description: 'Benötigte Berechtigung: `settings:manage`. `browser_session_cookie_available` sagt,
+        ob diese Anfrage über HTTPS kam (die Cookie-Variante also wählbar ist).'
       responses:
         '200':
           description: Erfolgreich.
@@ -7536,10 +8541,32 @@ paths:
                   type: string
                 session_ttl_minutes:
                   type: integer
+                browser_session_mode:
+                  type: string
+                  enum: [memory, cookie]
+                  description: >-
+                    Wie der Browser seine Anmeldung trägt: `memory` (Standard; Kopfzeile
+                    X-LCM-Session, kein Cookie) oder `cookie` (nur über HTTPS, sonst 422
+                    `settings.session_cookie_needs_https`). Andere Werte: 422
+                    `settings.browser_session_mode_invalid`. Ein Wechsel beendet alle
+                    Browser-Sitzungen aller Benutzer, auch die des Aufrufers.
+                browser_session_mode_confirmed:
+                  type: boolean
+                  description: Der Betreiber hat die Wahl bewusst getroffen (Frage nach den Pflichtschritten).
                 job_idle_timeout_minutes:
                   type: integer
                 job_idle_timeout_slow_minutes:
                   type: integer
+                packages_stale_warn_hours:
+                  type: integer
+                  minimum: 24
+                  maximum: 720
+                  default: 48
+                packages_stale_critical_days:
+                  type: integer
+                  minimum: 2
+                  maximum: 90
+                  default: 7
                 require_2fa_roles:
                   type: string
                 public_base_url:
@@ -7556,8 +8583,15 @@ paths:
                   type: string
                 mail_from:
                   type: string
+                  description: 'Absender, mit oder ohne Anzeigenamen (lcm@example.com oder LCM <lcm@example.com>).'
+                mail_security:
+                  type: string
+                  enum: [tls, starttls, none]
+                  description: 'Verschlüsselung des Versands: tls (implizit, Port 465), starttls (Pflicht, Port 587) oder none (Port 25). Fehlt sie, gilt mail_use_tls.'
                 mail_use_tls:
                   type: boolean
+                  deprecated: true
+                  description: 'Alt: true entspricht starttls, false none. Gilt nur ohne mail_security.'
                 mail_admin_recipients:
                   type: string
       security:
@@ -8273,10 +9307,10 @@ paths:
         ihn selbsttätig wieder auf.
 
 
-        Hinweis für Clients: Die Anmeldung läuft über den Authorization-Header,
-        den `EventSource` nicht setzen kann. Der Strom ist deshalb per `fetch`
-        zu lesen; der Token gehört NICHT in die URL (er landete sonst in
-        Zugriffs- und Proxy-Protokollen).
+        Hinweis für Clients: Die Anmeldung läuft über eine Kopfzeile
+        (`X-LCM-Session` oder `X-API-Key`), die `EventSource` nicht setzen kann.
+        Der Strom ist deshalb per `fetch` zu lesen; der Sitzungswert gehört NICHT
+        in die URL (er landete sonst in Zugriffs- und Proxy-Protokollen).
 
 
         Benötigte Berechtigung: `settings:manage`.
@@ -8333,6 +9367,56 @@ paths:
       responses:
         '200':
           description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/system/db:
+    get:
+      tags:
+      - System
+      summary: Momentaufnahme der Datenbank-Messung.
+      operationId: dbCtrl_Snapshot
+      description: >-
+        Zähler und Histogramme seit dem Start des Prozesses: Wartezeit auf die
+        Schreibsperre (`lock_wait`, Dauer von `BEGIN IMMEDIATE`), Dauer der
+        Transaktionen und der Anweisungen je Tabelle und Art (`statements`,
+        Stufen in `statement_bounds_ms`), die 50 langsamsten Anweisungen ohne
+        Werte, die zehn längsten Transaktionen mit Aufrufstelle, Fehler durch
+        Sperren (`errors.busy`, `errors.locked`), Datei- und WAL-Größe samt
+        `page_count` und `freelist_count`, Zeilen je Tabelle (stündlich
+        gezählt), die letzten Läufe wie Checkpoint, VACUUM, `VACUUM INTO` und
+        System-Jobs, dazu Heap, Goroutines, offene Dateien und Poolstatistik.
+        Die Zähler leben im Speicher und beginnen bei jedem Start bei null
+        (`started_at`). Quelle für `lcm-probe`.
+
+
+        Benötigte Berechtigung: `settings:manage`, auch per API-Schlüssel mit
+        Bereich `read`.
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /metrics:
+    get:
+      tags:
+      - System
+      summary: Dieselbe Messung im Prometheus-Textformat.
+      operationId: dbCtrl_Metrics
+      description: >-
+        Liegt außerhalb von `/api/v1`, unter dem Pfad, den Prometheus
+        standardmäßig abfragt. Dauern in Sekunden, Präfix `lcm_db_` und
+        `lcm_process_`.
+
+
+        Benötigte Berechtigung: `settings:manage`, auch per API-Schlüssel mit
+        Bereich `read`.
+      responses:
+        '200':
+          description: Erfolgreich (`text/plain; version=0.0.4`).
         '401':
           description: Nicht angemeldet.
         '403':
@@ -8471,6 +9555,87 @@ paths:
           description: Keine Berechtigung.
         '409':
           description: Selbst-Update hier nicht möglich (Grund im Text).
+    delete:
+      tags:
+      - System
+      summary: Bricht das angeforderte Selbst-Update ab, solange es noch auf laufende Jobs wartet.
+      operationId: opsCtrl_CancelSelfUpdate
+      description: 'Bricht das angeforderte Selbst-Update ab, solange es noch auf laufende Jobs wartet,
+        und hebt die Sperre auf. Läuft schon die Sicherung oder das Update, geht das nicht mehr.
+
+
+        Benötigte Berechtigung: `settings:manage`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '409':
+          description: Das Update wartet nicht mehr und lässt sich nicht mehr abbrechen.
+  /api/v1/system/maintenance:
+    get:
+      tags:
+      - System
+      summary: Sagt, ob LCM gerade wegen des Selbst-Updates gesperrt ist.
+      operationId: opsCtrl_Maintenance
+      description: 'Sagt jedem angemeldeten Benutzer, ob LCM gerade wegen des Selbst-Updates gesperrt ist
+        (`active`, `phase`, `target_version`). Von der Anforderung bis zum Neustart starten keine neuen
+        Jobs, und jede schreibende Anfrage außer An- und Abmelden wird mit 423 `system.maintenance`
+        abgelehnt. Änderungen meldet das Ereignis `system.maintenance` im Thema `system`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+  /api/v1/system/release-notes:
+    get:
+      tags:
+      - System
+      summary: Hinweise zum letzten Update, solange dieser Benutzer sie nicht geschlossen hat.
+      operationId: opsCtrl_ReleaseNotes
+      description: 'Hinweise zum letzten Update, solange dieser Benutzer sie nicht geschlossen hat. Ein
+        leeres Objekt heißt: nichts zu zeigen.
+
+
+        Benötigte Berechtigung: `settings:manage`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/system/release-notes/seen:
+    post:
+      tags:
+      - System
+      summary: Hält fest, dass der Benutzer die Hinweise der laufenden Version kennt.
+      operationId: opsCtrl_ReleaseNotesSeen
+      description: 'Hält fest, dass der Benutzer die Hinweise der laufenden Version kennt.
+
+
+        Benötigte Berechtigung: `settings:manage`.'
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/system/update-check:
     post:
       tags:

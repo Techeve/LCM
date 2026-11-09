@@ -269,7 +269,7 @@ func TestDecommissionLcmHostDisablesSelfRegistration(t *testing.T) {
 		&domain.DockerImage{}, &domain.Vulnerability{}, &domain.StorageHistory{},
 		&domain.AptRepository{}, &domain.ServerGroup{}, &domain.LinuxUser{},
 		&domain.SSHSession{}, &domain.SSHCommand{}, &domain.AuditLog{},
-		&domain.PendingUserSync{}, &domain.AdvisoryFinding{}); err != nil {
+		&domain.PendingUserSync{}, &domain.AdvisoryFinding{}, &domain.ServerCapability{}); err != nil {
 		t.Fatalf("migration: %v", err)
 	}
 	servers := repositories.NewServerRepository(db)
@@ -310,7 +310,7 @@ func TestDecommissionOtherServerKeepsSelfRegistration(t *testing.T) {
 		&domain.DockerImage{}, &domain.Vulnerability{}, &domain.StorageHistory{},
 		&domain.AptRepository{}, &domain.ServerGroup{}, &domain.LinuxUser{},
 		&domain.SSHSession{}, &domain.SSHCommand{}, &domain.AuditLog{},
-		&domain.PendingUserSync{}, &domain.AdvisoryFinding{}); err != nil {
+		&domain.PendingUserSync{}, &domain.AdvisoryFinding{}, &domain.ServerCapability{}); err != nil {
 		t.Fatalf("migration: %v", err)
 	}
 	servers := repositories.NewServerRepository(db)

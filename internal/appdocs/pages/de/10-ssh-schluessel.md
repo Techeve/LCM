@@ -180,7 +180,7 @@ Danach gilt für diesen Schlüssel alles aus dem Abschnitt
 
 Ist auf einem Server zusätzlich die Zwei-Faktor-Anmeldung aktiv, brauchst du
 neben dem Schlüssel einen Einmalcode - wie du den einrichtest, steht unter
-[Zwei-Faktor-Anmeldung für SSH einrichten](/#/doku/ssh-2fa).
+[Zwei-Faktor-Anmeldung für SSH einrichten](/docs/ssh-2fa).
 
 ## Wenn es klemmt
 

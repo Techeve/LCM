@@ -1,6 +1,7 @@
 package services
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -240,5 +241,25 @@ func TestDetectProxmoxRecognizesDatacenterManager(t *testing.T) {
 				t.Errorf("erwartet (%q, %q), bekam (%q, %q)", tc.wantType, tc.wantVersion, typ, version)
 			}
 		})
+	}
+}
+
+// TestDpkgBestandOhneEntferntePakete: „rc" heißt entfernt, nur die Konfiguration
+// blieb. Solche Pakete dürfen nicht im Bestand landen, sonst meldet der CVE-Scan
+// Lücken in Software, die gar nicht mehr installiert ist.
+func TestDpkgBestandOhneEntferntePakete(t *testing.T) {
+	status := "ii  curl 8.5.0\nrc  ubuntu-advantage-tools 31.2.3\nhi  nginx 1.24.0\niF  crowdsec 1.8.2\npn  altlast 1.0\n"
+	cmd := exec.Command("sh", "-c", dpkgInstalledFilter)
+	cmd.Stdin = strings.NewReader(status)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, p := range parseDpkgList(string(out)) {
+		names = append(names, p.Name)
+	}
+	if got, want := strings.Join(names, " "), "curl nginx crowdsec"; got != want {
+		t.Fatalf("Bestand = %q, erwartet %q", got, want)
 	}
 }

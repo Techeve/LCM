@@ -107,3 +107,16 @@ func parse(v string) ([3]int, string) {
 	}
 	return nums, pre
 }
+
+// FeatureBehind meldet, ob target bei Major- oder Feature-Nummer hinter
+// installed liegt (1.48.1 hinter 2.0.0~beta.12). Die Patch-Nummer und
+// Vorabversionen zählen nicht: Ein Kanal, der nur einen Bugfix zurückliegt,
+// holt das mit dem nächsten Release auf.
+func FeatureBehind(target, installed string) bool {
+	nt, _ := parse(target)
+	ni, _ := parse(installed)
+	if nt[0] != ni[0] {
+		return nt[0] < ni[0]
+	}
+	return nt[1] < ni[1]
+}

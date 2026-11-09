@@ -80,6 +80,14 @@ func (r *AlertRepository) FindEnabled() ([]domain.AlertRule, error) {
 	return rules, nil
 }
 
+// FindEnabledByType liefert die aktiven Regeln eines Typs - für Alarme, die ein
+// Ereignis sofort auslöst und nicht erst die halbstündige Auswertung abwarten.
+func (r *AlertRepository) FindEnabledByType(alertType string) ([]domain.AlertRule, error) {
+	var rules []domain.AlertRule
+	err := r.db.Preload("Groups").Where("enabled = ? AND type = ?", true, alertType).Order("name").Find(&rules).Error
+	return rules, err
+}
+
 // CountRulesUsingChannel zählt Regeln, die einen bestimmten Kanal referenzieren
 // (für den Löschschutz eines Kanals).
 func (r *AlertRepository) CountRulesUsingChannel(channelID uint) (int64, error) {
@@ -114,20 +122,35 @@ func (r *AlertRepository) FindEvents(limit int) ([]domain.AlertEvent, error) {
 	return events, nil
 }
 
+// FindRecentEventsScoped liefert die jüngsten Alarm-Events, soweit der Scope
+// den zugehörigen Server sehen darf. Events ohne Server (Selbstbeobachtung)
+// gehören nur Admins.
+func (r *AlertRepository) FindRecentEventsScoped(scope AccessScope, limit int) ([]domain.AlertEvent, error) {
+	var events []domain.AlertEvent
+	q := scope.scopeByServerColumn(r.db, "alert_events.server_id")
+	if err := q.Order("created_at DESC").Limit(limit).Find(&events).Error; err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
 // AlertEventFilter grenzt die Event-Historie ein (leer = alles).
 type AlertEventFilter struct {
 	Type     string
 	Severity string
 	ServerID uint
+	Since    *time.Time // created_at >= Since
 	Limit    int
 	Offset   int
 }
 
-// FindEventsFiltered liefert Alarm-Events seitenweise mit Gesamtzahl.
+// FindEventsFiltered liefert Alarm-Events seitenweise mit Gesamtzahl, soweit
+// der Scope den zugehörigen Server sehen darf. Events ohne Server
+// (Selbstbeobachtung) gehören nur Admins.
 // Vorher war die Historie auf die neuesten 200 gedeckelt und Paging/Filter
 // wirkungslos - bei 677 Ereignissen waren 477 unerreichbar (R2-023).
-func (r *AlertRepository) FindEventsFiltered(f AlertEventFilter) ([]domain.AlertEvent, int64, error) {
-	q := r.db.Model(&domain.AlertEvent{})
+func (r *AlertRepository) FindEventsFiltered(scope AccessScope, f AlertEventFilter) ([]domain.AlertEvent, int64, error) {
+	q := scope.scopeByServerColumn(r.db.Model(&domain.AlertEvent{}), "alert_events.server_id")
 	if f.Type != "" {
 		q = q.Where("type = ?", f.Type)
 	}
@@ -136,6 +159,9 @@ func (r *AlertRepository) FindEventsFiltered(f AlertEventFilter) ([]domain.Alert
 	}
 	if f.ServerID != 0 {
 		q = q.Where("server_id = ?", f.ServerID)
+	}
+	if f.Since != nil {
+		q = q.Where("created_at >= ?", *f.Since)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -152,13 +178,22 @@ func (r *AlertRepository) FindEventsFiltered(f AlertEventFilter) ([]domain.Alert
 // LastEventAt liefert den Zeitpunkt des jüngsten Events für (Regel, Server) -
 // Grundlage der Cooldown-Entprellung. serverID darf nil sein (nicht
 // serverbezogene Alarme). Nullzeit, wenn noch kein Event existiert.
-func (r *AlertRepository) LastEventAt(ruleID uint, serverID *uint) (time.Time, error) {
+//
+// code "" zählt Events beliebigen Codes. Mit Code zählen nur Events genau dieses
+// Codes: Alarme, die je Server mehrere unabhängige Zustände melden
+// (action_failed: eine Kategorie je Code), entprellen jeden für sich - sonst
+// unterdrückte die Meldung der einen Kategorie die der anderen. Der Index über
+// (Regel, Server) grenzt vor; der Code filtert nur noch die wenigen Treffer.
+func (r *AlertRepository) LastEventAt(ruleID uint, serverID *uint, code string) (time.Time, error) {
 	var e domain.AlertEvent
 	q := r.db.Where("rule_id = ?", ruleID)
 	if serverID == nil {
 		q = q.Where("server_id IS NULL")
 	} else {
 		q = q.Where("server_id = ?", *serverID)
+	}
+	if code != "" {
+		q = q.Where("code = ?", code)
 	}
 	err := q.Order("created_at DESC").First(&e).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

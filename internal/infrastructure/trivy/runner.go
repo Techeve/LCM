@@ -26,7 +26,6 @@ type runner interface {
 	scanImage(ctx context.Context, ref string) ([]byte, error)
 	// info liefert Scanner-Version, DB-Stand und Abschottung.
 	info(ctx context.Context) domain.CVEDBStatus
-	// updateDB lädt die Schwachstellen-Datenbank; Rückgabe ist die Ausgabe
-	// des Werkzeugs fürs Job-Protokoll (auch im Fehlerfall gefüllt).
-	updateDB(ctx context.Context) (string, error)
+	// updateDB gleicht die Schwachstellen-Datenbank ab (siehe DBRefresher).
+	updateDB(ctx context.Context) (DBUpdate, error)
 }

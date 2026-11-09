@@ -47,6 +47,7 @@ var serializerColumns = []struct {
 	{"ssh_commands", "id", "output"},
 	{"servers", "id", "host"},
 	{"servers", "id", "ip_addresses"},
+	{"servers", "id", "update_check_error"},
 	// Firewall-/Port-Felder der Server.
 	{"servers", "id", "firewall_allowed_ports"},
 	{"servers", "id", "firewall_rules"},
@@ -68,6 +69,7 @@ var serializerColumns = []struct {
 	// Zustandsfelder, die der Scan schreibt.
 	{"servers", "id", "rhsm_status"},
 	{"servers", "id", "https_revert_urls"},
+	{"servers", "id", "https_unavailable_urls"},
 	// Benutzer-/Linux-Benutzer-Felder ohne Blindindex (die mit Blindindex -
 	// username/email - laufen weiter unten als Sonderfall).
 	{"users", "id", "first_name"},
@@ -84,6 +86,10 @@ var serializerColumns = []struct {
 	{"storage_healths", "id", "name"},
 	{"storage_healths", "id", "raw_state"},
 	{"storage_healths", "id", "message"},
+	// Fehlertexte der Betriebsfähigkeit (aus der Server-Ausgabe).
+	{"server_capabilities", "id", "last_error_message"},
+	{"server_capabilities", "id", "last_error_params"},
+	{"server_capabilities", "id", "warning_message"},
 }
 
 // blindIndexedColumns sind verschlüsselte Felder mit einem MITZUFÜHRENDEN

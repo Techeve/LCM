@@ -322,7 +322,7 @@ servers.
 ## Self-service activation
 
 Instead of knowing keys in advance, LCM can send a user an
-**activation link** by email. Via a public page (`/linux-aktivierung`,
+**activation link** by email. Via a public page (`/linux-activate`,
 reachable even without login) the user themselves sets their password and/or
 provides their public key. Only then are they distributed to the servers.
 
@@ -343,7 +343,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 <Steps>
 
-1. Under *Linux Users*, create an entry via **"+ Linux User"**
+1. Under *Linux users*, create an entry via **"Add Linux user"**
    (username, optional email).
 2. Provide SSH keys - paste directly or generate a key pair in LCM
    (the private part is offered for download **once**). Alternatively leave it
@@ -384,7 +384,7 @@ The **Users** tab on the server detail page shows the **actual state** of the
 target system: every account that can sign in via SSH or shell. System
 accounts (UID below `UID_MIN`, `nologin`/`false` shell) are hidden; `root` is
 shown on purpose. Data is collected during the full scan ("Refresh all",
-system sync) and on demand ("Rescan now").
+system sync) and on demand ("Re-read").
 
 Per account you see:
 
@@ -400,28 +400,29 @@ Per account you see:
 
 Accounts can be managed right from the overview:
 
-- **Disable** locks the password **and** expires the account - only the
+- **Lock** locks the password **and** expires the account - only the
   expiry date blocks SSH key logins too (`usermod -L` alone does not).
-  Reversible via **Enable**.
+  Reversible via **Unlock**.
 - **Remove** deletes the account permanently, including its home directory.
-- **Sync LCM users**: assign a catalog user to this server and provision it
+- **Assign LCM user**: assign a catalog user to this server and provision it
   immediately.
 
 `root`, the LCM service user and **LCM-managed accounts** are protected -
 the latter are maintained on this page (Linux users); otherwise the next
 sync would silently restore the old state.
 
-## Built-in guide at /doku
+## Built-in guide at /docs
 
-LCM ships a short end-user guide, reachable at `https://<host>/#/doku` -
+LCM ships a short end-user guide, reachable at `https://<host>/docs` -
 **without signing in**, because the SSH key instructions are needed precisely
 when someone does not have access yet. The link is therefore safe to put in an
 invitation e-mail.
 
-Currently five pages: setting up the SSH key, enrolling in two-factor login,
-and three guides for onboarding devices - [LCM agent](/en/guides/remote),
-[MikroTik RouterOS](/en/guides/routeros) and [Synology DSM](/en/guides/dsm).
-They address whoever performs the setup and each names the spot that trips
+Currently eight pages: setting up the SSH key, enrolling in two-factor login,
+three guides for onboarding devices - [LCM agent](/en/guides/remote),
+[MikroTik RouterOS](/en/guides/routeros) and [Synology DSM](/en/guides/dsm) -
+plus "What LCM changes on the server", "Keyboard shortcuts" and "Set up Linux
+users". The device guides address whoever performs the setup and each names the spot that trips
 people up: the agent port, the read-only user on the router, enforced 2FA on
 the NAS.
 
@@ -444,8 +445,9 @@ through (rationale: [Dependencies](/en/reference/dependencies)).
 
 ### Blocking, syncing and the login history
 
-Next to **"Rescan now"** there is **"Sync LCM users"**: it distributes the users
-maintained in LCM to this server right away, without waiting for a schedule.
+Next to **"Re-read"** there is **"Assign LCM user"**: it assigns a user
+maintained in LCM to this server and provisions it right away, without waiting
+for a schedule.
 
 **Distributed accounts can be blocked on a single server.** The user stays
 assigned in LCM and usable on every other server; here they are shut down. The
@@ -465,7 +467,7 @@ pass). How far back the history reaches is up to the system: `wtmp` is usually
 rotated monthly, and older logins are gone by then.
 
 For the users themselves there is also the page **Set up Linux users**
-(`/#/doku/linux-benutzer`): how to set the password through the activation
+(`/docs/linux-benutzer`): how to set the password through the activation
 link, which details LCM pushes to the server (full name, shell, keys), and
 which email address only serves the activation link. The **Users** tab of a
 server has a button that leads there directly.

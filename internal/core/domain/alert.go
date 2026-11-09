@@ -20,7 +20,12 @@ const (
 	// konfigurierten Mindest-Schwere (MinSeverity).
 	AlertTypeSecurityCVE = "security_cve"
 	// AlertTypeFailedUpdates: Patch-Management - Alarm, wenn die Zahl
-	// überfälliger Paket-Updates den Schwellenwert (MaxOutdated) übersteigt.
+	// ausstehender (noch nicht eingespielter) Paket-Updates den Schwellenwert
+	// (MaxOutdated) übersteigt. Die Oberfläche nennt ihn „Ausstehende Updates".
+	//
+	// Warum der Schlüssel trotzdem „failed_updates" heißt: Er steht in
+	// bestehenden Alarmregeln. Mit fehlgeschlagenen Aktionen hat er nichts zu
+	// tun - die meldet AlertTypeActionFailed.
 	AlertTypeFailedUpdates = "failed_updates"
 	// AlertTypeHeartbeat: Downtime-/Loss-of-Signal-Überwachung - Alarm, wenn
 	// der letzte Server-Kontakt länger als HeartbeatHours zurückliegt.
@@ -81,6 +86,19 @@ const (
 	// Quellen fuehren fuer sie meist keine Schwere, und ein Volltreffer
 	// duerfte nicht daran vorbeirutschen, dass ein Feld leer ist.
 	AlertTypeAdvisory = "advisory"
+	// AlertTypeActionFailed: LCM kann auf einem Server nicht mehr handeln -
+	// Updates scheitern, die Verbindung ist weg, Regeln oder der CVE-Scan
+	// schlagen fehl, oder die Paketläufe sind stillschweigend ausgeblieben
+	// (Stillstand). Reines Zustands-Kriterium ohne Schwellenwert; der Cooldown
+	// ist die Erinnerungsfrist.
+	//
+	// Warum als eigener Alarm: Ein einzelner fehlgeschlagener Job geht im
+	// Protokoll unter, und der nächste Health-Ping färbt den Server wieder
+	// grün. Dieser Alarm folgt dem Zustand je Kategorie (ServerCapability):
+	// Er löst beim Wechsel ok → fehlgeschlagen sofort aus, meldet die Rückkehr
+	// als Entwarnung und erinnert in der halbstündigen Auswertung, solange der
+	// Fehler besteht.
+	AlertTypeActionFailed = "action_failed"
 )
 
 // IsSelfAlert meldet, ob ein Alarm-Typ LCM SELBST bewertet statt eines
@@ -113,7 +131,6 @@ func IsSelfAlert(alertType string) bool {
 const (
 	DefaultDiskCapacityPercent  = 90
 	DefaultForecastDays         = 10
-	DefaultMaxOutdated          = 0
 	DefaultHeartbeatHours       = 24
 	DefaultAlertCooldownMinutes = 360 // 6h - verhindert Alarm-Spam
 )
@@ -225,7 +242,7 @@ type AlertEvent struct {
 	CreatedAt time.Time `gorm:"index" json:"created_at"`
 
 	RuleID   uint  `gorm:"index:idx_alert_rule_server" json:"rule_id"`
-	ServerID *uint `gorm:"index:idx_alert_rule_server" json:"server_id"`
+	ServerID *uint `gorm:"index:idx_alert_rule_server;index" json:"server_id"` // der einfache Index trägt Filter und Sichtbereich
 
 	RuleName   string `json:"rule_name"`
 	ServerName string `json:"server_name"`

@@ -21,43 +21,22 @@ func NewProfileBlockController(blocks *services.ProfileBlockService) *ProfileBlo
 }
 
 func mapBlockError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "regelbaustein nicht gefunden")
-	case errors.Is(err, services.ErrBlockBuiltin):
-		return fiber.NewError(fiber.StatusForbidden, err.Error())
-	case errors.Is(err, services.ErrBlockInUse), errors.Is(err, services.ErrBlockSlugTake),
-		errors.Is(err, services.ErrBlockNameTake):
-		return fiber.NewError(fiber.StatusConflict, err.Error())
-	case errors.Is(err, domain.ErrBlockSlugInvalid), errors.Is(err, domain.ErrBlockNameEmpty),
-		errors.Is(err, domain.ErrBlockNoVariants), errors.Is(err, domain.ErrBlockNoRules),
-		errors.Is(err, domain.ErrBlockFamily), errors.Is(err, domain.ErrBlockParamName),
-		errors.Is(err, domain.ErrBlockParamValue):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	default:
-		// Die Prüfung einer Variante liefert einen umschließenden Fehler mit
-		// Fundstelle („variante apt, …") - der gehört als Fehleingabe an den
-		// Client, nicht als Serverfehler.
-		var rootEquivalent *domain.ErrRootEquivalent
-		if errors.As(err, &rootEquivalent) || isBlockValidationError(err) {
-			return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-		}
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errBlockNotFound
 	}
-}
-
-// isBlockValidationError erkennt die umschlossenen Prüf-Fehler der Varianten.
-func isBlockValidationError(err error) bool {
-	for _, sentinel := range []error{
-		domain.ErrSudoCommandEmpty, domain.ErrSudoCommandRelative, domain.ErrSudoCommandWildcard,
-		domain.ErrSudoCommandMeta, domain.ErrSudoCommandNoArgs,
-		domain.ErrPathRelative, domain.ErrPathMeta, domain.ErrPathProtected,
-	} {
-		if errors.Is(err, sentinel) {
-			return true
-		}
+	if rootEquivalent, ok := rootEquivalentError(err); ok {
+		return rootEquivalent
 	}
-	return false
+	if mapped := matchSentinel(err, blockErrors); mapped != nil {
+		return mapped
+	}
+	// Die Prüfung einer Variante liefert einen umschließenden Fehler mit
+	// Fundstelle („variante apt, …") - der gehört als Fehleingabe an den
+	// Client, nicht als Serverfehler.
+	if mapped := matchSentinel(err, variantErrors); mapped != nil {
+		return mapped.With("detail", err.Error())
+	}
+	return err
 }
 
 type blockRequest struct {
@@ -126,15 +105,24 @@ func (ctrl *ProfileBlockController) Preview(c fiber.Ctx) error {
 		Family string `json:"family"`
 		Values string `json:"values"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLine("family", req.Family, maxNameLen); err != nil {
+		return err
+	}
+	if err := checkText("values", req.Values, maxDescriptionLen); err != nil {
+		return err
 	}
 	if req.Family == "" {
 		req.Family = domain.BlockFamilyAll
 	}
 	lines, err := ctrl.blocks.RenderPreview(id, req.Family, req.Values)
 	if err != nil {
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
+		if mapped := matchSentinel(err, blockErrors); mapped != nil {
+			return mapped
+		}
+		return errBlockRenderFailed.With("detail", err.Error())
 	}
 	return c.JSON(fiber.Map{"lines": lines})
 }
@@ -142,8 +130,11 @@ func (ctrl *ProfileBlockController) Preview(c fiber.Ctx) error {
 // Create - POST /api/v1/profile-blocks (profiles:write)
 func (ctrl *ProfileBlockController) Create(c fiber.Ctx) error {
 	var req blockRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkBlockRequest(req); err != nil {
+		return err
 	}
 	block, err := ctrl.blocks.Create(req.toInput(), actor(c))
 	if err != nil {
@@ -162,8 +153,11 @@ func (ctrl *ProfileBlockController) Clone(c fiber.Ctx) error {
 		Slug string `json:"slug"`
 		Name string `json:"name"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkLines(lineField{"slug", req.Slug, maxNameLen}, lineField{"name", req.Name, maxNameLen}); err != nil {
+		return err
 	}
 	block, err := ctrl.blocks.Clone(id, req.Slug, req.Name, actor(c))
 	if err != nil {
@@ -179,8 +173,11 @@ func (ctrl *ProfileBlockController) Update(c fiber.Ctx) error {
 		return err
 	}
 	var req blockRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if err := checkBlockRequest(req); err != nil {
+		return err
 	}
 	block, err := ctrl.blocks.Update(id, req.toInput(), actor(c))
 	if err != nil {
@@ -199,4 +196,38 @@ func (ctrl *ProfileBlockController) Delete(c fiber.Ctx) error {
 		return mapBlockError(err)
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// checkBlockRequest prüft Namen, Beschreibungen, Parameter und jede Variante.
+// Die Variantentexte sind sudoers-Zeilen und Pfade: der Service prüft ihre
+// Bedeutung (domain.ValidateBlockVariant), hier geht es um Länge und
+// Steuerzeichen.
+func checkBlockRequest(req blockRequest) error {
+	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"slug", req.Slug, maxNameLen}, lineField{"name_en", req.NameEN, maxNameLen}, lineField{"params", req.Params, maxCommandLen}); err != nil {
+		return err
+	}
+	if err := checkText("description", req.Description, maxDescriptionLen); err != nil {
+		return err
+	}
+	if err := checkText("description_en", req.DescriptionEN, maxDescriptionLen); err != nil {
+		return err
+	}
+	if err := checkCount("variants", len(req.Variants), maxItems); err != nil {
+		return err
+	}
+	for _, v := range req.Variants {
+		if err := checkLines(lineField{"variants.family", v.Family, maxNameLen}, lineField{"variants.run_as", v.RunAs, maxNameLen}); err != nil {
+			return err
+		}
+		for _, f := range []lineField{
+			{"variants.sudo_commands", v.SudoCommands, maxScriptLen},
+			{"variants.edit_paths", v.EditPaths, maxScriptLen},
+			{"variants.path_rules", v.PathRules, maxScriptLen},
+		} {
+			if err := checkText(f.name, f.value, f.max); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

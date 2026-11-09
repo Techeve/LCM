@@ -58,6 +58,13 @@ gefälschten Kopfzeile jede beliebige Adresse - in die Allowlist hinein und
 aus der Anmeldesperre heraus.
 :::
 
+Dieselbe Regel entscheidet, ob LCM eine Anfrage als **HTTPS** erkennt:
+`X-Forwarded-Proto: https` zählt nur von einem vertrauten Proxy. Das braucht die
+Cookie-Variante der Browser-Anmeldung (*Einstellungen → Allgemein → Anmeldung im
+Browser*): Ohne vertrauten Proxy gilt jede Anfrage hinter dem Proxy als HTTP, die
+Option ist gesperrt, und ein Login läuft als Arbeitsspeicher-Sitzung. Der Proxy muss
+`X-Forwarded-Proto` also setzen (die Referenzkonfigurationen unten tun das).
+
 Nach der Änderung Dienst neu starten. Prüfen: Fehlversuche im Journal tragen
 die Client-Adresse, nicht die des Proxys:
 
@@ -109,6 +116,16 @@ server {
 
     # Web-Konsole (WebSocket) - die Sitzung bleibt offen.
     location ~ ^/api/v1/servers/[0-9]+/terminal$ {
+        proxy_pass https://127.0.0.1:9310;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        include /etc/nginx/lcm-proxy.conf;
+    }
+
+    # Ereigniskanal (WebSocket) - hält die Oberfläche live, solange die Seite offen ist.
+    location = /api/v1/events {
         proxy_pass https://127.0.0.1:9310;
         proxy_http_version 1.1;
         proxy_set_header Upgrade    $http_upgrade;

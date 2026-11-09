@@ -19,9 +19,20 @@ import (
 // sudoers-Whitelist aufgenommen wird. Jedes Unterkommando validiert seine
 // Parameter streng (Slugs, Ports, Benutzernamen, URLs) und schreibt nur die
 // von LCM verwalteten Pfade - der eingeschränkte Management-Benutzer bekommt
-// damit die Kernfunktionen (Repositories, apt-Cache, SSH-Konfiguration,
-// SSH-Port, Benutzer-Sync) zurück, ohne je eine Root-Shell oder freien
-// Dateisystemzugriff zu erhalten.
+// damit alles, was LCM selbst verwaltet (Repositories, Paketkanal, apt-Cache,
+// SSH-Konfiguration, SSH-Port, Benutzer-Sync, firewalld und nftables, fail2ban
+// und CrowdSec, Paket-Pins, Neustart, LCM-Host-Aktionen), zurück, ohne je eine Root-Shell
+// oder freien Dateisystemzugriff zu erhalten.
+//
+// Die Regeln für jedes Unterkommando - sie sind die Sicherheitsgrenze:
+//   - Kein Unterkommando nimmt ein Skript oder einen frei gewählten Pfad an.
+//   - Jeder Parameter ist streng geprüft (valid_*): Aufzählungen, IPs, Ports,
+//     URLs, Paketnamen; Freitext nur base64-kodiert.
+//   - Geschrieben werden nur Pfade, die LCM verwaltet (apt-, fail2ban-,
+//     CrowdSec-, Firewall-Konfiguration).
+//   - Der Rumpf ist derselbe wie im Voll-Modus (Platzhalter @@…@@, siehe
+//     helperEmbeds): Dort setzt LCM die Variablen, hier der Helper aus den
+//     geprüften Parametern.
 const lcmHelperPath = "/usr/local/sbin/lcm-helper"
 
 // lcmHelperScript ist das Helper-Skript selbst (POSIX sh, keine Bashismen).
@@ -33,24 +44,66 @@ const lcmHelperPath = "/usr/local/sbin/lcm-helper"
 // auseinanderlaufen, und dann meldete der eingeschränkte Modus etwas anderes
 // als der Voll-Modus.
 var lcmHelperScript = strings.NewReplacer(
-	"@@DEEPSCAN_TOOLS@@", deepScanToolsScript(),
-	"@@DEEPSCAN_NEEDRESTART@@", needrestartBatchCmd,
-	"@@DEEPSCAN_LYNIS@@", lynisRunCmd,
-	"@@DEEPSCAN_CURATED@@", curatedChecksScript(),
-	"@@USERS_SCAN@@", usersScanScript(),
-	"@@HOST_TRIVY@@", trivyInstallScript,
-	"@@ACCOUNT_UNLOCK@@", accountUnlockFragment(`"$name"`),
-	"@@HOST_SANDBOX@@", sandboxInstallScript,
-	"@@HOST_APTCACHER@@", aptCacherInstallScript,
-	"@@HOST_APTCACHER_RESTART@@", aptCacherRestartScript,
-	"@@HOST_APTCACHER_CACHE_ON@@", aptCacherPermanentCacheScript(true),
-	"@@HOST_APTCACHER_CACHE_OFF@@", aptCacherPermanentCacheScript(false),
-	"@@HOST_CROWDSEC_BOUNCER@@", crowdsecLapiInstallScript(true),
-	"@@HOST_CROWDSEC_PLAIN@@", crowdsecLapiInstallScript(false),
-	"@@HOST_SELF_UPDATE@@", selfUpdateScript(false),
-	"@@HTTPS_BACKUP_DIR@@", httpsBackupDir,
-	"@@HELPER_VERSION@@", lcmHelperVersion,
-).Replace(lcmHelperTemplate)
+	append(helperEmbeds(), "@@HELPER_VERSION@@", lcmHelperVersion)...).Replace(lcmHelperTemplate)
+
+// helperEmbeds sind die Platzhalter des Helpers und die Skripte, die an ihre
+// Stelle kommen (Paare Platzhalter, Skript). Eine Liste für beides: der
+// Versionsstand (helperVersionInput) hasht genau das, was eingesetzt wird -
+// ein vergessener Eintrag dort ließe eine Änderung am Skript unbemerkt.
+func helperEmbeds() []string {
+	apt := defaultAptChannelPaths()
+	return []string{
+		"@@DEEPSCAN_TOOLS@@", deepScanToolsScript(),
+		"@@DEEPSCAN_NEEDRESTART@@", needrestartBatchCmd,
+		"@@DEEPSCAN_LYNIS@@", lynisRunCmd,
+		"@@DEEPSCAN_CURATED@@", curatedChecksScript(),
+		"@@USERS_SCAN@@", usersScanScript(),
+		"@@HOST_TRIVY@@", trivyInstallScript,
+		"@@ACCOUNT_UNLOCK@@", accountUnlockFragment(`"$name"`),
+		"@@HOST_SANDBOX@@", sandboxInstallScript,
+		"@@HOST_APTCACHER@@", aptCacherInstallScript,
+		"@@HOST_APTCACHER_RESTART@@", aptCacherRestartScript,
+		"@@HOST_APTCACHER_CACHE_ON@@", aptCacherPermanentCacheScript(true),
+		"@@HOST_APTCACHER_CACHE_OFF@@", aptCacherPermanentCacheScript(false),
+		"@@HOST_CROWDSEC_BOUNCER@@", crowdsecLapiInstallScript(true),
+		"@@HOST_CROWDSEC_PLAIN@@", crowdsecLapiInstallScript(false),
+		"@@HOST_SELF_UPDATE@@", selfUpdateScript(false),
+		"@@HOST_APT_COMMUNITY@@", communityRevertScriptIn(apt),
+		"@@HOST_APT_BETA@@", apt.vars() + betaChannelBody(apt),
+		"@@HOST_APT_ENTERPRISE@@", apt.vars() + enterpriseChannelBody(apt),
+		"@@PINS_APT@@", pinAptBody,
+		"@@PINS_DNF@@", pinDnfBody,
+		"@@PINS_PACMAN@@", pinPacmanBody,
+		"@@FW_NFT_APPLY@@", nftablesApplyBody(),
+		"@@FW_NFT_DISABLE@@", nftablesDisableScript(),
+		"@@FW_NFT_STATUS@@", nftablesStatusCmd,
+		"@@FW_NFT_PORT_ALLOW@@", nftablesAllowPortBody,
+		"@@FW_NFT_PORT_REMOVE@@", nftablesRemovePortCmd(0),
+		"@@FW_FIREWALLD_APPLY@@", firewalldApplyBody(),
+		"@@FW_FIREWALLD_DISABLE@@", firewalldDisableScript(),
+		"@@FW_FIREWALLD_STATUS@@", firewalldStatusCmd,
+		"@@FW_FIREWALLD_PORT_ALLOW@@", firewalldAllowPortBody,
+		"@@FW_FIREWALLD_PORT_REMOVE@@", firewalldRemovePortBody,
+		"@@SEC_FAIL2BAN_CONFIG@@", fail2banConfigBody,
+		"@@SEC_CROWDSEC_REPO@@", crowdsecRepoBody,
+		"@@SEC_CROWDSEC_COLLECTIONS@@", crowdsecCollectionsBody,
+		"@@SEC_CROWDSEC_CONFIGURE@@", crowdsecConfigureBody,
+		"@@SEC_CROWDSEC_LAPI_URL@@", crowdsecLapiURLBody,
+		"@@SEC_SVC_START@@", securityServiceBody(SecurityToolActionStart),
+		"@@SEC_SVC_STOP@@", securityServiceBody(SecurityToolActionStop),
+		"@@SEC_SVC_RESTART@@", securityServiceBody(SecurityToolActionRestart),
+		"@@SEC_SVC_ENABLE@@", securityServiceBody(SecurityToolActionEnable),
+		"@@SEC_SVC_DISABLE@@", securityServiceBody(SecurityToolActionDisable),
+		"@@SEC_PURGE_FAIL2BAN@@", purgeFail2banBody,
+		"@@SEC_PURGE_CROWDSEC@@", purgeCrowdSecBody,
+		"@@SEC_UNBAN_FAIL2BAN@@", unbanFail2banBody,
+		"@@SEC_UNBAN_CROWDSEC@@", unbanCrowdSecBody,
+		"@@SEC_BANS_FAIL2BAN@@", banListFail2banBody,
+		"@@SEC_BANS_CROWDSEC@@", banListCrowdSecBody,
+		"@@REBOOT@@", rebootScript(),
+		"@@HTTPS_BACKUP_DIR@@", httpsBackupDir,
+	}
+}
 
 // lcmHelperVersion kennzeichnet den Stand des Helper-Skripts. Bewusst KEINE
 // von Hand gepflegte Nummer: sie wird aus dem Skript selbst abgeleitet und
@@ -59,20 +112,19 @@ var lcmHelperScript = strings.NewReplacer(
 // veralteten Helper für aktuell.
 //
 // Gehasht wird die Vorlage MIT dem Platzhalter (der Wert steht ja erst danach
-// fest) und OHNE die eingesetzten Deep-Scan-Skripte; letztere fließen über
-// helperVersionInput trotzdem ein, damit auch eine Änderung an den Prüfungen
-// die Version bewegt.
+// fest) und alle eingesetzten Skripte (helperEmbeds); so bewegt auch eine
+// Änderung an den Prüfungen oder an den Skripten der Aktionen die Version.
 var lcmHelperVersion = helperVersion()
 
 func helperVersion() string { return shortHash(helperVersionInput()) }
 
 func helperVersionInput() string {
-	return lcmHelperTemplate + "\x00" + deepScanToolsScript() + "\x00" +
-		needrestartBatchCmd + "\x00" + lynisRunCmd + "\x00" + curatedChecksScript() +
-		"\x00" + usersScanScript() + "\x00" + trivyInstallScript + sandboxInstallScript +
-		aptCacherInstallScript + aptCacherRestartScript + aptCacherPermanentCacheScript(true) +
-		aptCacherPermanentCacheScript(false) + crowdsecLapiInstallScript(true) +
-		crowdsecLapiInstallScript(false) + selfUpdateScript(false)
+	embeds := helperEmbeds()
+	parts := []string{lcmHelperTemplate}
+	for i := 1; i < len(embeds); i += 2 {
+		parts = append(parts, embeds[i])
+	}
+	return strings.Join(parts, "\x00")
 }
 
 const lcmHelperTemplate = `#!/bin/sh
@@ -86,14 +138,29 @@ die() { echo "lcm-helper: $*" >&2; exit 1; }
 
 b64dec() { printf '%s' "$1" | base64 -d 2>/dev/null || die "ungueltige base64-daten"; }
 
-valid_slug()  { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,63}$'; }
-valid_user()  { printf '%s' "$1" | grep -Eq '^[a-z_][a-z0-9_-]{0,31}$'; }
-valid_port()  { printf '%s' "$1" | grep -Eq '^[0-9]{1,5}$' && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
-valid_url()   { printf '%s' "$1" | grep -Eq '^https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$'; }
-valid_repo_url(){ printf '%s' "$1" | grep -Eq '^https://[A-Za-z0-9._~:/@%+,=-]+$'; }
-valid_shell() { printf '%s' "$1" | grep -Eq '^/[A-Za-z0-9/._-]+$'; }
-valid_ip()    { printf '%s' "$1" | grep -Eq '^[0-9A-Fa-f:.]{2,45}$'; }
-valid_domain(){ printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._-]{1,253}$'; }
+# matches <wert> <grep-argumente>: Der Wert passt als Ganzes. grep prueft
+# zeilenweise: Ein Wert mit Zeilenumbruch kaeme sonst mit einer einzigen
+# passenden Zeile durch, und der Rest landete in einer Konfigurationsdatei.
+NL='
+'
+matches() {
+    _wert="$1"; shift
+    case "$_wert" in *"$NL"*) return 1 ;; esac
+    printf '%s' "$_wert" | grep -Eq "$@"
+}
+
+valid_slug()  { matches "$1" '^[a-z0-9][a-z0-9-]{0,63}$'; }
+valid_user()  { matches "$1" '^[a-z_][a-z0-9_-]{0,31}$'; }
+valid_port()  { matches "$1" '^[0-9]{1,5}$' && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+valid_url()   { matches "$1" '^https?://[][A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$'; }
+valid_repo_url(){ matches "$1" '^https://[A-Za-z0-9._~:/@%+,=-]+$'; }
+valid_http_repo_url(){ matches "$1" '^http://[A-Za-z0-9._~:/@%+,=-]+$'; }
+valid_pkg_url(){ matches "$1" '^https?://[A-Za-z0-9._~:/@%+,=-]+$'; }
+valid_shell() { matches "$1" '^/[A-Za-z0-9/._-]+$'; }
+valid_ip()    { matches "$1" '^[0-9A-Fa-f:.]{2,45}$'; }
+valid_cidr()  { matches "$1" '^[0-9A-Fa-f:.]{2,45}(/[0-9]{1,3})?$'; }
+valid_pin()   { matches "$1" '^[a-z0-9][a-z0-9._+-]{0,126}\*?$'; }
+valid_domain(){ matches "$1" '^[A-Za-z0-9._-]{1,253}$'; }
 
 # Der Management-Benutzer selbst und root sind fuer den Benutzer-Sync tabu -
 # sonst koennte sich der eingeschraenkte Benutzer via sudo-Grant selbst
@@ -115,7 +182,7 @@ deny_self_and_root() {
 # KillMode=process). Nur ohne aktiven Dienst (Accept=yes, sshd je Verbindung)
 # ist nichts zu tun - jede neue Verbindung liest die Konfiguration frisch.
 sshd_socket_active() { systemctl is-active --quiet ssh.socket 2>/dev/null || systemctl is-active --quiet sshd.socket 2>/dev/null; }
-sshd_reload() { sshd -t && { if sshd_socket_active; then if systemctl is-active --quiet ssh.service 2>/dev/null; then systemctl restart ssh; elif systemctl is-active --quiet sshd.service 2>/dev/null; then systemctl restart sshd; fi; else systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || service ssh reload 2>/dev/null || service sshd reload; fi; }; }
+sshd_reload() { { mkdir -p /run/sshd 2>/dev/null; sshd -t; } && { if sshd_socket_active; then if systemctl is-active --quiet ssh.service 2>/dev/null; then systemctl reset-failed ssh 2>/dev/null; systemctl restart ssh; elif systemctl is-active --quiet sshd.service 2>/dev/null; then systemctl reset-failed sshd 2>/dev/null; systemctl restart sshd; fi; else systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || service ssh reload 2>/dev/null || service sshd reload; fi; }; }
 
 # sshd_ensure_include stellt sicher, dass sshd_config das Drop-in-Verzeichnis
 # ueberhaupt einliest - openSUSE liefert keine Include-Zeile mit, dort blieb
@@ -133,7 +200,7 @@ sshd_conf_path() {
 
 sshd_ensure_include() {
     conf=$(sshd_conf_path) || die "sshd_config weder unter /etc/ssh noch unter /usr/etc/ssh gefunden"
-    grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$conf" && return 0
+    grep -vE '^[[:space:]]*(#|$)' "$conf" | head -n1 | grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' && return 0
     cp -f "$conf" /etc/ssh/sshd_config.lcm-backup || return 1
     { echo '# von LCM ergaenzt: Drop-ins einlesen (muss oben stehen)'
       echo 'Include /etc/ssh/sshd_config.d/*.conf'
@@ -187,34 +254,71 @@ repo_add() {
     apt-get update
 }
 
-# repos-https: alle http://-apt-Quellen auf https umstellen (mit Sicherung
-# und Rollback, falls apt-update danach fehlschlaegt).
+# apt_update_ok: apt-get update laufen lassen und die Ausgabe auswerten. Der
+# Exit-Code allein genuegt nicht: apt-get update endet auch dann mit 0, wenn
+# einzelne Quellen mit "Err:" scheitern.
+apt_update_ok() {
+    out=$(LC_ALL=C apt-get update 2>&1)
+    rc=$?
+    printf '%s\n' "$out"
+    [ "$rc" -eq 0 ] && ! printf '%s\n' "$out" | grep -qE '^(Err|E):'
+}
+
+# restore_sources: gesicherte Quellen zurueck und die Paketlisten neu laden,
+# denn apt verwirft beim Update die Listen der alten Adressen.
+restore_sources() {
+    for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done
+    apt-get update >/dev/null 2>&1 || true
+}
+
+# https_switch_file <datei> [url...]: die genannten http-URLs der Datei (ohne
+# Angabe alle) auf https umstellen, mit Sicherung davor. Endet mit 1, wenn sich
+# an der Datei nichts geaendert hat. Eine URL zaehlt nur als Ganzes - gefolgt
+# von Leerraum oder dem Zeilenende -, sonst stellte .../debian auch
+# .../debian-security mit um, obwohl der Anwender es abgewaehlt hat. Ein
+# Schraegstrich am Ende zaehlt nicht (deb822 schreibt ".../ubuntu/").
+https_switch_file() {
+    f="$1"; shift
+    grep -q 'http://' "$f" || return 1
+    cp "$f" "$f.lcm-bak"
+    if [ $# -eq 0 ]; then
+        sed -i 's|http://|https://|g' "$f"
+    else
+        for u in "$@"; do b="${u%/}"; h="https://${b#http://}"; sed -i -e "s|$b\(/\{0,1\}[[:space:]]\)|$h\1|g" -e "s|$b\(/\{0,1\}\)\$|$h\1|" "$f"; done
+    fi
+    # Nichts geaendert: keine Sicherung, kein Erfolg.
+    if cmp -s "$f" "$f.lcm-bak"; then rm -f "$f.lcm-bak"; return 1; fi
+}
+
+# repos-https [url...]: die genannten http://-apt-Quellen (ohne Angabe alle)
+# auf https umstellen (mit Sicherung und Rollback, falls apt-update danach
+# eine fehlerhafte Quelle meldet). Welche Quellen HTTPS sprechen, prueft der
+# LCM-Server vorher; hier wird geprueft, dass es unbedenkliche URLs sind.
 repos_https() {
+    for u in "$@"; do valid_http_repo_url "$u" || die "ungueltige paketquellen-url: $u"; done
     apt-get install -y --no-install-recommends ca-certificates >/dev/null 2>&1 || true
     changed=0
     for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
         [ -f "$f" ] || continue
-        grep -q 'http://' "$f" || continue
-        cp "$f" "$f.lcm-bak"
-        sed -i 's|http://|https://|g' "$f"
-        changed=1
+        https_switch_file "$f" "$@" && changed=1
     done
     if [ "$changed" -eq 0 ]; then echo 'LCM: keine http-quellen gefunden - nichts zu tun'; return 0; fi
-    if apt-get update; then
+    if apt_update_ok; then
         for f in $(find /etc/apt -name '*.lcm-bak'); do
             orig="${f%.lcm-bak}"; dest="@@HTTPS_BACKUP_DIR@@$orig"
             if [ -f "$dest" ]; then rm -f "$f"; else mkdir -p "$(dirname "$dest")"; mv "$f" "$dest"; fi
         done
-        echo 'LCM: alle paketquellen auf https umgestellt'
+        echo 'LCM: paketquellen auf https umgestellt'
     else
-        for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done
+        restore_sources
         echo 'LCM: apt-update nach der umstellung fehlgeschlagen - alle aenderungen zurueckgerollt'
         exit 1
     fi
 }
 
 # repos-http <url>...: die genannten Paketquellen von https auf http
-# zurueckstellen (mit Sicherung und Rollback, falls apt-update fehlschlaegt).
+# zurueckstellen (mit Sicherung und Rollback, falls apt-update eine fehlerhafte
+# Quelle meldet).
 # Zurueck darf nur, was LCM selbst umgestellt hat - welche URLs das sind,
 # entscheidet der LCM-Server anhand seines Protokolls; hier wird geprueft,
 # dass es ueberhaupt unbedenkliche URLs sind.
@@ -232,11 +336,11 @@ repos_http() {
         changed=1
     done
     if [ "$changed" -eq 0 ]; then echo 'LCM: keine der genannten quellen gefunden - nichts zu tun'; return 0; fi
-    if apt-get update; then
+    if apt_update_ok; then
         find /etc/apt -name '*.lcm-bak' -delete
         echo 'LCM: paketquellen auf http zurueckgestellt'
     else
-        for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done
+        restore_sources
         echo 'LCM: apt-update nach der rueckstellung fehlgeschlagen - alle aenderungen zurueckgerollt'
         exit 1
     fi
@@ -288,7 +392,7 @@ apt_proxy() {
 # Datei ist kein Beleg: ohne systemd greift timedatectl nicht, und ein blosses
 # Ueberschreiben von /etc/timezone bleibt ohne passenden localtime-Symlink
 # wirkungslos.
-valid_tz() { printf '%s' "$1" | grep -Eq '^[A-Za-z][A-Za-z0-9+_-]*(/[A-Za-z0-9+._-]+){0,2}$'; }
+valid_tz() { matches "$1" '^[A-Za-z][A-Za-z0-9+_-]*(/[A-Za-z0-9+._-]+){0,2}$'; }
 
 set_timezone() {
     valid_tz "$1" || die "ungueltige zeitzone"
@@ -311,7 +415,7 @@ set_ntp() {
     srv=$(printf '%s' "$1" | tr ',' ' ')
     [ -n "$srv" ] || die "keine zeitserver angegeben"
     for s in $srv; do
-        printf '%s' "$s" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9._:-]{0,251}[A-Za-z0-9])?$' || die "ungueltiger zeitserver: $s"
+        matches "$s" '^[A-Za-z0-9]([A-Za-z0-9._:-]{0,251}[A-Za-z0-9])?$' || die "ungueltiger zeitserver: $s"
     done
     synced=no; svc=""
     if command -v chronyc >/dev/null 2>&1; then
@@ -402,24 +506,27 @@ dns() {
     fi
 }
 
-# ssh-harden on|off: das LCM-Haertungs-Drop-in schreiben/entfernen und sshd
-# neu laden (bei Fehlschlag zurueckrollen).
+# ssh-harden on|off: die LCM-Haertungs-Drop-ins schreiben/entfernen und sshd
+# neu laden (bei Fehlschlag zurueckrollen). 00- setzt sich gegen fremde
+# Drop-ins wie 50-cloud-init.conf durch, siehe sshKeysOnlyDropin.
 ssh_harden() {
     dropin=/etc/ssh/sshd_config.d/60-lcm-hardening.conf
+    first=/etc/ssh/sshd_config.d/00-lcm-hardening.conf
     case "$1" in
         on)
             sshd_ensure_include || die "sshd_config konnte nicht um die Include-Zeile ergaenzt werden"
             install -d -m 755 /etc/ssh/sshd_config.d
             printf 'PasswordAuthentication no\nChallengeResponseAuthentication no\nPubkeyAuthentication yes\nPermitRootLogin prohibit-password\n' > "$dropin"
+            printf 'PasswordAuthentication no\nPubkeyAuthentication yes\n' > "$first"
             if ! sshd_reload; then
-                rm -f "$dropin"; sshd_reload
+                rm -f "$dropin" "$first"; sshd_reload
                 die "sshd-haertung fehlgeschlagen - zurueckgerollt"
             fi
             # Nachweis statt Annahme: wirkt die Haertung nicht, ist eine
             # Erfolgsmeldung schaedlicher als ein ehrlicher Fehlschlag.
             sshd_password_auth_off; rc=$?
             if [ "$rc" -eq 1 ]; then
-                rm -f "$dropin"; sshd_reload
+                rm -f "$dropin" "$first"; sshd_reload
                 die "sshd meldet weiterhin passwordauthentication yes - haertung wirkungslos, zurueckgerollt"
             fi
             # Unbelegt ist kein Erfolg (R2-014). Das Drop-in bleibt liegen -
@@ -431,7 +538,7 @@ ssh_harden() {
             fi
             ;;
         off)
-            rm -f "$dropin"
+            rm -f "$dropin" "$first"
             sshd_reload || die "sshd-reload fehlgeschlagen"
             ;;
         *) die "ssh-harden on|off" ;;
@@ -451,7 +558,9 @@ ssh_options() {
         old_ifs="${IFS}"; IFS=','
         for p in $ports; do
             valid_port "$p" || die "ungueltiger port: $p"
-            if [ "$p" -ne 22 ]; then body="${body}Port $p
+            # Nur ein einzelner Port 22 braucht keine Zeile. Im Uebergang muss er
+            # dastehen: Der Generator leitet die Ports der Socket-Unit hieraus ab.
+            if [ "$ports" != "22" ]; then body="${body}Port $p
 "; fi
         done
         IFS="${old_ifs}"
@@ -518,7 +627,11 @@ ListenStream=
         install -d -m 755 "$d"
         printf '%s' "$want" > "$f"
     fi
-    systemctl daemon-reload && systemctl restart "$u" || die "socket-unit $u konnte nicht neu gestartet werden"
+    # Der Dienst muss stehen, sonst verweigert systemd den Start der Socket-Unit.
+    systemctl daemon-reload || die "daemon-reload fehlgeschlagen"
+    systemctl stop "${u%.socket}.service" 2>/dev/null
+    systemctl reset-failed "${u%.socket}.service" 2>/dev/null
+    systemctl restart "$u" || die "socket-unit $u konnte nicht neu gestartet werden"
 }
 
 # user-ensure <name> <shell> <keys_b64> <sudo|nosudo> [fullname_b64|-] [password_b64|-]
@@ -666,6 +779,26 @@ user_remove() {
     echo "lcm-helper: benutzer $name entfernt"
 }
 
+# self-remove: den aufrufenden Service-User bei der Ziel-Bereinigung entfernen,
+# samt Schluessel, sudo-Grant, Shims und diesem Helper. Der Name kommt aus sudo,
+# nicht vom Aufrufer: Der eingeschraenkte Benutzer kann so nur sich selbst
+# entfernen. Bleibt das Konto bestehen, ist das ein FEHLER; der Helper bleibt
+# dann liegen und der Schluessel ist trotzdem weg.
+self_remove() {
+    name="${SUDO_USER:-}"
+    valid_user "$name" || die "self-remove nur ueber sudo"
+    [ "$name" != "root" ] || die "root wird nicht entfernt"
+    rm -f "/home/$name/.ssh/authorized_keys"
+    rm -f "/etc/sudoers.d/$name"
+    if command -v userdel >/dev/null 2>&1; then userdel -rf "$name" >/dev/null 2>&1
+    elif command -v deluser >/dev/null 2>&1; then deluser --remove-home "$name" >/dev/null 2>&1
+    fi
+    id -u "$name" >/dev/null 2>&1 && die "konto $name besteht weiterhin"
+    rm -rf "/home/$name"
+    rm -f "$0"
+    echo "lcm-helper: service-user $name entfernt"
+}
+
 # user-lock <name>: deaktivierten Benutzer sperren - Passwort gesperrt,
 # LCM-Schluesselblock raus, sudo-Grant weg. Konto und Home bleiben
 # (Deaktivierung ist umkehrbar; endgueltig ist user-remove). R2-039.
@@ -771,6 +904,263 @@ host_self_update() {
 @@HOST_SELF_UPDATE@@
 }
 
+# host-apt-channel <community|beta|enterprise> [...]: den apt-Paketkanal des
+# LCM-Hosts umstellen. Die Skripte kommen aus subscription_apt.go (eine Quelle
+# fuer beide Modi); die Werte, die dort Variablen sind, werden hier geprueft:
+#   beta <paketserver-url>
+#   enterprise <repo-url> <instanz-id> <zugangsschluessel_b64>
+host_apt_channel() {
+    mode="$1"; shift
+    case "$mode" in
+        community)
+            [ $# -eq 0 ] || die "host-apt-channel community"
+            @@HOST_APT_COMMUNITY@@
+            ;;
+        beta)
+            [ $# -eq 1 ] || die "host-apt-channel beta <paketserver-url>"
+            valid_pkg_url "$1" || die "ungueltige paketserver-adresse"
+            FALLBACK="$1"
+            @@HOST_APT_BETA@@
+            ;;
+        enterprise)
+            [ $# -eq 3 ] || die "host-apt-channel enterprise <repo-url> <instanz-id> <zugangsschluessel_b64>"
+            REPO="$1"; LOGIN="$2"; SECRET=$(b64dec "$3") || exit 1
+            valid_repo_url "$REPO" || die "ungueltige repository-adresse (nur https)"
+            matches "$LOGIN" '^[A-Za-z0-9._-]{1,64}$' || die "ungueltige instanz-id"
+            matches "$SECRET" '^[A-Za-z0-9._~+=-]{1,256}$' || die "ungueltiger zugangsschluessel"
+            @@HOST_APT_ENTERPRISE@@
+            ;;
+        *) die "host-apt-channel community|beta|enterprise" ;;
+    esac
+}
+
+# package-pins <apt|dnf|pacman> <noremove-csv|-> <hold-csv|->: die Paket-Pins
+# in die von LCM verwalteten Dateien schreiben (apt: Schutzdatei und
+# apt-mark hold, dnf: protected.d, pacman: eigene Include-Datei). Die Rumpfe
+# kommen aus pkgpin.go; jeder Pin-Name wird gegen [a-z0-9._+-] (und ein
+# abschliessendes *) geprueft.
+pin_words() {
+    [ "$1" = "-" ] && return 0
+    old_ifs="$IFS"; IFS=','; set -f
+    for n in $1; do
+        valid_pin "$n" || { echo "lcm-helper: ungueltiger pin-name: $n" >&2; return 1; }
+        printf '%s ' "$n"
+    done
+    set +f; IFS="$old_ifs"
+}
+
+package_pins() {
+    kind="$1"
+    NOREMOVE=$(pin_words "$2") || exit 1
+    HOLD=$(pin_words "$3") || exit 1
+    NOREMOVE="${NOREMOVE% }"; HOLD="${HOLD% }"
+    case "$kind" in
+        apt)    @@PINS_APT@@ ;;
+        dnf)    @@PINS_DNF@@ ;;
+        pacman) @@PINS_PACMAN@@ ;;
+        *) die "package-pins apt|dnf|pacman <noremove-csv|-> <hold-csv|->" ;;
+    esac
+}
+
+# nft_ruleset_ok prueft den Regelsatz Zeile fuer Zeile gegen die Formen, die
+# LCM erzeugt (nftRuleset in firewall_nftables.go): LCMs eigene Tabelle, ein
+# input-Hook mit policy drop und accept-Regeln fuer Ports, optional je Quelle
+# und mit Bemerkung. Alles andere - fremde Tabellen, andere Hooks, include,
+# flush - wird abgelehnt. Gibt die nicht passenden Zeilen aus.
+nft_ruleset_bad_lines() {
+    addr='[0-9A-Fa-f:.]+(/[0-9]{1,3})?'
+    note=' comment "[^[:cntrl:]"\\]*"'
+    printf '%s\n' "$1" | grep -Ev \
+        -e '^(delete )?table inet lcm$' \
+        -e '^table inet lcm \{$' \
+        -e '^    chain input \{$' \
+        -e '^        type filter hook input priority 0; policy drop;$' \
+        -e '^        ct state established,related accept comment "lcm:[0-9a-f]{12}"$' \
+        -e '^        (ct state invalid drop|iif "lo" accept|ip protocol icmp accept|meta l4proto ipv6-icmp accept)$' \
+        -e "^        (meta nfproto ipv[46] )?(tcp|udp) dport [0-9]{1,5} accept(${note})?\$" \
+        -e "^        ip6? saddr \\{ ${addr}(, ${addr})* \\} (tcp|udp) dport [0-9]{1,5} accept(${note})?\$" \
+        -e '^    \}$' \
+        -e '^\}$'
+}
+
+# firewall-apply nftables <ruleset_b64> | firewalld <firewall-cmd-argument>...:
+# die Firewall-Regeln von LCM anwenden. Die Rumpfe kommen aus
+# firewall_nftables.go und firewall_firewalld.go (eine Quelle fuer beide Modi).
+firewall_apply() {
+    tool="$1"; shift
+    case "$tool" in
+        nftables)
+            [ $# -eq 1 ] || die "firewall-apply nftables <ruleset_b64>"
+            RULESET_B64="$1"
+            rs=$(b64dec "$RULESET_B64") || exit 1
+            [ "${#rs}" -le 65536 ] || die "regelsatz zu gross"
+            if bad=$(nft_ruleset_bad_lines "$rs"); then
+                die "regelsatz abgelehnt, unzulaessige zeile: $(printf '%s\n' "$bad" | grep -m 1 .)"
+            fi
+            # Geschrieben wird genau, was geprueft wurde.
+            RULESET_B64=$(printf '%s\n' "$rs" | base64)
+            @@FW_NFT_APPLY@@
+            ;;
+        firewalld)
+            [ $# -ge 1 ] || die "firewall-apply firewalld <argument>..."
+            for a in "$@"; do
+                matches "$a" \
+                    -e '^--add-port=[0-9]{1,5}/(tcp|udp)$' \
+                    -e '^--add-rich-rule=rule family="ipv[46]"( source address="[0-9A-Fa-f:./]+")? port port="[0-9]{1,5}" protocol="(tcp|udp)" accept$' \
+                    || die "ungueltige freigabe: $a"
+            done
+            @@FW_FIREWALLD_APPLY@@
+            ;;
+        *) die "firewall-apply nftables|firewalld ..." ;;
+    esac
+}
+
+# firewall-disable <nftables|firewalld>, firewall-status <nftables|firewalld>
+# und firewall-port <allow|remove> <nftables|firewalld> <port>.
+firewall_disable() {
+    case "$1" in
+        nftables)  @@FW_NFT_DISABLE@@ ;;
+        firewalld) @@FW_FIREWALLD_DISABLE@@ ;;
+        *) die "firewall-disable nftables|firewalld" ;;
+    esac
+}
+
+firewall_status() {
+    case "$1" in
+        nftables)  @@FW_NFT_STATUS@@ ;;
+        firewalld) @@FW_FIREWALLD_STATUS@@ ;;
+        *) die "firewall-status nftables|firewalld" ;;
+    esac
+}
+
+firewall_port() {
+    PORT="$3"
+    valid_port "$PORT" || die "ungueltiger port"
+    case "$1/$2" in
+        allow/nftables)   @@FW_NFT_PORT_ALLOW@@ ;;
+        remove/nftables)  @@FW_NFT_PORT_REMOVE@@ ;;
+        allow/firewalld)  @@FW_FIREWALLD_PORT_ALLOW@@ ;;
+        remove/firewalld) @@FW_FIREWALLD_PORT_REMOVE@@ ;;
+        *) die "firewall-port allow|remove nftables|firewalld <port>" ;;
+    esac
+}
+
+# fail2ban-config <ip>...: LCMs fail2ban-Drop-in mit der Allowlist schreiben
+# und fail2ban neu laden. Die Rumpfe der Sicherheits-Tools kommen aus
+# securitytools.go und securitytools_manage.go.
+fail2ban_config() {
+    IGNORE=""
+    for ip in "$@"; do
+        valid_cidr "$ip" || die "ungueltige allowlist-ip: $ip"
+        IGNORE="${IGNORE:+$IGNORE }$ip"
+    done
+    @@SEC_FAIL2BAN_CONFIG@@
+}
+
+# crowdsec-repo <deb|rpm>: das CrowdSec-Herstellerrepo einrichten.
+crowdsec_repo() {
+    case "$1" in
+        deb) CS_REPO_SCRIPT=script.deb.sh ;;
+        rpm) CS_REPO_SCRIPT=script.rpm.sh ;;
+        *) die "crowdsec-repo deb|rpm" ;;
+    esac
+    @@SEC_CROWDSEC_REPO@@
+}
+
+# crowdsec-collections <name>...: Collections installieren.
+crowdsec_collections() {
+    for c in "$@"; do
+        matches "$c" '^[A-Za-z0-9][A-Za-z0-9._/-]*$' || die "ungueltige collection: $c"
+    done
+    COLLS="$*"
+    @@SEC_CROWDSEC_COLLECTIONS@@
+}
+
+# crowdsec-configure <local|keep|remote|console> <lapi-url|-> <lapi-login|->
+# <lapi-passwort_b64|-> <console-key|-> <ip>...: LAPI anbinden (nur remote und
+# console), Allowlist schreiben, Dienst aktivieren/laden.
+crowdsec_configure() {
+    LAPI_MODE="$1"; LAPI_URL=""; LAPI_LOGIN=""; LAPI_PW_B64=""; CONSOLE_KEY=""
+    case "$LAPI_MODE" in
+        local|keep) ;;
+        remote)
+            valid_url "$2" || die "ungueltige lapi-url"
+            matches "$3" '^[A-Za-z0-9._@-]{1,128}$' || die "ungueltiger lapi-login"
+            pw=$(b64dec "$4") || exit 1
+            [ -n "$pw" ] && [ "${#pw}" -le 256 ] && [ "$(printf '%s' "$pw" | wc -l)" -eq 0 ] || die "ungueltiges lapi-passwort"
+            LAPI_URL="$2"; LAPI_LOGIN="$3"; LAPI_PW_B64="$4"
+            ;;
+        console)
+            matches "$5" '^[A-Za-z0-9]{1,128}$' || die "ungueltiger console-key"
+            CONSOLE_KEY="$5"
+            ;;
+        *) die "ungueltiger lapi-modus" ;;
+    esac
+    shift 5
+    [ $# -ge 1 ] || die "crowdsec-configure braucht mindestens eine allowlist-ip"
+    IPS=""
+    for ip in "$@"; do
+        valid_cidr "$ip" || die "ungueltige allowlist-ip: $ip"
+        IPS="${IPS:+$IPS }$ip"
+    done
+    @@SEC_CROWDSEC_CONFIGURE@@
+}
+
+# crowdsec-lapi-url: die LAPI-URL aus der (root-eigenen) Credentials-Datei.
+crowdsec_lapi_url() {
+    @@SEC_CROWDSEC_LAPI_URL@@
+}
+
+# security-service <fail2ban|crowdsec> <start|stop|restart|enable|disable>
+security_service() {
+    case "$1" in
+        fail2ban|crowdsec) UNIT="$1" ;;
+        *) die "security-service fail2ban|crowdsec <aktion>" ;;
+    esac
+    case "$2" in
+        start)   @@SEC_SVC_START@@ ;;
+        stop)    @@SEC_SVC_STOP@@ ;;
+        restart) @@SEC_SVC_RESTART@@ ;;
+        enable)  @@SEC_SVC_ENABLE@@ ;;
+        disable) @@SEC_SVC_DISABLE@@ ;;
+        *) die "security-service <tool> start|stop|restart|enable|disable" ;;
+    esac
+}
+
+# security-purge <fail2ban|crowdsec>: LCMs Konfiguration des Tools entfernen.
+security_purge() {
+    case "$1" in
+        fail2ban) @@SEC_PURGE_FAIL2BAN@@ ;;
+        crowdsec) @@SEC_PURGE_CROWDSEC@@ ;;
+        *) die "security-purge fail2ban|crowdsec" ;;
+    esac
+}
+
+# security-unban <fail2ban|crowdsec> <ip> und security-bans <fail2ban|crowdsec>.
+security_unban() {
+    IP="$2"
+    valid_cidr "$IP" || die "ungueltige ip"
+    case "$1" in
+        fail2ban) @@SEC_UNBAN_FAIL2BAN@@ ;;
+        crowdsec) @@SEC_UNBAN_CROWDSEC@@ ;;
+        *) die "security-unban fail2ban|crowdsec <ip>" ;;
+    esac
+}
+
+security_bans() {
+    case "$1" in
+        fail2ban) @@SEC_BANS_FAIL2BAN@@ ;;
+        crowdsec) @@SEC_BANS_CROWDSEC@@ ;;
+        *) die "security-bans fail2ban|crowdsec" ;;
+    esac
+}
+
+# reboot: den Server neu starten, vom SSH-Kanal abgekoppelt. Eigener Name, eine
+# Shell-Funktion reboot verdeckte sonst den Befehl.
+reboot_host() {
+    @@REBOOT@@
+}
+
 cmd="${1:-}"
 [ $# -ge 1 ] && shift
 case "$cmd" in
@@ -778,8 +1168,24 @@ case "$cmd" in
     host-apt-cacher)   [ $# -eq 1 ] || die "host-apt-cacher restart|cache-on|cache-off"; host_apt_cacher "$@" ;;
     host-crowdsec-lapi) [ $# -eq 1 ] || die "host-crowdsec-lapi bouncer|plain"; host_crowdsec_lapi "$@" ;;
     host-self-update)  [ $# -eq 0 ] || die "host-self-update"; host_self_update ;;
+    host-apt-channel)  [ $# -ge 1 ] || die "host-apt-channel community|beta|enterprise [...]"; host_apt_channel "$@" ;;
+    package-pins)      [ $# -eq 3 ] || die "package-pins <apt|dnf|pacman> <noremove-csv|-> <hold-csv|->"; package_pins "$@" ;;
+    firewall-apply)    [ $# -ge 2 ] || die "firewall-apply nftables|firewalld <argument>..."; firewall_apply "$@" ;;
+    firewall-disable)  [ $# -eq 1 ] || die "firewall-disable nftables|firewalld"; firewall_disable "$@" ;;
+    firewall-status)   [ $# -eq 1 ] || die "firewall-status nftables|firewalld"; firewall_status "$@" ;;
+    firewall-port)     [ $# -eq 3 ] || die "firewall-port allow|remove nftables|firewalld <port>"; firewall_port "$@" ;;
+    fail2ban-config)   [ $# -ge 1 ] || die "fail2ban-config <ip>..."; fail2ban_config "$@" ;;
+    crowdsec-repo)     [ $# -eq 1 ] || die "crowdsec-repo deb|rpm"; crowdsec_repo "$@" ;;
+    crowdsec-collections) [ $# -ge 1 ] || die "crowdsec-collections <name>..."; crowdsec_collections "$@" ;;
+    crowdsec-configure) [ $# -ge 6 ] || die "crowdsec-configure <modus> <url|-> <login|-> <passwort_b64|-> <console-key|-> <ip>..."; crowdsec_configure "$@" ;;
+    crowdsec-lapi-url) [ $# -eq 0 ] || die "crowdsec-lapi-url"; crowdsec_lapi_url ;;
+    security-service)  [ $# -eq 2 ] || die "security-service fail2ban|crowdsec <aktion>"; security_service "$@" ;;
+    security-purge)    [ $# -eq 1 ] || die "security-purge fail2ban|crowdsec"; security_purge "$@" ;;
+    security-unban)    [ $# -eq 2 ] || die "security-unban fail2ban|crowdsec <ip>"; security_unban "$@" ;;
+    security-bans)     [ $# -eq 1 ] || die "security-bans fail2ban|crowdsec"; security_bans "$@" ;;
+    reboot)            [ $# -eq 0 ] || die "reboot"; reboot_host ;;
     repo-add)    [ $# -eq 3 ] || die "repo-add <key> <keyurl_b64> <line_b64>"; repo_add "$@" ;;
-    repos-https) repos_https ;;
+    repos-https) repos_https "$@" ;;
     repos-http)  [ $# -ge 1 ] || die "repos-http <https-url>..."; repos_http "$@" ;;
     apt-proxy)   [ $# -eq 1 ] || die "apt-proxy <url>|off"; apt_proxy "$@" ;;
     dns)         [ $# -eq 2 ] || die "dns <ips-csv|off> <testdomain>"; dns "$@" ;;
@@ -791,6 +1197,7 @@ case "$cmd" in
     profile-prune)  [ $# -le 1 ] || die "profile-prune [slugs-csv|-]"; profile_prune "${1:--}" ;;
     user-remove) [ $# -eq 1 ] || die "user-remove <name>"; user_remove "$@" ;;
     user-lock)   [ $# -eq 1 ] || die "user-lock <name>"; user_lock "$@" ;;
+    self-remove) [ $# -eq 0 ] || die "self-remove"; self_remove ;;
     timezone)    [ $# -eq 1 ] || die "timezone <zone>"; set_timezone "$@" ;;
     ntp)         [ $# -eq 1 ] || die "ntp <servers-csv>"; set_ntp "$@" ;;
     user-disable) [ $# -eq 1 ] || die "user-disable <name>"; user_disable "$@" ;;
@@ -822,6 +1229,18 @@ func helperCmd(sub string, args ...string) string {
 		parts = append(parts, shellQuote(a))
 	}
 	return strings.Join(parts, " ")
+}
+
+// helperCurrentStep steht vor einer Einrichtung, die erst Pakete installiert und
+// dann den Helper braucht: Ein veralteter Helper kennt die Unterkommandos nicht
+// und ließe den Server halb eingerichtet zurück. Gefragt wird der Helper selbst,
+// der im Scan gemerkte Stand hinkt nach einem Update hinterher.
+func helperCurrentStep(restricted bool) string {
+	if !restricted {
+		return ":"
+	}
+	return helperCmd("version") + " 2>/dev/null | grep -qF " + shellQuote(lcmHelperVersion) +
+		" || { echo 'LCM-FEHLER: Der LCM-Helper auf diesem Server ist veraltet, es wurde nichts eingerichtet. Bitte den Server neu verbinden.'; exit 1; }"
 }
 
 // parseHelperVersion liest den Stand aus der Ausgabe von `lcm-helper version`.

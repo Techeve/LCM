@@ -107,6 +107,36 @@ func (r *ServerRepository) FindAll(scope AccessScope) ([]domain.Server, error) {
 	return servers, nil
 }
 
+// FindSelected liefert die sichtbaren Server, schon in SQL auf eine Gruppe
+// (groupID > 0) und/oder eine Kennungsliste (ids) eingegrenzt. Die übrigen
+// Filter der Serverliste (Name, Host, OS, Kernel) wirken auf entschlüsselten
+// Spalten und laufen deshalb erst danach in Go.
+func (r *ServerRepository) FindSelected(scope AccessScope, groupID uint, ids []uint) ([]domain.Server, error) {
+	q := scope.scopeServers(r.db.Preload("Groups"))
+	if groupID > 0 {
+		q = q.Where("servers.id IN (SELECT server_id FROM server_group_servers WHERE server_group_id = ?)", groupID)
+	}
+	if len(ids) > 0 {
+		q = q.Where("servers.id IN ?", ids)
+	}
+	var servers []domain.Server
+	if err := q.Find(&servers).Error; err != nil {
+		return nil, err
+	}
+	return servers, nil
+}
+
+// VisibleIDs liefert die Kennungen der Server, die der Scope sehen darf - ohne
+// die Server selbst zu laden (der Ereigniskanal braucht nur die Menge).
+func (r *ServerRepository) VisibleIDs(scope AccessScope) ([]uint, error) {
+	var ids []uint
+	q := scope.scopeServers(r.db.Model(&domain.Server{}))
+	if err := q.Pluck("servers.id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // FindAllUnscoped liefert alle Server - nur für interne Prozesse
 // (Scheduler, System-Sync), nie für User-Requests verwenden.
 func (r *ServerRepository) FindAllUnscoped() ([]domain.Server, error) {
@@ -181,6 +211,9 @@ func (r *ServerRepository) Delete(id uint) error {
 			return err
 		}
 		if err := tx.Where("server_id = ?", id).Delete(&domain.AptRepository{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("server_id = ?", id).Delete(&domain.ServerCapability{}).Error; err != nil {
 			return err
 		}
 		// Offene Benutzer-Abgleiche verfallen mit dem Server - sie hätten
@@ -264,6 +297,19 @@ func (r *ServerRepository) FindPackages(serverID uint) ([]domain.Package, error)
 	return pkgs, nil
 }
 
+// FindPackage liefert ein Paket eines Servers nach Namen; nil, wenn es nicht im
+// Bestand steht.
+func (r *ServerRepository) FindPackage(serverID uint, name string) (*domain.Package, error) {
+	var pkgs []domain.Package
+	if err := r.db.Where("server_ref = ? AND name = ?", ServerRef(serverID), name).Limit(1).Find(&pkgs).Error; err != nil {
+		return nil, err
+	}
+	if len(pkgs) == 0 {
+		return nil, nil
+	}
+	return &pkgs[0], nil
+}
+
 func (r *ServerRepository) FindOutdatedPackages(serverID uint) ([]domain.Package, error) {
 	var pkgs []domain.Package
 	if err := r.db.Where("server_ref = ? AND candidate_version != '' AND candidate_version != version", ServerRef(serverID)).
@@ -283,6 +329,48 @@ func (r *ServerRepository) CountOutdatedPackages(serverID uint) (int64, error) {
 		Where("server_ref = ? AND candidate_version != '' AND candidate_version != version AND COALESCE(held_reason, '') = ''", ServerRef(serverID)).
 		Count(&n).Error
 	return n, err
+}
+
+// NothingPending meldet, ob der letzte Paket-Scan durchlief und kein Update
+// offen ließ. Eine gescheiterte Update-Prüfung sagt über den Stand nichts aus.
+func (r *ServerRepository) NothingPending(serverID uint) (bool, error) {
+	var server domain.Server
+	if err := r.db.Select("update_check_error").First(&server, serverID).Error; err != nil {
+		return false, err
+	}
+	if server.UpdateCheckError != "" {
+		return false, nil
+	}
+	n, err := r.CountOutdatedPackages(serverID)
+	return n == 0, err
+}
+
+// CountOutdatedPackagesFor zählt die überfälligen Updates (Zählweise wie
+// CountOutdatedPackages) für mehrere Server mit EINER Abfrage. Server ohne
+// überfällige Pakete fehlen im Ergebnis.
+func (r *ServerRepository) CountOutdatedPackagesFor(serverIDs []uint) (map[uint]int, error) {
+	idByRef := make(map[string]uint, len(serverIDs))
+	refs := make([]string, 0, len(serverIDs))
+	for _, id := range serverIDs {
+		ref := ServerRef(id)
+		idByRef[ref] = id
+		refs = append(refs, ref)
+	}
+	var rows []struct {
+		ServerRef string
+		N         int
+	}
+	err := r.db.Model(&domain.Package{}).Select("server_ref, COUNT(*) AS n").
+		Where("server_ref IN ? AND candidate_version != '' AND candidate_version != version AND COALESCE(held_reason, '') = ''", refs).
+		Group("server_ref").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[uint]int, len(rows))
+	for _, row := range rows {
+		counts[idByRef[row.ServerRef]] = row.N
+	}
+	return counts, nil
 }
 
 // PhasedPackagesWithCVE liefert die Pakete, deren Update in gestaffelter
@@ -416,12 +504,13 @@ func (r *ServerRepository) FindDockerImages(serverID uint) ([]domain.DockerImage
 	return images, nil
 }
 
-// CountOutdatedDockerImages zählt genutzte Images mit verfügbarem Update
-// (speist die Ampel-Bewertung).
+// CountOutdatedDockerImages zählt genutzte Images mit verfügbarem Update,
+// dazu überholte Fassungen, auf denen noch ein Container läuft: Für ihn ist
+// das Update erst fertig, wenn er neu erstellt wurde (speist die Ampel).
 func (r *ServerRepository) CountOutdatedDockerImages(serverID uint) (int64, error) {
 	var n int64
 	err := r.db.Model(&domain.DockerImage{}).
-		Where("server_id = ? AND update_available = ? AND in_use = ?", serverID, true, true).
+		Where("server_id = ? AND in_use = ? AND (update_available = ? OR superseded = ?)", serverID, true, true, true).
 		Count(&n).Error
 	return n, err
 }
@@ -1098,7 +1187,7 @@ func (r *ServerRepository) GlobalDockerOverview(scope AccessScope) ([]DockerImag
 		Select("docker_images.repository, docker_images.tag,"+
 			" COUNT(DISTINCT docker_images.server_id) AS server_count,"+
 			" SUM(CASE WHEN docker_images.in_use THEN 1 ELSE 0 END) AS in_use_count,"+
-			" MAX(CASE WHEN docker_images.update_available THEN 1 ELSE 0 END) AS update_available,"+
+			" MAX(CASE WHEN docker_images.update_available OR docker_images.restart_pending THEN 1 ELSE 0 END) AS update_available,"+
 			" MAX(CASE WHEN docker_images.check_status = 'unauthorized' THEN 1 ELSE 0 END) AS unverifiable,"+
 			" MIN(CASE WHEN docker_images.check_status = 'local' THEN 1 ELSE 0 END) AS local_only").
 		Joins("JOIN servers ON servers.id = docker_images.server_id").

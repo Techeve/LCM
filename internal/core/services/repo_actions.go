@@ -44,30 +44,26 @@ func (s *ServerService) knownRepoByKey(key string) (domain.KnownRepo, bool) {
 	return domain.KnownRepo{}, false
 }
 
-// SecureRepositories stellt alle unverschlüsselten (http://) apt-Quellen
-// des Servers auf https um. Die öffentlichen Debian-/Ubuntu-Mirrors
-// unterstützen https durchgängig; für die TLS-Verbindungen wird
-// ca-certificates sichergestellt. Sicherheitsnetz: Vor der Änderung wird
-// jede Datei gesichert - schlägt `apt-get update` danach fehl, wird alles
-// zurückgerollt und die Aktion als Fehler gemeldet.
-func (s *ServerService) SecureRepositories(scope repositories.AccessScope, id uint, actor string) (string, error) {
+// ErrRepoNotSecurable: die angeforderte Quelle ist keine unverschlüsselte
+// Quelle des Servers. Was nicht im Bestand steht, kommt nicht in die
+// Kommandozeile.
+var ErrRepoNotSecurable = errors.New("diese paketquelle ist keine unverschlüsselte quelle des servers")
+
+// SecureRepositories stellt unverschlüsselte (http://) apt-Quellen des
+// Servers auf https um: die genannten uris, ohne Auswahl alle. Die Auswahl
+// kommt aus der Prüfung vorher (CheckRepositoriesHTTPS), denn nicht jeder
+// Spiegel spricht HTTPS. Für die TLS-Verbindungen wird ca-certificates
+// sichergestellt. Sicherheitsnetz: Vor der Änderung wird jede Datei gesichert
+// - schlägt `apt-get update` danach fehl, wird alles zurückgerollt und die
+// Aktion als Fehler gemeldet.
+func (s *ServerService) SecureRepositories(scope repositories.AccessScope, id uint, uris []string, actor string) (string, error) {
 	server, err := s.servers.FindByID(scope, id)
 	if err != nil {
 		return "", err
 	}
-	// Gleiche Guards wie AddKnownRepository: RouterOS hat keine apt-Quellen,
-	// Proxmox pflegt seine Paketquellen selbst, und die Umstellung ist
-	// apt-spezifisch - auf anderen Paketverwaltungen wäre „nichts zu tun"
-	// irreführend.
-	if server.IsRouterOS() {
-		return "", ErrRouterOSUnsupported
-	}
-	if server.IsProxmox() {
-		return "", ErrProxmoxRestricted
-	}
-	if pkgFamily(server.PackageManager) != pkgApt {
-		return "", fmt.Errorf("%w: die https-Umstellung betrifft apt-Quellen, dieser Server nutzt %s",
-			ErrRepoPackageManagerMismatch, PackageManagerLabel(server.PackageManager))
+	script, targets, err := s.planSecureRepos(server, uris)
+	if err != nil {
+		return "", err
 	}
 	conn, err := s.connectRec(server, "secure-repos", actor)
 	if err != nil {
@@ -75,23 +71,115 @@ func (s *ServerService) SecureRepositories(scope repositories.AccessScope, id ui
 	}
 	defer conn.Close()
 
-	script := secureHTTPSScript()
-	// Eingeschränkter Modus: dieselbe Logik steckt validiert im LCM-Helper.
-	if server.RestrictedSudo {
-		script = helperCmd("repos-https")
-	}
-
 	output, code, runErr := conn.Run(privRun(server, script))
 	if runErr != nil {
 		return output, runErr
 	}
 	if code != 0 {
-		return output, fmt.Errorf("https-umstellung fehlgeschlagen (exit %d)", code)
+		return output, repoSwitchError("https-umstellung", output, code)
 	}
 	// Die http→https-Umstellung ist apt-spezifisch (sources.list).
 	s.rescanRepositories(conn, server, pkgApt)
-	s.audit.Log(actor, "server.secure-repos", "server", id, server.Name)
+	details := server.Name
+	if len(targets) > 0 {
+		details += ": " + strings.Join(targets, ", ")
+	}
+	s.audit.Log(actor, "server.secure-repos", "server", id, details)
 	return output, nil
+}
+
+// repoSwitchError nennt die Quellen, an denen die Umstellung gescheitert ist.
+// Die Oberfläche zeigt im Fehlerfall nur diesen Text, nicht die Ausgabe.
+func repoSwitchError(action, output string, code int) error {
+	failed := domain.ClassifyAptUpdate(output).FailedSources
+	if len(failed) == 0 {
+		return fmt.Errorf("%s fehlgeschlagen (exit %d)", action, code)
+	}
+	return fmt.Errorf("%s zurückgerollt, nicht erreichbar: %s", action, strings.Join(failed, ", "))
+}
+
+// planSecureRepos prüft Server und Auswahl und baut das Skript der
+// https-Umstellung - für den Lauf und die Befehlsvorschau gleich. Der zweite
+// Rückgabewert sind die gewählten URLs; leer heißt „alle".
+func (s *ServerService) planSecureRepos(server *domain.Server, uris []string) (string, []string, error) {
+	if err := secureReposSupported(server); err != nil {
+		return "", nil, err
+	}
+	targets, err := s.secureTargets(server, uris)
+	if err != nil {
+		return "", nil, err
+	}
+	// Eingeschränkter Modus: dieselbe Logik steckt validiert im LCM-Helper.
+	// Ein älterer Helper überginge die Auswahl und stellte alle Quellen um -
+	// mit Auswahl muss er deshalb aktuell sein.
+	if server.RestrictedSudo && len(targets) == 0 {
+		return helperCmd("repos-https"), nil, nil
+	}
+	if server.RestrictedSudo {
+		return helperCurrentStep(true) + "\n" + helperCmd("repos-https", targets...), targets, nil
+	}
+	if len(targets) == 0 {
+		return secureHTTPSScript(), nil, nil
+	}
+	return secureHTTPSURLsScript(targets), targets, nil
+}
+
+// secureReposSupported sind die Guards der https-Umstellung und ihrer Prüfung.
+// Gleich wie bei AddKnownRepository: RouterOS hat keine apt-Quellen, Proxmox
+// pflegt seine Paketquellen selbst, und die Umstellung ist apt-spezifisch -
+// auf anderen Paketverwaltungen wäre „nichts zu tun" irreführend.
+func secureReposSupported(server *domain.Server) error {
+	if server.IsRouterOS() {
+		return ErrRouterOSUnsupported
+	}
+	if server.IsProxmox() {
+		return ErrProxmoxRestricted
+	}
+	if pkgFamily(server.PackageManager) != pkgApt {
+		return fmt.Errorf("%w: die https-Umstellung betrifft apt-Quellen, dieser Server nutzt %s",
+			ErrRepoPackageManagerMismatch, PackageManagerLabel(server.PackageManager))
+	}
+	return nil
+}
+
+// secureTargets prüft die Auswahl gegen die unverschlüsselten Quellen im
+// Bestand des Servers. Ohne Auswahl bleibt es bei der Umstellung aller
+// Quellen (ältere Oberflächen schicken keine).
+func (s *ServerService) secureTargets(server *domain.Server, uris []string) ([]string, error) {
+	var wanted []string
+	for _, uri := range uris {
+		if uri = strings.TrimSpace(uri); uri != "" {
+			wanted = append(wanted, uri)
+		}
+	}
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	repos, err := s.servers.FindRepositories(server.ID)
+	if err != nil {
+		return nil, err
+	}
+	return chooseRepoURIs(domain.InsecureRepoURIs(repos), wanted)
+}
+
+// chooseRepoURIs lässt nur zu, was in allowed steht - jede URL einmal.
+func chooseRepoURIs(allowed, wanted []string) ([]string, error) {
+	known := map[string]bool{}
+	for _, uri := range allowed {
+		known[uri] = true
+	}
+	seen := map[string]bool{}
+	var chosen []string
+	for _, uri := range wanted {
+		if !known[uri] {
+			return nil, fmt.Errorf("%w: %s", ErrRepoNotSecurable, uri)
+		}
+		if !seen[uri] {
+			seen[uri] = true
+			chosen = append(chosen, uri)
+		}
+	}
+	return chosen, nil
 }
 
 // AddKnownRepository richtet eine bekannte Paketquelle aus dem Katalog auf dem
@@ -108,6 +196,31 @@ func (s *ServerService) AddKnownRepository(scope repositories.AccessScope, id ui
 	if err != nil {
 		return "", err
 	}
+	script, err := planAddRepo(server, repo)
+	if err != nil {
+		return "", err
+	}
+	conn, err := s.connectRec(server, "add-repo:"+repo.Key, actor)
+	if err != nil {
+		return "", fmt.Errorf("verbindung: %w", err)
+	}
+	defer conn.Close()
+
+	output, code, runErr := conn.Run(privRun(server, script))
+	if runErr != nil {
+		return output, runErr
+	}
+	if code != 0 {
+		return output, fmt.Errorf("repository %s einrichten fehlgeschlagen (exit %d)", repo.Name, code)
+	}
+	s.rescanRepositories(conn, server, server.PackageManager)
+	s.audit.Log(actor, "server.add-repo", "server", id, server.Name+": "+repo.Name)
+	return output, nil
+}
+
+// planAddRepo prüft Server und Quelle und baut das Einrichtungsskript - für
+// den Lauf und die Befehlsvorschau gleich.
+func planAddRepo(server *domain.Server, repo domain.KnownRepo) (string, error) {
 	if server.IsRouterOS() {
 		return "", ErrRouterOSUnsupported
 	}
@@ -123,30 +236,13 @@ func (s *ServerService) AddKnownRepository(scope repositories.AccessScope, id ui
 			ErrRepoPackageManagerMismatch, repo.Name,
 			PackageManagerLabel(repo.RepoPackageManager()), PackageManagerLabel(server.PackageManager))
 	}
-	conn, err := s.connectRec(server, "add-repo:"+repo.Key, actor)
-	if err != nil {
-		return "", fmt.Errorf("verbindung: %w", err)
-	}
-	defer conn.Close()
-
-	script := repoAddScript(server.PackageManager, repo)
 	// Eingeschränkter Modus gibt es nur auf apt-Systemen (sudoers + LCM-Helper):
 	// Key-Download, Quellen-Zeile und apt-Update erledigt dort der validierte
 	// Helper.
 	if server.RestrictedSudo && server.PackageManager == pkgApt {
-		script = helperCmd("repo-add", repo.Key, helperB64(repo.KeyURL), helperB64(repo.Line))
+		return helperCmd("repo-add", repo.Key, helperB64(repo.KeyURL), helperB64(repo.Line)), nil
 	}
-
-	output, code, runErr := conn.Run(privRun(server, script))
-	if runErr != nil {
-		return output, runErr
-	}
-	if code != 0 {
-		return output, fmt.Errorf("repository %s einrichten fehlgeschlagen (exit %d)", repo.Name, code)
-	}
-	s.rescanRepositories(conn, server, server.PackageManager)
-	s.audit.Log(actor, "server.add-repo", "server", id, server.Name+": "+repo.Name)
-	return output, nil
+	return repoAddScript(server.PackageManager, repo), nil
 }
 
 // repoAddScript baut das Einrichtungsskript einer Katalog-Quelle passend zur
@@ -249,18 +345,34 @@ func (s *ServerService) rescanRepositories(conn sshx.Conn, server *domain.Server
 	repos := scanReposFor(mgr, run)
 	_ = s.servers.ReplaceRepositories(server.ID, repos)
 	s.updateHTTPSRevertURLs(conn, server, repos)
+	s.pruneHTTPSUnavailableURLs(server, repos)
 }
 
-// secureHTTPSScript stellt alle http-Quellen auf https um. Vor der Änderung
-// wird jede betroffene Datei gesichert; schlägt `apt-get update` danach fehl,
-// wird alles zurückgerollt und die Aktion als Fehler gemeldet.
+// aptUpdateProbe lässt `apt-get update` laufen und reicht die Ausgabe durch.
+// Ausgewertet wird sie mit aptUpdateOK, denn der Exit-Code allein genügt nicht:
+// `apt-get update` endet auch dann mit 0, wenn einzelne Quellen mit „Err:"
+// scheitern. So blieb ein Spiegel ohne HTTPS als gemeldeter Erfolg stehen.
+// LC_ALL=C, weil apt auf einem deutschen System „Fehl:" schreibt.
+const aptUpdateProbe = `LCM_OUT=$(LC_ALL=C apt-get update 2>&1); LCM_RC=$?
+printf '%s\n' "$LCM_OUT"`
+
+// aptUpdateOK ist die Bedingung zu aptUpdateProbe. Sie gilt für alle Quellen:
+// War eine fremde Quelle schon vorher kaputt, bleibt der Server lieber beim
+// bekannten Stand, und die Ausgabe nennt die Quelle.
+const aptUpdateOK = `[ "$LCM_RC" -eq 0 ] && ! printf '%s\n' "$LCM_OUT" | grep -qE '^(Err|E):'`
+
+// rollbackSourcesScript stellt die gesicherten Quellen wieder her und lädt die
+// Paketlisten neu: apt verwirft beim Update die Listen der alten Adressen.
+const rollbackSourcesScript = `  for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done
+  apt-get update >/dev/null 2>&1 || true`
+
+// aptSourceFiles sind die Dateien, in denen apt seine Quellen liest.
+const aptSourceFiles = "/etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources"
+
+// secureHTTPSScript stellt alle http-Quellen auf https um.
 func secureHTTPSScript() string {
-	return strings.Join([]string{
-		// Root-Zertifikate für TLS sicherstellen (best effort - auf minimalen
-		// Systemen fehlen sie; apt >= 1.5 spricht https nativ).
-		"apt-get install -y --no-install-recommends ca-certificates >/dev/null 2>&1 || true",
-		"changed=0",
-		"for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do",
+	return secureWithRollback([]string{
+		"for f in " + aptSourceFiles + "; do",
 		`  [ -f "$f" ] || continue`,
 		`  grep -q 'http://' "$f" || continue`,
 		`  cp "$f" "$f.lcm-bak"`,
@@ -268,15 +380,57 @@ func secureHTTPSScript() string {
 		"  changed=1",
 		"done",
 		`if [ "$changed" -eq 0 ]; then echo 'LCM: keine http-quellen gefunden - nichts zu tun'; exit 0; fi`,
-		"if apt-get update; then",
+	}, "LCM: alle paketquellen auf https umgestellt")
+}
+
+// secureHTTPSURLsScript stellt genau die genannten http-URLs auf https um,
+// URL-weise wie revertHTTPSScript. Eine URL zählt nur als Ganzes - gefolgt von
+// Leerraum oder dem Zeilenende -, sonst stellte .../debian auch
+// .../debian-security mit um, obwohl der Anwender es abgewählt hat. Ein
+// Schrägstrich am Ende zählt nicht: deb822-Dateien schreiben „.../ubuntu/",
+// einzeilige oft „.../ubuntu". Geändert gilt nur, was sich wirklich geändert
+// hat, sonst meldete die Umstellung Erfolg, ohne etwas zu tun.
+func secureHTTPSURLsScript(uris []string) string {
+	return secureWithRollback([]string{
+		"URLS='" + strings.Join(uris, " ") + "'",
+		"for f in " + aptSourceFiles + "; do",
+		`  [ -f "$f" ] || continue`,
+		`  grep -q 'http://' "$f" || continue`,
+		`  cp "$f" "$f.lcm-bak"`,
+		`  for u in $URLS; do ` + httpsURLSed + `; done`,
+		`  if cmp -s "$f" "$f.lcm-bak"; then rm -f "$f.lcm-bak"; else changed=1; fi`,
+		"done",
+		`if [ "$changed" -eq 0 ]; then echo 'LCM: keine der genannten quellen gefunden - nichts zu tun'; exit 0; fi`,
+	}, "LCM: ausgewaehlte paketquellen auf https umgestellt")
+}
+
+// httpsURLSed stellt die URL $u in der Datei $f auf https um, mit oder ohne
+// Schrägstrich am Ende. Derselbe Befehl steht im LCM-Helper (https_switch_file).
+const httpsURLSed = `b="${u%/}"; h="https://${b#http://}"; sed -i -e "s|$b\(/\{0,1\}[[:space:]]\)|$h\1|g" -e "s|$b\(/\{0,1\}\)\$|$h\1|" "$f"`
+
+// secureWithRollback rahmt die Änderung an den Quellen ein: vorher
+// ca-certificates, danach die Probe mit `apt-get update`. Meldet sie eine
+// fehlerhafte Quelle, wird alles zurückgerollt und die Aktion als Fehler
+// gemeldet; sonst wandern die Sicherungen ins Protokoll.
+func secureWithRollback(change []string, okMessage string) string {
+	lines := []string{
+		// Root-Zertifikate für TLS sicherstellen (best effort - auf minimalen
+		// Systemen fehlen sie; apt >= 1.5 spricht https nativ).
+		"apt-get install -y --no-install-recommends ca-certificates >/dev/null 2>&1 || true",
+		"changed=0",
+	}
+	lines = append(lines, change...)
+	return strings.Join(append(lines,
+		aptUpdateProbe,
+		"if "+aptUpdateOK+"; then",
 		keepBackupsScript,
-		"  echo 'LCM: alle paketquellen auf https umgestellt'",
+		"  echo '"+okMessage+"'",
 		"else",
-		`  for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done`,
+		rollbackSourcesScript,
 		"  echo 'LCM: apt-update nach der umstellung fehlgeschlagen - alle aenderungen zurueckgerollt'",
 		"  exit 1",
 		"fi",
-	}, "\n")
+	), "\n")
 }
 
 // httpsBackupDir ist das Protokoll der https-Umstellung: die Sicherungskopien
@@ -315,23 +469,14 @@ var ErrNotRevertible = errors.New("diese Paketquelle ist nicht zum Zurückstelle
 // Servers zurückgestellt.
 //
 // Sicherheitsnetz wie bei der Umstellung: Vor der Änderung wird jede Datei
-// gesichert - schlägt `apt-get update` danach fehl, wird alles zurückgerollt.
+// gesichert - meldet `apt-get update` danach eine fehlerhafte Quelle, wird
+// alles zurückgerollt.
 func (s *ServerService) RevertRepositoriesHTTPS(scope repositories.AccessScope, id uint, uris []string, actor string) (string, error) {
 	server, err := s.servers.FindByID(scope, id)
 	if err != nil {
 		return "", err
 	}
-	if server.IsRouterOS() {
-		return "", ErrRouterOSUnsupported
-	}
-	if server.IsProxmox() {
-		return "", ErrProxmoxRestricted
-	}
-	if pkgFamily(server.PackageManager) != pkgApt {
-		return "", fmt.Errorf("%w: die https-Rückstellung betrifft apt-Quellen, dieser Server nutzt %s",
-			ErrRepoPackageManagerMismatch, PackageManagerLabel(server.PackageManager))
-	}
-	targets, err := revertTargets(server.HTTPSRevertURLs, uris)
+	script, _, err := planRevertRepos(server, uris)
 	if err != nil {
 		return "", err
 	}
@@ -341,21 +486,40 @@ func (s *ServerService) RevertRepositoriesHTTPS(scope repositories.AccessScope, 
 		return "", fmt.Errorf("verbindung: %w", err)
 	}
 	defer conn.Close()
-
-	script := revertHTTPSScript(targets)
-	if server.RestrictedSudo {
-		script = helperCmd("repos-http", targets...)
-	}
 	output, code, runErr := conn.Run(privRun(server, script))
 	if runErr != nil {
 		return output, runErr
 	}
 	if code != 0 {
-		return output, fmt.Errorf("https-rückstellung fehlgeschlagen (exit %d)", code)
+		return output, repoSwitchError("https-rückstellung", output, code)
 	}
 	s.rescanRepositories(conn, server, pkgApt)
 	s.audit.Log(actor, "server.revert-repos-https", "server", id, server.Name)
 	return output, nil
+}
+
+// planRevertRepos prüft Server und Auswahl und baut das Skript der
+// Rückstellung - für den Lauf und die Befehlsvorschau gleich. Der zweite
+// Rückgabewert sind die URLs, die zurückgestellt werden.
+func planRevertRepos(server *domain.Server, uris []string) (string, []string, error) {
+	if server.IsRouterOS() {
+		return "", nil, ErrRouterOSUnsupported
+	}
+	if server.IsProxmox() {
+		return "", nil, ErrProxmoxRestricted
+	}
+	if pkgFamily(server.PackageManager) != pkgApt {
+		return "", nil, fmt.Errorf("%w: die https-Rückstellung betrifft apt-Quellen, dieser Server nutzt %s",
+			ErrRepoPackageManagerMismatch, PackageManagerLabel(server.PackageManager))
+	}
+	targets, err := revertTargets(server.HTTPSRevertURLs, uris)
+	if err != nil {
+		return "", nil, err
+	}
+	if server.RestrictedSudo {
+		return helperCmd("repos-http", targets...), targets, nil
+	}
+	return revertHTTPSScript(targets), targets, nil
 }
 
 // revertTargets prüft die Auswahl gegen die beim Scan ermittelten Kandidaten
@@ -412,11 +576,12 @@ func revertHTTPSScript(uris []string) string {
 		"  changed=1",
 		"done",
 		`if [ "$changed" -eq 0 ]; then echo 'LCM: keine der genannten quellen gefunden - nichts zu tun'; exit 0; fi`,
-		"if apt-get update; then",
+		aptUpdateProbe,
+		"if " + aptUpdateOK + "; then",
 		"  find /etc/apt -name '*.lcm-bak' -delete",
 		"  echo 'LCM: paketquellen auf http zurueckgestellt'",
 		"else",
-		`  for f in $(find /etc/apt -name '*.lcm-bak'); do mv "$f" "${f%.lcm-bak}"; done`,
+		rollbackSourcesScript,
 		"  echo 'LCM: apt-update nach der rueckstellung fehlgeschlagen - alle aenderungen zurueckgerollt'",
 		"  exit 1",
 		"fi",

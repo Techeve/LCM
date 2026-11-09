@@ -1,0 +1,5 @@
+{
+  "comment": "patterns: Schlüssel, die der Code zur Laufzeit zusammensetzt, werden nicht als verwaist gemeldet (`*` am Ende = beliebige Fortsetzung). allowedWords: Produktnamen, die in Vorlagen ohne Übersetzung stehen dürfen.",
+  "patterns": ["errors.*", "insights.*", "servers.preview.notes.*", "servers.tabs.*", "servers.capability.*", "servers.status.*", "servers.repair.*", "servers.insights.severity.*", "servers.confirm.reboot.*", "servers.packages.*", "servers.snaps.*", "servers.security.*", "servers.deepScan.severity.*", "previews.notes.*", "previews.when.*"],
+  "allowedWords": ["LCM"]
+}

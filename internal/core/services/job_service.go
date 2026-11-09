@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/storage/repositories"
 )
 
@@ -26,12 +27,28 @@ var ErrJobNotRunning = errors.New("dieser job läuft nicht (mehr)")
 // Durchgang ist aktueller als er.
 var ErrJobSuperseded = errors.New("zeitplan-lauf übersprungen - der nächste durchgang ist aktueller")
 
+// watchdogActor ist der Actor, unter dem der Watchdog Jobs abbricht. An ihm
+// unterscheidet sich ein Abbruch wegen Stillstand vom manuellen.
+const watchdogActor = "job-watchdog"
+
+// JobOutcome ist das Ende eines Jobs, wie es die Betriebsfähigkeit eines
+// Servers braucht. ByWatchdog trennt den Abbruch wegen Stillstand (zählt als
+// Fehlschlag des Servers) vom manuellen Abbruch (wird nur protokolliert).
+// Skipped: Der Job gilt als Erfolg, hat aber nichts ausgeführt (siehe
+// CompleteSkipped) und sagt nichts über den Server.
+type JobOutcome struct {
+	Job        *domain.Job
+	ByWatchdog bool
+	Skipped    bool
+}
+
 // activeJob ist das Laufzeit-Handle eines laufenden Jobs: die zugehörigen
 // SSH-Verbindungen (zum Zwangs-Schließen beim Abbruch) und das
 // Finalisierungs-Flag, das das Rennen zwischen Abort und Complete entscheidet.
 type activeJob struct {
 	closers   []io.Closer
-	finalized bool // true: Abort hat den Job bereits abgeschlossen
+	finalized bool  // true: Abort hat den Job bereits abgeschlossen
+	serverID  *uint // Server des Jobs (nil: System-Job) - für job.progress
 }
 
 // JobService verwaltet den Lebenszyklus aller Jobs und erzwingt den
@@ -58,10 +75,20 @@ type JobService struct {
 	// Frage und dürfen nicht auseinanderlaufen.
 	queues map[uint][]*queuedJob
 
+	// maintenance hält neue Jobs zurück, solange LCM sich selbst aktualisiert;
+	// pass lässt dabei den Update-Lauf durch (siehe job_maintenance.go). Beide
+	// stehen unter mu, denn sie entscheiden mit über „darf er starten?".
+	maintenance bool
+	pass        *maintenancePass
+
 	// onFinished erfährt vom Ende jedes Jobs (serverID nil: serverloser
 	// System-Job) - damit verwirft der ServerService die zwischengespeicherte
 	// Ampel des Servers. Optional.
 	onFinished func(serverID *uint)
+
+	// onOutcome erfährt vom Ergebnis jedes regulär beendeten Jobs und jedes
+	// Watchdog-Abbruchs - Grundlage der Betriebsfähigkeit. Optional.
+	onOutcome func(JobOutcome)
 
 	// activity hält je überwachtem Job den Zeitpunkt seines letzten
 	// Lebenszeichens. Bewusst mit EIGENEM Mutex: Der Eintrag wird bei jedem
@@ -75,6 +102,13 @@ type JobService struct {
 	// laufen und können dort folglich auch nicht hängen.
 	activityMu sync.Mutex
 	activity   map[string]time.Time
+	// progress drosselt job.progress je überwachtem Job (siehe job_events.go).
+	// Steht unter activityMu.
+	progress map[string]*progressMark
+
+	// bus meldet Start, Ende und Warteschlange der Jobs (siehe job_events.go).
+	// Optional - nil = keine Ereignisse.
+	bus *events.Bus
 }
 
 // WithAudit verdrahtet das Audit-Log für Job-Abbrüche (R2-067).
@@ -88,6 +122,7 @@ func NewJobService(jobs *repositories.JobRepository) *JobService {
 		jobs:     jobs,
 		active:   map[string]*activeJob{},
 		activity: map[string]time.Time{},
+		progress: map[string]*progressMark{},
 		queues:   map[uint][]*queuedJob{},
 	}
 }
@@ -124,6 +159,19 @@ func (s *JobService) createLocked(serverID, ruleID *uint, jobType, name, trigger
 // zu werden. Start bleibt der Weg für unmittelbare Aktionen, hinter denen
 // jemand steht und auf eine Antwort wartet.
 func (s *JobService) Start(serverID, ruleID *uint, jobType, name, triggeredBy string) (*domain.Job, error) {
+	job, err := s.start(serverID, ruleID, jobType, name, triggeredBy)
+	switch {
+	case err == nil:
+		s.publishBusy(job, true)
+	case job != nil && (errors.Is(err, ErrServerBusy) || errors.Is(err, ErrMaintenance)):
+		s.publishFinished(job, false) // der blockierte Eintrag steht in der Historie
+	}
+	return job, err
+}
+
+// start ist Start ohne Ereignisse: Die Meldung darf erst nach dem Freigeben
+// des Mutex raus, denn sie fragt die Warteschlange ab.
+func (s *JobService) start(serverID, ruleID *uint, jobType, name, triggeredBy string) (*domain.Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -138,6 +186,13 @@ func (s *JobService) Start(serverID, ruleID *uint, jobType, name, triggeredBy st
 		StartedAt:   &now,
 	}
 
+	if s.heldByMaintenanceLocked(serverID, jobType, name) {
+		job.Status = domain.JobStatusBlocked
+		job.FinishedAt = &now
+		job.Output = "Blockiert: LCM wurde zum Trigger-Zeitpunkt aktualisiert. Nach dem Update lässt sich der Job wieder starten."
+		_ = s.jobs.Create(job)
+		return job, ErrMaintenance
+	}
 	if serverID != nil {
 		running, err := s.jobs.HasRunningForServer(*serverID)
 		if err != nil {
@@ -156,7 +211,7 @@ func (s *JobService) Start(serverID, ruleID *uint, jobType, name, triggeredBy st
 	}
 	// Laufzeit-Handle registrieren - darüber können Abort und Watchdog den
 	// Job später abbrechen und seine Verbindungen schließen.
-	s.active[job.ID] = &activeJob{}
+	s.active[job.ID] = &activeJob{serverID: job.ServerID}
 	return job, nil
 }
 
@@ -204,6 +259,9 @@ type QueuedStart struct {
 // blockierte ein Wartender die Arbeit an ganz anderen Servern.
 func (s *JobService) StartOrQueue(in QueuedStart) (*domain.Job, error) {
 	job, wait, err := s.enqueue(in)
+	if err == nil {
+		s.publishBusy(job, true) // läuft oder steht in der Schlange - der Server ist belegt
+	}
 	if err != nil || wait == nil {
 		return job, err // sofort gestartet oder abgelehnt
 	}
@@ -216,12 +274,21 @@ func (s *JobService) StartOrQueue(in QueuedStart) (*domain.Job, error) {
 	case <-timer.C:
 		// Zu lange gewartet - aber vielleicht ist er in genau diesem Moment
 		// gestartet worden. Wer das Rennen verliert, bekommt seinen Job.
-		if s.dropQueued(in.ServerID, wait, "Übersprungen: hat "+in.MaxWait.String()+
-			" auf einen freien Server gewartet - der nächste Durchgang dieses Zeitplans ist aktueller.") {
+		if s.dropQueued(in.ServerID, wait, s.supersededReason(in.MaxWait)) {
 			return nil, ErrJobSuperseded
 		}
 		return wait.job, <-wait.ready
 	}
+}
+
+// supersededReason begründet, warum ein wartender Zeitplan-Lauf verworfen wird.
+func (s *JobService) supersededReason(waited time.Duration) string {
+	if s.InMaintenance() {
+		return "Übersprungen: hat " + waited.String() + " auf das Ende des LCM-Updates gewartet - " +
+			"der nächste Durchgang dieses Zeitplans ist aktueller."
+	}
+	return "Übersprungen: hat " + waited.String() +
+		" auf einen freien Server gewartet - der nächste Durchgang dieses Zeitplans ist aktueller."
 }
 
 // enqueue legt den Job an: entweder sofort laufend, oder wartend in der
@@ -236,13 +303,14 @@ func (s *JobService) enqueue(in QueuedStart) (*domain.Job, *queuedJob, error) {
 	}
 	// Freie Bahn heißt: kein laufender Job UND niemand, der schon länger
 	// wartet. Ohne die zweite Bedingung überholte ein frisch ausgelöster Lauf
-	// die gesamte Warteschlange.
-	if !running && len(s.queues[in.ServerID]) == 0 {
+	// die gesamte Warteschlange. Während der Wartung reiht sich jeder ein.
+	held := s.maintenance
+	if !running && len(s.queues[in.ServerID]) == 0 && !held {
 		job, err := s.createLocked(&in.ServerID, in.RuleID, in.Type, in.Name, in.TriggeredBy, domain.JobStatusRunning)
 		if err != nil {
 			return nil, nil, err
 		}
-		s.active[job.ID] = &activeJob{}
+		s.active[job.ID] = &activeJob{serverID: job.ServerID}
 		return job, nil, nil
 	}
 
@@ -257,6 +325,9 @@ func (s *JobService) enqueue(in QueuedStart) (*domain.Job, *queuedJob, error) {
 		}
 	}
 	if in.MaxWait <= 0 {
+		if held {
+			return nil, nil, ErrMaintenance
+		}
 		return nil, nil, ErrServerBusy
 	}
 
@@ -333,6 +404,7 @@ func (s *JobService) dropQueued(serverID uint, q *queuedJob, reason string) bool
 	if err := s.jobs.Update(q.job); err != nil {
 		slog.Error("queued job could not be closed", "job", q.job.ID, "error", err)
 	}
+	s.publishFinished(q.job, false)
 	return true
 }
 
@@ -341,9 +413,9 @@ func (s *JobService) dropQueued(serverID uint, q *queuedJob, reason string) bool
 func (s *JobService) startNext(serverID uint) {
 	s.mu.Lock()
 	queue := s.queues[serverID]
-	if len(queue) == 0 {
+	if len(queue) == 0 || s.maintenance {
 		s.mu.Unlock()
-		return
+		return // während der Wartung bleibt die Schlange stehen, EndMaintenance stößt sie an
 	}
 	// Auch hier gegen die Datenbank prüfen: Zwischen dem Ende des einen und
 	// der Weitergabe kann eine unmittelbare Aktion dazwischengegangen sein.
@@ -358,7 +430,7 @@ func (s *JobService) startNext(serverID uint) {
 	now := time.Now()
 	next.job.Status = domain.JobStatusRunning
 	next.job.StartedAt = &now
-	s.active[next.job.ID] = &activeJob{}
+	s.active[next.job.ID] = &activeJob{serverID: next.job.ServerID}
 	s.mu.Unlock()
 
 	err = s.jobs.Update(next.job)
@@ -370,6 +442,7 @@ func (s *JobService) startNext(serverID uint) {
 	} else {
 		slog.Info("queued job started", "job", next.job.ID, "name", next.job.Name,
 			"waited", time.Since(next.since).Round(time.Second).String())
+		s.publishBusy(next.job, true)
 	}
 	next.ready <- err
 }
@@ -399,10 +472,12 @@ func (s *JobService) AttachCloser(jobID string, closer io.Closer) {
 	entry, ok := s.active[jobID]
 	if ok && !entry.finalized {
 		entry.closers = append(entry.closers, closer)
+		serverID := entry.serverID
 		s.mu.Unlock()
 		// Ab der ersten Verbindung ist der Job überwacht: Von jetzt an muss
 		// er Lebenszeichen liefern, sonst greift der Watchdog.
 		s.startWatching(jobID)
+		s.watchProgress(jobID, serverID)
 		return
 	}
 	finalized := ok && entry.finalized
@@ -423,6 +498,7 @@ func (s *JobService) startWatching(jobID string) {
 func (s *JobService) stopWatching(jobID string) {
 	s.activityMu.Lock()
 	delete(s.activity, jobID)
+	delete(s.progress, jobID)
 	s.activityMu.Unlock()
 }
 
@@ -440,6 +516,7 @@ func (s *JobService) MarkActivity(jobID string) {
 		s.activity[jobID] = time.Now()
 	}
 	s.activityMu.Unlock()
+	s.reportProgress(jobID)
 }
 
 // lastActivity liefert das letzte Lebenszeichen eines Jobs. ok=false, wenn er
@@ -456,6 +533,20 @@ func (s *JobService) lastActivity(jobID string) (time.Time, bool) {
 // Wurde der Job zwischenzeitlich abgebrochen (Abort/Watchdog), ist die
 // DB-Zeile bereits finalisiert - dann wird sie nicht mehr überschrieben.
 func (s *JobService) Complete(job *domain.Job, output string, exitCode *int, runErr error) {
+	s.complete(job, output, exitCode, runErr, false)
+}
+
+// CompleteSkipped schließt einen Job als Erfolg ab, der nichts ausgeführt hat
+// und den Server nie kontaktierte (Demo-Server, eingeschränkter Modus,
+// nicht zutreffender Gerätetyp, nichts zu tun). Für den Benutzer ist das ein
+// grüner Job, für die Betriebsfähigkeit aber kein Beweis: Er erreichte weder
+// den Server noch hat er eine Aktion durchgeführt - ein fehlgeschlagenes
+// Update oder eine kaputte Verbindung bliebe sonst durch ihn „geheilt".
+func (s *JobService) CompleteSkipped(job *domain.Job, output string) {
+	s.complete(job, output, ptrInt(0), nil, true)
+}
+
+func (s *JobService) complete(job *domain.Job, output string, exitCode *int, runErr error, skipped bool) {
 	s.mu.Lock()
 	entry := s.active[job.ID]
 	delete(s.active, job.ID)
@@ -466,6 +557,14 @@ func (s *JobService) Complete(job *domain.Job, output string, exitCode *int, run
 	// Abbruch-Fall: Dort hat abort() die Zeile schon geschlossen, die
 	// Warteschlange muss trotzdem weiterfließen.
 	defer s.releaseServer(job)
+	// Die Meldung kommt nach dem Verwerfen der Ampel (onFinished läuft als
+	// Erstes) und vor der Weitergabe an den nächsten Wartenden. Bei einem
+	// Abbruch hat abort() schon gemeldet.
+	defer func() {
+		if !aborted {
+			s.publishFinished(job, true)
+		}
+	}()
 	if s.onFinished != nil {
 		defer s.onFinished(job.ServerID)
 	}
@@ -501,6 +600,21 @@ func (s *JobService) Complete(job *domain.Job, output string, exitCode *int, run
 		job.Status = domain.JobStatusSuccess
 	}
 	_ = s.jobs.Update(job)
+	// Vor onFinished (deferred): Der Statuscache wird erst danach verworfen und
+	// die Ampel mit der neuen Betriebsfähigkeit neu berechnet.
+	s.reportOutcome(JobOutcome{Job: job, Skipped: skipped})
+}
+
+// reportOutcome meldet das Ergebnis an den Abonnenten, falls es einen gibt.
+func (s *JobService) reportOutcome(o JobOutcome) {
+	if s.onOutcome != nil {
+		s.onOutcome(o)
+	}
+}
+
+// OnOutcome meldet künftig das Ergebnis jedes Jobs an fn (siehe onOutcome).
+func (s *JobService) OnOutcome(fn func(JobOutcome)) {
+	s.onOutcome = fn
 }
 
 // OnFinished meldet künftig das Ende jedes Jobs an fn (siehe onFinished).
@@ -512,6 +626,36 @@ func (s *JobService) OnFinished(fn func(serverID *uint)) {
 // Gesamtanzahl.
 func (s *JobService) HistoryFiltered(scope repositories.AccessScope, f repositories.JobFilter) ([]domain.Job, int64, error) {
 	return s.jobs.HistoryFiltered(scope, f)
+}
+
+// JobItem ist ein Eintrag der Job-Liste: der Job (ohne Ausgabe) mit dem Namen
+// seines Servers und der Laufzeit.
+type JobItem struct {
+	domain.Job
+	ServerName string `json:"server_name"`
+	// DurationSeconds ist leer, solange der Job nicht gestartet und beendet ist.
+	DurationSeconds *int64 `json:"duration_seconds"`
+}
+
+// List liefert die gefilterte Seite der Job-Liste als Einträge samt Gesamtzahl.
+func (s *JobService) List(scope repositories.AccessScope, f repositories.JobFilter) ([]JobItem, int64, error) {
+	jobs, total, err := s.jobs.HistoryFiltered(scope, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]JobItem, len(jobs))
+	for i := range jobs {
+		items[i] = JobItem{Job: jobs[i]}
+		if jobs[i].Server != nil {
+			items[i].ServerName = jobs[i].Server.Name
+		}
+		items[i].Server = nil // die Liste trägt nur den Namen
+		if start, end := jobs[i].StartedAt, jobs[i].FinishedAt; start != nil && end != nil {
+			seconds := int64(end.Sub(*start).Seconds())
+			items[i].DurationSeconds = &seconds
+		}
+	}
+	return items, total, nil
 }
 
 // FilterOptions liefert distinkte Typen und Auslöser für die Filter-Dropdowns.
@@ -624,6 +768,7 @@ func (s *JobService) abort(job *domain.Job, actor, reason string) (*domain.Job, 
 		_ = c.Close()
 	}
 
+	wasRunning := job.Status == domain.JobStatusRunning
 	now := time.Now()
 	job.FinishedAt = &now
 	job.Status = domain.JobStatusAborted
@@ -642,6 +787,12 @@ func (s *JobService) abort(job *domain.Job, actor, reason string) (*domain.Job, 
 		s.audit.Log(actor, "job.abort", "job", 0,
 			"job "+job.ID+" ("+job.Name+"): "+reason)
 	}
+	// Nur der Watchdog-Abbruch sagt etwas über den Server (der Lauf hing); ein
+	// manueller Abbruch ist eine Entscheidung des Benutzers.
+	if actor == watchdogActor {
+		s.reportOutcome(JobOutcome{Job: job, ByWatchdog: true})
+	}
+	s.publishFinished(job, wasRunning)
 	s.releaseServer(job)
 	return job, nil
 }
@@ -697,6 +848,8 @@ type SelfUpdateRecovery struct {
 // Dienst mitgenommen hat, ist durchgelaufen, sonst liefe jetzt nicht die neue
 // Version. Solche Jobs als Fehler zu melden, wäre schlicht falsch.
 func (s *JobService) FailInterruptedOnStartup(self *SelfUpdateRecovery) {
+	// Meldet bewusst kein OnOutcome: Der Dienst-Neustart ist nicht Schuld des
+	// Servers und darf seine Betriebsfähigkeit nicht verschlechtern.
 	jobs, err := s.jobs.FindUnfinished()
 	if err != nil {
 		slog.Error("orphaned jobs could not be determined", "error", err)
@@ -822,7 +975,7 @@ func (s *JobService) abortIfStalled(job *domain.Job, idleLimit func(job *domain.
 	reason := "Ohne Lebenszeichen: seit " + idle.Round(time.Second).String() +
 		" kam keine Ausgabe mehr (erlaubt sind " + limit.String() +
 		") - der Lauf gilt als hängend, die Server-Sperre wurde aufgehoben."
-	if _, err := s.abort(job, "job-watchdog", reason); err != nil {
+	if _, err := s.abort(job, watchdogActor, reason); err != nil {
 		if !errors.Is(err, ErrJobNotRunning) {
 			slog.Error("job watchdog: abort failed", "job", job.ID, "error", err)
 		}

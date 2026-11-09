@@ -231,3 +231,30 @@ func TestGruppenVorrang(t *testing.T) {
 		}
 	}
 }
+
+// Ein vorhandener Name ist ein eigener Fehler (409), kein Datenbankfehler -
+// beim Anlegen wie beim Umbenennen, auch bei anderer Schreibweise.
+func TestGroupNameMustBeUnique(t *testing.T) {
+	env := newTestEnv(t)
+	scope := repositories.ScopeAll()
+	first, err := env.Groups.Create("Produktion", "", nil, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Groups.Create("Produktion", "", nil, "admin"); !errors.Is(err, services.ErrGroupNameTaken) {
+		t.Errorf("doppelter name beim anlegen: %v", err)
+	}
+	if _, err := env.Groups.Create("produktion", "", nil, "admin"); !errors.Is(err, services.ErrGroupNameTaken) {
+		t.Errorf("andere schreibweise beim anlegen: %v", err)
+	}
+	second, err := env.Groups.Create("Test", "", nil, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Groups.UpdateSettings(scope, second.ID, "Produktion", "", nil, "admin"); !errors.Is(err, services.ErrGroupNameTaken) {
+		t.Errorf("umbenennen auf vorhandenen namen: %v", err)
+	}
+	if _, err := env.Groups.UpdateSettings(scope, first.ID, "Produktion", "neue Beschreibung", nil, "admin"); err != nil {
+		t.Errorf("die eigene Gruppe darf ihren Namen behalten: %v", err)
+	}
+}

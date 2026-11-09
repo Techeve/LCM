@@ -102,7 +102,7 @@ zusätzlichen IPs bei.
   aussperren.)
 - **Für die zentrale CrowdSec-LAPI** eine Liste mit den Quell-IPs der verwalteten
   Server pflegen und den LAPI-Port (8080) nur für diese freigeben (siehe
-  [Sicherheit-Tools](/guides/security-tools)).
+  [Sicherheits-Tools](/guides/security-tools)).
 - **Leeren = schließen.** Willst du eine Freigabe temporär entziehen, leere die
   Liste - die referenzierenden Firewall-Regeln schließen den Port dann sicher,
   statt ihn zu öffnen.

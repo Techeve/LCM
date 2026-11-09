@@ -1,0 +1,7 @@
+node_modules/
+dist/*
+!dist/.gitkeep
+# E2E: Arbeitsverzeichnisse der Test-Instanzen und Playwright-Ausgaben
+e2e/.run/
+test-results/
+playwright-report/

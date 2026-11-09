@@ -257,7 +257,7 @@ func (s *ServerService) replaceDSMPackages(id uint, info *synology.Info) {
 func (s *ServerService) recordDSMJoin(server *domain.Server, actor, detail string) {
 	now := time.Now()
 	job := &domain.Job{
-		ServerID: &server.ID, Type: "join", Name: "DSM-Onboarding: " + server.Name,
+		ServerID: &server.ID, Type: domain.JobTypeJoin, Name: "DSM-Onboarding: " + server.Name,
 		Status: domain.JobStatusSuccess, TriggeredBy: actor,
 		StartedAt: &now, FinishedAt: &now,
 		Output: "Synology-DSM-Gerät angelegt (Überwachung über die DSM-Web-API).\n" + detail,
@@ -290,9 +290,9 @@ func (e *Executor) runDSMRule(job *domain.Job, server *domain.Server, rule *doma
 		}
 		e.jobs.Complete(job, out, ptrInt(0), nil)
 	default:
-		e.jobs.Complete(job, "Synology DSM: Aktionstyp „"+rule.Type+"“ übersprungen - "+
+		e.jobs.CompleteSkipped(job, "Synology DSM: Aktionstyp „"+rule.Type+"“ übersprungen - "+
 			"LCM überwacht dieses Gerät über die DSM-Web-API; Paketverwaltung, Firewall, "+
-			"Benutzer-Sync und Skripte gibt es dort nicht.", ptrInt(0), nil)
+			"Benutzer-Sync und Skripte gibt es dort nicht.")
 	}
 }
 

@@ -36,6 +36,13 @@ const (
 	JobStatusAborted = "aborted"
 )
 
+// Job-Typen, die keine Regel-Typen (RuleType*) sind: Onboarding und SSH-Härtung.
+const (
+	JobTypeJoin      = "join"       // Server aufnehmen (alle Arten: SSH, Agent, RouterOS, DSM)
+	JobTypeReconnect = "reconnect"  // Zugang eines Servers neu einrichten
+	JobTypeHardenSSH = "harden-ssh" // SSH-Härtung (steht im Verlauf der Demo-Daten)
+)
+
 // RoutineJobTypes sind die Job-Typen, deren Ausgabe nur kurz aufbewahrt wird
 // (GlobalSettings.RoutineLogRetentionDays).
 var RoutineJobTypes = []string{RuleTypeHealth, RuleTypeAlertCheck}

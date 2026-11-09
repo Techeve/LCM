@@ -1,6 +1,12 @@
 package services
 
-import "strings"
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"LCM/internal/core/domain"
+)
 
 // Multi-Distro-Paketverwaltung. LCM erkennt beim Scan die Paketverwaltung
 // des Zielsystems (Server.PackageManager) und wählt hier die passenden
@@ -208,6 +214,43 @@ func pkgUpgradePackagesScript(mgr string, names []string) string {
 	}
 }
 
+// Reparatur-Aktionen der Paketverwaltung (siehe ServerService.RepairPackages).
+const (
+	RepairDpkgConfigure = "dpkg_configure" // angebrochene dpkg-Installationen abschließen
+	RepairFixDeps       = "fix_deps"       // kaputte Abhängigkeiten reparieren
+)
+
+// pkgRepairScript liefert das Skript einer Reparatur-Aktion. Leer heißt: Die
+// Aktion gibt es für diese Paketverwaltung nicht - der Aufrufer lehnt sie ab,
+// statt ein anderes Kommando unterzuschieben.
+//
+// dnf/yum, pacman und apk haben keine Entsprechung: Sie hinterlassen keinen
+// angebrochenen Zustand, den ein einzelner Befehl sicher repariert.
+func pkgRepairScript(mgr, action string) string {
+	// Bewusst nicht über pkgFamily: Dessen Fallback „apt" gälte auch für einen
+	// Server ohne erkannte Paketverwaltung.
+	switch mgr {
+	case pkgApt:
+		return aptRepairScript(action)
+	case pkgZypper:
+		if action == RepairFixDeps {
+			return "zypper --non-interactive verify"
+		}
+	}
+	return ""
+}
+
+// aptRepairScript wählt das apt-Skript der Aktion; leer bei unbekannter.
+func aptRepairScript(action string) string {
+	switch action {
+	case RepairDpkgConfigure:
+		return aptRepairDpkgScript()
+	case RepairFixDeps:
+		return aptFixDepsScript()
+	}
+	return ""
+}
+
 // pkgAutoremoveScript entfernt nicht mehr benötigte Pakete (verwaiste
 // Abhängigkeiten) je Paketverwaltung.
 //
@@ -273,6 +316,7 @@ var protectedPackagePrefixes = []string{
 // isProtectedPackage meldet, ob ein Paket geschützt ist (siehe die beiden
 // Listen). Der Name ist bereits kleingeschrieben und validiert.
 func isProtectedPackage(name string) bool {
+	name = strings.ToLower(name)
 	if protectedPackageExact[name] {
 		return true
 	}
@@ -349,6 +393,43 @@ func scriptForRule(mgr, ruleType, command string) (string, bool) {
 		return pkgAutoremoveScript(mgr), true
 	}
 	return "", false
+}
+
+// packageRunResult wertet das Ende eines Paket-Skripts aus und liefert den
+// Exit-Code und Fehler, mit denen der Job abgeschlossen wird.
+//
+// Eine Ausnahme vom „Exit-Code ungleich 0 ist ein Fehler": „Paketliste
+// aktualisieren" führt nur `apt-get update` aus, und das endet mit 100, sobald
+// EINE Quelle einen E:-Fehler meldet (etwa eine Fremdquelle ohne Release-Datei).
+// Die Listen der übrigen Quellen sind dann aktuell und der Bestandsabgleich
+// danach sinnvoll - der Lauf gilt als Erfolg, die kaputte Quelle meldet
+// CapabilityService als gelben Hinweis. Scheitern alle Quellen oder meldet apt
+// einen allgemeinen Fehler (Sperre, dpkg), bleibt es ein Fehlschlag.
+//
+// zypper verhält sich gleich: `zypper refresh` endet mit 4, sobald EINE Quelle
+// nicht aktualisiert werden konnte. Eine übersprungene Quelle unter anderen
+// ist ein Erfolg mit gelbem Hinweis, scheitern alle, ein Fehlschlag.
+//
+// Die Gegenrichtung: `apt-get update` endet mit 0, obwohl keine Quelle
+// erreichbar war (DNS, Netz) - apt meldet dann nur Err:- und W:-Zeilen. Ohne
+// Listen ist der Lauf wertlos; er gilt als Fehlschlag, sonst bliebe die
+// Kategorie „Pakete" grün, während der Server seit Tagen nichts bekommt.
+func packageRunResult(jobType, mgr, output string, code int, runErr error) (int, error) {
+	if runErr != nil {
+		return code, runErr
+	}
+	family := pkgFamily(mgr)
+	isRefresh := jobType == domain.RuleTypePackageScan && (family == pkgApt || family == pkgZypper)
+	if code == 0 {
+		if isRefresh && domain.ClassifyRefresh(output).Failed() {
+			return code, errors.New("paketlisten konnten nicht aktualisiert werden")
+		}
+		return code, nil
+	}
+	if isRefresh && domain.ClassifyRefresh(output).PartiallyFailed() {
+		return 0, nil
+	}
+	return code, fmt.Errorf("paket-update endete mit exit-code %d", code)
 }
 
 // pkgVersionsCommand liefert das Kommando zum Auflisten der installierbaren

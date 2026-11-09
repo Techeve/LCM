@@ -1,14 +1,13 @@
 package services
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/storage/repositories"
 )
@@ -20,17 +19,19 @@ import (
 // Protokoll. Eine Konsole heißt, dass jemand mit dem passenden Recht über
 // LCMs Schlüssel eine Root-Shell auf jedem verwalteten Server bekommt.
 //
-// Deshalb hängen an ihr vier Schlösser, und keines davon ist Zierrat:
+// Deshalb hängen an ihr drei Schlösser, und keines davon ist Zierrat:
 //
 //   - eine EIGENE Berechtigung (servers:console), die nicht in servers:write
 //     mitgeliefert wird und im Auslieferungszustand nur bei admin liegt;
 //   - ein globaler Schalter, mit dem ein Betreiber die Fähigkeit ganz aus dem
 //     Haus nehmen kann;
 //   - der Mitschnitt jeder Sitzung (siehe recordingTerminal) - ohne ihn hätte
-//     die Beweiskette ihr Loch genau dort, wo am meisten möglich ist;
-//   - der Exec-Slot des Servers, den die Sitzung belegt: Solange die Konsole
-//     offen ist, laufen dort keine Zeitpläne. Ein apt-Lauf neben einer
-//     tippenden Hand ist der Konflikt, den die Server-Sperre verhindert.
+//     die Beweiskette ihr Loch genau dort, wo am meisten möglich ist.
+//
+// Eine Sitzung sperrt den Server nicht: Sie belegt einen eigenen Konsolen-Platz
+// (siehe connectTerminal), nicht den Exec-Slot. Zeitpläne, Updates und Aktionen
+// laufen daneben weiter; treffen apt-Läufe aufeinander, wartet LCM auf die
+// Paketverwaltung.
 
 // ErrTerminalDisabled: Der Betreiber hat die Konsole global abgeschaltet.
 var ErrTerminalDisabled = errors.New("die web-konsole ist auf dieser installation abgeschaltet")
@@ -98,7 +99,21 @@ func (s *ServerService) OpenTerminal(scope repositories.AccessScope, id uint, ac
 	s.audit.Log(actor, "server.terminal.open", "server", id, server.Name)
 	slog.Info("terminal opened", "server", server.Name, "actor", actor)
 	return &serverTerminal{Terminal: t, conn: conn, server: server.Name, actor: actor, audit: s.audit, id: id,
-		unregister: s.consoles.add(id, actor)}, nil
+		unregister: s.registerConsole(id, actor)}, nil
+}
+
+// registerConsole trägt eine offene Konsole ein und meldet es als server.status:
+// Wer die Seite des Servers offen hat, soll die Konsole sofort sehen (und nicht
+// erst beim nächsten Nachfragen). Die Meldung heißt hier „an diesem Server hat
+// sich etwas geändert, neu laden" - die Ampel selbst bleibt unberührt. Die
+// zurückgegebene Funktion trägt wieder aus und meldet ebenso.
+func (s *ServerService) registerConsole(id uint, actor string) func() {
+	remove := s.consoles.add(id, actor)
+	s.bus.Publish(events.ServerStatus(&id))
+	return func() {
+		remove()
+		s.bus.Publish(events.ServerStatus(&id))
+	}
 }
 
 // OpenConsoles liefert die gerade offenen Web-Konsolen auf den Servern, die
@@ -219,8 +234,7 @@ func (t *serverTerminal) Close() error {
 // genau einmal, für genau einen Server und genau den Benutzer, der sie geholt
 // hat. Steht sie später in einem Protokoll, ist sie längst wertlos.
 type TerminalTickets struct {
-	mu      sync.Mutex
-	tickets map[string]terminalTicket
+	store *ticketStore[terminalTicket]
 }
 
 type terminalTicket struct {
@@ -229,54 +243,24 @@ type terminalTicket struct {
 	// clientIP ist die Adresse, die die Fahrkarte geholt hat. Nur sie darf
 	// sie einlösen - eine mitgelesene Fahrkarte nützt von woanders nichts.
 	clientIP string
-	expires  time.Time
 }
 
-// ticketTTL ist die Lebensdauer einer Fahrkarte - lang genug für den
-// unmittelbar folgenden Verbindungsaufbau, zu kurz für alles andere.
-const ticketTTL = 30 * time.Second
-
 func NewTerminalTickets() *TerminalTickets {
-	return &TerminalTickets{tickets: map[string]terminalTicket{}}
+	return &TerminalTickets{store: newTicketStore[terminalTicket]()}
 }
 
 // Issue stellt eine Fahrkarte für einen Benutzer und einen Server aus,
 // gebunden an die Client-Adresse, die sie geholt hat.
 func (t *TerminalTickets) Issue(actor string, serverID uint, clientIP string) (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	token := base64.RawURLEncoding.EncodeToString(raw)
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.purgeLocked()
-	t.tickets[token] = terminalTicket{actor: actor, serverID: serverID, clientIP: clientIP, expires: time.Now().Add(ticketTTL)}
-	return token, nil
+	return t.store.issue(terminalTicket{actor: actor, serverID: serverID, clientIP: clientIP})
 }
 
 // Redeem löst eine Fahrkarte ein. Sie gilt genau einmal, nur für den
 // Server, für den sie ausgestellt wurde, und nur von der Adresse, die sie
 // geholt hat.
 func (t *TerminalTickets) Redeem(token string, serverID uint, clientIP string) (string, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.purgeLocked()
-	ticket, ok := t.tickets[token]
-	if !ok || ticket.serverID != serverID || ticket.clientIP != clientIP {
-		return "", false
-	}
-	delete(t.tickets, token) // einmal heißt einmal
-	return ticket.actor, true
-}
-
-// purgeLocked räumt abgelaufene Fahrkarten weg. Erwartet den gehaltenen Mutex.
-func (t *TerminalTickets) purgeLocked() {
-	now := time.Now()
-	for token, ticket := range t.tickets {
-		if now.After(ticket.expires) {
-			delete(t.tickets, token)
-		}
-	}
+	ticket, ok := t.store.redeem(token, func(tk terminalTicket) bool {
+		return tk.serverID == serverID && tk.clientIP == clientIP
+	})
+	return ticket.actor, ok
 }

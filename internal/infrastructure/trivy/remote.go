@@ -83,16 +83,16 @@ func (r *remoteRunner) info(ctx context.Context) domain.CVEDBStatus {
 	return infoFromSidecar(resp)
 }
 
-func (r *remoteRunner) updateDB(ctx context.Context) (string, error) {
+func (r *remoteRunner) updateDB(ctx context.Context) (DBUpdate, error) {
 	out, err := r.post(ctx, PathUpdateDB, "application/json", []byte("{}"))
 	if err != nil {
-		return "", err
+		return DBUpdate{}, err
 	}
 	var resp UpdateResponse
 	if err := json.Unmarshal(out, &resp); err != nil {
-		return "", fmt.Errorf("antwort des trivy-sidecars nicht lesbar: %w", err)
+		return DBUpdate{}, fmt.Errorf("antwort des trivy-sidecars nicht lesbar: %w", err)
 	}
-	return resp.Output, nil
+	return DBUpdate{Output: resp.Output, Updated: resp.Updated}, nil
 }
 
 func (r *remoteRunner) get(ctx context.Context, path string) ([]byte, error) {

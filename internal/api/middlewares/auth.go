@@ -1,12 +1,11 @@
 // Package middlewares enthält Fiber-Middlewares für Authentifizierung
-// (JWT + API-Key) und Autorisierung (RBAC via RequirePermission).
+// (Browser-Sitzung + API-Key) und Autorisierung (RBAC via RequirePermission).
 package middlewares
 
 import (
-	"strings"
-
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/apierr"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
 )
@@ -67,11 +66,15 @@ func CurrentUser(c fiber.Ctx) *domain.User {
 	return user
 }
 
-// Authenticate prüft den Authorization-Header und hängt bei Erfolg den
-// User an den Request-Kontext. Unterstützt zwei Schemata:
+// Authenticate prüft die Anmeldung des Requests und hängt bei Erfolg den
+// User an den Request-Kontext. Unterstützt drei Wege, in dieser Rangfolge:
 //
-//	Authorization: Bearer <jwt>     - Browser-/User-Sessions
-//	X-API-Key: <key>                - Service-zu-Service-Kommunikation
+//	X-API-Key: <key>                - Skripte und Service-zu-Service-Kommunikation
+//	X-LCM-Session: <wert>           - Browser-Sitzung, Arbeitsspeicher-Variante
+//	Cookie __Host-lcm_session       - Browser-Sitzung, Cookie-Variante (ändernde Anfragen: CSRFProtect)
+//
+// Eine Sitzung gilt nur über den Weg, für den sie ausgestellt wurde. Ein
+// Authorization: Bearer an der REST-API ist keine Anmeldung.
 //
 // Ohne gültige Credentials wird der Request NICHT abgebrochen - das
 // entscheidet RequireAuth bzw. RequirePermission. So können Routen
@@ -85,14 +88,12 @@ func Authenticate(auth *services.AuthService, apiKeys *services.APIKeyService) f
 				// könnte ein für read-only-Serverdaten gedachter Key hier
 				// schreibend wirken. Kein User-Kontext → RequireAuth greift.
 				if key.IsMCP() {
-					return fiber.NewError(fiber.StatusForbidden,
-						"MCP-API-Key ist nur für die MCP-Schnittstelle gültig, nicht für die REST-API")
+					return errMCPKeyOnREST
 				}
 				// Scope-Prüfung: read-only-Keys dürfen keine
 				// schreibenden HTTP-Methoden verwenden.
 				if key.IsReadOnly() && isMutating(c.Method()) {
-					return fiber.NewError(fiber.StatusForbidden,
-						"API-Key hat nur Lese-Rechte (scope: read)")
+					return errKeyReadOnly
 				}
 				c.Locals(userContextKey, user)
 				c.Locals(apiKeyContextKey, key.Prefix)
@@ -105,16 +106,28 @@ func Authenticate(auth *services.AuthService, apiKeys *services.APIKeyService) f
 			return c.Next()
 		}
 
-		header := c.Get("Authorization")
-		if token, ok := strings.CutPrefix(header, "Bearer "); ok {
-			if user, err := auth.ValidateToken(token); err == nil {
-				c.Locals(userContextKey, user)
-			} else {
-				c.Locals(rejectedAuthContextKey, "session")
-			}
+		if token := c.Get(SessionHeader); token != "" {
+			authenticateSession(c, auth, token, services.TransportHeader)
+			return c.Next()
+		}
+		if token := c.Cookies(SessionCookieName); token != "" {
+			authenticateSession(c, auth, token, services.TransportCookie)
 		}
 		return c.Next()
 	}
+}
+
+// authenticateSession prüft den Sitzungswert der Browser-Anmeldung. Merkt sich
+// die Sitzungs-ID für CSRFProtect und CurrentSessionID.
+func authenticateSession(c fiber.Ctx, auth *services.AuthService, token string, transport services.Transport) {
+	user, sessionID, err := auth.ValidateSession(token, transport)
+	if err != nil {
+		c.Locals(rejectedAuthContextKey, "session")
+		return
+	}
+	c.Locals(userContextKey, user)
+	c.Locals(sessionIDContextKey, sessionID)
+	c.Locals(sessionTransportContextKey, transport)
 }
 
 // isMutating meldet, ob eine HTTP-Methode Daten verändert.
@@ -131,7 +144,7 @@ func isMutating(method string) bool {
 func RequireAuth() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		if CurrentUser(c) == nil {
-			return fiber.NewError(fiber.StatusUnauthorized, "Anmeldung erforderlich")
+			return apierr.Unauthorized
 		}
 		return c.Next()
 	}
@@ -147,10 +160,10 @@ func RequirePermission(code string) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		user := CurrentUser(c)
 		if user == nil {
-			return fiber.NewError(fiber.StatusUnauthorized, "Anmeldung erforderlich")
+			return apierr.Unauthorized
 		}
 		if !user.HasPermission(code) {
-			return fiber.NewError(fiber.StatusForbidden, "fehlende Berechtigung: "+code)
+			return apierr.Forbidden.With("permission", code)
 		}
 		return c.Next()
 	}

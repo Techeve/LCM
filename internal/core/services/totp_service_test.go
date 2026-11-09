@@ -77,7 +77,7 @@ func TestTOTPSetupEnableVerify(t *testing.T) {
 
 	// Derselbe Code ein zweites Mal: abgewiesen (RFC 6238 - ein angenommener
 	// Code gilt genau einmal). Der Code der Aktivierung ist damit verbraucht.
-	if err := svc.Verify(adminID, code); !errors.Is(err, services.ErrTOTPInvalid) {
+	if err := svc.Verify(adminID, code); !errors.Is(err, services.ErrTOTPReused) {
 		t.Errorf("wiederverwendeter code muss abgewiesen werden, bekam %v", err)
 	}
 	// Ein ANDERER gültiger Code (nächste Periode, liegt im ±1-Fenster) geht.

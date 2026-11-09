@@ -43,13 +43,6 @@ func (r *PendingUserSyncRepository) ForServer(serverID uint) ([]domain.PendingUs
 	return out, err
 }
 
-// CountByServer liefert die Zahl offener Einträge je Server (für die Anzeige).
-func (r *PendingUserSyncRepository) CountByServer(serverID uint) (int64, error) {
-	var n int64
-	err := r.db.Model(&domain.PendingUserSync{}).Where("server_id = ?", serverID).Count(&n).Error
-	return n, err
-}
-
 // ServerIDs liefert alle Server mit offenen Einträgen.
 func (r *PendingUserSyncRepository) ServerIDs() ([]uint, error) {
 	var ids []uint

@@ -62,10 +62,10 @@ variables:
   GO_IMAGE: golang:1.27-alpine
   NODE_IMAGE: node:24
   # Playwright-Image mit vorinstallierten Browsern. Die Version MUSS zu
-  # @playwright/test in frontend/package.json passen -- laufen sie
+  # @playwright/test in ui/package.json passen -- laufen sie
   # auseinander, laedt Playwright die Browser doch wieder selbst nach und der
   # Vorteil ist weg. Renovate haelt beides zusammen (matchDepNames).
-  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.0-noble
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.1-noble
   # Volle Historie + Tags: die Versionsermittlung braucht beides.
   GIT_DEPTH: "0"
   # Der npm-Cache im Projektverzeichnis, damit der Runner ihn über MinIO
@@ -134,7 +134,7 @@ workflow:
 # den Code je sieht, und bleiben deshalb.
 #
 # Was hier bewusst NICHT haengt:
-#   frontend  liefert das Artefakt frontend/dist, das binaries per go:embed
+#   frontend  liefert das Artefakt ui/dist, das binaries per go:embed
 #             einbettet - der Job baut, er prueft nicht nur.
 #   e2e       bleibt der Waechter vor Release und Deploy. Er prueft als
 #             einziger das ausgelieferte Binary, und auf den Release-Branches
@@ -153,13 +153,13 @@ workflow:
 # verwaist dann und faellt der Ablaufregel des Buckets (30 Tage) zum Opfer.
 .npm-cache: &npm-cache
   key:
-    files: [frontend/package-lock.json]
+    files: [ui/package-lock.json]
     prefix: npm
   paths: [.cache/npm]
 
 .npm-cache-ro: &npm-cache-ro
   key:
-    files: [frontend/package-lock.json]
+    files: [ui/package-lock.json]
     prefix: npm
   paths: [.cache/npm]
   policy: pull
@@ -281,6 +281,11 @@ check:commits:
           echo "SKIP (Release-Commit): $hash $subject"
           continue
         fi
+        # Squash-Merges behalten den von Git erzeugten Betreff.
+        if echo "$subject" | grep -qE '^Merge branch '; then
+          echo "SKIP (Merge-Betreff): $hash $subject"
+          continue
+        fi
         if ! echo "$subject" | grep -qE "$PATTERN"; then
           echo "FEHLER: Commit $hash folgt nicht Conventional Commits: '$subject'"
           echo "  Erwartet: typ(scope): beschreibung - z.B. 'feat(api): notes-endpunkt'"
@@ -303,12 +308,15 @@ frontend:
   image: $NODE_IMAGE
   cache: *npm-cache
   script:
-    - cd frontend
+    - cd ui
     - npm ci --no-audit --ignore-scripts
     - npm audit --audit-level=high
+    - npm run -s check:locales
+    - npm test
     - npm run build
+    - npm run -s check:bundle
   artifacts:
-    paths: [frontend/dist]
+    paths: [ui/dist]
     expire_in: 1 week
 
 backend:
@@ -372,13 +380,13 @@ e2e:
     - echo "Installiere Go $GO_VERSION"
     - curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
     - export PATH=/usr/local/go/bin:$PATH && go version
-    - cd frontend
+    - cd ui
     # --ignore-scripts: siehe frontend-Job. Die Browser bringt das Image mit.
     - npm ci --no-audit --ignore-scripts
     - npx playwright test
   artifacts:
     when: on_failure
-    paths: [frontend/test-results]
+    paths: [ui/test-results]
     expire_in: 3 days
 
 ## ---- build ---------------------------------------------------------------------
@@ -508,6 +516,9 @@ binaries:
     # LCM Remote: lcm-agent (nur Linux - läuft auf den verwalteten Servern).
     - GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-agent-linux-amd64 ./cmd/agent
     - GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-agent-linux-arm64 ./cmd/agent
+    # lcm-probe: Messung des LCM-Hosts und der Datenbank, eigenes Paket.
+    - GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-probe-linux-amd64 ./cmd/probe
+    - GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-probe-linux-arm64 ./cmd/probe
     # Trivy-Sidecar (nur Container-Betrieb): bedient Trivys Kommandozeile über
     # HTTP, damit das Scratch-Image ohne Trivy auskommt. Wird NICHT als
     # Release-Artefakt angeboten - er ergibt nur im Sidecar-Image einen Sinn.
@@ -551,6 +562,14 @@ packages:deb:
           go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
           --config packaging/nfpm-agent.yaml --packager deb --target bin/
       done
+    # lcm-probe: eigenes Paket neben LCM (apt install lcm-probe).
+    - |
+      for A in amd64 arm64; do
+        cp "bin/lcm-probe-linux-${A}" bin/lcm-probe-pkg
+        LCM_ARCH="$A" LCM_VERSION="$DEB_VERSION" \
+          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
+          --config packaging/nfpm-probe.yaml --packager deb --target bin/
+      done
     # LCM Remote laeuft auf jeder Distribution - das Paket gab es aber nur als
     # .deb, und damit war der Agent faktisch Debian-only. Dasselbe Paket
     # zusaetzlich als RPM, APK und Arch-Paket: Der Agent ist ein statisches
@@ -565,7 +584,7 @@ packages:deb:
             --config packaging/nfpm-agent.yaml --packager "$P" --target bin/
         done
       done
-    - rm -f bin/lcm-pkg bin/lcm-agent-pkg
+    - rm -f bin/lcm-pkg bin/lcm-agent-pkg bin/lcm-probe-pkg
     - ls -lh bin/*.deb bin/*.rpm bin/*.apk bin/*.pkg.tar.zst
   artifacts:
     paths: [bin/*.deb, bin/*.rpm, bin/*.apk, bin/*.pkg.tar.zst]
@@ -1045,6 +1064,8 @@ docs-build:
           tail -n +2 CHANGELOG.md
         } > "$dir/changelog.md"
       done
+    # Versionshinweise für das Fenster nach einem Update, je Version eine Datei.
+    - sh tools/release-notes.sh CHANGELOG.md docs/static/release-notes
   script:
     - docs-build
   artifacts:

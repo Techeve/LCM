@@ -177,7 +177,7 @@ to that key.
 
 If a server additionally has two-factor login enabled, you need a one-time code
 next to your key - see
-[Setting up two-factor login for SSH](/#/doku/ssh-2fa) for how to set that up.
+[Setting up two-factor login for SSH](/docs/ssh-2fa) for how to set that up.
 
 ## When it does not work
 

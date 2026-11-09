@@ -21,34 +21,23 @@ func NewGroupController(groups *services.GroupService, scheduler *services.Sched
 }
 
 func mapGroupError(err error) error {
-	switch {
-	case errors.Is(err, repositories.ErrNotFound):
-		return fiber.NewError(fiber.StatusNotFound, "nicht gefunden")
-	case errors.Is(err, services.ErrProtectedGroup), errors.Is(err, services.ErrProtectedRule),
-		errors.Is(err, services.ErrProtectedSchedule):
-		return fiber.NewError(fiber.StatusForbidden, err.Error())
-	case errors.Is(err, services.ErrInvalidCron), errors.Is(err, services.ErrInvalidSpread),
-		errors.Is(err, services.ErrInvalidRuleType),
-		errors.Is(err, services.ErrRuleCommandUnused), errors.Is(err, services.ErrInvalidDNSTestDomain),
-		errors.Is(err, services.ErrInvalidAptCacheChoice), errors.Is(err, services.ErrInvalidDockerScope), errors.Is(err, services.ErrRuleOrderInvalid),
-		errors.Is(err, services.ErrEnforceRuleType), errors.Is(err, services.ErrRuleNeedsTarget),
-		errors.Is(err, services.ErrEnforceFirewallSpec),
-		errors.Is(err, services.ErrInvalidGroupPriority),
-		errors.Is(err, services.ErrNoPackages), errors.Is(err, services.ErrInvalidPackage),
-		errors.Is(err, services.ErrCustomActionNotSelected):
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	default:
-		return err
+	if errors.Is(err, repositories.ErrNotFound) {
+		return errGroupNotFound
 	}
+	return mapSentinel(err, groupErrors)
 }
 
 // List - GET /api/v1/server-groups (groups:read)
+// Query: q (Teil des Namens). Ungeblättert; Antwort {items, total}.
 func (ctrl *GroupController) List(c fiber.Ctx) error {
-	groups, err := ctrl.groups.List(scopeFor(c))
+	if err := checkLine("q", c.Query("q"), maxQueryLen); err != nil {
+		return err
+	}
+	groups, err := ctrl.groups.Search(scopeFor(c), c.Query("q"))
 	if err != nil {
 		return err
 	}
-	return c.JSON(groups)
+	return c.JSON(newListResponse(groups, len(groups)))
 }
 
 // Get - GET /api/v1/server-groups/:id (groups:read)
@@ -75,11 +64,11 @@ type groupRequest struct {
 // Create - POST /api/v1/server-groups/create (groups:write)
 func (ctrl *GroupController) Create(c fiber.Ctx) error {
 	var req groupRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Name == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
+		return missingFields("name")
 	}
 	if err := checkGroupRequest(req); err != nil {
 		return err
@@ -98,8 +87,8 @@ func (ctrl *GroupController) UpdateSettings(c fiber.Ctx) error {
 		return err
 	}
 	var req groupRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkGroupRequest(req); err != nil {
 		return err
@@ -134,8 +123,8 @@ func (ctrl *GroupController) AssignServer(c fiber.Ctx) error {
 		return err
 	}
 	var req serverRef
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.groups.AssignServer(scopeFor(c), id, req.ServerID, actor(c)); err != nil {
 		return mapGroupError(err)
@@ -150,8 +139,8 @@ func (ctrl *GroupController) RemoveServer(c fiber.Ctx) error {
 		return err
 	}
 	var req serverRef
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.groups.RemoveServer(scopeFor(c), id, req.ServerID, actor(c)); err != nil {
 		return mapGroupError(err)
@@ -174,8 +163,8 @@ func (ctrl *GroupController) AssignManager(c fiber.Ctx) error {
 		return err
 	}
 	var req userRef
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.groups.AssignManager(scopeFor(c), id, req.UserID, actor(c)); err != nil {
 		return mapGroupError(err)
@@ -190,8 +179,8 @@ func (ctrl *GroupController) RemoveManager(c fiber.Ctx) error {
 		return err
 	}
 	var req userRef
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.groups.RemoveManager(scopeFor(c), id, req.UserID, actor(c)); err != nil {
 		return mapGroupError(err)
@@ -227,11 +216,11 @@ func (ctrl *GroupController) DefineSchedule(c fiber.Ctx) error {
 		return err
 	}
 	var req scheduleRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if req.Name == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "name ist erforderlich")
+		return missingFields("name")
 	}
 	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"cron_expr", req.CronExpr, maxCronLen}); err != nil {
 		return err
@@ -250,8 +239,8 @@ func (ctrl *GroupController) UpdateSchedule(c fiber.Ctx) error {
 		return err
 	}
 	var req scheduleRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkLines(lineField{"name", req.Name, maxNameLen}, lineField{"cron_expr", req.CronExpr, maxCronLen}); err != nil {
 		return err
@@ -274,8 +263,8 @@ func (ctrl *GroupController) ReorderRules(c fiber.Ctx) error {
 	var req struct {
 		RuleIDs []uint `json:"rule_ids"`
 	}
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := ctrl.groups.ReorderRules(scopeFor(c), id, req.RuleIDs, actor(c)); err != nil {
 		return mapGroupError(err)
@@ -361,8 +350,8 @@ func (ctrl *GroupController) DefineRule(c fiber.Ctx) error {
 		return err
 	}
 	var req defineRuleRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkRuleRequest(req); err != nil {
 		return err
@@ -407,8 +396,8 @@ func (ctrl *GroupController) UpdateRule(c fiber.Ctx) error {
 		return err
 	}
 	var req defineRuleRequest
-	if err := c.Bind().Body(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "ungültiger Request-Body")
+	if err := bindBody(c, &req); err != nil {
+		return err
 	}
 	if err := checkRuleRequest(req); err != nil {
 		return err

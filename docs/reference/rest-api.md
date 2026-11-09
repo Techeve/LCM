@@ -11,26 +11,29 @@ keine separate interne Schnittstelle. Alle Endpunkte liegen unter `/api/v1`.
 
 ## Authentifizierung
 
-Zwei gleichwertige Wege:
+Skripte, Automatisierung und Integrationen nutzen den **API-Key**; die
+Weboberfläche meldet sich über eine Browser-Sitzung an:
 
 | Methode | Header | Für |
 |---|---|---|
-| Session-Token | `Authorization: Bearer <jwt>` | interaktive Nutzung, Skripte mit Login |
-| API-Key | `X-API-Key: <key>` | Service-zu-Service, Automatisierung |
+| API-Key | `X-API-Key: <key>` | Skripte, Automatisierung, Service-zu-Service |
+| Browser-Sitzung | `X-LCM-Session: <wert>` oder Cookie | die Weboberfläche |
 
-**Session-Login:**
+`Authorization: Bearer` gilt an der REST-API **nicht** als Anmeldung. Einen
+Login mit Benutzername und Passwort für Skripte gibt es nicht - dafür ist der
+API-Key da. (Der MCP-Port ist ein eigener Listener und nimmt den API-Key vom
+Scope `mcp` als Bearer-Token, siehe [MCP-Schnittstelle](/guides/mcp/).)
 
-```sh
-curl -s -X POST https://lcm.example.com/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"…"}'
-# → {"token":"eyJ…", "user": {...}}
-```
+**Browser-Sitzung:** Wie die Weboberfläche die Sitzung trägt, stellt der Betreiber
+unter *Einstellungen → Allgemein → Anmeldung im Browser* ein. Mehr dazu im
+[Sicherheitsmodell](/reference/security-model/#anmeldung-im-browser).
+`POST /auth/login` liefert in der Standard-Variante den Sitzungswert im
+Antwortrumpf (`session_token`), den die Oberfläche als `X-LCM-Session` sendet; in
+der Cookie-Variante setzt es stattdessen das Cookie `__Host-lcm_session`. Ist für
+den Account 2FA aktiv, liefert `/auth/login` eine Challenge; `POST /auth/login/2fa`
+mit dem TOTP-Code schließt den Login ab.
 
-Ist für den Account 2FA aktiv, liefert `/auth/login` statt eines Tokens eine
-Challenge; `POST /auth/login/2fa` mit dem TOTP-Code schließt den Login ab.
-
-**API-Key erzeugen** (unter *Einstellungen → API-Keys*, benötigt
+**API-Key erzeugen** (unter *Einstellungen → API-Schlüssel*, benötigt
 `apikeys:manage`): Der Klartext-Key wird **nur einmal** in der Antwort
 angezeigt - sicher aufbewahren, ein verlorener Key lässt sich nicht erneut
 anzeigen, nur widerrufen und neu erzeugen.
@@ -52,22 +55,21 @@ zugewiesenen Gruppen, Admins alles). Details zu Rollen und Scopes:
 ## Beispiel-Workflow
 
 ```sh
-TOKEN=$(curl -s -X POST https://lcm.example.com/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"…"}' | jq -r .token)
+# Der Key kommt aus Einstellungen → API-Schlüssel (siehe oben)
+export LCM_KEY='lcm_xxxxxxxxxxxxxxxx'
 
 # Alle Server auflisten
 curl -s https://lcm.example.com/api/v1/servers \
-  -H "Authorization: Bearer $TOKEN" | jq '.[].name'
+  -H "X-API-Key: $LCM_KEY" | jq '.items[].name'
 
 # Sicherheits-Updates auf einem Server anstoßen (asynchron, liefert eine Job-ID)
 curl -s -X POST https://lcm.example.com/api/v1/servers/3/packages/upgrade-security \
-  -H "Authorization: Bearer $TOKEN"
+  -H "X-API-Key: $LCM_KEY"
 # → {"status":"started", "job_id":"…", "job_name":"…"}
 
 # Job-Fortschritt/-Ergebnis abfragen
-curl -s https://lcm.example.com/api/v1/jobs/history?server_id=3 \
-  -H "Authorization: Bearer $TOKEN"
+curl -s https://lcm.example.com/api/v1/jobs?server_id=3 \
+  -H "X-API-Key: $LCM_KEY"
 ```
 
 Server-verändernde Aktionen (Updates, Härtung, Docker-Aktionen, …) laufen
@@ -78,7 +80,7 @@ Job-Historie.
 
 ## Vollständige Referenz (OpenAPI)
 
-Alle **258 Endpunkte** mit Methode, Pfad, benötigter Berechtigung und (soweit
+Alle **290 Endpunkte** (Kombinationen aus Methode und Pfad, verteilt auf 258 Pfade) mit benötigter Berechtigung und (soweit
 im Quellcode ersichtlich) Request-Body stehen maschinenlesbar als
 OpenAPI-3.0-Spezifikation zum Download bereit:
 

@@ -54,6 +54,10 @@ const aptLocks = "/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/li
 // fehlt auf Minimal-Installationen, /proc/locks gibt es immer. Gesucht wird
 // nach der Inode der Sperrdatei; Zeilen mit "->" sind Wartende, keine Halter.
 //
+// lcm_apt_who beginnt mit „PID n (name)": So liest der Klassifizierer
+// (domain.ClassifyFailure) den Halter aus; die Kommandozeile dahinter bleibt im
+// Job-Output und gelangt nicht in den Serverstatus.
+//
 // lcm_apt_orphan erkennt LCMs eigene Läufe am Ausgabe-Wrapper (__lf=, siehe
 // detachBackgroundFDs) unter den Vorfahren des Halters. Ein laufender
 // LCM-Lauf auf demselben Server kann es nicht sein: Jobs eines Servers laufen
@@ -64,7 +68,7 @@ lcm_apt_holder() {
     awk 'NR == FNR { ino[$1] = 1; next } $2 != "->" { n = split($6, a, ":"); if (a[n] in ino) { print $5; exit } }' - /proc/locks 2>/dev/null
 }
 lcm_apt_who() {
-  printf 'PID %s, laeuft seit %s: %s' "$1" "$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')" "$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | cut -c1-160)"
+  printf 'PID %s (%s), laeuft seit %s: %s' "$1" "$(cat "/proc/$1/comm" 2>/dev/null)" "$(ps -o etime= -p "$1" 2>/dev/null | tr -d ' ')" "$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | cut -c1-160)"
 }
 lcm_apt_orphan() {
   case "$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)" in *apt-get*" update "*) ;; *) return 1 ;; esac

@@ -36,24 +36,24 @@ installierter Kernel) und die **Host-Härtung** braucht es Werkzeuge auf dem Zie
 `needrestart` und `lynis` sind auf vielen Servern nicht vorinstalliert. LCM
 installiert sie **nicht automatisch**: fehlt ein Werkzeug, läuft der Deep Scan
 trotzdem und meldet den fehlenden Teil ehrlich als „nicht geprüft". Über den Knopf
-**„Tools installieren"** (Server-Detail → Tab **Deep Scan**) lassen sich beide
+**„Werkzeuge installieren"** (Server-Detail → Reiter **Deep-Scan**) lassen sich beide
 Werkzeuge je Paketverwaltung nachrüsten (apt/dnf/zypper/pacman/apk; wo eine
 Distribution ein Werkzeug nicht anbietet - z. B. needrestart auf Alpine - wird das
 gemeldet).
 
 ## Ausführen
 
-- **Einzelner Server**: Server-Detail → Tab **Deep Scan** → **„Deep Scan starten"**.
+- **Einzelner Server**: Server-Detail → Reiter **Deep-Scan** → **„Tiefen Scan starten"**.
   Der Lauf kann durch Lynis ~30-60 s dauern und erscheint als Job in der Historie.
-- **Ganze Gruppe**: Gruppen-Regel vom Typ **„Deep Scan"** (geplant oder manuell
+- **Ganze Gruppe**: Gruppen-Regel vom Typ **„Tiefenprüfung"** (geplant oder manuell
   ausgelöst).
 
 Der Deep Scan ist rein lesend und läuft daher auch im eingeschränkten Sudo-Modus.
 
 ## Ergebnis
 
-Der Tab **Deep Scan** zeigt den Härtungs-Index, die kernel-bezogenen CVEs und die
-**Berichte**.
+Der Reiter **Deep-Scan** zeigt den Härtungs-Index, die kernel-bezogenen CVEs und
+den **Verlauf** der Berichte.
 
 ### Berichte statt einer endlosen Liste
 
@@ -82,13 +82,13 @@ Zusätzlich fließt das Ergebnis in Ampel und Alarme ein:
 - eine **Kernel-Reboot-Lücke** setzt „Neustart erforderlich" (gelb),
 - **Härtungs-/Konfigurationswarnungen** färben den Server gelb - reine **Lynis-
   Empfehlungen** bleiben bewusst informativ (kein „alles gelb"),
-- die Alarmregel **„Deep Scan: Befunde"** meldet Warnungen/Kernel-Reboot aktiv.
+- die Alarmregel **„Tiefenprüfung mit Befunden"** meldet Warnungen/Kernel-Reboot aktiv.
 
 ## Wenn der Befund „Root-Login erlaubt" nicht verschwindet
 
 Der Deep Scan liest den Root-Login mit `sshd -T` aus - also die **effektive**
 Konfiguration, nicht den Inhalt einer bestimmten Datei. Meldet er den Zugang
-als offen, obwohl in LCM „Root-Login deaktivieren" gesetzt ist, hat der Scan
+als offen, obwohl in LCM „Root-Login sperren" gesetzt ist, hat der Scan
 recht und die Einstellung greift tatsächlich nicht.
 
 Der Grund liegt in einer Eigenheit von sshd: Bei **mehrfacher Definition

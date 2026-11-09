@@ -99,7 +99,8 @@ func (s *ServerService) InstallCrowdSecLapi(scope repositories.AccessScope, id u
 
 func (s *ServerService) runCrowdSecLapiJob(job *domain.Job, server *domain.Server, in LapiInstallInput, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "Demo-Server - CrowdSec-LAPI-Einrichtung simuliert (kein SSH-Kontakt).", ptrInt(0), nil)
+		demoAddPackage(s.servers, server.ID, "crowdsec", "1.6.4")
+		s.jobs.CompleteSkipped(job, "Demo-Server - CrowdSec-LAPI-Einrichtung simuliert (kein SSH-Kontakt).")
 		return
 	}
 	conn, err := s.connectRec(server, "crowdsec-lapi", actor)
@@ -109,11 +110,7 @@ func (s *ServerService) runCrowdSecLapiJob(job *domain.Job, server *domain.Serve
 	}
 	defer conn.Close()
 
-	variant := "plain"
-	if in.Bouncer {
-		variant = "bouncer"
-	}
-	script := hostScript(server, crowdsecLapiInstallScript(in.Bouncer), "host-crowdsec-lapi", variant)
+	script := crowdsecLapiHostScript(server, in.Bouncer)
 	output, code, runErr := conn.Run(privRun(server, script))
 	if runErr == nil && code != 0 {
 		runErr = fmt.Errorf("einrichtung endete mit exit-code %d", code)

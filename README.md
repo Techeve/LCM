@@ -33,7 +33,7 @@ LCM is a self-hosted control center for Linux servers. Install it once - a singl
 binary with no external dependencies - and manage any number of machines over
 plain SSH: nothing to roll out on the managed servers, no agents to keep
 updated, no configuration management language to learn. Go backend (Fiber v3,
-GORM, SQLite) plus Svelte 5 frontend (Vite, Bootstrap 5) in **one executable**,
+GORM, SQLite) plus Lit web interface (TypeScript, Vite) in **one executable**,
 running on Linux, Windows and macOS.
 
 It is built for the daily reality of running a server fleet - whether that is a
@@ -189,6 +189,9 @@ theme. Taken from the built-in demo mode (`lcm --demo`).
 - **Roles & permissions** - admins, managers (only assigned servers, tenant
   isolation at query level), service accounts (API keys with expiry), regular
   users as key identities
+- **Browser sign-in** - two settable ways: in the tab's memory only (default, no
+  cookies at all) or as a `__Host-` session cookie (HTTPS only); scripts use API
+  keys, a bearer login does not exist
 - **Security by design** - AES-256-GCM encryption of sensitive data at rest
   (master key in `lcm.key` or `LCM_ENCRYPTION_KEY`), key rotation
   (`rotate-db-key`, SSH certificate rotation), TOTP 2FA with enforcement, HTTPS
@@ -257,7 +260,7 @@ without the flag a new installation starts empty:
 **Development** with hot reload:
 
 ```sh
-make dev       # backend :9310 + Vite dev server :5173
+make dev       # backend :9310 + Vite dev server :5174
 ```
 
 **Tests:**
@@ -341,7 +344,7 @@ snapshot of the `community` and `beta` branches on every release:
 ## Stack
 
 Go · Fiber v3 · GORM · SQLite (CGO-free) · x/crypto/ssh · argon2id · JWT ·
-AES-256-GCM - Svelte 5 (runes) · Bootstrap 5 · Vite - Playwright · govulncheck ·
+AES-256-GCM - Lit · TypeScript · Vite - Playwright · govulncheck ·
 npm audit
 
 ## Dependencies & supply chain

@@ -2,128 +2,76 @@
 sidebar:
   order: 24
 title: Frontend & API
-description: API service classes, the central ApiClient, the auth store, Svelte 5 runes patterns, routing, and the dev workflow.
+description: The API client, the data store, live data, routing, input validation, and the dev workflow of the web interface.
 ---
 
-This page describes the **frontend architecture** around the API (service
-classes, Svelte patterns). For the REST API itself - authentication,
-permissions, example requests, and the full endpoint reference - see the
-[REST API](/en/reference/rest-api/) page.
+This page describes the **frontend architecture** around the API. For the REST
+API itself - authentication, permissions, example requests, and the full endpoint
+reference - see the [REST API](/en/reference/rest-api/) page.
+
+The web interface lives in `ui/`: Lit, TypeScript, and Vite, with its own
+components and no CSS framework. The rules for new pages are in `ui/README.md`.
 
 ## Basic principle
 
-Svelte components **never** call `fetch()` directly. Instead there is one service class per backend resource in `frontend/src/api/`, bundled in the central `api` object:
+Pages **never** call `fetch()` directly. Requests per domain live in `ui/src/api/`
+(`servers.ts`, `groups.ts`, …) and go through the API client.
 
-```svelte
-<script>
-  import { api, ApiError } from '../api';
+```ts
+import { LiveData } from '../lib/live-data';
 
-  let servers = $state([]);
-
-  async function load() {
-    servers = await api.servers.list();
-  }
-</script>
+readonly #servers = new LiveData(this, {
+  url: () => SERVERS_URL,
+  topics: () => ['servers'],
+});
 ```
 
-Available: `api.auth`, `api.users`, `api.linuxUsers`, `api.servers`, `api.groups`, `api.jobs`, `api.system`, `api.apiKeys`, `api.customActions`, `api.notifications`, `api.alerts`, plus `api.client` (reactive state). Shared formatting helpers (timestamps, GB, CVE severities) live in `frontend/src/lib/format.js`.
+`LiveData` delivers data straight from the tab's store, refreshes it in the
+background, and reloads when an event for a subscribed topic arrives. There is no
+polling. Changing calls go through `api.post/put/patch/delete`, followed by
+`store.invalidate(prefix)`.
 
-## What the ApiClient handles centrally
+## What the API client handles centrally
 
-`frontend/src/api/client.svelte.js` is the only place with `fetch`:
+`ui/src/lib/api.ts` is the only place with `fetch`:
 
-- **Attach the JWT automatically:** if a session is active, every request gets the `Authorization: Bearer …` header. Components know nothing about tokens.
-- **Normalize errors:** every error response becomes an `ApiError` with `status` and `message` (from the backend's `{"error": "..."}` body).
-- **Auto-logout on 401:** if the server responds with 401 (token expired/invalid), the client discards the session and redirects to `/login` - implemented exactly once, applies everywhere.
-- **Session persistence:** token + profile are stored in `localStorage`; a page reload keeps the login.
+- **Session:** the operator chooses under *Settings → General* how the browser
+  carries it. By default (`memory`) the `session_token` of the sign-in lives only
+  in a module variable of the tab and is sent as `X-LCM-Session` - never in
+  `localStorage`, `sessionStorage`, IndexedDB, cache, or a service worker, and
+  there is no cookie. A reload, a new tab, or closing it signs you out. In the
+  cookie variant (HTTPS only) the session lives in the httpOnly cookie
+  `__Host-lcm_session`, which no script can read.
+- **CSRF:** only with the cookie session, every changing request carries the
+  `X-CSRF-Token` header; a browser does not send the header of the memory
+  variant by itself and does not need it.
+- **Files and streams:** a link to a protected path would not carry the session
+  of the memory variant. Downloads therefore go through `api.download` (fetch
+  and blob), the live log through `api.stream` (SSE over fetch instead of
+  `EventSource`), and the event channel fetches a one-time ticket before every
+  connection (`POST /events/ticket`).
+- **Normalized errors:** every error response becomes an `ApiError` with `status`,
+  `code`, and `params`. `code` is the translation key `errors.<code>`; the text
+  comes from `errorText(err)`.
+- **Expired session:** a 401 leads to the login and back to the page afterwards.
 
-The auth state is a `$state` field in a `.svelte.js` file - which makes `api.client.isLoggedIn`, `api.client.user`, and `hasPermission()` **reactive**: UI that reads them updates automatically on login/logout.
+## Permissions
 
-## The auth store
+`auth.can('servers:write')` hides actions. This is purely cosmetic; the binding
+check is always done by the server's RBAC middleware.
 
-For components there is the slim wrapper `frontend/src/stores/auth.svelte.js`:
+## Input validation
 
-```svelte
-<script>
-  import { auth } from '../stores/auth.svelte.js';
-</script>
-
-{#if auth.isLoggedIn}
-  Hallo, {auth.user.display_name}!
-{/if}
-
-{#if auth.can('servers:write')}
-  <button>Server hinzufügen</button>
-{/if}
-```
-
-`auth.can()` is pure UI cosmetics (hiding buttons) - the authoritative check is always done by the server via the RBAC middleware.
-
-## Creating a new API class
-
-Example "Notes" (the backend routes already exist, see [Architecture](/en/reference/architecture/)):
-
-**1. Class** - `frontend/src/api/notes.js` (template: `alerts.js` or `customactions.js`):
-
-```js
-export class NotesApi {
-  #client;
-  constructor(client) { this.#client = client; }
-
-  getAll()        { return this.#client.get('/notes'); }
-  create(title, body) { return this.#client.post('/notes', { title, body }); }
-  remove(id)      { return this.#client.delete(`/notes/${id}`); }
-}
-```
-
-**2. Register** - in `frontend/src/api/index.js`:
-
-```js
-import { NotesApi } from './notes.js';
-
-export const api = {
-  // ...
-  notes: new NotesApi(client),
-};
-```
-
-**3. Use** - `await api.notes.getAll()` in any component.
-
-## The template's Svelte 5 patterns
-
-**Local state + loading** (e.g. `pages/Dashboard.svelte`):
-
-```svelte
-<script>
-  let servers = $state([]);
-  let error = $state('');
-
-  // $derived berechnet abgeleitete Werte automatisch neu:
-  let reachableCount = $derived(servers.filter((s) => s.reachable).length);
-
-  // $effect lädt initial und bei Änderung getrackter Abhängigkeiten:
-  $effect(() => {
-    void auth.isLoggedIn;   // Abhängigkeit: neu laden nach Login/Logout
-    load();
-  });
-</script>
-```
-
-**Props + callback upward** (e.g. `components/ReconnectWizard.svelte`):
-
-```svelte
-<script>
-  let { server, open = $bindable(false), onDone = () => {} } = $props();
-  // ... nach erfolgreichem Abschluss:
-  onDone();
-</script>
-```
-
-**Error handling:** always catch `ApiError` and show `e.status`/`e.message` - that turns a 403 ("fehlende Berechtigung: servers:write") into a comprehensible UI message instead of a console exception.
+The backend is the authority: it checks every input itself and responds with a
+code that names the reason. The web interface reports the same thing earlier, at
+the field (`ui/src/lib/validate.ts`).
 
 ## Routing
 
-`svelte-spa-router` with **hash routing** (`/#/users`): works in the single binary without server configuration and in `file://` contexts. Routes are defined in `App.svelte`; a new page = a new file in `pages/` + an entry in the `routes` object. Links with `use:link`, programmatically with `push('/pfad')`.
+A custom router with the History API and real paths (`ui/src/lib/router.ts`). Pages
+are listed in `ui/src/routes.ts` and load on first use. Everything that defines a
+view is in the address: tabs as a path segment, filters, sorting, and page as a
+query. If a page holds unsaved changes, the router asks before leaving.
 
 ## Dev workflow
 
@@ -131,4 +79,9 @@ export const api = {
 make dev
 ```
 
-starts the Go backend on `:9310` and Vite on `:5173` (with an `/api` proxy to the backend). Frontend changes appear instantly via hot reload; for final testing run `make build` and start the binary.
+starts the Go backend on `:9310` and Vite on `:5174` (with an `/api` proxy to the
+backend). Changes to the web interface appear immediately; backend changes need a
+restart of `make dev`.
+
+Tests: `npm test` in `ui/` for the unit tests, `make test-e2e` for the Playwright
+tests against the real binary.

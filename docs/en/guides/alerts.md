@@ -15,8 +15,14 @@ functions the interval is not configurable.
 Under *Settings → Notifications* you create channels. A channel is referenced
 by alert rules and is protected against deletion as long as a rule uses it.
 
-- **Email (SMTP)** - a dedicated outbox per channel (host, port, sender,
-  recipients; password stored encrypted).
+- **Email (SMTP)** - a dedicated outbox per channel (host, port,
+  encryption, sender, recipients; password stored encrypted). You pick the
+  **encryption**: *TLS* (encrypted from the first byte, usually port 465),
+  *STARTTLS* (mandatory, usually port 587; if the server does not offer it,
+  nothing is sent) or *None* (usually port 25; the password and the content
+  cross the network in plain text, only use it in trusted networks). The
+  **sender** may carry a display name, such as `LCM <lcm@example.com>`. The
+  same options apply to the email sending under *Settings → General*.
 - **Webhook** - HTTPS POST to a target URL, either as **generic JSON**
   (for your own automations) or in **Microsoft Teams format** (Adaptive
   Card). For Teams, create a workflow "When a Teams webhook request is
@@ -89,53 +95,58 @@ one selected group is still evaluated only once.
 
 | Type | Trigger |
 |---|---|
-| **Disk capacity** | usage reaches the percentage threshold |
-| **Storage forecast** | the linear extrapolation exceeds the limit within the deadline |
-| **Security/CVE** | CVE findings from the configured minimum severity |
-| **Overdue updates** | number of open package updates exceeds the threshold |
-| **Heartbeat** | last server contact is more than *n* hours ago |
+| **Disk space low** | usage reaches the percentage threshold |
+| **Disk space forecast** | the linear extrapolation exceeds the limit within the deadline |
+| **Vulnerabilities (CVE)** | CVE findings from the configured minimum severity |
+| **Pending updates** | number of open package updates exceeds the threshold |
+| **No contact (heartbeat)** | last server contact is more than *n* hours ago |
 | **Reboot required** | the system itself requests a reboot after an update (e.g. a new kernel) - a plain yes/no criterion without a threshold |
 | **APT cache unreachable** | one of the [APT caches](/en/guides/apt-cache/) does not respond; the message names each affected one. Stays silent while no cache is configured under *Settings → APT cache* |
-| **Deep scan** | the last [deep scan](/en/guides/deep-scan/) produced warnings or critical findings (hardening/misconfiguration or a kernel reboot gap) - a plain yes/no criterion without a threshold |
+| **Deep scan with findings** | the last [deep scan](/en/guides/deep-scan/) produced warnings or critical findings (hardening/misconfiguration or a kernel reboot gap) - a plain yes/no criterion without a threshold |
 | **CrowdSec LAPI unreachable** | one of the central CrowdSec LAPIs does not respond or rejects the stored machine login; the message names each affected one. Applies only to the LCM host and stays silent while no LAPI is stored under *Settings → CrowdSec* |
 | **CVE database outdated** | the vulnerability database of the CVE scanner is older than 48&nbsp;hours or was never downloaded. This matters because an old database reports no error but returns outdated results - from the outside that looks like “no vulnerabilities”. Applies only to the LCM host |
 | **System backup overdue** | automatic backups are enabled, but the newest backup is older than **twice the interval** - or none exists at all. Deliberately measures the outcome instead of individual failed attempts: however the backup went missing, the missing state is what gets reported. Applies only to the LCM host |
+| **Early warning: new findings** | open findings of [early warning](/en/guides/security-cve/#early-warning-osv) from the configured minimum severity. Malicious packages always fire; findings acknowledged under *Security* no longer fire |
+| **Action failed** | LCM can no longer act on a server: updates fail, the connection is lost, rules or the CVE scan fail, or package runs silently stopped (stand-still). Fires **immediately** when a capability category fails, reports the return to normal as an **all-clear** (severity *info*) and sends a reminder once the cooldown has passed while the failure persists. Each category is debounced on its own. A busy dpkg lock only counts from the second consecutive failure. The stand-still alerts on the red level only (Settings → General); the yellow level stays a traffic-light hint. The message names category, error class and hint, **never the raw output** of the server |
 
 ## Examples per alert type
 
 All examples are created as a rule under *Settings → Alerts*. Where no
 threshold is given, the built-in default applies.
 
-- **Disk capacity** - "Root partition getting tight": threshold **85%**,
+- **Disk space low** - "Root partition getting tight": threshold **85%**,
   group *Databases*, severity *warning*. Without a threshold the default
   **90%** applies.
-- **Storage forecast** - "Filling up soon": deadline **7 days**, all servers,
+- **Disk space forecast** - "Filling up soon": deadline **7 days**, all servers,
   severity *warning*. The linear extrapolation from the
   [storage history](/en/guides/monitoring/) warns before the disk actually
   fills up (default deadline: 10 days).
-- **Security/CVE** - "Critical gaps immediately": minimum severity
+- **Vulnerabilities (CVE)** - "Critical gaps immediately": minimum severity
   **critical**, all servers, severity *critical*. A second, looser rule with
   minimum severity **high** just for the group *Production* (default: `high`).
-- **Overdue updates** - "Patch backlog": allowed number of open updates
+- **Pending updates** - "Patch backlog": allowed number of open updates
   **0** (any pending update fires), group *Production*. More generous for
   staging, e.g. **20**.
-- **Heartbeat** - "Server went quiet": timeout **6 hours**, all servers,
+- **No contact (heartbeat)** - "Server went quiet": timeout **6 hours**, all servers,
   severity *critical* (default: 24 hours).
 - **Reboot required** - "Kernel waiting for reboot": no threshold, group
   *Production*, severity *warning*. Fires as soon as a server itself requests a
   reboot after an update.
 - **APT cache unreachable** - no threshold; only meaningful if at least one
   cache is configured under *Settings → APT cache*.
-- **Deep scan** - "Report hardening findings": no threshold, severity
+- **Deep scan with findings** - "Report hardening findings": no threshold, severity
   *warning*. Fires as soon as a deep scan yields warnings or critical findings.
+- **Action failed** - "Server can no longer be maintained": no threshold, all
+  servers, severity *critical*. The cooldown is the reminder interval (e.g.
+  1440 minutes for a daily reminder).
 
 ## Severity & cooldown
 
-Each rule has a **severity** and a **cooldown**: the most recent alert per
-(rule, server) debounces further notifications, so that no alert spam arises.
-**`0` does not mean “no cooldown”** - it selects the built-in default of
-**360&nbsp;minutes (6&nbsp;h)**; a shorter cooldown must be entered
-explicitly (minimum&nbsp;1). Triggered alerts land in the **alert history**
+Each rule has a **severity** (*Urgency* in the interface) and a **cooldown**
+(in minutes): the most recent alert per (rule, server) debounces further
+notifications, so that no alert spam arises. **`0` means “no cooldown”**: every
+evaluation (every 30&nbsp;minutes) reports again. New rules start with
+**360&nbsp;minutes (6&nbsp;h)** as a visible default value. Triggered alerts land in the **alert history**
 (including delivery status); it is cleaned up after the log retention period.
 
 ## Interplay

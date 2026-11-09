@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/core/events"
 	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
@@ -26,6 +27,21 @@ type BulkUpdateStatus struct {
 	StartedAt  *time.Time `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
 	LastError  string     `json:"last_error"` // letzter Fehler (leer = ok)
+
+	// scope ist der Sichtbereich dessen, der den Lauf gestartet hat: Total,
+	// Zähler, Servernamen und Fehlertexte beziehen sich auf genau diese Server.
+	scope repositories.AccessScope
+}
+
+// VisibleTo liefert den Stand so, wie ihn der Betrachter sehen darf: den
+// vollständigen Stand für Admins und für den, dessen Sichtbereich der Lauf
+// betrifft; allen anderen nur, ob gerade ein Lauf aktiv ist. Es gibt nur einen
+// Lauf zugleich, und Namen oder Zähler fremder Server gehen niemanden etwas an.
+func (st BulkUpdateStatus) VisibleTo(viewer repositories.AccessScope) BulkUpdateStatus {
+	if viewer.All || viewer == st.scope {
+		return st
+	}
+	return BulkUpdateStatus{Running: st.Running}
 }
 
 // bulkUpdateRunner kapselt den Fortschritt hinter einem Mutex.
@@ -102,12 +118,13 @@ func (s *ServerService) StartBulkUpdate(scope repositories.AccessScope, actor st
 
 	now := time.Now()
 	s.bulk.state = BulkUpdateStatus{
-		Running: true, Total: len(targets), Actor: actor, StartedAt: &now,
+		Running: true, Total: len(targets), Actor: actor, StartedAt: &now, scope: scope,
 	}
 	st := s.bulk.state
 	s.bulk.mu.Unlock()
 
 	s.audit.Log(actor, "security.bulk-update", "system", 0, "Security-Updates auf allen Servern gestartet")
+	s.publishBulk()
 	safego.Go("bulk-update", func() { s.runBulkUpdate(targets, actor) })
 	return st, nil
 }
@@ -115,6 +132,7 @@ func (s *ServerService) StartBulkUpdate(scope repositories.AccessScope, actor st
 // runBulkUpdate arbeitet die Server der Reihe nach ab: pro Server ein
 // Security-Upgrade als Job, dann warten bis der Job terminal ist.
 func (s *ServerService) runBulkUpdate(targets []domain.Server, actor string) {
+	defer s.publishBulk()
 	defer s.bulk.finish()
 	for i := range targets {
 		srv := &targets[i]
@@ -123,11 +141,23 @@ func (s *ServerService) runBulkUpdate(targets []domain.Server, actor string) {
 		if err != nil {
 			// z.B. ErrServerBusy (anderer Job läuft) - als fehlgeschlagen zählen.
 			s.bulk.markDone(false, srv.Name+": "+err.Error())
+			s.publishBulk()
 			continue
 		}
 		ok := s.waitJobTerminal(job.ID)
 		s.bulk.markDone(ok, "")
+		s.publishBulk()
 	}
+}
+
+// publishBulk meldet den Stand des Sammel-Updates. Nur Zähler, keine Namen:
+// Das Update läuft über alle Server, die Meldung geht aber auch an Benutzer,
+// die nur einen Teil davon sehen dürfen.
+func (s *ServerService) publishBulk() {
+	st := s.bulk.snapshot()
+	s.bus.Publish(events.BulkProgress(events.BulkProgressData{
+		Running: st.Running, Total: st.Total, Completed: st.Completed, Failed: st.Failed,
+	}))
 }
 
 // waitJobTerminal wartet, bis ein Job einen Endzustand erreicht, und meldet,

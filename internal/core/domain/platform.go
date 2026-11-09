@@ -46,6 +46,7 @@ var ubuntuReleases = map[string]osRelease{
 	"24.10": {eol: "2025-07"},
 	"25.04": {eol: "2026-01"},
 	"25.10": {eol: "2026-07"},
+	"26.04": {eol: "2031-05", lts: true},
 }
 
 var debianReleases = map[string]osRelease{
@@ -77,7 +78,7 @@ var centosStreamReleases = map[string]osRelease{
 }
 
 const (
-	ubuntuRecommended = "24.04" // aktuellste LTS
+	ubuntuRecommended = "26.04" // aktuellste LTS
 	debianRecommended = "13"    // aktuelles Stable (trixie)
 	rhelRecommended   = "10"    // aktuelle Hauptversion der RHEL-Familie
 	centosRecommended = "10"    // aktueller CentOS-Stream

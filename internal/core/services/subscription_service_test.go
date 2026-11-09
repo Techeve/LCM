@@ -19,6 +19,13 @@ import (
 // newSubscriptionEnv baut den Dienst mit In-Memory-DB und echtem Cipher.
 func newSubscriptionEnv(t *testing.T) (*SubscriptionService, *repositories.SettingsRepository) {
 	t.Helper()
+	svc, settings, _ := newSubscriptionEnvDB(t)
+	return svc, settings
+}
+
+// newSubscriptionEnvDB ist newSubscriptionEnv mit Zugriff auf die Datenbank.
+func newSubscriptionEnvDB(t *testing.T) (*SubscriptionService, *repositories.SettingsRepository, *gorm.DB) {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("test-db: %v", err)
@@ -39,7 +46,7 @@ func newSubscriptionEnv(t *testing.T) (*SubscriptionService, *repositories.Setti
 	}
 	audit := NewAuditService(repositories.NewAuditRepository(db))
 	svc := NewSubscriptionService(settings, repositories.NewServerRepository(db), cipher, audit)
-	return svc, settings
+	return svc, settings, db
 }
 
 // fakeSubscriptionServer stellt den Anbieter-Dienst nach - mit dem echten

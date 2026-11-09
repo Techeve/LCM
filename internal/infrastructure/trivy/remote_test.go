@@ -159,7 +159,7 @@ func TestSidecarUebersetztBekannteTrivyFehler(t *testing.T) {
 func TestSidecarUpdateDBLiefertDieAusgabe(t *testing.T) {
 	srv := fakeSidecar(t, func(path string, _ []byte) (int, string) {
 		if path == PathUpdateDB {
-			return 200, `{"output":"Downloading DB... 100%"}`
+			return 200, `{"output":"Downloading DB... 100%","updated":true}`
 		}
 		return 200, `{"available":true}`
 	})
@@ -168,8 +168,11 @@ func TestSidecarUpdateDBLiefertDieAusgabe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateDB: %v", err)
 	}
-	if !strings.Contains(out, "Downloading DB") {
-		t.Errorf("die Ausgabe gehoert ins Job-Protokoll, bekam %q", out)
+	if !strings.Contains(out.Output, "Downloading DB") {
+		t.Errorf("die Ausgabe gehoert ins Job-Protokoll, bekam %q", out.Output)
+	}
+	if !out.Updated {
+		t.Error("der neue Stand ist unterwegs verloren gegangen")
 	}
 }
 

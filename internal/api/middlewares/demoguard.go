@@ -22,8 +22,7 @@ import (
 func DemoGuard() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		if demoBlocked(c.Method(), c.Path()) {
-			return fiber.NewError(fiber.StatusForbidden,
-				"In der öffentlichen Demo deaktiviert / disabled in this public demo")
+			return errDemoDisabled
 		}
 		return c.Next()
 	}

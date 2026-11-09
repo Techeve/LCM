@@ -338,8 +338,12 @@ type GlobalSettingsInput struct {
 	AdvisoryLocalCopy           *bool
 	AdvisoryCacheTTLMinutes     *int
 	SessionTTLMinutes           *int
+	BrowserSessionMode          *string // memory | cookie
+	BrowserSessionModeConfirmed *bool
 	JobIdleTimeoutMinutes       *int
 	JobIdleTimeoutSlowMinutes   *int
+	PackagesStaleWarnHours      *int
+	PackagesStaleCriticalDays   *int
 	Require2FARoles             *string
 	PublicBaseURL               *string
 	CVEHighWeightPackages       *string
@@ -355,7 +359,8 @@ type GlobalSettingsInput struct {
 	MailUsername        *string
 	MailPassword        *string // nil/leer = unverändert
 	MailFrom            *string
-	MailUseTLS          *bool
+	MailSecurity        *string // tls | starttls | none
+	MailUseTLS          *bool   // alt; gilt nur, wenn MailSecurity fehlt
 	MailAdminRecipients *string
 
 	// CrowdSec-Zugang (Passwort/Key nil/leer = unverändert).
@@ -481,7 +486,7 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		// als Log-Zeile beim Scheduler-Reload auf und der CVE-Scan liefe
 		// still nie.
 		if _, err := cronParser.Parse(*in.CVEScanCron); err != nil {
-			return nil, fmt.Errorf("ungültiger CVE-Scan-Zeitplan %q: %w", *in.CVEScanCron, err)
+			return nil, fmt.Errorf("%w: ungültiger CVE-Scan-Zeitplan %q: %v", ErrSettingInvalid, *in.CVEScanCron, err)
 		}
 		settings.CVEScanCron = *in.CVEScanCron
 		touch("cve_scan_cron")
@@ -538,6 +543,17 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		settings.SessionTTLMinutes = clampSessionTTL(*in.SessionTTLMinutes)
 		touch("session_ttl_minutes")
 	}
+	if in.BrowserSessionMode != nil {
+		if !domain.ValidBrowserSessionMode(*in.BrowserSessionMode) {
+			return nil, fmt.Errorf("%w: browser_session_mode muss memory oder cookie sein", ErrSettingInvalid)
+		}
+		settings.BrowserSessionMode = *in.BrowserSessionMode
+		touch("browser_session_mode")
+	}
+	if in.BrowserSessionModeConfirmed != nil {
+		settings.BrowserSessionModeConfirmed = *in.BrowserSessionModeConfirmed
+		touch("browser_session_mode_confirmed")
+	}
 	if in.JobIdleTimeoutMinutes != nil {
 		// Erlaubte Stille (Watchdog): 0 = aus; sonst 1 Minute bis 24 Stunden.
 		settings.JobIdleTimeoutMinutes = domain.ClampJobIdleTimeout(*in.JobIdleTimeoutMinutes)
@@ -546,6 +562,20 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 	if in.JobIdleTimeoutSlowMinutes != nil {
 		settings.JobIdleTimeoutSlowMinutes = domain.ClampJobIdleTimeout(*in.JobIdleTimeoutSlowMinutes)
 		touch("job_idle_timeout_slow_minutes")
+	}
+	if in.PackagesStaleWarnHours != nil {
+		if err := validateRange(*in.PackagesStaleWarnHours, domain.PackagesStaleWarnHoursMin, domain.PackagesStaleWarnHoursMax, "packages_stale_warn_hours"); err != nil {
+			return nil, err
+		}
+		settings.PackagesStaleWarnHours = *in.PackagesStaleWarnHours
+		touch("packages_stale_warn_hours")
+	}
+	if in.PackagesStaleCriticalDays != nil {
+		if err := validateRange(*in.PackagesStaleCriticalDays, domain.PackagesStaleCriticalDaysMin, domain.PackagesStaleCriticalDaysMax, "packages_stale_critical_days"); err != nil {
+			return nil, err
+		}
+		settings.PackagesStaleCriticalDays = *in.PackagesStaleCriticalDays
+		touch("packages_stale_critical_days")
 	}
 	if in.Require2FARoles != nil {
 		// Rollennamen normalisieren: ohne das machte ein „Admin" statt
@@ -598,10 +628,18 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		settings.MailFrom = strings.TrimSpace(*in.MailFrom)
 		touch("mail_from")
 	}
-	if in.MailUseTLS != nil {
-		settings.MailUseTLS = *in.MailUseTLS
-		touch("mail_use_tls")
+	switch {
+	case in.MailSecurity != nil:
+		if !domain.ValidMailSecurity(*in.MailSecurity) {
+			return nil, fmt.Errorf("%w: mail_security muss tls, starttls oder none sein", ErrSettingInvalid)
+		}
+		settings.MailSecurity = *in.MailSecurity
+		touch("mail_security")
+	case in.MailUseTLS != nil:
+		settings.MailSecurity = domain.MailSecurityFromLegacy(*in.MailUseTLS)
+		touch("mail_security")
 	}
+	settings.NormalizeMail()
 	if in.MailAdminRecipients != nil {
 		settings.MailAdminRecipients = strings.TrimSpace(*in.MailAdminRecipients)
 		touch("mail_admin_recipients")
@@ -619,6 +657,14 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 	}
 	// Konsistenz des ENDzustands prüfen (unabhängig davon, welche Felder
 	// dieser PATCH anfasste).
+	if in.PackagesStaleWarnHours != nil || in.PackagesStaleCriticalDays != nil {
+		// Rot muss nach gelb kommen - sonst meldet LCM nie „gelb", sondern
+		// springt direkt auf „rot".
+		if settings.PackagesStaleCriticalAfter() <= settings.PackagesStaleWarnAfter() {
+			return nil, fmt.Errorf("%w: packages_stale_critical_days (%d Tage) muss länger sein als packages_stale_warn_hours (%d Stunden)",
+				ErrSettingInvalid, settings.PackagesStaleCriticalDays, settings.PackagesStaleWarnHours)
+		}
+	}
 	if settings.MailEnabled {
 		if settings.MailHost == "" || settings.MailFrom == "" {
 			return nil, ErrMailerIncomplete
@@ -718,7 +764,7 @@ func (s *SettingsService) UpdateBackupSettings(in BackupSettingsInput, actor str
 	}
 	recipients, err := NormalizeBackupRecipients(in.Recipients)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSettingInvalid, err)
+		return nil, fmt.Errorf("%w: %w", ErrSettingInvalid, err)
 	}
 	settings.BackupRecipients = recipients
 	// Aktivieren ohne irgendeinen Schlüssel - keine Passphrase (gespeichert,
@@ -764,6 +810,7 @@ func (s *SettingsService) SystemMailProvider() (*notify.EmailProvider, error) {
 	if settings.MailHost == "" || settings.MailFrom == "" {
 		return nil, ErrMailerIncomplete
 	}
+	settings.NormalizeMail()
 	password := ""
 	if settings.MailPasswordEnc != "" {
 		if password, err = s.cipher.DecryptString(settings.MailPasswordEnc); err != nil {
@@ -776,7 +823,7 @@ func (s *SettingsService) SystemMailProvider() (*notify.EmailProvider, error) {
 		Username:   settings.MailUsername,
 		From:       settings.MailFrom,
 		Recipients: splitRecipients(settings.MailAdminRecipients),
-		UseTLS:     settings.MailUseTLS,
+		Security:   settings.MailSecurity,
 	}
 	return notify.NewEmailProvider(cfg, password), nil
 }

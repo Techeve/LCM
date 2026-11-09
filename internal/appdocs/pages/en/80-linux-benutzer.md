@@ -67,14 +67,14 @@ If a change must stay, make it in LCM.
 
 ## Lock and remove
 
-In the **Users** tab of a server, **Disable** locks the account on that server;
-**Enable** removes the lock again. **Remove** deletes the account together with
+In the **Users** tab of a server, **Lock** locks the account on that server;
+**Unlock** removes the lock again. **Remove** deletes the account together with
 its home directory. The lock survives the next sync. For more, see the page
-[SSH keys](/#/doku/ssh-schluessel) and the server guide.
+[SSH keys](/docs/ssh-schluessel) and the server guide.
 
 ## Set up yourself: password and key
 
 On the activation page the user can set both at once: the password and an SSH
 key. LCM can also generate the key for them; they then download the private
 part once. The guide to your own key is on the page
-[Set up SSH keys](/#/doku/ssh-schluessel).
+[Set up SSH keys](/docs/ssh-schluessel).

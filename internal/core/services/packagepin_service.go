@@ -68,7 +68,9 @@ func validPinName(name string) (string, error) {
 		return "", ErrPackagePinName
 	}
 	base := strings.TrimSuffix(n, "*")
-	if base == "" {
+	// Das erste Zeichen ist ein Buchstabe oder eine Ziffer, wie bei jedem
+	// Paketnamen - ein Name mit fuehrendem '-' ginge sonst als Option durch.
+	if base == "" || strings.ContainsRune(".-_+", rune(base[0])) {
 		return "", ErrPackagePinName
 	}
 	for _, r := range base {
@@ -258,20 +260,16 @@ func (s *ServerService) effectivePins(server *domain.Server) []domain.PackagePin
 // ApplyPackagePins schreibt die wirksamen Pins auf dem Server fest
 // (Schutzdateien und Holds je Paketverwaltung). Asynchroner Job.
 func (s *ServerService) ApplyPackagePins(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	server, err := s.servers.FindByID(scope, id)
-	if err != nil {
-		return nil, err
-	}
+	return s.runPlanned(scope, id, actor, s.planApplyPins)
+}
+
+// planApplyPins prüft den Server und baut das Schutz-Skript aus den
+// wirksamen Pins - für den Lauf und die Befehlsvorschau gleich.
+func (s *ServerService) planApplyPins(server *domain.Server) (packagePlan, error) {
 	if err := s.ensurePinsAvailable(server); err != nil {
-		return nil, err
-	}
-	// Schutzdateien liegen unter /etc - das geht ueber die sudo-Whitelist des
-	// eingeschraenkten Modus hinaus.
-	if err := ensureFullSudo(server); err != nil {
-		return nil, err
+		return packagePlan{}, err
 	}
 	pins := s.effectivePins(server)
-	build := func(mgr string) string { return pkgPinScript(mgr, pins) }
-	return s.startPackageJob(scope, id, domain.RuleTypePackageScan,
-		"Paket-Pins anwenden", build, actor)
+	build := func(mgr string) string { return pkgPinScript(server.RestrictedSudo, mgr, pins) }
+	return s.newPackagePlan(server, domain.RuleTypePackageScan, "Paket-Pins anwenden", build)
 }

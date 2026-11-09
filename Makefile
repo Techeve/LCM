@@ -2,7 +2,7 @@
 #
 # Wichtigste Targets:
 #   make build          Vollständiger, sicherheitsgeprüfter Build (aktuelle Plattform)
-#   make dev            Backend (:9310) + Vite-Dev-Server (:5173) parallel
+#   make dev            Backend (:9310) + Vite-Dev-Server (:5174) parallel
 #   make test           Go-Tests (In-Memory SQLite)
 #   make test-e2e       Playwright End-to-End-Tests gegen das echte Binary
 #   make audit          npm audit + govulncheck
@@ -15,7 +15,7 @@
 
 BINARY      := lcm
 BUILD_DIR   := bin
-FRONTEND    := frontend
+FRONTEND    := ui
 
 VERSION_PKG := LCM/internal/version
 APP_VERSION := $(shell cat VERSION)
@@ -36,6 +36,7 @@ GO_LDFLAGS   = -s -w \
 .PHONY: all build bump-build frontend-audit frontend-build go-vulncheck go-build \
         build-linux build-linux-arm64 build-windows build-macos build-macos-intel build-all \
         build-agent deb deb-amd64 deb-arm64 deb-agent deb-agent-amd64 deb-agent-arm64 \
+        build-probe deb-probe deb-probe-amd64 deb-probe-arm64 \
         agent-packages \
         docker-build docker-build-full docker-build-trivyd docker-run \
         dev test test-e2e audit update-deps lint clean version next-version prepare-release
@@ -104,7 +105,7 @@ build-macos-intel: frontend-audit frontend-build go-vulncheck bump-build
 	mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/$(BINARY)-darwin-amd64 ./cmd/app
 
-build-all: build build-linux build-linux-arm64 build-windows build-macos build-macos-intel build-agent
+build-all: build build-linux build-linux-arm64 build-windows build-macos build-macos-intel build-agent build-probe
 
 # LCM Remote: lcm-agent (nur Linux - läuft auf den verwalteten Servern).
 # Kein Frontend/Audit nötig, das Binary ist schlank (stdlib + paho + wire).
@@ -112,6 +113,13 @@ build-agent: bump-build
 	mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/lcm-agent-linux-amd64 ./cmd/agent
 	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/lcm-agent-linux-arm64 ./cmd/agent
+
+# lcm-probe: Messung des LCM-Hosts und der Datenbank (läuft neben LCM).
+# Die Auswertung läuft auch auf dem Mac: go run ./cmd/probe report --dir <kopie>
+build-probe: bump-build
+	mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/lcm-probe-linux-amd64 ./cmd/probe
+	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/lcm-probe-linux-arm64 ./cmd/probe
 
 ## ---- Debian-Pakete (.deb via nfpm) ------------------------------------------
 
@@ -149,6 +157,21 @@ deb-agent-arm64: build-agent
 
 deb-agent: deb-agent-amd64 deb-agent-arm64
 
+# lcm-probe: eigenes Paket (apt install lcm-probe), unabhängig vom Server-Paket.
+deb-probe-amd64: build-probe
+	cp $(BUILD_DIR)/lcm-probe-linux-amd64 $(BUILD_DIR)/lcm-probe-pkg
+	LCM_ARCH=amd64 LCM_VERSION=$(APP_VERSION) $(NFPM) package \
+		--config packaging/nfpm-probe.yaml --packager deb --target $(BUILD_DIR)/
+	rm -f $(BUILD_DIR)/lcm-probe-pkg
+
+deb-probe-arm64: build-probe
+	cp $(BUILD_DIR)/lcm-probe-linux-arm64 $(BUILD_DIR)/lcm-probe-pkg
+	LCM_ARCH=arm64 LCM_VERSION=$(APP_VERSION) $(NFPM) package \
+		--config packaging/nfpm-probe.yaml --packager deb --target $(BUILD_DIR)/
+	rm -f $(BUILD_DIR)/lcm-probe-pkg
+
+deb-probe: deb-probe-amd64 deb-probe-arm64
+
 # LCM Remote auf den uebrigen Distributionen: dasselbe Agent-Paket als RPM,
 # APK und Arch-Paket. Der Agent ist ein statisches Go-Binary und sein
 # postinstall reines POSIX-sh - es gibt also nichts Debian-Spezifisches, was
@@ -168,7 +191,7 @@ agent-packages: build-agent
 	@rm -f $(BUILD_DIR)/lcm-agent-pkg
 	@ls -lh $(BUILD_DIR)/lcm-agent-*.rpm $(BUILD_DIR)/lcm-agent*.apk $(BUILD_DIR)/lcm-agent*.pkg.tar.zst
 
-deb: deb-amd64 deb-arm64 deb-agent
+deb: deb-amd64 deb-arm64 deb-agent deb-probe
 	@ls -lh $(BUILD_DIR)/*.deb
 
 ## ---- Docker (siehe docs/docker.md) -------------------------------------------
@@ -231,7 +254,7 @@ lint:
 	@find . -name '*.go' -not -path './.cache/*' -exec gofmt -l {} + | (! grep .) \
 		|| (echo "Nicht gofmt-formatiert (siehe oben) - 'gofmt -w .' ausführen." && false)
 	go vet ./...
-	cd $(FRONTEND) && npx svelte-check --no-tsconfig 2>/dev/null || true
+	cd $(FRONTEND) && npm run -s typecheck
 
 ## ---- Wartung -----------------------------------------------------------------
 

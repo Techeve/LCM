@@ -89,14 +89,14 @@ func (s *APIKeyService) Validate(plaintext string) (*domain.User, *domain.APIKey
 	// Deaktivierte Benutzer: ihre API-Keys müssen sofort ungültig sein -
 	// sonst behielte ein ausgeschiedener Mitarbeiter über einen bestehenden
 	// Key Zugriff, obwohl seine Browser-Sessions bereits tot sind (der
-	// JWT-Pfad prüft user.Active frisch, dieser Pfad tat es bisher nicht).
+	// Sitzungspfad prüft den Nutzer frisch, dieser Pfad tat es bisher nicht).
 	if !key.User.Active {
 		return nil, nil, ErrAPIKeyInvalid
 	}
 	// Passwortwechsel entwertet auch API-Keys, die VOR dem Wechsel entstanden
 	// sind. Ohne diese Prüfung überlebte ein still angelegter Key genau den
 	// Vorgang, mit dem ein Nutzer auf eine Kompromittierung reagiert: alle
-	// JWTs sterben, der Key des Angreifers bliebe unbefristet gültig.
+	// Sitzungen sterben, der Key des Angreifers bliebe unbefristet gültig.
 	if key.User.PasswordChangedAt != nil && key.CreatedAt.Before(*key.User.PasswordChangedAt) {
 		return nil, nil, ErrAPIKeyInvalid
 	}

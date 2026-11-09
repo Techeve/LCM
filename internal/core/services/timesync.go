@@ -319,10 +319,7 @@ func (s *ServerService) SetTimezone(scope repositories.AccessScope, id uint, tz,
 	if err != nil {
 		return "", err
 	}
-	if err := ensureNotRouterOS(server); err != nil {
-		return "", err
-	}
-	clean, err := validTimezone(tz)
+	script, clean, err := planTimezone(server, tz)
 	if err != nil {
 		return "", err
 	}
@@ -331,11 +328,6 @@ func (s *ServerService) SetTimezone(scope repositories.AccessScope, id uint, tz,
 		return "", fmt.Errorf("verbindung: %w", err)
 	}
 	defer conn.Close()
-
-	script := timezoneApplyScript(clean)
-	if server.RestrictedSudo {
-		script = helperCmd("timezone", clean)
-	}
 	output, code, runErr := conn.Run(privRun(server, script))
 	if runErr != nil {
 		return output, runErr
@@ -354,35 +346,15 @@ func (s *ServerService) ConfigureNTP(scope repositories.AccessScope, id uint, se
 	if err != nil {
 		return "", err
 	}
-	if err := ensureNotRouterOS(server); err != nil {
-		return "", err
-	}
-	// In einem Container ist die Systemuhr GAR NICHT verwaltbar: sie kommt vom
-	// Host, und systemd-timesyncd startet dort aus genau diesem Grund nicht
-	// (ConditionVirtualization=!container). Eine Aktion anzubieten, die dort
-	// nie greifen kann, wäre dasselbe leere Versprechen wie beim Kernel eines
-	// Containers - deshalb hier ein klarer Riegel mit dem Hinweis, wo die Uhr
-	// tatsächlich zu richten ist.
-	if domain.IsContainerVirt(server.Virtualization) {
-		return "", fmt.Errorf("%w (%s)", ErrClockFromHost, server.Virtualization)
-	}
-	clean, err := validNTPServers(servers)
+	script, clean, err := planNTP(server, servers)
 	if err != nil {
 		return "", err
-	}
-	if len(clean) == 0 {
-		return "", fmt.Errorf("%w: keine Zeitserver angegeben", ErrInvalidNTPServer)
 	}
 	conn, err := s.connectRec(server, "configure-ntp", actor)
 	if err != nil {
 		return "", fmt.Errorf("verbindung: %w", err)
 	}
 	defer conn.Close()
-
-	script := ntpApplyScript(clean)
-	if server.RestrictedSudo {
-		script = helperCmd("ntp", strings.Join(clean, ","))
-	}
 	output, code, runErr := conn.Run(privRun(server, script))
 	// Der Zustand wird IMMER nachgelesen - auch wenn die Synchronisierung
 	// (noch) nicht belegt ist, sind die Zeitserver jetzt eingetragen, und der
@@ -402,6 +374,50 @@ func (s *ServerService) ConfigureNTP(scope repositories.AccessScope, id uint, se
 	default:
 		return output, withProvisionLog(fmt.Errorf("ntp einrichten fehlgeschlagen (exit %d)", code), output)
 	}
+}
+
+// planTimezone prüft Server und Zeitzone und baut das Skript - für den Lauf
+// und die Befehlsvorschau gleich.
+func planTimezone(server *domain.Server, tz string) (string, string, error) {
+	if err := ensureNotRouterOS(server); err != nil {
+		return "", "", err
+	}
+	clean, err := validTimezone(tz)
+	if err != nil {
+		return "", "", err
+	}
+	if server.RestrictedSudo {
+		return helperCmd("timezone", clean), clean, nil
+	}
+	return timezoneApplyScript(clean), clean, nil
+}
+
+// planNTP prüft Server und Zeitserver und baut das Skript - für den Lauf und
+// die Befehlsvorschau gleich.
+func planNTP(server *domain.Server, servers []string) (string, []string, error) {
+	if err := ensureNotRouterOS(server); err != nil {
+		return "", nil, err
+	}
+	// In einem Container ist die Systemuhr GAR NICHT verwaltbar: sie kommt vom
+	// Host, und systemd-timesyncd startet dort aus genau diesem Grund nicht
+	// (ConditionVirtualization=!container). Eine Aktion anzubieten, die dort
+	// nie greifen kann, wäre dasselbe leere Versprechen wie beim Kernel eines
+	// Containers - deshalb hier ein klarer Riegel mit dem Hinweis, wo die Uhr
+	// tatsächlich zu richten ist.
+	if domain.IsContainerVirt(server.Virtualization) {
+		return "", nil, fmt.Errorf("%w (%s)", ErrClockFromHost, server.Virtualization)
+	}
+	clean, err := validNTPServers(servers)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(clean) == 0 {
+		return "", nil, fmt.Errorf("%w: keine Zeitserver angegeben", ErrInvalidNTPServer)
+	}
+	if server.RestrictedSudo {
+		return helperCmd("ntp", strings.Join(clean, ",")), clean, nil
+	}
+	return ntpApplyScript(clean), clean, nil
 }
 
 // ntpNotSyncedExit meldet „Zeitserver eingetragen, Synchronisierung nicht

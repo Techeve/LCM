@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/version"
 )
 
@@ -129,33 +130,37 @@ func (s *SettingsService) CheckForUpdate() error {
 // immer den Community-Kanal ab - wer auf Beta oder Enterprise stand, bekam
 // damit die Version eines fremden Kanals gemeldet und im Zweifel gar kein
 // Update angezeigt, obwohl in seinem Kanal längst eins bereitlag.
-//
-// Community und Beta sind offen (kein Zugang). Enterprise liegt hinter dem
-// instanzgebundenen Zugangsschlüssel - dieselben Daten, die auch der
-// apt-Quelle des Hosts hinterlegt sind (siehe subscription_apt.go).
 func (s *SettingsService) updateSource() (channel, url, login, secret string, err error) {
 	settings, err := s.settings.Get()
 	if err != nil {
 		return "", "", "", "", err
 	}
 	channel = settings.AptChannel()
-	if channel != domain.AptChannelEnterprise {
-		return channel, repoIndexURL(RepoBaseURL, aptSuiteForChannel(channel)), "", "", nil
-	}
+	url, login, secret, err = channelIndexSource(settings, s.cipher, channel)
+	return channel, url, login, secret, err
+}
 
-	// Enterprise: eigene Adresse + Zugang. Fehlt beides, ist der gespeicherte
-	// Kanal nicht mehr benutzbar - das wird gemeldet, statt still auf den
-	// Community-Kanal auszuweichen und eine fremde Version als „neueste" zu
-	// verkaufen.
+// channelIndexSource liefert den Paket-Index eines Kanals samt Zugang.
+//
+// Community und Beta sind offen (kein Zugang). Enterprise liegt hinter dem
+// instanzgebundenen Zugangsschlüssel - dieselben Daten, die auch der
+// apt-Quelle des Hosts hinterlegt sind (siehe subscription_apt.go). Fehlen
+// sie, ist der Kanal nicht benutzbar - das wird gemeldet, statt still auf den
+// Community-Kanal auszuweichen und eine fremde Version als „neueste" zu
+// verkaufen.
+func channelIndexSource(settings *domain.GlobalSettings, cipher *crypto.Cipher, channel string) (url, login, secret string, err error) {
+	if channel != domain.AptChannelEnterprise {
+		return repoIndexURL(RepoBaseURL, aptSuiteForChannel(channel)), "", "", nil
+	}
 	base := strings.TrimSpace(settings.SubscriptionRepoURL)
 	if base == "" {
-		return channel, "", "", "", fmt.Errorf("kein Enterprise-Repository hinterlegt - Subscription prüfen")
+		return "", "", "", fmt.Errorf("kein Enterprise-Repository hinterlegt - Subscription prüfen")
 	}
-	key, err := s.cipher.DecryptString(settings.SubscriptionAccessKeyEnc)
+	key, err := cipher.DecryptString(settings.SubscriptionAccessKeyEnc)
 	if err != nil {
-		return channel, "", "", "", fmt.Errorf("zugangsschlüssel entschlüsseln: %w", err)
+		return "", "", "", fmt.Errorf("zugangsschlüssel entschlüsseln: %w", err)
 	}
-	return channel, repoIndexURL(base, aptSuiteForChannel(channel)), settings.InstanceID, key, nil
+	return repoIndexURL(base, aptSuiteForChannel(channel)), settings.InstanceID, key, nil
 }
 
 // fetchLatestRepoVersion liest die Version des lcm-Pakets aus dem Paket-Index

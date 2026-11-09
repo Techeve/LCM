@@ -10,10 +10,14 @@ import (
 	"github.com/fasthttp/websocket"
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/apierr"
 	"LCM/internal/netfilter"
 	"LCM/internal/remote/wire"
 	"LCM/internal/safego"
 )
+
+// errUpgradeFailed meldet einen gescheiterten WebSocket-Upgrade eines Agents.
+var errUpgradeFailed = apierr.Define(400, "agent.upgrade_failed", "websocket upgrade failed")
 
 // WSHandler liefert den Fiber-Handler für GET /mqtt: Upgrade auf WebSocket
 // und Übergabe der Verbindung an den eingebetteten Broker. Die eigentliche
@@ -43,8 +47,7 @@ func WSHandler(hub *Hub, trust netfilter.ProxyTrust) fiber.Handler {
 			ip = addr.String()
 		}
 		if !limiter.allow(ip) {
-			return fiber.NewError(fiber.StatusTooManyRequests,
-				"zu viele Verbindungsversuche - bitte später erneut versuchen")
+			return apierr.TooManyRequests
 		}
 		err := upgrader.Upgrade(c.RequestCtx(), func(ws *websocket.Conn) {
 			// Ab hier ist die Verbindung „hijacked": fasthttp führt diesen
@@ -58,7 +61,7 @@ func WSHandler(hub *Hub, trust netfilter.ProxyTrust) fiber.Handler {
 			_ = hub.HandleConn(&wsNetConn{Conn: ws.NetConn(), ws: ws})
 		})
 		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "websocket-upgrade fehlgeschlagen")
+			return errUpgradeFailed
 		}
 		return nil
 	}

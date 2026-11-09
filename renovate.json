@@ -7,13 +7,24 @@
   ],
   "timezone": "Europe/Berlin",
   "baseBranchPatterns": ["develop"],
-  "enabledManagers": ["gomod", "npm", "dockerfile"],
+  "enabledManagers": ["gomod", "npm", "dockerfile", "gitlabci", "custom.regex"],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "**/testdata/**"
+  ],
   "labels": ["dependencies"],
   "semanticCommitType": "chore",
   "semanticCommitScope": "deps",
   "prConcurrentLimit": 5,
   "prHourlyLimit": 0,
-  "postUpdateOptions": ["gomodTidy", "npmDedupe"],
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths", "npmDedupe"],
   "platformAutomerge": true,
   "automerge": false,
   "minimumReleaseAge": "7 days",
@@ -26,6 +37,19 @@
   },
   "osvVulnerabilityAlerts": true,
   "packageRules": [
+    {
+      "description": "Indirekte Go-Abhängigkeiten (// indirect in go.mod) mit aktualisieren. config:recommended schaltet sie ab, sie tragen aber genauso Lücken, etwa golang.org/x/net unter fasthttp. Sie laufen in der Gruppe der Go-Abhängigkeiten mit.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "enabled": true
+    },
+    {
+      "description": "Kein Major-Sprung bei indirekten Go-Abhängigkeiten: Welche Major-Fassung gilt, entscheidet das Modul, das sie einbindet (etwa modernc.org/libc unter modernc.org/sqlite). Ein eigener MR dafür ließe sich nicht bauen.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
     {
       "matchManagers": ["gomod"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
@@ -45,11 +69,9 @@
         "github.com/golang-jwt/**",
         "github.com/eclipse/**",
         "gorm.io/**",
-        "svelte",
+        "lit",
         "vite",
-        "@sveltejs/**",
-        "@playwright/**",
-        "bootstrap"
+        "@playwright/**"
       ],
       "matchUpdateTypes": ["patch", "pin", "digest"],
       "groupName": "Vertrauenswürdige Patch-Updates",
@@ -80,15 +102,46 @@
       "description": "Playwright-Image und @playwright/test brauchen dieselbe Version, sonst fehlen im Image die passenden Browser.",
       "matchDepNames": ["mcr.microsoft.com/playwright", "@playwright/test"],
       "groupName": "Playwright"
+    },
+    {
+      "description": "Go-Werkzeuge der CI (govulncheck, nfpm): Version in .gitlab-ci.yml, Makefile und docker/Dockerfile, immer gemeinsam.",
+      "matchDatasources": ["go"],
+      "matchPackageNames": ["golang.org/x/vuln", "github.com/goreleaser/nfpm/v2"],
+      "groupName": "Go-Werkzeuge der CI"
+    },
+    {
+      "description": "Renovate erscheint fast täglich neu. Einmal im Monat genügt, ein MR für alle Stände dazwischen.",
+      "matchPackageNames": ["renovate/renovate"],
+      "groupName": "Renovate",
+      "schedule": ["* 0-8 1 * *"]
+    },
+    {
+      "description": "Docker-in-Docker bleibt unter 29.7: Ab dem dind-Stand vom August 2026 meldet der Push gegen die GitLab-Registry „blob unknown to registry“ (Kommentar am Job images). Vor dem Anheben erst Registry und GitLab aktualisieren und einen Push testen.",
+      "matchPackageNames": ["docker"],
+      "matchDatasources": ["docker"],
+      "allowedVersions": "<29.7"
+    },
+    {
+      "description": "Eigene Images aus registry.techeve.de: Renovate hat dort keinen Lesezugang, der Stand des Doku-Builders wird mit Tool/docs-builder angehoben.",
+      "matchPackageNames": ["registry.techeve.de/**"],
+      "enabled": false
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Docker-Images in den *_IMAGE-Variablen der .gitlab-ci.yml (Go, Node, Playwright).",
+      "description": "Docker-Images in den *_IMAGE-Variablen der .gitlab-ci.yml (Go, Node, Playwright). Feste image:-Zeilen liest der Manager gitlabci.",
       "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
       "matchStrings": ["(?:^|\\n)[ \\t]*[A-Z_]+_IMAGE:[ \\t]+(?<depName>[^\\s:]+):(?<currentValue>[^\\s#]+)"],
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Werkzeugversionen mit einer Zeile # renovate: datasource=… depName=… darüber, in .gitlab-ci.yml, Makefile und docker/Dockerfile.",
+      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/", "/^Makefile$/", "/^docker/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[ \\t]*(?:ARG[ \\t]+)?[A-Z_]+_VERSION[ \\t]*(?::|\\?=|=)[ \\t]*(?<currentValue>\\S+)"
+      ]
     }
   ]
 }

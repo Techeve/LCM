@@ -365,8 +365,14 @@ func TestHardenAndUnhardenSSH(t *testing.T) {
 	if srv, _ := env.Servers.Get(repositories.ScopeAll(), id); !srv.SSHHardened {
 		t.Error("ssh_hardened nach härten nicht gesetzt")
 	}
-	if !strings.Contains(strings.Join(env.Dialer.Commands, "\n"), "60-lcm-hardening.conf") {
+	written := strings.Join(env.Dialer.Commands, "\n")
+	if !strings.Contains(written, "60-lcm-hardening.conf") {
 		t.Errorf("härtungs-drop-in nicht geschrieben: %v", env.Dialer.Commands)
+	}
+	// OpenSSH nimmt den zuerst gefundenen Wert: Das vorderste Drop-in schlägt
+	// fremde wie 50-cloud-init.conf, ohne 2FA oder Root-Login zu überstimmen.
+	if !strings.Contains(written, `PasswordAuthentication no\nPubkeyAuthentication yes\n'\'' > /etc/ssh/sshd_config.d/00-lcm-hardening.conf`) {
+		t.Errorf("vorderes drop-in fehlt oder enthält mehr als nötig: %s", written)
 	}
 
 	env.Dialer.Commands = nil
@@ -377,8 +383,8 @@ func TestHardenAndUnhardenSSH(t *testing.T) {
 		t.Error("ssh_hardened nach aufheben noch gesetzt")
 	}
 	all := strings.Join(env.Dialer.Commands, "\n")
-	if !strings.Contains(all, "rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf") {
-		t.Errorf("drop-in nicht entfernt: %s", all)
+	if !strings.Contains(all, "rm -f /etc/ssh/sshd_config.d/60-lcm-hardening.conf /etc/ssh/sshd_config.d/00-lcm-hardening.conf") {
+		t.Errorf("drop-ins nicht entfernt: %s", all)
 	}
 }
 
@@ -583,6 +589,43 @@ func TestDecommissionPurgesAllServerData(t *testing.T) {
 	}
 	if commands != 0 {
 		t.Errorf("%d ssh-kommandos nach löschen übrig (verwaiste kinder)", commands)
+	}
+}
+
+// TestDecommissionPurgeRestrictedUsesHelper: Der eingeschränkte Service-User
+// darf weder userdel noch /etc/sudoers.d anfassen - die Bereinigung muss über
+// den Helper laufen, sonst bleiben Konto und sudoers stehen.
+func TestDecommissionPurgeRestrictedUsesHelper(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	setServerFields(t, env, id, map[string]any{"restricted_sudo": true})
+	env.Dialer.Commands = nil
+
+	if _, err := env.Servers.Decommission(repositories.ScopeAll(), id, "admin", services.DecommissionOptions{PurgeTarget: true}); err != nil {
+		t.Fatalf("decommission: %v", err)
+	}
+	all := strings.Join(env.Dialer.Commands, "\n")
+	if !strings.Contains(all, "lcm-helper self-remove") {
+		t.Errorf("bereinigung ohne helper: %s", all)
+	}
+	if strings.Contains(all, "userdel -rf") {
+		t.Errorf("userdel läuft eingeschränkt ins Leere: %s", all)
+	}
+}
+
+// TestDecommissionPurgeReportsRemainingAccount: Bleibt das Konto stehen, wird
+// kein Erfolg gemeldet und der Server bleibt in LCM.
+func TestDecommissionPurgeReportsRemainingAccount(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinTestServer(t, env, "web01")
+	env.Dialer.Responses["userdel -rf"] = sshx.FakeResponse{Output: "FEHLER: konto lcm-svc besteht weiterhin\n", ExitCode: 1}
+
+	_, err := env.Servers.Decommission(repositories.ScopeAll(), id, "admin", services.DecommissionOptions{PurgeTarget: true})
+	if err == nil || !strings.Contains(err.Error(), "besteht weiterhin") {
+		t.Fatalf("erwartet Fehler mit Ursache, bekam %v", err)
+	}
+	if _, err := env.Servers.Get(repositories.ScopeAll(), id); err != nil {
+		t.Errorf("server muss bestehen bleiben: %v", err)
 	}
 }
 

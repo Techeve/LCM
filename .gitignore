@@ -4,9 +4,8 @@ bin/
 /agent
 # dist wird generiert; .gitkeep bleibt, damit go:embed in frischen
 # Checkouts kompiliert (all:dist braucht mindestens eine Datei)
-frontend/dist/*
-!frontend/dist/.gitkeep
-frontend/e2e/.run/
+ui/dist/*
+!ui/dist/.gitkeep
 
 # Laufzeit-Dateien (enthalten Secrets bzw. Daten)
 config.json
@@ -24,9 +23,6 @@ backup/
 *.lcmbak
 
 # Node
-frontend/node_modules/
-frontend/test-results/
-frontend/playwright-report/
 /test-results/
 
 # IDE / OS
@@ -45,3 +41,4 @@ dev-docs/
 # Versehentlich einmal eingecheckt: "go build ./tools/release" legt hier ein
 # Binary namens "release" ab.
 /release
+/githubsync

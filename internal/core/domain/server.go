@@ -62,7 +62,9 @@ const (
 )
 
 // MaxDNSServers ist die Obergrenze der pro Server setzbaren Nameserver.
-const MaxDNSServers = 3
+// systemd-resolved nutzt alle; glibc liest aus /etc/resolv.conf nur die
+// ersten drei (MAXNS), ein vierter wirkt dort also nicht.
+const MaxDNSServers = 4
 
 // MaxNTPServers ist die Obergrenze der pro Server setzbaren Zeitserver. Vier
 // ist die Empfehlung der NTP-Pool-Projekte: genug für einen belastbaren
@@ -452,8 +454,14 @@ type Server struct {
 	// - siehe HTTPSRevertCandidates. Leer heißt: nichts zurückzustellen.
 	// column: explizit setzen - gorm trennte HTTPS sonst zu http_s_revert_urls.
 	HTTPSRevertURLs string `gorm:"column:https_revert_urls;serializer:aesgcm" json:"https_revert_urls"`
+	// HTTPSUnavailableURLs sind die http-Quellen, die bei der letzten Prüfung
+	// vor der https-Umstellung kein HTTPS boten (kommagetrennt). Sie bleiben
+	// auf http, die Oberfläche markiert sie und empfiehlt einen anderen
+	// Spiegel. Was nicht mehr als http-Quelle im Bestand steht, fällt beim
+	// nächsten Scan heraus.
+	HTTPSUnavailableURLs string `gorm:"column:https_unavailable_urls;serializer:aesgcm" json:"https_unavailable_urls"`
 
-	// DNS: von LCM gesetzte Nameserver (bis zu drei, kommagetrennt). Werden per
+	// DNS: von LCM gesetzte Nameserver (bis zu vier, kommagetrennt). Werden per
 	// Aktion „DNS anwenden" auf den Server geschrieben (systemd-resolved-Drop-in
 	// oder /etc/resolv.conf, siehe services/dns.go). Leer = LCM verwaltet DNS nicht.
 	DNSServers string `json:"dns_servers"`
@@ -533,6 +541,12 @@ type Server struct {
 	// CVE-Scan (Trivy) gegen den erfassten Paketbestand.
 	LastCVEScanAt *time.Time `json:"last_cve_scan_at"` // letzter erfolgreicher CVE-Scan
 	CVEScanError  string     `json:"cve_scan_error"`   // z.B. "Trivy nicht verfügbar"
+
+	// UpdateCheckError: Die Update-Prüfung des letzten Scans ist gescheitert
+	// (kaputte Paketquelle). Die Paketliste zeigt dann keine Updates, der Stand
+	// ist aber unbekannt. Stammt aus der Ausgabe des Servers, deshalb at rest
+	// verschlüsselt.
+	UpdateCheckError string `gorm:"serializer:aesgcm" json:"update_check_error"`
 
 	// Demo-Server werden nie per SSH kontaktiert (--demo Testdaten).
 	IsDemo bool `gorm:"default:false" json:"is_demo"`
@@ -736,9 +750,18 @@ func countParams(n int) map[string]string {
 // TrafficLightInput bündelt die Fakten für die Ampel-Bewertung, die
 // nicht am Server-Struct selbst hängen.
 type TrafficLightInput struct {
-	OutdatedPackages int  // Anzahl überfälliger Paket-Updates
-	LastJobFailed    bool // letzter abgeschlossener Job fehlgeschlagen?
-	LastJobName      string
+	OutdatedPackages int // Anzahl überfälliger Paket-Updates
+	// Capabilities: die Betriebsfähigkeit des Servers je Kategorie. Ersetzt
+	// die frühere Frage „ist der letzte Job fehlgeschlagen?": Die kennt nur
+	// den jüngsten Job irgendeiner Art, sodass ein Health-Ping einen
+	// fehlgeschlagenen Update-Lauf Minuten später überdeckte.
+	Capabilities []ServerCapability
+	// PackagesStale ist die Stufe des Stillstands der Paketaktualisierung:
+	// "", PackagesStaleWarning oder PackagesStaleCritical. Der Aufrufer
+	// berechnet sie (Schwellen stehen in den Einstellungen);
+	// PackagesStaleSince ist der Bezugszeitpunkt, den der Befund nennt.
+	PackagesStale      string
+	PackagesStaleSince time.Time
 	// Now aktiviert die OS-Support-/EOL-Bewertung (Zero-Wert = deaktiviert,
 	// damit schlanke Tests ohne Zeitbezug unverändert bleiben).
 	Now time.Time
@@ -790,6 +813,8 @@ type TrafficLightInput struct {
 	// gelaufen ist, war von einem tatsächlich sauberen nicht zu
 	// unterscheiden (BUG-021).
 	CVEScanError string
+	// UpdateCheckError: Die Update-Prüfung ist gescheitert, „keine Updates" gilt nicht.
+	UpdateCheckError string
 	// CVEDB ist der Stand der zentralen Schwachstellen-Datenbank. Sie gilt für
 	// ALLE Server gleichermaßen (der Scan läuft zentral auf dem LCM-Host), ist
 	// also kein Merkmal dieses Servers - wohl aber die Grundlage seiner
@@ -869,8 +894,8 @@ func (s *Server) unreachableGraceExpired(now time.Time) bool {
 // TrafficLight bewertet den Server nach dem strikten Ampelsystem:
 //
 //	🔴 Rot   - keine Verbindung möglich (offline, Auth-/Host-Key-Fehler)
-//	🟡 Gelb  - erreichbar, aber Handlungsbedarf (Updates, Disk, Job-Fehler)
-//	🟢 Grün  - erreichbar, alles aktuell, letzte Jobs erfolgreich
+//	🟡 Gelb  - erreichbar, aber Handlungsbedarf (Updates, Disk, Aktionsfehler)
+//	🟢 Grün  - erreichbar, alles aktuell, alle Fähigkeiten in Ordnung
 func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 	// Nicht erreichbar → normalerweise sofort rot. Ist „Nichterreichbarkeit
 	// unkritisch" für diesen Server gesetzt und die Kulanzfrist noch nicht
@@ -925,6 +950,11 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 	// Konnte die Sicherheitsbewertung nicht laufen, ist "keine Lücken
 	// gefunden" keine Aussage - das muss sichtbar sein statt als Entwarnung
 	// durchzugehen (BUG-021).
+	if in.UpdateCheckError != "" {
+		insights = append(insights, insight("warning", "updateCheckFailed",
+			"Update-Stand unbekannt: "+in.UpdateCheckError,
+			map[string]string{"error": in.UpdateCheckError}))
+	}
 	if in.CVEScanError != "" {
 		insights = append(insights, insight("warning", "cveScanError",
 			"CVE-Bewertung nicht möglich: "+in.CVEScanError,
@@ -1056,13 +1086,20 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 			formatCount(in.DeepScanWarnings, "Deep-Scan-Warnung (Härtung/Konfiguration)", "Deep-Scan-Warnungen (Härtung/Konfiguration)"),
 			countParams(in.DeepScanWarnings)))
 	}
-	if in.LastJobFailed {
-		if in.LastJobName != "" {
-			insights = append(insights, insight("warning", "lastJobFailedNamed",
-				"Letzter Job fehlgeschlagen: "+in.LastJobName, map[string]string{"job": in.LastJobName}))
-		} else {
-			insights = append(insights, insight("warning", "lastJobFailed", "Letzter Job fehlgeschlagen", nil))
-		}
+	// Betriebsfähigkeit: was LCM auf diesem Server nicht mehr kann, und seit
+	// wann. Eine kritische Fähigkeit färbt den Server rot (siehe unten).
+	caps := in.Capabilities
+	if !s.Reachable {
+		// Bis hierher kommt ein nicht erreichbarer Server nur, wenn die
+		// Nichterreichbarkeit geduldet wird. Der Verbindungsfehler wäre dann
+		// genau das Geduldete - und würde den Server doch rot färben.
+		caps = withoutConnection(caps)
+	}
+	capInsights, capInfos, capCritical := capabilityInsights(caps, in.Now)
+	insights = append(insights, capInsights...)
+	infos = append(infos, capInfos...)
+	if in.PackagesStale != "" {
+		insights = append(insights, packagesStaleInsight(in.PackagesStale, in.PackagesStaleSince, in.Now))
 	}
 	// Betriebssystem außerhalb des Herstellersupports (EOL) oder in weniger als
 	// einem Monat davor - Sicherheitsrisiko. Beides eskaliert die Ampel auf Rot.
@@ -1117,8 +1154,8 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 
 	// Kritische CVEs oder ein (bald) nicht mehr unterstütztes Betriebssystem
 	// machen den Server rot (stärkstes Signal, gleichrangig mit „nicht
-	// erreichbar").
-	if in.CriticalVulns > 0 || osCritical {
+	// erreichbar"). Ebenso, wenn LCM ihn nicht mehr pflegen kann.
+	if in.CriticalVulns > 0 || osCritical || capCritical || in.PackagesStale == PackagesStaleCritical {
 		return ServerStatusRed, withInfos(insights, infos)
 	}
 	// Nur Befunde mit Handlungsbedarf färben gelb - reine Hinweise nicht.

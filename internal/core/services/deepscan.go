@@ -372,13 +372,13 @@ func (e *Executor) RunDeepScanServer(id uint, triggeredBy string) {
 	}
 	job, err := e.jobs.Start(&server.ID, nil, domain.RuleTypeDeepScan, "Deep Scan @ "+server.Name, triggeredBy)
 	if err != nil {
-		if !errors.Is(err, ErrServerBusy) {
+		if !heldBack(err) {
 			slog.Error("deep scan job start failed", "server", server.Name, "error", err)
 		}
 		return
 	}
 	if server.IsDemo {
-		e.jobs.Complete(job, "Demo-Server - Deep Scan übersprungen.", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "Demo-Server - Deep Scan übersprungen.")
 		return
 	}
 	conn, err := e.connect(server)
@@ -399,7 +399,7 @@ func (e *Executor) RunDeepScanServer(id uint, triggeredBy string) {
 // runDeepScanRule führt den Deep Scan als Gruppen-Regel auf einem Server aus.
 func (e *Executor) runDeepScanRule(job *domain.Job, server *domain.Server, rule *domain.Rule, triggeredBy string) {
 	if server.IsDemo {
-		e.jobs.Complete(job, "Demo-Server - Deep Scan übersprungen.", ptrInt(0), nil)
+		e.jobs.CompleteSkipped(job, "Demo-Server - Deep Scan übersprungen.")
 		return
 	}
 	conn, err := e.connect(server)
@@ -495,7 +495,13 @@ func (s *ServerService) DeepScanReportDetail(scope repositories.AccessScope, id 
 // InstallDeepScanTools installiert needrestart + lynis auf dem Server (angeboten,
 // nicht automatisch). Multi-Distro, best-effort je Paket.
 func (s *ServerService) InstallDeepScanTools(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
-	return s.startPackageJob(scope, id, domain.RuleTypeScript,
+	return s.runPlanned(scope, id, actor, s.planDeepScanTools)
+}
+
+// planDeepScanTools baut die Installation von needrestart und lynis - für den
+// Lauf und die Befehlsvorschau gleich.
+func (s *ServerService) planDeepScanTools(server *domain.Server) (packagePlan, error) {
+	return s.newPackagePlan(server, domain.RuleTypeScript,
 		"Deep-Scan-Tools installieren (needrestart, lynis)",
-		func(mgr string) string { return pkgInstallScript(mgr, []string{"needrestart", "lynis"}) }, actor)
+		func(mgr string) string { return pkgInstallScript(mgr, []string{"needrestart", "lynis"}) })
 }

@@ -32,7 +32,8 @@ import (
 
 // ssh2faDropinPath: alphabetisch VOR 60-lcm-hardening.conf - OpenSSH nimmt
 // je Option den ZUERST gefundenen Wert, und das Härtungs-Drop-in setzt
-// ChallengeResponseAuthentication no.
+// ChallengeResponseAuthentication no. Deshalb steht diese Option auch nicht in
+// 00-lcm-hardening.conf.
 const ssh2faDropinPath = "/etc/ssh/sshd_config.d/55-lcm-2fa.conf"
 
 const pamSSHDPath = "/etc/pam.d/sshd"
@@ -176,16 +177,9 @@ func (s *ServerService) ConfigureSSH2FA(scope repositories.AccessScope, id uint,
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureNotRouterOS(server); err != nil {
+	plan, err := planSSH2FA(server, enable)
+	if err != nil {
 		return nil, err
-	}
-	if err := ensureFullSudo(server); err != nil {
-		return nil, err
-	}
-	if enable {
-		if _, err := ssh2faPackageName(server.PackageManager); err != nil {
-			return nil, err
-		}
 	}
 	title := "SSH-2FA aktivieren @ " + server.Name
 	if !enable {
@@ -197,14 +191,38 @@ func (s *ServerService) ConfigureSSH2FA(scope repositories.AccessScope, id uint,
 	}
 	s.audit.Log(actor, "server.ssh-2fa", "server", id, fmt.Sprintf("%s: enable=%t", server.Name, enable))
 	safego.GoCleanup("job:ssh-2fa", jobPanicCleanup(s.jobs, job), func() {
-		s.runSSH2FAJob(job, server, enable, actor)
+		s.runSSH2FAJob(job, server, enable, plan, actor)
 	})
 	return job, nil
 }
 
-func (s *ServerService) runSSH2FAJob(job *domain.Job, server *domain.Server, enable bool, actor string) {
+// ssh2faPlan sind die Skripte von ConfigureSSH2FA. Lauf und Befehlsvorschau
+// bauen sie mit planSSH2FA.
+type ssh2faPlan struct {
+	script   string // einrichten bzw. entfernen
+	rollback string // nur beim Einrichten und nur, wenn die Aussperr-Probe scheitert
+}
+
+func planSSH2FA(server *domain.Server, enable bool) (ssh2faPlan, error) {
+	if err := ensureNotRouterOS(server); err != nil {
+		return ssh2faPlan{}, err
+	}
+	if err := ensureFullSudo(server); err != nil {
+		return ssh2faPlan{}, err
+	}
+	if !enable {
+		return ssh2faPlan{script: ssh2faUninstallScript(server.PackageManager)}, nil
+	}
+	script, err := ssh2faInstallScript(server.PackageManager, server.ServiceUser)
+	if err != nil {
+		return ssh2faPlan{}, err
+	}
+	return ssh2faPlan{script: script, rollback: ssh2faRollbackScript()}, nil
+}
+
+func (s *ServerService) runSSH2FAJob(job *domain.Job, server *domain.Server, enable bool, plan ssh2faPlan, actor string) {
 	if server.IsDemo {
-		s.jobs.Complete(job, "Demo-Server - SSH-2FA simuliert (kein SSH-Kontakt).", ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, "Demo-Server - SSH-2FA simuliert (kein SSH-Kontakt).")
 		_ = s.servers.UpdateFields(server.ID, map[string]any{"ssh_2fa_enabled": enable})
 		return
 	}
@@ -215,15 +233,7 @@ func (s *ServerService) runSSH2FAJob(job *domain.Job, server *domain.Server, ena
 	}
 	defer conn.Close()
 
-	script := ssh2faUninstallScript(server.PackageManager)
-	if enable {
-		script, err = ssh2faInstallScript(server.PackageManager, server.ServiceUser)
-		if err != nil {
-			s.jobs.Complete(job, "", nil, err)
-			return
-		}
-	}
-	output, code, runErr := conn.Run(privRun(server, script))
+	output, code, runErr := conn.Run(privRun(server, plan.script))
 	if runErr == nil && code != 0 {
 		runErr = fmt.Errorf("ssh-2fa endete mit exit-code %d", code)
 	}
@@ -243,7 +253,7 @@ func (s *ServerService) runSSH2FAJob(job *domain.Job, server *domain.Server, ena
 		// bekommen - die Probe schlüge sonst IMMER fehl und rollte jede
 		// Aktivierung zurück (im Langzeittest genau so aufgetreten).
 		if probe, probeErr := s.connectRecRead(server, "ssh-2fa-verify", actor); probeErr != nil {
-			rbOut, _, _ := conn.Run(privRun(server, ssh2faRollbackScript()))
+			rbOut, _, _ := conn.Run(privRun(server, plan.rollback))
 			s.jobs.Complete(job, output+"\n\nROLLBACK:\n"+rbOut, ptrInt(1),
 				fmt.Errorf("aussperr-probe fehlgeschlagen (%v) - SSH-2FA wurde zurückgerollt", probeErr))
 			return

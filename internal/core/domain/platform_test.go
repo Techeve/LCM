@@ -9,7 +9,7 @@ func TestOSSupportStatus(t *testing.T) {
 	now := time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC)
 
 	// Ubuntu 24.04 LTS: aktuell, unterstützt.
-	u := OSSupportStatus("ubuntu", "24.04", "Ubuntu", now)
+	u := OSSupportStatus("ubuntu", "26.04", "Ubuntu", now)
 	if !u.Known || !u.Supported || !u.IsLTS || !u.UpToDate {
 		t.Errorf("ubuntu 24.04: %+v", u)
 	}
@@ -64,7 +64,7 @@ func TestOSSupportStatus(t *testing.T) {
 	if OSSupportStatus("arch", "rolling", "Arch Linux", now).Known {
 		t.Error("arch sollte nicht bekannt sein")
 	}
-	if OSSupportStatus("ubuntu", "24.04", "Ubuntu", time.Time{}).Known {
+	if OSSupportStatus("ubuntu", "26.04", "Ubuntu", time.Time{}).Known {
 		t.Error("zero-zeit sollte keine bewertung liefern")
 	}
 }

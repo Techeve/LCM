@@ -2,7 +2,7 @@
 sidebar:
   order: 21
 title: Security Model
-description: Authentication, JWT, RBAC, API keys, and LCM's other hardening measures.
+description: Authentication, browser session, RBAC, API keys, and LCM's other hardening measures.
 ---
 
 ## Overview
@@ -10,7 +10,7 @@ description: Authentication, JWT, RBAC, API keys, and LCM's other hardening meas
 | Building block | Technology | Location |
 |---|---|---|
 | Password hashing | argon2id (OWASP parameters) | `internal/core/services/auth_service.go` |
-| User auth | JWT (HS256), 60 min TTL | `AuthService` + `middlewares.Authenticate` |
+| User auth | server session (memory or cookie), idle 60 min, 12 h at most | `AuthService` + `middlewares.Authenticate` |
 | Service auth | API keys (SHA-256 hashed) | `APIKeyService` |
 | Authorization | RBAC: user → roles → permissions | `middlewares.RequirePermission` |
 | Secrets | generated `config.json` (0600) | `internal/config/config.go` |
@@ -56,8 +56,8 @@ valid until they are next changed.
 **In regular operation, 2FA is enabled by default for administrators.** When
 seeding a fresh database, LCM sets `require_2fa_roles = admin`. Reason: the admin
 account manages SSH access and root privileges for the entire fleet - a password
-alone is not enough. The setting can be changed under *Settings → General*;
-unknown role names are **rejected** so a typo cannot silently disable the
+alone is not enough. The setting can be changed under *Settings → Security* (card "Sign-in",
+*Two-factor required for*); unknown role names are **rejected** so a typo cannot silently disable the
 requirement.
 
 In **development (`--dev`) and demo mode (`--demo`)** the requirement is
@@ -95,8 +95,10 @@ locked login for the entire installation; and without the list anyone reaching
 the port directly could choose their own address.
 
 An accepted **TOTP code is valid exactly once** (RFC 6238): the same code is not
-accepted a second time within the verification window, and the challenge of the
-two-step login is revoked after the second step. At login, passwords above
+accepted a second time within the verification window. Login reports this as its
+own error (`auth.totp_reused`) so nobody mistakes a correct code for a wrong one;
+the lockout counts it like a wrong code. The challenge of the two-step login is
+revoked after the second step. At login, passwords above
 1024 bytes are not hashed at all - argon2id is deliberately expensive, and the
 endpoint is reachable anonymously.
 
@@ -118,16 +120,84 @@ host and port of the listener). Depending on the network setup the link may then
 not be reachable from outside - but it is never misleading. For production, the
 address should be set.
 
-## JWT lifecycle
+## Sign-in in the browser
 
-1. **Login** (`POST /api/v1/auth/login`): after argon2id verification, `AuthService` issues an HS256-signed JWT. Claims: user ID (`sub`), username, `iat`/`exp`.
-2. **Request**: the frontend sends `Authorization: Bearer <jwt>`. The `Authenticate` middleware validates signature and expiry - the signature method is explicitly pinned to HS256 (`jwt.WithValidMethods`), which prevents algorithm-confusion attacks.
-3. **Role resolution**: permissions are **not** stored in the token. On every request the user is loaded fresh from the DB together with their roles/permissions - role changes and deactivations take effect immediately, not only at the next login.
-4. **Expiry**: after `access_token_ttl_minutes` (default 60) the token is invalid → the server responds 401 → the frontend logs out automatically (see [API reference](/en/reference/api/)).
+The web interface signs in through a **server session**. The browser carries only a
+random, opaque value (32 random bytes); user, start, and last activity live in the
+process's memory. There is no JWT sign-in and no bearer login: `Authorization: Bearer`
+does not count as a sign-in at the REST API. Scripts use `X-API-Key`.
 
-The JWT secret is generated cryptographically at random on first start (48 bytes from `crypto/rand`) and lives only in the `config.json` (file permissions 0600). Secrets shorter than 32 characters are rejected on load.
+How the browser carries the value is set by the operator under *Settings → General →
+Sign-in in the browser* (`browser_session_mode`). The question comes once, right after the
+mandatory steps of the first sign-in; the card explains both ways.
 
-**Session invalidation on every restart:** The HS256 signing material is drawn fresh from `crypto/rand` on every process start and lives only in memory (`newSigningKey` in `auth_service.go`). There is no stored secret behind it any more - earlier versions mixed in a `jwt_secret` from `config.json`, which had no purpose once the key was bound to the process start; a leftover entry is ignored and removed the next time the file is written. So every (re)start produces a different signing key and **all** previously issued tokens fail signature verification - every session ends, a new login is required. This specifically covers the case where an old, still-valid session would otherwise trust a freshly seeded admin with the same ID (rebuild, process restart, newly created database).
+| | In memory (`memory`, default) | Session cookie (`cookie`) |
+|---|---|---|
+| Requirement | none | HTTPS only |
+| Carrier | header `X-LCM-Session`; the value lives only in a variable of the tab | cookie `__Host-lcm_session` (HttpOnly, Secure, SameSite=Strict, Path=/, no Domain) |
+| Cookies | none | session and `__Host-lcm_csrf` |
+| CSRF | not needed (a browser does not send the header by itself) | header `X-CSRF-Token` on every changing request |
+| Reload, new tab, closing | signed out; on closing a `keepalive` logout ends the session on the server | signed in, applies to all tabs |
+| Expiry | idle limit ("Session length in minutes" setting), after 12 hours at the latest unless the idle limit is set longer | same |
+
+**The value belongs to one way.** Every session carries its transport (`cookie` or
+`header`) and is valid only through it: a cookie that belongs to a header session is not
+a sign-in, and vice versa. `Authenticate` checks `X-API-Key`, then `X-LCM-Session`, then
+the cookie.
+
+**Cookie only with HTTPS.** "HTTPS" means a real TLS connection, or
+`X-Forwarded-Proto: https` from a trusted proxy (`trust_proxy_header` and
+`trusted_proxies`, the same rule as for `X-Forwarded-For`). The server rejects setting
+`cookie` over HTTP with 422 `settings.session_cookie_needs_https`. If it is set to
+`cookie` and a login still arrives over plain HTTP (say HTTPS was taken down), nobody is
+locked out: the login runs as a `memory` session, without a cookie. If someone signs in in
+`memory` mode and the browser still sends cookies of an earlier cookie session, the login
+response deletes them - the only `Set-Cookie` line this variant ever has.
+
+**Switching.** When the way changes, **all** browser sessions of all users end, including the
+operator's own, and open event channels are closed. The security log records the switch
+(`session.mode.changed`). If the way stays the same, nothing ends.
+
+**Mandatory steps and password.** A password change also ends the session (it is older than the
+password change). The interface then signs out and leads to the login; this holds for both
+ways. Sessions also end on deactivation and role change.
+
+**WebSockets.** A browser cannot set a header on a WebSocket. The event channel
+(`GET /api/v1/events`) and the console therefore connect with a **one-time ticket**
+(`POST /api/v1/events/ticket` and `.../terminal/ticket`): valid for 30 seconds, exactly once,
+bound to user and session (console: server and client address). The event channel keeps
+checking the session on a timer (without extending it), limits connections per session,
+checks the origin, and closes on sign-out - the same for both ways. Scripts connect with
+`X-API-Key`. The access log redacts the value of `ticket`.
+
+**What the interface does so that `memory` does not get in the way:** downloads go through
+fetch and blob instead of links, the live log through a stream over fetch instead of
+`EventSource`. Error states reload data or modules instead of reloading the page. A new version
+reloads the page; anyone who was signed in in `memory` signs in again and returns to the same
+address.
+
+The Content Security Policy is strict: `script-src 'self'`, `style-src 'self'` without inline styles, plus Trusted Types.
+
+## 2FA challenge (JWT)
+
+The second sign-in step needs a short-lived intermediate token: after the password, with 2FA
+enabled, `POST /api/v1/auth/login` returns a **challenge**, an HS256-signed JWT with the claim
+`twofa_pending`. It authorizes only `POST /api/v1/auth/login/2fa`, never an access, is valid
+briefly, and is revoked when redeemed. The signature method is explicitly pinned to HS256
+(`jwt.WithValidMethods`), which prevents algorithm confusion.
+
+The signing material is drawn fresh from `crypto/rand` on every process start and lives only in
+memory (`newSigningKey` in `auth_service.go`); the CSRF secret is derived from it too. There is no
+stored secret - a `jwt_secret` from older versions is ignored on load and removed the next time the
+file is written.
+
+**Role resolution:** permissions are **not** stored in the session. On every request the user is
+loaded fresh from the DB together with their roles/permissions - role changes and deactivations
+take effect immediately.
+
+**Session invalidation on every restart:** sessions live only in memory. Every (re)start ends all
+of them - this specifically covers the case where an old session would otherwise trust a freshly
+seeded admin with the same ID (rebuild, process restart, newly created database).
 
 ## RBAC: user → role → permission
 
@@ -166,7 +236,7 @@ For processes without a browser (CI, cron, other services) there are API keys (`
 
 **Scopes:** when creating a key you choose `"scope": "read"`, `"readwrite"` (default) or `"mcp"`. A `read` key may only use `GET`/`HEAD`/`OPTIONS` - any writing method is rejected with **403** in the `Authenticate` middleware, *before* controller code runs and in addition to the RBAC check. This lets you issue, for example, monitoring keys that cannot change anything even in an admin context. An `mcp` key is strictly isolated: it works **only** on the separate MCP listener (see below) and is rejected on the regular REST API/UI. Migration 1 automatically sets keys from older versions to `readwrite` (previous behavior).
 
-**Rate limiting:** `api_key_rate_limit_per_minute` in config.json (default 120, `0` = off) limits requests **per API key per minute** (fixed window, in-memory). The limit applies before key validation - even brute-force attempts with invalid keys are throttled. On exceeding it: **429** with a `Retry-After` header. JWT browser sessions are not affected. For multi-instance deployments the limit belongs in the reverse proxy or a shared store.
+**Rate limiting:** `api_key_rate_limit_per_minute` in config.json (default 120, `0` = off) limits requests **per API key per minute** (fixed window, in-memory). The limit applies before key validation - even brute-force attempts with invalid keys are throttled. On exceeding it: **429** with a `Retry-After` header. Browser sessions are not affected. For multi-instance deployments the limit belongs in the reverse proxy or a shared store.
 
 The seeding user `system` exists for background processes without a user context; it cannot log in with a password (`IsSystem`).
 
@@ -186,7 +256,7 @@ The package inventory of all servers, centrally recorded in the DB, is checked d
 
 - **Status effect:** critical CVE → red light, high CVE → yellow (with an insight explanation).
 - **Graceful degrade:** if Trivy is not installed on the LCM host, the feature disables itself cleanly (notice in the UI and job log); everything else runs normally. Trivy is set up separately (see Installation).
-- **Alerts:** the "Security/CVE" alert rule notifies from a configurable minimum severity (see Settings → Alerts).
+- **Alerts:** the "Vulnerabilities (CVE)" alert rule notifies from a configurable minimum severity (see Settings → Alerts).
 - Code: `internal/core/services/cvescan.go` (SBOM/PURL building), `internal/infrastructure/trivy/` (CLI binding).
 
 ## Restricted mode of the management user
@@ -194,7 +264,25 @@ The package inventory of all servers, centrally recorded in the DB, is checked d
 During onboarding (or later via *restrict privileges*) the LCM user can be
 moved from `NOPASSWD:ALL` to a sudoers whitelist: package management (apt,
 dnf/yum, zypper, pacman, apk), Docker, ufw and the strictly validating
-`lcm-helper`. Free-form scripts, custom actions and reboot are then blocked.
+`lcm-helper`. Free-form scripts, custom actions and SSH 2FA are then blocked.
+
+The helper is the only place for everything that needs root and is not on the
+whitelist: package channel of the LCM host, repositories, APT cache, SSH, users,
+firewalld and nftables, fail2ban and CrowdSec, package pins, reboot. Every subcommand
+has fixed parameters (enumerations, IPs, ports, URLs, package names; free text
+only base64-encoded) and writes only paths LCM manages. It runs the same script
+parts as full mode so the two cannot drift apart. A subcommand that took a
+script or a freely chosen path does not exist on purpose - it would be a root
+shell. One deliberate exception to "no foreign scripts": `crowdsec-repo` runs
+the vendor's setup script from packagecloud.io as root, as in full mode. The
+address is fixed and the caller only picks `deb` or `rpm`; trust rests on
+packagecloud and TLS.
+
+**Helper version.** The helper is written when restricting. On the LCM host
+`postinstall.sh` renews it on every package update (`lcm restricted-provision`,
+only if the host is restricted); a failure there only warns. Remote restricted
+servers are renewed by **Reconnect** with an admin login - a self-updating helper
+would be a free root path. Until then the status shows "helper outdated".
 
 **Proof instead of assumption.** After switching, LCM checks - as the
 restricted user - whether the helper and the system's package manager really
@@ -264,13 +352,14 @@ that the mode is meant to prevent.
 
 ## SSH hardening: proven, not claimed
 
-Hardening writes its own drop-in (`60-lcm-hardening.conf`) and then reads back
+Hardening writes its own drop-ins (`60-lcm-hardening.conf` and, ahead of all
+foreign drop-ins, `00-lcm-hardening.conf`) and then reads back
 the **effective** configuration (`sshd -T` evaluates includes and match
 blocks). A server counts as hardened only if `sshd` demonstrably reports
 password authentication as `no`:
 
-- if it still reports `yes` - for instance because a lexically earlier drop-in
-  file wins - the drop-in is rolled back and the failure reported;
+- if it still reports `yes` - for instance because of a start option of the
+  service - the drop-in is rolled back and the failure reported;
 - if the check yields **no result at all**, that does not count as success
   either: `ssh_hardened` stays off and the response names the missing proof.
   For a security function an unproven success message is more harmful than an
@@ -278,9 +367,9 @@ password authentication as `no`:
 
 The same measurement applies when the server is **refreshed**: the drop-in
 being present is not enough, `ssh_hardened` stays on only while `sshd -T`
-still reports `passwordauthentication no`. A lexically earlier file added
-later - on Ubuntu cloud images for instance `50-cloud-init.conf` with
-`PasswordAuthentication yes` - is caught at the next sync.
+still reports `passwordauthentication no`. Drop-ins like `50-cloud-init.conf`
+on Ubuntu cloud images no longer win against `00-lcm-hardening.conf`; a line
+added later above the `Include` of the main file is caught at the next sync.
 
 The configuration file is not assumed to live under `/etc/ssh`: openSUSE Leap
 16 has a stateless `/etc` and ships it as `/usr/etc/ssh/sshd_config`.
@@ -297,14 +386,17 @@ onboarded the host by hand.
 `NOPASSWD:ALL` (`/etc/sudoers.d/lcm-svc`, mode 0440), and stores an SSH key
 for it. **On its first start LCM limits the account to the sudoers whitelist**
 - package management, docker, ufw and the validating `lcm-helper`, whose
-subcommands `host-install`, `host-apt-cacher`, `host-crowdsec-lapi` and
-`host-self-update` carry the host functions. The account has no root shell
+subcommands `host-install`, `host-apt-cacher`, `host-crowdsec-lapi`,
+`host-self-update` and `host-apt-channel` carry the host functions. The account has no root shell
 afterwards; the effect check and the fallback to full mode are the same as
 when restricting any other server. It keeps full rights only with
 `LCM_SELF_MANAGE_FULL=1` at install time.
 
 **Existing installations stay as they are.** An upgrade no longer touches an
-existing `lcm-svc` - neither the sudoers rule nor its `authorized_keys`. That
+existing `lcm-svc` - neither the sudoers rule nor its `authorized_keys`. The one
+exception: if the host is already restricted, `postinstall.sh` renews helper,
+whitelist and shims through `lcm restricted-provision` - the whitelist is never
+replaced by `NOPASSWD:ALL`. That
 is deliberate: previously every package update rewrote the `NOPASSWD:ALL` line
 and would silently have undone a restricted whitelist. To switch your own host,
 use the server action **restrict privileges**; at start LCM states where you
@@ -461,7 +553,8 @@ The optional MCP listener (`internal/mcp`, off by default, bind `127.0.0.1:9330`
 
 - **Error handling:** internal errors only reach the client as a generic "internal server error" - no stack traces or SQL details.
 - **Security headers:** `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` (see `middlewares/security.go`).
-- **XSS:** the frontend renders exclusively via Svelte templating (automatic escaping); `{@html}` is not used.
+- **XSS:** the web interface renders exclusively via Lit templates (automatic escaping), backed by the strict CSP and Trusted Types.
+- **Input validation:** the backend checks every input itself and does not rely on bound parameters alone. A search metric rejects SQL in strings, numbers have fixed limits, and IP addresses, networks, and IPv6 are strictly validated (`internal/inputcheck`, `middlewares.InputGuard`).
 - **Build gates:** `make build` aborts on `npm audit` or `govulncheck` findings.
 - **Default bind:** `127.0.0.1` - anyone exposing it externally deliberately sets `"host": "0.0.0.0"` and should terminate TLS via a reverse proxy (Caddy, nginx).
 - **IP allowlist:** `allowed_ips` in config.json restricts network access to allowed client addresses (keywords `localhost`/`private` or IP/CIDR); non-matching clients get an early **403** (`IPAllowlist` middleware, before auth/logging). Filtering uses the direct TCP connection; behind a reverse proxy set `trust_proxy_header: true` **plus** `trusted_proxies` (`X-Forwarded-For` counts from those peers only). The matcher lives in the `internal/netfilter` package. See [Security & CVE Scans](/en/guides/security-cve/) and [Reverse proxy](/en/guides/reverse-proxy/).
@@ -469,9 +562,3 @@ The optional MCP listener (`internal/mcp`, off by default, bind `127.0.0.1:9330`
 - **Email address only with password:** your own address receives the password reset. Changing it requires the current password - a stolen session alone cannot redirect the account to a foreign address.
 - **Console ticket within scope:** the ticket for the web console is issued only for servers the user may see - the console permission alone is not enough.
 - **Security log:** logins (`login.ok`, `login.failed`, `login.locked`, `login.2fa.*`), password and email changes, second factor, API keys and console tickets are written as **one journal line** with the fixed text `security` and the client address (`middlewares.SecurityEvent`). Successes are INFO, everything else WARN: `journalctl -u lcm -p warning | grep security`. Unlike the audit log in the database, the journal can be forwarded and is usable by fail2ban (`event=login.failed ip=<HOST>`).
-
-## Deliberate simplifications of the template
-
-- **No refresh-token flow:** after token expiry a new login is required. For longer sessions, raise the TTL or add a refresh endpoint.
-- **Token in localStorage:** simple and appropriate for desktop/intranet apps. If you need stricter XSS protection, switch to httpOnly cookies (then add CSRF protection, e.g. the Fiber CSRF middleware).
-- **No rate limiting:** for exposed deployments, apply Fiber's `limiter` middleware to `/auth/login`.

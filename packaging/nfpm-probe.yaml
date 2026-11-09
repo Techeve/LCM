@@ -1,0 +1,41 @@
+# nfpm-Konfiguration für das lcm-probe-Debian-Paket: Messung des LCM-Hosts
+# und der Datenbank, mit eigener Auswertung. arch und version kommen aus der
+# Umgebung (LCM_ARCH, LCM_VERSION) wie bei nfpm.yaml und nfpm-agent.yaml.
+# Siehe Makefile-Target `deb-probe` und den CI-Job `packages:deb`.
+name: lcm-probe
+arch: "${LCM_ARCH}"
+platform: linux
+version: "${LCM_VERSION}"
+section: admin
+priority: optional
+maintainer: "Techeve <claude@techeve.de>"
+vendor: "Techeve"
+homepage: "https://gitlab.techeve.de/techeve/lcm"
+license: "proprietary"
+description: |
+  LCM probe - misst den LCM-Host (Last, CPU, Speicher, Platten, PSI) alle
+  2 Sekunden und die LCM-Datenbank jede Minute, schreibt jede Messung sofort
+  nach /var/lib/lcm-probe und wertet selbst aus (lcm-probe report).
+  Fuer die Datenbank einen API-Schluessel nach /etc/lcm-probe/key legen.
+
+contents:
+  - src: ./bin/lcm-probe-pkg
+    dst: /usr/bin/lcm-probe
+    file_info:
+      mode: 0755
+  - src: ./packaging/lcm-probe.service
+    dst: /usr/lib/systemd/system/lcm-probe.service
+    file_info:
+      mode: 0644
+  - dst: /etc/lcm-probe
+    type: dir
+    file_info:
+      mode: 0700
+
+scripts:
+  postinstall: ./packaging/scripts/probe-postinstall.sh
+  preremove: ./packaging/scripts/probe-preremove.sh
+  postremove: ./packaging/scripts/probe-postremove.sh
+
+deb:
+  compression: xz

@@ -351,7 +351,7 @@ Update auf bestehenden Servern nichts.
 ## Self-Service-Aktivierung
 
 Statt Keys vorab zu kennen, kann LCM einem Benutzer per E-Mail einen
-**Aktivierungslink** schicken. Über eine öffentliche Seite (`/linux-aktivierung`,
+**Aktivierungslink** schicken. Über eine öffentliche Seite (`/linux-activate`,
 auch ohne Login erreichbar) setzt der Benutzer selbst sein Passwort und/oder
 hinterlegt seinen Public-Key. Erst danach wird er auf die Server verteilt.
 
@@ -360,7 +360,7 @@ hinterlegt seinen Public-Key. Erst danach wird er auf die Server verteilt.
 Ein Benutzer lässt sich erst löschen, wenn er auf **keinem** Server mehr
 provisioniert ist - solange noch Zuweisungen bestehen, lehnt LCM das Löschen
 mit einem Hinweis ab (HTTP&nbsp;409). Der Weg ist also ausdrücklich
-zweischrittig: zuerst **„Von allen Servern entfernen"** (deprovisioniert
+zweischrittig: zuerst **„Von allen Servern nehmen"** (deprovisioniert
 Account und Key-Block auf den Zielsystemen), dann löschen. So kann auch ein
 unbedachtes Löschen keinen verwaisten OS-Account hinterlassen - und ein
 Server, der beim Deprovisionieren offline ist, fällt auf, statt still
@@ -373,7 +373,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 <Steps>
 
-1. Unter *Linux-Benutzer* über **„+ Linux-Benutzer“** einen Eintrag anlegen
+1. Unter *Linux-Benutzer* über **„Linux-Benutzer anlegen“** einen Eintrag anlegen
    (Benutzername, optional E-Mail).
 2. SSH-Keys hinterlegen - direkt einfügen oder in LCM ein Schlüsselpaar erzeugen
    (der private Teil wird **einmalig** zum Download angeboten). Alternativ per
@@ -416,7 +416,7 @@ Der Reiter **Benutzer** auf der Server-Detailseite zeigt den **IST-Zustand**
 des Zielsystems: alle Konten, mit denen man sich per SSH oder Shell anmelden
 kann. Systemkonten (UID unterhalb von `UID_MIN`, `nologin`/`false`-Shell)
 sind ausgeblendet; `root` erscheint bewusst. Erhoben wird beim Voll-Scan
-(„Alles aktualisieren", System-Sync) und auf Knopfdruck („Jetzt neu erheben").
+(„Alles aktualisieren", System-Sync) und auf Knopfdruck („Neu einlesen").
 
 Je Konto zu sehen:
 
@@ -425,35 +425,36 @@ Je Konto zu sehen:
 - Anzahl der **SSH-Keys** (`authorized_keys`)
 - **2FA**: hat der Benutzer sein TOTP eingerichtet
   (siehe [SSH-2FA](/guides/security-tools#ssh-2fa-totp-neben-dem-ssh-key))
-- **Letzter Login** laut `lastlog`/`lastlog2` - zählt nur interaktive
+- **Letzte Anmeldung** laut `lastlog`/`lastlog2` - zählt nur interaktive
   Anmeldungen; automatisierte Verbindungen (auch die von LCM) erscheinen
   hier nicht. Auf Systemen ohne lastlog bleibt die Spalte leer (best effort).
 - **LCM-Badge**: das Konto entspricht einem von LCM verteilten Linux-Benutzer
 
 Direkt aus der Übersicht heraus lassen sich Konten verwalten:
 
-- **Deaktivieren** sperrt das Passwort **und** lässt das Konto ablaufen -
+- **Sperren** sperrt das Passwort **und** lässt das Konto ablaufen -
   erst das Ablaufdatum blockiert auch SSH-Key-Logins (`usermod -L` allein
-  tut das nicht). Umkehrbar über **Aktivieren**.
+  tut das nicht). Umkehrbar über **Entsperren**.
 - **Entfernen** löscht das Konto endgültig, samt Home-Verzeichnis.
-- **LCM-Benutzer synchronisieren**: einen Katalog-Benutzer direkt auf diesen
+- **LCM-Benutzer zuordnen**: einen Katalog-Benutzer direkt auf diesen
   Server zuordnen und sofort einrichten.
 
 Geschützt sind `root`, der LCM-Service-User und **LCM-verwaltete Konten** -
 Letztere werden über diese Seite hier (Linux-Benutzer) gepflegt, sonst
 stellte der nächste Sync den alten Zustand stillschweigend wieder her.
 
-## Mitgelieferte Anleitung unter /doku
+## Mitgelieferte Anleitung unter /docs
 
-LCM bringt eine kurze Anwender-Doku mit, erreichbar unter `https://<host>/#/doku`
+LCM bringt eine kurze Anwender-Doku mit, erreichbar unter `https://<host>/docs`
 - **ohne Anmeldung**, denn die Anleitung zum Einrichten des SSH-Schlüssels wird
 genau dann gebraucht, wenn man noch keinen Zugang hat. Der Link darf also
 bedenkenlos in eine Einladungs-Mail.
 
-Aktuell fünf Seiten: das Einrichten des SSH-Schlüssels, die Selbst-Einrichtung
-der Zwei-Faktor-Anmeldung sowie drei Anleitungen zum Einbinden von Geräten -
+Aktuell acht Seiten: das Einrichten des SSH-Schlüssels, die Selbst-Einrichtung
+der Zwei-Faktor-Anmeldung, drei Anleitungen zum Einbinden von Geräten -
 [LCM-Agent](/guides/remote), [MikroTik RouterOS](/guides/routeros) und
-[Synology DSM](/guides/dsm). Sie richten sich an die Person, die die
+[Synology DSM](/guides/dsm) - sowie die Seiten „Was LCM auf dem Server
+ändert“, „Tastenkürzel“ und „Linux-Benutzer einrichten“. Die Geräte-Anleitungen richten sich an die Person, die die
 Einrichtung vornimmt, und nennen jeweils die Stelle, an der es erfahrungsgemäß
 hakt: den Agent-Port, den Nur-Lese-Benutzer auf dem Router, die erzwungene 2FA
 am NAS.
@@ -470,7 +471,7 @@ richtigen Format herausholt, wie man ihn über Pageant als Standard einrichtet
 und wie man ihn für OpenSSH umwandelt.
 
 Für die Benutzer selbst gibt es außerdem die Seite **Linux-Benutzer einrichten**
-(`/#/doku/linux-benutzer`): wie man das Passwort über den Aktivierungslink
+(`/docs/linux-benutzer`): wie man das Passwort über den Aktivierungslink
 festlegt, welche Angaben LCM auf den Server überträgt (voller Name, Shell,
 Schlüssel) und welche E-Mail-Adresse nur für den Aktivierungslink dient. Im
 Reiter **Benutzer** eines Servers führt ein Knopf direkt dorthin.
@@ -484,8 +485,8 @@ durchzureichen (Begründung: [Abhängigkeiten](/reference/dependencies)).
 
 ### Sperren, Synchronisieren und die Anmelde-Historie
 
-Neben **„Jetzt neu erheben"** steht **„LCM-Benutzer synchronisieren"**: Damit
-werden die in LCM gepflegten Benutzer sofort auf diesen Server verteilt, ohne
+Neben **„Neu einlesen"** steht **„LCM-Benutzer zuordnen"**: Damit wird ein in
+LCM gepflegter Benutzer sofort diesem Server zugeordnet und eingerichtet, ohne
 den Umweg über einen Zeitplan.
 
 **Verteilte Konten lassen sich auf einem einzelnen Server sperren.** Der
@@ -500,7 +501,7 @@ legte der nächste Sync ohnehin wieder an. Dafür ist die Deprovisionierung übe
 den Katalog da. Unantastbar bleiben in jedem Fall `root` und der
 LCM-Service-User: Über ihn verwaltet LCM den Server überhaupt erst.
 
-Die Spalte **Letzter Login** lässt sich aufklappen und zeigt dann die
+Die Spalte **Letzte Anmeldung** lässt sich aufklappen und zeigt dann die
 **einzelnen Anmeldungen** mit Zeitpunkt, Herkunft, Terminal und Dauer -
 laufende Sitzungen sind als solche gekennzeichnet. Quelle ist `wtmp` auf dem
 Server (erhoben über `last` im selben Scan-Durchgang). Wie weit die Historie

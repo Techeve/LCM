@@ -275,17 +275,35 @@ func TestConfigureFirewallUsesInstalledTool(t *testing.T) {
 	}
 }
 
-// TestConfigureFirewallRestrictedNonUfw: im eingeschränkten Modus ist nur
-// ufw verwaltbar - nftables/firewalld werden ehrlich abgelehnt.
-func TestConfigureFirewallRestrictedNonUfw(t *testing.T) {
+// TestConfigureFirewallRestrictedNftablesUeberHelper: im eingeschränkten Modus
+// läuft auch nftables - über den Helper statt über nft/systemctl, die nicht auf
+// der Whitelist stehen. Der Regelsatz geht base64-kodiert als Parameter.
+func TestConfigureFirewallRestrictedNftablesUeberHelper(t *testing.T) {
 	env := newTestEnv(t)
 	id := joinTestServer(t, env, "deb01")
 	if err := env.DB().Model(&domain.Server{}).Where("id = ?", id).
 		Updates(map[string]any{"os_id": "debian", "restricted_sudo": true, "firewall_tool": ""}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.Servers.ConfigureFirewall(repositories.ScopeAll(), id, true, "80", domain.FirewallSSHSources{}, "admin"); err == nil {
-		t.Error("nftables im eingeschränkten modus muss abgelehnt werden")
+	env.Dialer.Responses["then echo ufw"] = sshx.FakeResponse{Output: "nftables\n"}
+	env.Dialer.Responses["firewall-status"] = sshx.FakeResponse{Output: "table inet lcm {\n"}
+	env.Dialer.Commands = nil
+
+	job, err := env.Servers.ConfigureFirewall(repositories.ScopeAll(), id, true, "80", domain.FirewallSSHSources{}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := waitForJob(t, env, job.ID); done.Status != domain.JobStatusSuccess {
+		t.Fatalf("job fehlgeschlagen: %s", done.Output)
+	}
+	all := strings.Join(env.Dialer.Commands, "\n")
+	for _, want := range []string{"lcm-helper firewall-apply", "'nftables'", "lcm-helper firewall-status"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("%q fehlt:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "nft -f") || strings.Contains(all, "systemctl enable nftables") {
+		t.Errorf("nftables-Befehle laufen am Helper vorbei:\n%s", all)
 	}
 }
 

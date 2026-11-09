@@ -29,49 +29,11 @@ func TestAgentEndToEnd(t *testing.T) {
 		t.Skip("integrationstest (echter broker + websocket)")
 	}
 
-	// LCM-Seite: DB, Server-Datensatz, Hub, Fiber-App mit /mqtt.
-	db, err := storage.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := storage.Migrate(db); err != nil {
-		t.Fatal(err)
-	}
-	servers := repositories.NewServerRepository(db)
-	const secret = "integration-secret"
-	server := &domain.Server{
-		Name: "roadwarrior", Transport: domain.TransportAgent, ServiceUser: "root",
-		AgentID: "11111111-2222-3333-4444-555555555555", AgentTokenHash: wire.HashSecret(secret),
-	}
-	if err := servers.Create(server); err != nil {
-		t.Fatal(err)
-	}
-
-	hub := remote.New(servers, slog.Default())
-	if err := hub.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(hub.Close)
-
-	app := fiber.New()
-	app.Get("/mqtt", remote.WSHandler(hub, netfilter.ProxyTrust{}))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() { _ = app.Listener(ln) }()
-	t.Cleanup(func() { _ = app.Shutdown() })
-
-	// Agent-Seite: echter Client (wie `lcm-agent run`), verbindet über ws://.
-	cfg := &agent.Config{
-		URL:     fmt.Sprintf("http://%s", ln.Addr().String()),
-		AgentID: server.AgentID,
-		Secret:  secret,
-	}
-	go func() { _ = agent.NewClient(cfg, slog.Default(), "test").Run() }()
-
-	// Auf den Connect warten (Session-Event füllt die Online-Registry).
-	waitFor(t, 10*time.Second, "agent online", func() bool { return hub.Online(server.AgentID) })
+	hub, servers, server, app := connectedAgent(t)
+	t.Cleanup(func() {
+		_ = app.Shutdown()
+		hub.Close()
+	})
 
 	// Kommando-Roundtrip über die sshx.Conn-Schnittstelle.
 	conn, err := hub.Conn(server)
@@ -120,6 +82,105 @@ func TestAgentEndToEnd(t *testing.T) {
 	if _, err := hub.Conn(server); err == nil {
 		t.Fatal("Conn muss nach revocation offline melden")
 	}
+}
+
+// TestCloseDisconnectsAgents: Agents hängen an keinem Listener des Brokers.
+// Trennt Close sie nicht selbst, wartet der Broker ewig auf sie, und systemd
+// beendet den Dienst nach 30 s mit SIGKILL.
+func TestCloseDisconnectsAgents(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integrationstest (echter broker + websocket)")
+	}
+
+	hub, _, server, app := connectedAgent(t)
+	// Reihenfolge wie im Dienst: Erst nimmt der Agent-Port nichts mehr an, sonst
+	// verbände sich der getrennte Agent sofort neu.
+	if err := app.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	closeInTime(t, hub)
+	if hub.Online(server.AgentID) {
+		t.Fatal("agent nach Close noch online")
+	}
+}
+
+// TestCloseDropsSilentConn: Eine Verbindung ohne CONNECT führt der Broker noch
+// nicht als Client, wartet aber genauso auf ihr Ende.
+func TestCloseDropsSilentConn(t *testing.T) {
+	hub := remote.New(nil, slog.Default())
+	if err := hub.Start(); err != nil {
+		t.Fatal(err)
+	}
+	conn, peer := net.Pipe()
+	t.Cleanup(func() { _ = peer.Close() })
+	go func() { _ = hub.HandleConn(conn) }()
+	// Das erste Byte eines CONNECT: Kommt Write zurück, liest der Broker schon.
+	if _, err := peer.Write([]byte{0x10}); err != nil {
+		t.Fatal(err)
+	}
+	closeInTime(t, hub)
+}
+
+func closeInTime(t *testing.T, hub *remote.Hub) {
+	t.Helper()
+	closed := make(chan struct{})
+	go func() {
+		hub.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close hängt an einer offenen Verbindung")
+	}
+}
+
+// connectedAgent startet die LCM-Seite (DB, Hub, Fiber-App mit /mqtt) und einen
+// echten Agent und wartet, bis er online ist. Den Hub schließt der Aufrufer.
+func connectedAgent(t *testing.T) (*remote.Hub, *repositories.ServerRepository, *domain.Server, *fiber.App) {
+	t.Helper()
+	db, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	servers := repositories.NewServerRepository(db)
+	const secret = "integration-secret"
+	server := &domain.Server{
+		Name: "roadwarrior", Transport: domain.TransportAgent, ServiceUser: "root",
+		AgentID: "11111111-2222-3333-4444-555555555555", AgentTokenHash: wire.HashSecret(secret),
+	}
+	if err := servers.Create(server); err != nil {
+		t.Fatal(err)
+	}
+
+	hub := remote.New(servers, slog.Default())
+	if err := hub.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := fiber.New()
+	app.Get("/mqtt", remote.WSHandler(hub, netfilter.ProxyTrust{}))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = app.Listener(ln) }()
+	t.Cleanup(func() { _ = app.Shutdown() })
+
+	// Agent-Seite: echter Client (wie `lcm-agent run`), verbindet über ws://.
+	cfg := &agent.Config{
+		URL:     fmt.Sprintf("http://%s", ln.Addr().String()),
+		AgentID: server.AgentID,
+		Secret:  secret,
+	}
+	go func() { _ = agent.NewClient(cfg, slog.Default(), "test").Run() }()
+
+	// Auf den Connect warten (Session-Event füllt die Online-Registry).
+	waitFor(t, 10*time.Second, "agent online", func() bool { return hub.Online(server.AgentID) })
+	return hub, servers, server, app
 }
 
 func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool) {

@@ -50,31 +50,16 @@ func pinNames(pins []domain.PackagePin, hold bool) []string {
 		if (hold && !p.Hold) || (!hold && !p.NoRemove) {
 			continue
 		}
+		// Ältere Einträge können Namen tragen, die heute abgelehnt werden: Sie
+		// sind kein Paket, und der Helper verwürfe ihretwegen alle Pins.
+		if _, err := validPinName(name); err != nil {
+			continue
+		}
 		seen[name] = true
 		out = append(out, name)
 	}
 	sort.Strings(out)
 	return out
-}
-
-// pinRegex uebersetzt einen Pin-Namen in einen verankerten regulaeren
-// Ausdruck, wie ihn APT::NeverAutoRemove erwartet. Ein Praefix-Muster
-// ("linux-image-*") wird zu "^linux-image-.*$", ein exakter Name zu
-// "^name$". Regex-Sonderzeichen im Namen werden maskiert - Paketnamen duerfen
-// Punkte und Pluszeichen enthalten (g++, libstdc++6, python3.11).
-func pinRegex(name string) string {
-	base := strings.TrimSuffix(name, "*")
-	var b strings.Builder
-	for _, r := range base {
-		if strings.ContainsRune(`.+*?()[]{}^$|\`, r) {
-			b.WriteRune('\\')
-		}
-		b.WriteRune(r)
-	}
-	if strings.HasSuffix(name, "*") {
-		return "^" + b.String() + ".*$"
-	}
-	return "^" + b.String() + "$"
 }
 
 // pinShellPattern liefert das Glob-Muster fuer die Shell-Auswertung auf dem
@@ -108,72 +93,125 @@ func pinExpandCmd(listCmd string, names []string) string {
 // entfernt, bekommt so beim naechsten Anwenden auch auf dem Server wieder
 // einen ungeschuetzten Zustand - sonst blieben Leichen zurueck, die niemand
 // mehr zuordnen kann.
-func pkgPinScript(mgr string, pins []domain.PackagePin) string {
+//
+// restricted: Im eingeschraenkten Modus gibt es keine Root-Shell. Die Schritte,
+// die unter /etc schreiben oder apt-mark brauchen (pinRootStep), laufen dann
+// ueber das Helper-Unterkommando package-pins; alles uebrige geht ueber
+// Paketverwaltungen, die auf der sudo-Whitelist stehen.
+func pkgPinScript(restricted bool, mgr string, pins []domain.PackagePin) string {
 	noRemove := pinNames(pins, false)
 	hold := pinNames(pins, true)
 
 	switch pkgFamily(mgr) {
 	case pkgApt:
-		return aptPinScript(noRemove, hold)
+		return pinRootStep(restricted, pkgApt, noRemove, hold)
 	case pkgDnf:
-		return dnfPinScript(mgr, noRemove, hold)
+		return dnfPinScript(restricted, mgr, noRemove, hold)
 	case pkgZypper:
 		return zypperPinScript(noRemove, hold)
 	case pkgPacman:
-		return pacmanPinScript(noRemove, hold)
+		return pinRootStep(restricted, pkgPacman, noRemove, hold)
 	case pkgApk:
 		return apkPinScript(noRemove, hold)
 	}
 	return "echo 'LCM: Paket-Pins werden fuer diese Paketverwaltung nicht unterstuetzt'"
 }
 
-// aptPinScript: APT::NeverAutoRemove schuetzt vor autoremove (Updates laufen
-// weiter), `apt-mark hold` friert die Version ein.
-func aptPinScript(noRemove, hold []string) string {
-	steps := []string{"install -d -m 755 /etc/apt/apt.conf.d"}
-	if len(noRemove) == 0 {
-		steps = append(steps, "rm -f "+aptPinFile)
-	} else {
-		var entries strings.Builder
-		for _, n := range noRemove {
-			entries.WriteString("  \"" + pinRegex(n) + "\";\\n")
-		}
-		steps = append(steps,
-			fmt.Sprintf("printf '// von LCM verwaltet - nicht von Hand aendern\\nAPT::NeverAutoRemove\\n{\\n%s};\\n' > %s", entries.String(), aptPinFile),
-			fmt.Sprintf("echo 'LCM: %d Paket-Muster vor autoremove geschuetzt (%s)'", len(noRemove), aptPinFile),
-		)
+// Root-Schritte der Pin-Skripte. Es gibt sie einmal, mit den Pin-Listen als
+// Shell-Variablen $NOREMOVE und $HOLD (Leerzeichen-getrennte Muster):
+// im Voll-Modus setzt LCM die Variablen vor den Rumpf, im eingeschraenkten Modus
+// traegt der Helper (package-pins) denselben Rumpf und setzt sie aus seinen
+// geprueften Parametern. Die Muster duerfen `*` enthalten - set -f verhindert,
+// dass die Shell sie gegen Dateinamen aufloest; die Unterschale haelt das
+// aus dem restlichen Skript heraus.
+const (
+	// APT::NeverAutoRemove schuetzt vor autoremove (Updates laufen weiter),
+	// `apt-mark hold` friert die Version ein. Die Muster werden zu verankerten
+	// Regexen: Namen duerfen nur [a-z0-9._+-] enthalten, also
+	// sind `.` und `+` die einzigen zu maskierenden Zeichen.
+	pinAptBody = `( set -f
+install -d -m 755 /etc/apt/apt.conf.d
+if [ -z "$NOREMOVE" ]; then
+  rm -f ` + aptPinFile + `
+else
+  { printf '// von LCM verwaltet - nicht von Hand aendern\nAPT::NeverAutoRemove\n{\n'
+    for p in $NOREMOVE; do
+      esc=$(printf '%s' "${p%\*}" | sed 's/[.+]/\\&/g')
+      case "$p" in *\*) printf '  "^%s.*$";\n' "$esc" ;; *) printf '  "^%s$";\n' "$esc" ;; esac
+    done
+    printf '};\n'
+  } > ` + aptPinFile + `
+  set -- $NOREMOVE
+  echo "LCM: $# Paket-Muster vor autoremove geschuetzt (` + aptPinFile + `)"
+fi
+apt-mark unhold $(apt-mark showhold) >/dev/null 2>&1 || true
+if [ -n "$HOLD" ]; then
+  hold=
+  for p in $(dpkg-query -W -f '${Package}\n' 2>/dev/null); do
+    for pat in $HOLD; do case "$p" in $pat) hold="$hold $p"; break ;; esac; done
+  done
+  [ -n "$hold" ] && apt-mark hold $hold || echo 'LCM: keine installierten Pakete passen auf die Hold-Pins'
+fi )`
+
+	// /etc/dnf/protected.d: dnf lehnt das Entfernen der dort genannten Pakete
+	// ab. Muster loesen wir gegen den installierten Bestand auf.
+	pinDnfBody = `( set -f
+install -d -m 755 /etc/dnf/protected.d
+if [ -z "$NOREMOVE" ]; then
+  rm -f ` + dnfPinFile + `
+else
+  : > ` + dnfPinFile + `
+  for p in $(rpm -qa --qf '%{NAME}\n' 2>/dev/null | sort -u); do for pat in $NOREMOVE; do case "$p" in $pat) echo "$p" >> ` + dnfPinFile + `; break ;; esac; done; done
+  echo "LCM: $(wc -l < ` + dnfPinFile + `) Pakete vor dem Entfernen geschuetzt (` + dnfPinFile + `)"
+fi )`
+
+	// pacman trennt beides sauber (HoldPkg = Entfernen wird verweigert,
+	// IgnorePkg = keine Upgrades). Beide stehen in einer eigenen LCM-Datei,
+	// die per Include aus pacman.conf gezogen wird (einmalig, idempotent).
+	pinPacmanBody = `( set -f
+install -d -m 755 /etc/pacman.d
+if [ -z "$NOREMOVE" ] && [ -z "$HOLD" ]; then
+  rm -f ` + pacmanPinFile + `
+  echo 'LCM: keine Paket-Pins gesetzt'
+else
+  { echo '# von LCM verwaltet - nicht von Hand aendern'; echo '[options]'
+    [ -z "$NOREMOVE" ] || echo "HoldPkg = $NOREMOVE"
+    [ -z "$HOLD" ] || echo "IgnorePkg = $HOLD"
+  } > ` + pacmanPinFile + `
+  grep -q '` + pacmanPinFile + `' /etc/pacman.conf 2>/dev/null || printf '\nInclude = ` + pacmanPinFile + `\n' >> /etc/pacman.conf
+  echo 'LCM: Paket-Pins geschrieben (` + pacmanPinFile + `)'
+fi )`
+)
+
+// pinRootBodies ordnet dem Wert von package-pins den Rumpf zu.
+var pinRootBodies = map[string]string{pkgApt: pinAptBody, pkgDnf: pinDnfBody, pkgPacman: pinPacmanBody}
+
+// pinRootStep liefert den Root-Schritt der Paketverwaltung kind: im Voll-Modus
+// den Rumpf samt Variablen, im eingeschraenkten Modus den Helper-Aufruf.
+func pinRootStep(restricted bool, kind string, noRemove, hold []string) string {
+	if restricted {
+		return helperCmd("package-pins", kind, pinCSV(noRemove), pinCSV(hold))
 	}
-	// Holds: erst ALLE bestehenden loesen, dann die gewuenschten setzen -
-	// sonst bliebe ein entfernter Pin auf dem Server aktiv.
-	steps = append(steps, "apt-mark unhold $(apt-mark showhold) >/dev/null 2>&1 || true")
-	if len(hold) > 0 {
-		steps = append(steps,
-			"hold=$("+pinExpandCmd("dpkg-query -W -f '${Package}\\n' 2>/dev/null", hold)+")",
-			"[ -n \"$hold\" ] && apt-mark hold $hold || echo 'LCM: keine installierten Pakete passen auf die Hold-Pins'",
-		)
-	}
-	return strings.Join(steps, "\n")
+	return shellVars("NOREMOVE", strings.Join(noRemove, " "), "HOLD", strings.Join(hold, " ")) + pinRootBodies[kind]
 }
 
-// dnfPinScript: /etc/dnf/protected.d schuetzt vor dem Entfernen,
-// `versionlock` friert die Version ein (Plugin, wird bei Bedarf nachinstalliert).
+// pinCSV ist die Helper-Schreibweise einer Pin-Liste ("-" = leer).
+func pinCSV(names []string) string {
+	if len(names) == 0 {
+		return "-"
+	}
+	return strings.Join(names, ",")
+}
+
+// dnfPinScript: der Schutz vor dem Entfernen ist ein Root-Schritt (siehe
+// pinDnfBody), `versionlock` friert die Version ein (Plugin, wird bei Bedarf
+// nachinstalliert) und laeuft ueber dnf selbst.
 //
 // Hinweis: Wie viele Kernel dnf behaelt, steuert zusaetzlich installonly_limit
 // in dnf.conf (Standard 3) - der Pin wirkt ergaenzend.
-func dnfPinScript(mgr string, noRemove, hold []string) string {
+func dnfPinScript(restricted bool, mgr string, noRemove, hold []string) string {
 	bin := dnfBin(mgr)
-	steps := []string{"install -d -m 755 /etc/dnf/protected.d"}
-	if len(noRemove) == 0 {
-		steps = append(steps, "rm -f "+dnfPinFile)
-	} else {
-		// protected.d nimmt je Zeile einen Paketnamen; Muster loesen wir
-		// gegen den installierten Bestand auf.
-		steps = append(steps,
-			": > "+dnfPinFile,
-			pinExpandCmd("rpm -qa --qf '%{NAME}\\n' 2>/dev/null | sort -u", noRemove)+" >> "+dnfPinFile,
-			fmt.Sprintf("echo \"LCM: $(wc -l < %s) Pakete vor dem Entfernen geschuetzt (%s)\"", dnfPinFile, dnfPinFile),
-		)
-	}
+	steps := []string{pinRootStep(restricted, pkgDnf, noRemove, hold)}
 	if len(hold) > 0 {
 		steps = append(steps,
 			bin+" -y install 'dnf-command(versionlock)' >/dev/null 2>&1 || "+bin+" -y install python3-dnf-plugin-versionlock >/dev/null 2>&1 || true",
@@ -209,35 +247,6 @@ func zypperPinScript(noRemove, hold []string) string {
 		steps = append(steps, fmt.Sprintf(
 			"echo 'LCM: %d Schutz-Pins werden bei zypper beim Aufraeumen ausgespart (zypper kennt keine reine Entfernsperre)'", len(noRemove)))
 	}
-	return strings.Join(steps, "\n")
-}
-
-// pacmanPinScript: pacman trennt beides sauber -
-//
-//	HoldPkg   = Entfernen wird verweigert  -> NoRemove
-//	IgnorePkg = keine Upgrades             -> Hold
-//
-// Beide stehen in einer eigenen LCM-Datei, die per Include aus pacman.conf
-// gezogen wird. Das Include wird bei Bedarf einmalig ergaenzt.
-func pacmanPinScript(noRemove, hold []string) string {
-	steps := []string{"install -d -m 755 /etc/pacman.d"}
-	if len(noRemove) == 0 && len(hold) == 0 {
-		return strings.Join(append(steps, "rm -f "+pacmanPinFile,
-			"echo 'LCM: keine Paket-Pins gesetzt'"), "\n")
-	}
-	lines := []string{"# von LCM verwaltet - nicht von Hand aendern", "[options]"}
-	if len(noRemove) > 0 {
-		lines = append(lines, "HoldPkg = "+strings.Join(expandStars(noRemove), " "))
-	}
-	if len(hold) > 0 {
-		lines = append(lines, "IgnorePkg = "+strings.Join(expandStars(hold), " "))
-	}
-	steps = append(steps,
-		fmt.Sprintf("printf '%s\\n' > %s", strings.Join(lines, "\\n"), pacmanPinFile),
-		// Include nur einmal anhaengen (idempotent).
-		fmt.Sprintf("grep -q '%s' /etc/pacman.conf 2>/dev/null || printf '\\nInclude = %s\\n' >> /etc/pacman.conf", pacmanPinFile, pacmanPinFile),
-		fmt.Sprintf("echo 'LCM: Paket-Pins geschrieben (%s)'", pacmanPinFile),
-	)
 	return strings.Join(steps, "\n")
 }
 

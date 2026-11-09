@@ -78,7 +78,7 @@ func TestZweiFaktorSeite(t *testing.T) {
 // TestQuerverweiseZeigenAufVorhandeneSeiten: ein Verweis auf eine Seite, die
 // es nicht gibt, ist schlimmer als keiner.
 func TestQuerverweiseZeigenAufVorhandeneSeiten(t *testing.T) {
-	verweis := regexp.MustCompile(`href="/#/doku/([a-z0-9-]+)"`)
+	verweis := regexp.MustCompile(`href="(?:/#/doku|/docs)/([a-z0-9-]+)"`)
 	for _, lang := range []string{"de", "en"} {
 		pages, err := List(lang)
 		if err != nil {

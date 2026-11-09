@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -126,7 +127,7 @@ func TestDockerCheckScansImagesWithTrivy(t *testing.T) {
 	}
 
 	// nginx:1.25 (gleicher Digest) läuft auf beiden Servern; dazu ein
-	// ungenutztes Image, das NICHT gescannt werden darf.
+	// ungenutztes Image eines anderen Repositorys, das eigens geprüft wird.
 	for _, id := range []uint{a, b} {
 		if err := repo.ReplaceDockerImages(id, []domain.DockerImage{
 			{Repository: "nginx", Tag: "1.25", RepoDigest: "sha256:alt", InUse: true},
@@ -148,15 +149,18 @@ func TestDockerCheckScansImagesWithTrivy(t *testing.T) {
 
 	// Dedup: ein Trivy-Scan für beide Server, adressiert per repo@digest
 	// (exakt der Stand, der auf den Servern läuft - nicht der aktuelle
-	// Registry-Stand des Tags); ungenutztes redis nicht gescannt.
-	if len(env.Scanner.ImageCalls) != 1 || env.Scanner.ImageCalls[0] != "nginx@sha256:alt" {
-		t.Errorf("erwartete genau 1 image-scan für nginx@sha256:alt, bekam %v", env.Scanner.ImageCalls)
+	// Registry-Stand des Tags); das ungenutzte redis ist das neueste seines
+	// Repositorys und wird mitgeprüft.
+	calls := append([]string(nil), env.Scanner.ImageCalls...)
+	sort.Strings(calls)
+	if strings.Join(calls, " ") != "nginx@sha256:alt redis@sha256:r" {
+		t.Errorf("erwartete je einen scan für nginx und redis, bekam %v", calls)
 	}
 
 	// Beide Server tragen den Docker-Fund; der OS-Fund von a bleibt.
 	vulnsA, _ := repo.FindVulnerabilities(a)
-	if len(vulnsA) != 2 {
-		t.Fatalf("web01: erwartet 2 funde (os+docker), bekam %d: %+v", len(vulnsA), vulnsA)
+	if len(vulnsA) != 3 {
+		t.Fatalf("web01: erwartet 3 funde (os+nginx+redis), bekam %d: %+v", len(vulnsA), vulnsA)
 	}
 	var haveOS, haveDocker bool
 	for _, v := range vulnsA {
@@ -171,8 +175,8 @@ func TestDockerCheckScansImagesWithTrivy(t *testing.T) {
 		t.Errorf("quellen-trennung verletzt: %+v", vulnsA)
 	}
 	vulnsB, _ := repo.FindVulnerabilities(b)
-	if len(vulnsB) != 1 || vulnsB[0].Source != domain.VulnSourceDocker {
-		t.Errorf("web02: erwartet 1 docker-fund, bekam %+v", vulnsB)
+	if len(vulnsB) != 2 || vulnsB[0].Source != domain.VulnSourceDocker {
+		t.Errorf("web02: erwartet 2 docker-funde, bekam %+v", vulnsB)
 	}
 
 	// Docker-CVEs zählen standardmäßig NICHT in die Ampel: der kritische

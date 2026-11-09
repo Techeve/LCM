@@ -6,24 +6,27 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-// contentSecurityPolicy für die eingebettete SPA: alles kommt von der
-// eigenen Origin (Bootstrap/Svelte sind lokal gebündelt, keine CDNs).
-//   - script-src 'self': KEIN 'unsafe-inline' - das gebaute index.html lädt
-//     nur ein verlinktes Modul, keine Inline-Skripte (der wichtigste Schutz
-//     gegen XSS-basierten Token-Diebstahl).
-//   - style-src erlaubt 'unsafe-inline', weil Svelte 5 seine Styles als
-//     <style>-Tags injiziert.
+// contentSecurityPolicy für die eingebettete Lit-Oberfläche: alles kommt von
+// der eigenen Origin, keine CDNs.
+//   - script-src und style-src 'self': kein Inline-Skript, kein Inline-Style.
+//   - Trusted Types: DOM-Senken nehmen nur Werte aus den Richtlinien lit-html
+//     und lcm-ui an (der wichtigste Schutz gegen XSS-basierten Token-Diebstahl).
 //   - img-src erlaubt data: für den 2FA-QR-Code (Inline-Data-URI).
 //   - frame-ancestors 'none' ergänzt X-Frame-Options gegen Clickjacking.
 const contentSecurityPolicy = "default-src 'self'; " +
 	"script-src 'self'; " +
-	"style-src 'self' 'unsafe-inline'; " +
+	"style-src 'self'; " +
 	"img-src 'self' data:; " +
+	"font-src 'self'; " +
 	"connect-src 'self'; " +
+	"worker-src 'self'; " +
+	"manifest-src 'self'; " +
 	"object-src 'none'; " +
-	"base-uri 'self'; " +
+	"base-uri 'none'; " +
 	"form-action 'self'; " +
-	"frame-ancestors 'none'"
+	"frame-ancestors 'none'; " +
+	"require-trusted-types-for 'script'; " +
+	"trusted-types lit-html lcm-ui"
 
 // SecurityHeaders setzt sichere HTTP-Header für die SPA-Auslieferung.
 // Für API-only-Deployments hinter einem Reverse-Proxy können diese dort

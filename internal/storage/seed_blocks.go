@@ -687,10 +687,10 @@ func builtinProfileBlocks() []domain.ProfileBlock {
 		},
 		{
 			Slug: "lcm-verwalten", Name: "LCM verwalten",
-			NameEN: "Manage LCM", DescriptionEN: "Everything from \"Operate LCM\" plus editing config.json. CAUTION: that file holds the JWT secret - whoever may write it can issue themselves admin sessions in LCM. This is a role for whoever looks after the LCM host, not for on-call duty.",
-			Description: "Alles aus „LCM betreiben“ plus Bearbeiten der config.json. ACHTUNG: In dieser " +
-				"Datei steht das JWT-Geheimnis - wer sie schreiben darf, kann sich Admin-Sitzungen in LCM " +
-				"ausstellen. Das ist eine Rolle für den Betreuer des LCM-Hosts, nicht für die Bereitschaft.",
+			NameEN: "Manage LCM", DescriptionEN: "Everything from \"Operate LCM\" plus editing config.json. CAUTION: that file controls the IP allowlist and which proxies LCM trusts - whoever may write it can bypass both. This is a role for whoever looks after the LCM host, not for on-call duty.",
+			Description: "Alles aus „LCM betreiben“ plus Bearbeiten der config.json. ACHTUNG: Diese " +
+				"Datei steuert die IP-Allowlist und welchen Proxys LCM vertraut - wer sie schreiben darf, " +
+				"kann beides aushebeln. Das ist eine Rolle für den Betreuer des LCM-Hosts, nicht für die Bereitschaft.",
 			Variants: []domain.ProfileBlockVariant{
 				serviceVariant(allFamilies, "lcm", "/etc/lcm/config.json", ""),
 			},

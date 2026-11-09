@@ -32,45 +32,56 @@ Registry-Call). Ergebnis pro Image:
 - **nicht prüfbar (privat)** - private Registry, anonym nicht abfragbar.
 - **lokal gebaut** - kein Registry-Digest, nicht prüfbar.
 
-Die **globale Docker-Seite** listet jedes eindeutige Image über alle
+Die globale Seite **Container** (Reiter *Images*) listet jedes eindeutige Image über alle
 sichtbaren Server hinweg, mit Nutzungszähler und CVE-Badges - praktisch, um
 z. B. auf einen Blick zu sehen, wie viele Server noch ein veraltetes
 `nginx:1.25` fahren:
 
-![Globale Docker-Übersicht mit Update- und CVE-Status je Image](./img/docker-overview.png)
+![Seite Container: Images mit Update- und CVE-Status](./img/docker-overview.png)
 
 ## Image-CVE-Scan
 
-Im selben Lauf scannt LCM die **genutzten** Images mit Trivy - adressiert per
-`repo@digest` (exakt der laufende Stand) und dedupliziert pro (Repository,
-Digest). Die Funde landen in derselben Schwachstellen-Tabelle wie der
-Paket-Scan. In **Ampel und Alarme** fließen sie standardmäßig **nicht** ein -
-nur für Container, die in der Container-Tabelle als **CVE-relevant** markiert
-sind, zählen die Image-CVEs mit voller Schwere (kritisch → 🔴, hoch → 🟡;
+Im selben Lauf scannt LCM Images mit Trivy - adressiert per `repo@digest`
+(exakt der vorhandene Stand) und dedupliziert pro (Repository, Digest):
+
+- **Genutzte Images** werden immer geprüft, auch eine ältere Fassung, auf der
+  noch ein Container läuft.
+- Von den **ungenutzten Images** prüft LCM je Repository nur das neueste, weil
+  es als Nächstes in Betrieb gehen könnte. Ältere Stände bleiben außen vor.
+
+Ob ein Image genutzt wird, entscheidet die Image-ID des Containers, nicht sein
+Name. Nach *Laden* liegt das neue Image auf dem Server, der Container läuft aber
+weiter mit dem alten. Das Update gilt deshalb erst als erledigt, wenn der
+Container neu erstellt wurde; bis dahin steht er auf *Container noch neu
+erstellen*.
+
+Die Funde landen in derselben Schwachstellen-Tabelle wie der Paket-Scan. In **Ampel und Alarme** fließen sie standardmäßig **nicht** ein -
+nur für Container, die im Reiter *Container* eines Servers in der Spalte
+*In der Ampel* eingeschaltet sind (im Folgenden **CVE-relevant**), zählen die Image-CVEs mit voller Schwere (kritisch → 🔴, hoch → 🟡;
 siehe [Status-Berechnung](/guides/status/)). Veraltete genutzte Images → 🟡.
 
 ## Aktionen
 
-Auf dem Docker-Tab eines Servers stehen (siehe Screenshot unten, Server
+Im Reiter *Container* eines Servers stehen (siehe Screenshot unten, Server
 `web01`): ein Compose-Projekt mit zwei Services (`webshop`) und ein
 Standalone-Container (`uptime-kuma`), darunter das Image-Inventar mit dem
-CVE-relevant-Umschalter je Container.
+Umschalter *In der Ampel* je Container.
 
-![Docker-Tab eines Servers: Compose-Projekt, Standalone-Container und Images](./img/docker-tab.png)
+![Reiter Container eines Servers: Compose-Projekt, Standalone-Container und Images](./img/docker-tab.png)
 
-- **Compose-Projekt aktualisieren** - `docker compose pull && up -d` im
+- **Projekt aktualisieren** - `docker compose pull && up -d` im
   `working_dir` des Projekts. Für einen einzelnen Service im Projekt geht das
-  auch gezielt über „Service aktualisieren“.
-- **Standalone-Image aktualisieren** - `docker pull` (die Neuerstellung des
+  auch gezielt über „Aktualisieren“ an dessen Zeile.
+- **Ziehen** (am Image) - `docker pull` (die Neuerstellung des
   Containers bleibt bewusst beim Betreiber, siehe Hinweis im UI).
 - **Alle Images aktualisieren** - zieht in einem Job alle genutzten,
   getaggten Registry-Images des Servers auf einmal (`docker pull` je Image);
   lokal gebaute Images bleiben unangetastet.
-- **CVE-relevant markieren** - Umschalter je Container: standardmäßig fließen
+- **In der Ampel** (CVE-relevant) - Umschalter je Container: standardmäßig fließen
   Docker-CVEs **nicht** in Ampel/Alarme ein (siehe
   [Status-Berechnung](/guides/status/)); der Umschalter macht einen Container
   ausdrücklich relevant, wenn sein Image z. B. direkt von außen erreichbar ist.
-- **Ungenutztes Image löschen** - einzeln per Button (`docker rmi`).
+- **Löschen** (am ungenutzten Image) - einzeln per Button (`docker rmi`).
 - **Aufräum-Regel** - die Gruppen-Regel „Docker: ungenutzte Images aufräumen“
   (`docker-prune`) räumt zeitgesteuert per `docker image prune -af` auf.
 
@@ -88,7 +99,7 @@ ebenfalls markiert.
 
 Zieht man ein Image, dessen Tag auf einen neuen Digest zeigt (etwa
 `nginx:latest`), verliert die alte Fassung ihren Tag. Solange ein Container sie
-nutzt, bleibt sie auf dem Server liegen. Der Reiter **Images** eines Servers
+nutzt, bleibt sie auf dem Server liegen. Der Abschnitt **Images** im Reiter *Container* eines Servers
 führt sie als **überholt** auf; beim Tag steht „+N ältere“, die Zahl aller
 überholten Fassungen dieses Repositorys. Sie verschwinden mit **Ungenutzte
 aufräumen** oder der Regel `docker-prune`, sobald kein Container mehr auf ihnen
@@ -118,7 +129,7 @@ er erst, wenn der neue läuft.
 
 ## Server-Schalter: zusehen statt eingreifen
 
-Unter **Server → Einstellungen → Docker** stehen zwei Schalter, mit denen ein
+Unter **Servereinstellungen → Betrieb** (Abschnitt *Docker*) stehen zwei Schalter, mit denen ein
 Server aus dem Docker-Betrieb von LCM herausgenommen werden kann. Beide sind
 ab Werk **aus**; es ändert sich also nichts, solange niemand sie umlegt.
 
@@ -143,7 +154,7 @@ heraus nicht falsch konfiguriert, sondern schlicht nicht erwünscht.
 
 Die Funde aus den Container-Images dieses Servers bleiben ganz außen vor: Sie
 zählen nicht für Ampel und Alarme und erscheinen nicht in der
-**Sicherheitsübersicht** - auch nicht über deren Quellen-Filter „Docker“.
+**Sicherheitsübersicht** - auch nicht über deren Filter *Herkunft* („Nur Container-Images“).
 
 :::caution[Der Schalter sticht die Ausnahmen]
 Er wirkt auch auf Container, die als **CVE-relevant** markiert sind, und auf

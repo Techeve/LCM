@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"LCM/internal/core/domain"
@@ -85,18 +86,31 @@ func nftRuleset(ssh domain.FirewallRule, rules []domain.FirewallRule) string {
 	return b.String()
 }
 
-// nftablesEnableScript schreibt den Regelsatz (base64 - keine Quoting-Fallen),
-// prüft ihn mit `nft -c` VOR dem Anwenden, wendet ihn atomar an und richtet
-// die Persistenz ein: Glob-Include in der vorhandenen Distributions-
-// Konfiguration ergänzen (ein Glob ohne Treffer ist für nft legal - ein
-// späteres Deaktivieren bricht den Boot also nie) und den Dienst aktivieren
-// (systemd, sonst OpenRC/Alpine).
+// nftablesEnableScript schreibt den Regelsatz, prüft ihn mit `nft -c` VOR dem
+// Anwenden, wendet ihn atomar an und richtet die Persistenz ein: Glob-Include
+// in der vorhandenen Distributions-Konfiguration ergänzen (ein Glob ohne
+// Treffer ist für nft legal - ein späteres Deaktivieren bricht den Boot also
+// nie) und den Dienst aktivieren (systemd, sonst OpenRC/Alpine).
+//
+// Der Regelsatz steht base64-kodiert (keine Quoting-Fallen) in $RULESET_B64.
+// Im eingeschränkten Modus übergibt LCM ihn dem Helper (firewall-apply), der
+// jede Zeile gegen die von nftRuleset erzeugten Formen prüft und denselben
+// Rumpf ausführt.
 func nftablesEnableScript(ssh domain.FirewallRule, rules []domain.FirewallRule) string {
+	return "RULESET_B64=" + shellQuote(nftablesApplyArg(ssh, rules)) + "\n" + nftablesApplyBody()
+}
+
+func nftablesApplyArg(ssh domain.FirewallRule, rules []domain.FirewallRule) string {
+	return helperB64(nftRuleset(ssh, rules))
+}
+
+// nftablesApplyBody erwartet den Regelsatz in $RULESET_B64.
+func nftablesApplyBody() string {
 	return strings.Join([]string{
 		"set -e",
 		"command -v nft >/dev/null 2>&1 || { echo '" + firewallToolMissingMarker(domain.FirewallToolNftables) + "'; exit 1; }",
 		"mkdir -p /etc/nftables.d",
-		writeFileB64(nftRuleset(ssh, rules), nftConfigPath+".tmp"),
+		`printf '%s' "$RULESET_B64" | base64 -d > ` + nftConfigPath + ".tmp",
 		"nft -c -f " + nftConfigPath + ".tmp",
 		"mv " + nftConfigPath + ".tmp " + nftConfigPath,
 		"nft -f " + nftConfigPath,
@@ -139,8 +153,11 @@ func nftablesInSync(statusOutput string, ssh domain.FirewallRule, rules []domain
 // nur wenn die LCM-Tabelle existiert; die abschließende Voll-Anwendung
 // stellt den Soll-Zustand wieder her.
 func nftablesAllowPortCmd(port int) string {
-	return fmt.Sprintf("command -v nft >/dev/null 2>&1 && nft list table inet lcm >/dev/null 2>&1 && nft insert rule inet lcm input tcp dport %d accept || true", port)
+	return "PORT=" + strconv.Itoa(port) + "\n" + nftablesAllowPortBody
 }
+
+// nftablesAllowPortBody erwartet $PORT (Helper: firewall-port).
+const nftablesAllowPortBody = `command -v nft >/dev/null 2>&1 && nft list table inet lcm >/dev/null 2>&1 && nft insert rule inet lcm input tcp dport "$PORT" accept || true`
 
 // nftablesRemovePortCmd: bewusster No-Op - das Entfernen einzelner Regeln
 // bräuchte Handle-Arithmetik; der SSH-Portwechsel endet ohnehin mit einer

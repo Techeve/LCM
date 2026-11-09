@@ -119,3 +119,122 @@ func HTTPSRevertCandidates(recorded []string, repos []AptRepository) []string {
 	}
 	return out
 }
+
+// Pruefung vor der https-Umstellung: Nicht jeder Spiegel spricht HTTPS. Die
+// Landesspiegel von Ubuntu (de.archive.ubuntu.com & Co.) etwa nehmen auf
+// Port 443 gar nichts an, ftp.de.debian.org hat kein passendes Zertifikat.
+// Wer pauschal umstellt, bekommt deshalb auf vielen Servern nur den Rollback.
+// LCM prueft die Quellen deshalb vorher einzeln, und zwar vom Server aus.
+
+// InsecureRepoURIs sind die http-URLs der unverschluesselten Quellen, jede
+// genau einmal, in der Reihenfolge des Bestands. Was SafeRepoURI nicht
+// besteht, fehlt: Die URL landet in einer Kommandozeile, die als root laeuft.
+func InsecureRepoURIs(repos []AptRepository) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, repo := range repos {
+		uri := RepoURI(repo.Line)
+		if !repo.Insecure || !strings.HasPrefix(uri, "http://") || seen[uri] || !SafeRepoURI(uri) {
+			continue
+		}
+		seen[uri] = true
+		out = append(out, uri)
+	}
+	return out
+}
+
+// HTTPSProbe ist eine zu pruefende Quelle: ihre http-URL und die Datei, die
+// ueber https abgerufen wird. URL ist leer, wenn sich aus der Zeile keine
+// pruefbare Adresse ableiten laesst.
+type HTTPSProbe struct {
+	URI string
+	URL string
+}
+
+// HTTPSProbes bestimmt fuer jede unverschluesselte Quelle die Probe. Massgeblich
+// ist die erste Zeile mit dieser URL - die Release-Datei einer Suite genuegt,
+// um zu sehen, ob der Spiegel HTTPS spricht.
+func HTTPSProbes(repos []AptRepository) []HTTPSProbe {
+	uris := InsecureRepoURIs(repos)
+	probes := make([]HTTPSProbe, 0, len(uris))
+	for _, uri := range uris {
+		probes = append(probes, HTTPSProbe{URI: uri, URL: firstProbeURL(uri, repos)})
+	}
+	return probes
+}
+
+func firstProbeURL(uri string, repos []AptRepository) string {
+	for _, repo := range repos {
+		if RepoURI(repo.Line) == uri {
+			if probe := HTTPSProbeURL(repo.Line); probe != "" {
+				return probe
+			}
+		}
+	}
+	return ""
+}
+
+// HTTPSProbeURL leitet aus einer Quellen-Zeile die https-Adresse ihrer
+// Release-Datei ab. Die Suite ist das Feld hinter der URL; endet sie auf „/",
+// ist es ein flaches Repository ohne dists/. Ohne Suite oder mit Zeichen, die
+// nicht in eine Kommandozeile gehoeren: leerer String.
+func HTTPSProbeURL(line string) string {
+	uri := RepoURI(line)
+	if !strings.HasPrefix(uri, "http://") {
+		return ""
+	}
+	suite := fieldAfter(line, uri)
+	if suite == "" {
+		return ""
+	}
+	base := "https://" + strings.TrimRight(strings.TrimPrefix(uri, "http://"), "/")
+	probe := base + "/dists/" + suite + "/Release"
+	if strings.HasSuffix(suite, "/") {
+		probe = base + "/" + strings.TrimLeft(strings.TrimPrefix(suite, "./"), "/") + "Release"
+	}
+	if !SafeRepoURI(probe) {
+		return ""
+	}
+	return probe
+}
+
+// fieldAfter liefert das Feld der Zeile, das auf want folgt.
+func fieldAfter(line, want string) string {
+	fields := strings.Fields(line)
+	for i, field := range fields {
+		if strings.TrimRight(field, ",;") == want && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+// HTTPSMirrorAlternative schlaegt fuer eine Quelle ohne HTTPS einen Spiegel
+// derselben Distribution vor, der HTTPS spricht: die zentralen Adressen von
+// Ubuntu und Debian. Fuer alles andere kennt LCM keinen Ersatz - leerer
+// String. Der Vorschlag ist nur ein Hinweis, LCM tauscht nichts selbst.
+func HTTPSMirrorAlternative(uri string) string {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	path := strings.TrimRight(parsed.Path, "/")
+	switch {
+	case host == "archive.ubuntu.com" || strings.HasSuffix(host, ".archive.ubuntu.com"):
+		return "https://archive.ubuntu.com" + path
+	case host == "ports.ubuntu.com" || strings.HasSuffix(host, ".ports.ubuntu.com"):
+		return "https://ports.ubuntu.com" + path
+	case host == "security.ubuntu.com":
+		return "https://security.ubuntu.com" + path
+	// archive.debian.org trägt nur abgelaufene Releases, die es auf
+	// deb.debian.org nicht mehr gibt; debian-ports und Co. liegen dort auch nicht.
+	case !strings.HasSuffix(host, ".debian.org") || host == "archive.debian.org":
+		return ""
+	case path == "/debian-security" || strings.HasPrefix(path, "/debian-security/"):
+		return "https://security.debian.org/debian-security"
+	case path == "/debian" || strings.HasPrefix(path, "/debian/"):
+		return "https://deb.debian.org/debian"
+	}
+	return ""
+}

@@ -33,8 +33,8 @@ Goal: On all web servers, only 80, 443 (and SSH) are permanently open.
 <Steps>
 
 1. Create a group “Web servers”, assign the servers.
-2. New rule: type **Firewall**, target **Baseline rule (Enforce)**, ports
-   `80,443`.
+2. In the group's *Rules* tab, add a new rule on the **Baseline rules** card:
+   type **Firewall**, ports `80,443`.
 3. On the next health ping, ufw is checked and - if it deviates - applied. If
    someone later changes the firewall on the server, the next ping restores the
    desired state.
@@ -47,10 +47,11 @@ Goal: On all web servers, only 80, 443 (and SSH) are permanently open.
 
 1. Install `apt-cacher-ng` on the LCM host and set `PassThroughPattern: .*`
    in `acng.conf` (see [APT cache](/en/guides/apt-cache/)).
-2. In LCM under *Settings → Repositories → APT cache*, enter the URL
-   `http://<host>:3142` and click “Test connection”.
-3. Add “**Enforce APT cache**” as a group rule - all servers in the group route
-   their APT requests through the cache from now on.
+2. In LCM under *Settings → APT cache*, enter the URL
+   `http://<host>:3142` and click “Check”.
+3. Add “**Use APT cache**” as a group rule (as a baseline rule the connection
+   is restored on deviation) - all servers in the group route their APT
+   requests through the cache from now on.
 
 </Steps>
 
@@ -61,8 +62,8 @@ Goal: On all web servers, only 80, 443 (and SSH) are permanently open.
 1. Set `LCM_BACKUP_PASSPHRASE` and create a backup under *Settings → Backups*
    (or enable an interval).
 2. Download the `.lcmbak` and store it safely.
-3. On a **new** instance, upload the archive under *Backups → Restore* and apply
-   it (with the same passphrase) - the instance takes over data, keys,
+3. On a **new** instance, upload the archive under *Settings → Backups →
+   Restore from file* and apply it (with the same passphrase) - the instance takes over data, keys,
    configuration and certificate.
 
 </Steps>
@@ -79,7 +80,7 @@ For monitoring scripts that may only read:
 
    ```sh
    curl -s https://<host>:9310/api/v1/servers \
-     -H "X-API-Key: lcm_dein_key" | jq '.[].name'
+     -H "X-API-Key: lcm_dein_key" | jq '.items[].name'
    ```
 
 3. Writing requests (POST/PUT/DELETE) are rejected server-side with **403** when

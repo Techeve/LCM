@@ -11,12 +11,6 @@ import (
 	"LCM/internal/storage/repositories"
 )
 
-// ErrFirewallNeedsFullSudo: die Backends firewalld und nftables brauchen
-// systemctl/rc-update und Datei-Schreibzugriffe unter /etc - das gibt die
-// sudo-Whitelist des eingeschränkten Modus bewusst nicht her. Nur ufw ist
-// dort verwaltbar (ufw steht auf der Whitelist).
-var ErrFirewallNeedsFullSudo = errors.New("dieses Firewall-Backend braucht volle Sudo-Rechte - im eingeschränkten Modus ist nur ufw verwaltbar")
-
 // ErrInvalidFirewallRules kennzeichnet Validierungsfehler der Regel-Eingabe
 // (Portbereich, Protokoll, Bind-Adresse, IP-Version) für das 400-Mapping.
 var ErrInvalidFirewallRules = errors.New("ungültige Firewall-Regeln")
@@ -33,6 +27,40 @@ func (s *ServerService) ConfigureFirewall(scope repositories.AccessScope, id uin
 	if err != nil {
 		return nil, err
 	}
+	rules, err := s.planFirewall(server, enable, rulesSpec, sshSources)
+	if err != nil {
+		return nil, err
+	}
+	label := "Firewall deaktivieren @ " + server.Name
+	if enable {
+		label = "Firewall anwenden @ " + server.Name
+	}
+	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeFirewall, label, actor)
+	if err != nil {
+		return nil, err
+	}
+	verb := "deaktivieren"
+	if enable {
+		// Der SSH-Port ist immer freigegeben - mit dem echten Port des
+		// Servers protokollieren, nicht hartkodiert 22.
+		sshPort := server.SSHPort
+		if sshPort == 0 {
+			sshPort = 22
+		}
+		verb = "anwenden (Ports: " + strings.TrimSuffix(fmt.Sprintf("%d,", sshPort)+firewallRulesPortsCSV(rules), ",") + ")"
+	}
+	s.audit.Log(actor, "server.firewall", "server", id, server.Name+": "+verb)
+	safego.GoCleanup("job:firewall", jobPanicCleanup(s.jobs, job), func() {
+		s.runFirewallJob(job, server, enable, rules, actor)
+	})
+	return job, nil
+}
+
+// planFirewall prüft die Eingabe der Firewall-Aktion - für den Lauf und die
+// Befehlsvorschau gleich - und liefert die normalisierten Regeln. Die
+// Quell-Einschränkung der SSH-Freigabe landet bereinigt in
+// server.FirewallSSHSources; der Lauf persistiert sie von dort.
+func (s *ServerService) planFirewall(server *domain.Server, enable bool, rulesSpec string, sshSources domain.FirewallSSHSources) ([]domain.FirewallRule, error) {
 	if err := ensureNotRouterOS(server); err != nil {
 		return nil, err
 	}
@@ -81,32 +109,7 @@ func (s *ServerService) ConfigureFirewall(scope repositories.AccessScope, id uin
 			}
 		}
 	}
-	if server.RestrictedSudo && firewallBackendFor(server) != domain.FirewallToolUfw {
-		return nil, ErrFirewallNeedsFullSudo
-	}
-	label := "Firewall deaktivieren @ " + server.Name
-	if enable {
-		label = "Firewall anwenden @ " + server.Name
-	}
-	job, err := s.jobs.Start(&server.ID, nil, domain.RuleTypeFirewall, label, actor)
-	if err != nil {
-		return nil, err
-	}
-	verb := "deaktivieren"
-	if enable {
-		// Der SSH-Port ist immer freigegeben - mit dem echten Port des
-		// Servers protokollieren, nicht hartkodiert 22.
-		sshPort := server.SSHPort
-		if sshPort == 0 {
-			sshPort = 22
-		}
-		verb = "anwenden (Ports: " + strings.TrimSuffix(fmt.Sprintf("%d,", sshPort)+firewallRulesPortsCSV(rules), ",") + ")"
-	}
-	s.audit.Log(actor, "server.firewall", "server", id, server.Name+": "+verb)
-	safego.GoCleanup("job:firewall", jobPanicCleanup(s.jobs, job), func() {
-		s.runFirewallJob(job, server, enable, rules, actor)
-	})
-	return job, nil
+	return rules, nil
 }
 
 // runFirewallJob führt die Firewall-Aktion aus: Backend bestimmen (erkanntes
@@ -124,7 +127,7 @@ func (s *ServerService) runFirewallJob(job *domain.Job, server *domain.Server, e
 			fields["firewall_ssh_sources"] = server.FirewallSSHSources
 		}
 		_ = s.servers.UpdateFields(server.ID, fields)
-		s.jobs.Complete(job, "Demo-Server - Firewall-Konfiguration simuliert (kein SSH-Kontakt).", ptrInt(0), nil)
+		s.jobs.CompleteSkipped(job, "Demo-Server - Firewall-Konfiguration simuliert (kein SSH-Kontakt).")
 		return
 	}
 	conn, err := s.connectRec(server, "firewall", actor)
@@ -184,7 +187,7 @@ func (s *ServerService) runFirewallDisable(job *domain.Job, conn sshx.Conn, serv
 	if backend == "" {
 		backend = firewallBackendFor(server)
 	}
-	be := firewallBackendByName(backend)
+	be := firewallBackendOf(server, backend)
 	output, code, runErr := conn.Run(privRun(server, be.disableScript()))
 	if strings.Contains(output, firewallToolMissingPrefix) {
 		// Kein Werkzeug installiert → es gibt nichts zu deaktivieren; der
@@ -240,7 +243,7 @@ func applyFirewallRules(conn sshx.Conn, server *domain.Server, ssh domain.Firewa
 		}
 	}
 
-	be := firewallBackendByName(backend)
+	be := firewallBackendOf(server, backend)
 	out, code, err := conn.Run(privRun(server, be.enableScript(ssh, rules)))
 	log.WriteString(out)
 	if strings.Contains(out, firewallToolMissingPrefix) {

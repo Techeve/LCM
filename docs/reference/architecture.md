@@ -5,7 +5,7 @@ title: Architektur
 description: Schichtenmodell des Go-Backends, Verzeichnisstruktur, Startablauf, Versionierung, Build und Betrieb von LCM.
 ---
 
-LCM kompiliert ein Go-Backend (Fiber v3) und ein Svelte-5-Frontend in **ein einziges Binary**. Das Frontend wird von Vite nach `frontend/dist` gebaut und per `go:embed` eingebettet (`frontend/embed.go`).
+LCM kompiliert ein Go-Backend (Fiber v3) und eine Lit-Oberfläche in **ein einziges Binary**. Die Oberfläche wird von Vite nach `ui/dist` gebaut und per `go:embed` eingebettet (`ui/embed.go`).
 
 ## Schichtenmodell des Backends
 
@@ -16,7 +16,7 @@ HTTP-Request
    │
    ▼
 Router + Middlewares   internal/api/router, internal/api/middlewares
-   │                   (JWT/API-Key-Auth, RBAC, Logging, Recover)
+   │                   (Sitzung/API-Key-Auth, RBAC, Logging, Recover)
    ▼
 Controller             internal/api/controllers
    │                   (JSON parsen, Input validieren, Statuscodes)
@@ -106,16 +106,18 @@ internal/mcp/              MCP-Schnittstelle: eigener Listener + read-only
 internal/netfilter/        IP-Allowlist-Matcher (config.json allowed_ips)
 internal/storage/          DB-Verbindung, Migration, Seeding, Repositories
 internal/config/           config.json-Management
-frontend/src/api/          API-Service-Klassen (fetch-Abstraktion)
-frontend/src/components/   Wiederverwendbare UI-Elemente
-frontend/src/pages/        Eine Svelte-Datei pro Route
-frontend/src/stores/       Globaler State (Svelte 5 Runes)
-frontend/embed.go          go:embed des dist-Ordners
+ui/src/api/                Abrufe und Typen je Fachbereich
+ui/src/lib/                Router, API-Client, Datenspeicher, i18n, Eingabeprüfung
+ui/src/components/         Wiederverwendbare lcm-*-Bausteine
+ui/src/pages/              Seiten, je Bereich ein Verzeichnis
+ui/src/shell/              Rahmen der Anwendung
+ui/e2e/                    Playwright-Tests gegen das echte Binary
+ui/embed.go                go:embed des dist-Ordners
 ```
 
 ## Konfiguration & Startablauf
 
-Beim Start sucht das Binary eine `config.json` **neben der ausführbaren Datei** (überschreibbar mit `-config <pfad>`). Fehlt sie, wird sie mit sicheren Zufallswerten erzeugt - inklusive kryptografisch starkem JWT-Secret. Details: [Sicherheitsmodell](/reference/security-model/).
+Beim Start sucht das Binary eine `config.json` **neben der ausführbaren Datei** (überschreibbar mit `-config <pfad>`). Fehlt sie, wird sie mit sicheren Zufallswerten erzeugt - ohne gespeichertes Geheimnis (der Signaturschlüssel entsteht bei jedem Start im Speicher). Details: [Sicherheitsmodell](/reference/security-model/).
 
 Danach: SQLite öffnen (WAL-Modus), GORM-AutoMigration, **Update-Prozess** (version.json mit Binary-Version abgleichen, ggf. Update-Migrationen ausführen - siehe [Datenbank & Migrationen](/reference/database/)), idempotentes Seeding (Rollen, Permissions, `system`- und `admin`-User; im Demo-Modus zusätzlich Beispiel-Server samt Paketen, Speicher-Verlauf und CVE-Funden). Das generierte Admin-Passwort erscheint **einmalig** in der Konsole.
 

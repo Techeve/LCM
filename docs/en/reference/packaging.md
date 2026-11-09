@@ -45,7 +45,7 @@ Determine the architecture with `dpkg --print-architecture`
 |------|--------|
 | `/usr/bin/lcm` | the program file (single binary, web UI embedded) |
 | `/lib/systemd/system/lcm.service` | the hardened systemd unit |
-| `/etc/lcm/config.json` | configuration (created on first run with a random JWT secret) |
+| `/etc/lcm/config.json` | configuration (created on first run with safe defaults, no secret) |
 | `/var/lib/lcm/` | state: encrypted SQLite DB, master key (`lcm.key`), TLS certificate, backups |
 
 The service runs under the dedicated system user **`lcm`** without root
@@ -81,7 +81,7 @@ All settings live in `/etc/lcm/config.json` - after changes restart the service
   restrict access via firewall and/or put a reverse proxy with a valid
   certificate in front. For purely local operation set `host` to `127.0.0.1`.
 - `port` (default `9310`).
-- No secret lives in the file: the session signing key is generated in memory
+- No secret lives in the file: the signing key of the 2FA challenge is generated in memory
   on every start. A `jwt_secret` from older versions is ignored and removed the
   next time the file is written.
 
@@ -93,7 +93,7 @@ Install the new package over the old one:
 sudo apt install ./lcm_<new-version>_amd64.deb
 ```
 
-Configuration, database, and the JWT secret are preserved; pending database
+Configuration and database are preserved; pending database
 migrations run automatically at startup.
 
 ### Removal
@@ -240,7 +240,7 @@ Afterwards the app runs at <http://localhost:9310>. On first start the following
 
 ```
 data/
-├── config.json    configuration (incl. generated JWT secret)
+├── config.json    configuration (no secret)
 ├── app.db         SQLite database (+ -wal/-shm during operation)
 └── version.json   installed version (update detection)
 ```

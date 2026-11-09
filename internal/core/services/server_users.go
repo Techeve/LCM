@@ -164,7 +164,8 @@ func sessionsAsLogins(serverID uint, sessions []domain.SSHSession) []domain.Serv
 // SetServerUserDisabled deaktiviert bzw. reaktiviert ein Konto auf dem
 // Zielsystem. Geschützte und LCM-verwaltete Konten sind ausgenommen.
 func (s *ProvisioningService) SetServerUserDisabled(server *domain.Server, username string, disabled bool, actor string) (string, error) {
-	if err := s.guardServerUserAction(server, username, true); err != nil {
+	script, err := s.planServerUserDisabled(server, username, disabled)
+	if err != nil {
 		return "", err
 	}
 	// Verteilte Konten: die Sperre MUSS gemerkt werden, bevor sie gesetzt
@@ -184,14 +185,9 @@ func (s *ProvisioningService) SetServerUserDisabled(server *domain.Server, usern
 			return "", err
 		}
 	}
-	script, helperSub := enableUserScript(username), "user-enable"
 	action := "server.user-enable"
 	if disabled {
-		script, helperSub = disableUserScript(username), "user-disable"
 		action = "server.user-disable"
-	}
-	if server.RestrictedSudo {
-		script = helperCmd(helperSub, username)
 	}
 	out, err := s.runUserActionAndRescan(server, username, script, "user-toggle:"+username, actor)
 	if err != nil {
@@ -205,12 +201,9 @@ func (s *ProvisioningService) SetServerUserDisabled(server *domain.Server, usern
 // Geschützte und LCM-verwaltete Konten sind ausgenommen - für verwaltete
 // Konten ist die Deprovisionierung über die Linux-Benutzer-Verwaltung der Weg.
 func (s *ProvisioningService) RemoveServerUser(server *domain.Server, username, actor string) (string, error) {
-	if err := s.guardServerUserAction(server, username, false); err != nil {
+	script, err := s.planRemoveServerUser(server, username)
+	if err != nil {
 		return "", err
-	}
-	script := removeUserScript(username)
-	if server.RestrictedSudo {
-		script = helperCmd("user-remove", username)
 	}
 	out, err := s.runUserActionAndRescan(server, username, script, "user-remove:"+username, actor)
 	if err != nil {
@@ -218,6 +211,34 @@ func (s *ProvisioningService) RemoveServerUser(server *domain.Server, username, 
 	}
 	s.logAudit(actor, "server.user-remove", "server", server.ID, username)
 	return out, nil
+}
+
+// planServerUserDisabled prüft Konto und Server und baut das Skript zum
+// Sperren bzw. Freigeben - für den Lauf und die Befehlsvorschau gleich.
+func (s *ProvisioningService) planServerUserDisabled(server *domain.Server, username string, disabled bool) (string, error) {
+	if err := s.guardServerUserAction(server, username, true); err != nil {
+		return "", err
+	}
+	script, helperSub := enableUserScript(username), "user-enable"
+	if disabled {
+		script, helperSub = disableUserScript(username), "user-disable"
+	}
+	if server.RestrictedSudo {
+		return helperCmd(helperSub, username), nil
+	}
+	return script, nil
+}
+
+// planRemoveServerUser prüft Konto und Server und baut das Skript zum
+// endgültigen Entfernen - für den Lauf und die Befehlsvorschau gleich.
+func (s *ProvisioningService) planRemoveServerUser(server *domain.Server, username string) (string, error) {
+	if err := s.guardServerUserAction(server, username, false); err != nil {
+		return "", err
+	}
+	if server.RestrictedSudo {
+		return helperCmd("user-remove", username), nil
+	}
+	return removeUserScript(username), nil
 }
 
 // runUserActionAndRescan führt das Aktions-Skript aus und erhebt die Konten

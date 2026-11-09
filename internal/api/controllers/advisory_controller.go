@@ -116,7 +116,7 @@ func (ctrl *AdvisoryController) Caches(c fiber.Ctx) error {
 // funktioniert nicht".
 func (ctrl *AdvisoryController) Poll(c fiber.Ctx) error {
 	if !ctrl.advisories.Enabled() {
-		return fiber.NewError(fiber.StatusConflict, "die frühwarnung ist nicht eingeschaltet")
+		return errAdvisoryOff
 	}
 	job, err := ctrl.poll(actor(c))
 	if err != nil {
@@ -132,7 +132,7 @@ func (ctrl *AdvisoryController) Poll(c fiber.Ctx) error {
 // Lauf lädt zig Megabyte auf den LCM-Host.
 func (ctrl *AdvisoryController) Mirror(c fiber.Ctx) error {
 	if !ctrl.advisories.UsesLocalCopy() {
-		return fiber.NewError(fiber.StatusConflict, "die lokale kopie ist nicht eingestellt")
+		return errAdvisoryNoMirror
 	}
 	job, err := ctrl.mirror(actor(c))
 	if err != nil {
@@ -150,7 +150,7 @@ func (ctrl *AdvisoryController) Mirror(c fiber.Ctx) error {
 func (ctrl *AdvisoryController) Acknowledge(c fiber.Ctx) error {
 	if err := ctrl.advisories.Acknowledge(scopeFor(c), c.Params("id"), actor(c)); err != nil {
 		if errors.Is(err, repositories.ErrNotFound) {
-			return fiber.NewError(fiber.StatusNotFound, "befund nicht gefunden")
+			return errAdvisoryNotFound
 		}
 		return err
 	}

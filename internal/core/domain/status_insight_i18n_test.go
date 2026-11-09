@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,8 +49,22 @@ func insightScenarios() []struct {
 		{"Zeitdienst unsynchron", Server{Reachable: true, TimeCheckedAt: &now, NTPService: "chrony"}, base},
 		{"Neustart nötig", Server{Reachable: true, RebootRequired: true}, base},
 		{"Deep-Scan-Warnungen", Server{Reachable: true}, TrafficLightInput{Now: now, DeepScanWarnings: 2}},
-		{"letzter Job fehlgeschlagen", Server{Reachable: true}, TrafficLightInput{Now: now, LastJobFailed: true}},
-		{"letzter Job benannt", Server{Reachable: true}, TrafficLightInput{Now: now, LastJobFailed: true, LastJobName: "Update"}},
+		{"Aktionsfehler je Kategorie", Server{Reachable: true}, TrafficLightInput{Now: now, Capabilities: []ServerCapability{
+			failedCapability(CapabilityConnection, ErrClassNetwork, 2),
+			failedCapability(CapabilityPackages, ErrClassLockBusy, 2),
+			failedCapability(CapabilityRules, ErrClassUnknown, 1),
+			failedCapability(CapabilityCVEScan, ErrClassTimeout, 1),
+		}}},
+		{"Paketstand veraltet", Server{Reachable: true}, TrafficLightInput{
+			Now: now, PackagesStale: PackagesStaleWarning, PackagesStaleSince: now.Add(-72 * time.Hour)}},
+		{"Paketstand lange veraltet", Server{Reachable: true}, TrafficLightInput{
+			Now: now, PackagesStale: PackagesStaleCritical, PackagesStaleSince: now.Add(-9 * 24 * time.Hour)}},
+		{"Paketquelle fehlerhaft", Server{Reachable: true}, TrafficLightInput{Now: now, Capabilities: []ServerCapability{
+			{Category: CapabilityPackages, State: CapabilityOK, WarningClass: ErrClassRepoError, WarningMessage: "ppa.example"},
+		}}},
+		{"apt-Hinweis", Server{Reachable: true}, TrafficLightInput{Now: now, Capabilities: []ServerCapability{
+			{Category: CapabilityPackages, State: CapabilityOK, WarningClass: "apt_warning", WarningMessage: "W: x"},
+		}}},
 		{"Betriebssystem EOL", Server{Reachable: true, OSID: "ubuntu", OSVersionID: "18.04"}, base},
 		{"RouterOS-Update", Server{
 			Reachable: true, OSID: OSIDRouterOS, RouterOSUpdateAvailable: true,
@@ -87,25 +102,25 @@ func TestJederStatusBefundHatEinenUebersetzungsschluessel(t *testing.T) {
 }
 
 func TestJederStatusBefundStehtInBeidenSprachkatalogen(t *testing.T) {
-	catalogs := map[string]string{}
+	catalogs := map[string]map[string]any{}
 	for _, lang := range []string{"de", "en"} {
-		path := filepath.Join("..", "..", "..", "frontend", "src", "locales", lang+".js")
+		path := filepath.Join("..", "..", "..", "ui", "src", "locales", lang+".json")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("Sprachkatalog %s nicht lesbar: %v", lang, err)
 		}
 		// Nur der insights-Abschnitt zählt - ein gleichnamiger Schlüssel in
 		// einem anderen Abschnitt wäre sonst ein falscher Freispruch.
-		text := string(data)
-		start := strings.Index(text, "\n  insights: {")
-		if start < 0 {
+		var catalog struct {
+			Insights map[string]any `json:"insights"`
+		}
+		if err := json.Unmarshal(data, &catalog); err != nil {
+			t.Fatalf("Sprachkatalog %s: %v", lang, err)
+		}
+		if len(catalog.Insights) == 0 {
 			t.Fatalf("Sprachkatalog %s hat keinen insights-Abschnitt", lang)
 		}
-		end := strings.Index(text[start+1:], "\n  },")
-		if end < 0 {
-			t.Fatalf("insights-Abschnitt in %s nicht abgeschlossen", lang)
-		}
-		catalogs[lang] = text[start : start+1+end]
+		catalogs[lang] = catalog.Insights
 	}
 	seen := map[string]bool{}
 	for _, sc := range insightScenarios() {
@@ -116,11 +131,28 @@ func TestJederStatusBefundStehtInBeidenSprachkatalogen(t *testing.T) {
 				continue
 			}
 			seen[in.Key] = true
-			for lang, text := range catalogs {
-				if !strings.Contains(text, "\n    "+in.Key+":") {
+			for lang, insights := range catalogs {
+				if !catalogHasKey(insights, in.Key) {
 					t.Errorf("Befund %q fehlt im Sprachkatalog %s (Szenario %s)", in.Key, lang, sc.name)
 				}
 			}
 		}
 	}
+}
+
+// catalogHasKey sucht einen Befund-Schlüssel im insights-Abschnitt. Ein Punkt
+// im Schlüssel (actionFailed.packages) bedeutet Verschachtelung: erst die
+// Gruppe auf der Ebene der Befunde, darin der Eintrag.
+func catalogHasKey(insights map[string]any, key string) bool {
+	group, entry, nested := strings.Cut(key, ".")
+	if !nested {
+		_, ok := insights[key]
+		return ok
+	}
+	entries, ok := insights[group].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = entries[entry]
+	return ok
 }

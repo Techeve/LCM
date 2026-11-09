@@ -288,6 +288,12 @@ git push origin develop
 
 **Kein Writeback, kein `RELEASE_TOKEN`:** Version und Changelog stehen bereits im getaggten Commit (und über den Merge auch auf `develop` und im Kanal). Die CI schreibt nichts ins Repo zurück - sie liest nur. Der Release-Job kommt mit dem automatischen `CI_JOB_TOKEN` aus.
 
+### Versionshinweise im Update-Fenster
+
+Nach einem Update zeigt LCM jedem Administrator einmal, was die Version mitbringt. Der Text liegt auf dem Doku-Server unter `https://doc.techeve.de/lcm/static/release-notes/<version>.md`. Der Job `docs-build` schneidet die Dateien mit `tools/release-notes.sh` aus `CHANGELOG.md`, sie erscheinen also mit dem Doku-Rollout. Fehlt die Datei oder ist der Server nicht erreichbar, bleibt das Fenster zu und LCM versucht es später erneut.
+
+Jede Datei beginnt mit dem handgeschriebenen Text aus `release-info/<x.y.z>.md`, falls es ihn gibt. Er gehört zur Release-Reihe: `release-info/2.0.0.md` steht über `2.0.0` und allen Betas davon. Danach folgt der Auszug aus dem Changelog mit neuen Funktionen und Korrekturen, ohne Refactoring und Sonstiges. Den Text legt der letzte Commit vor dem Release an (`docs(release): …`). `prepare-release.sh` weist darauf hin, wenn er bei einem Release `x.y.0` fehlt.
+
 ### apt-Repository-Rollout (deploy)
 
 Bei jedem Release rollt der Job `deploy:apt` die gebauten `.deb`-Pakete (amd64 + arm64) auf den TechEve-Repository-Server (aptly) aus - danach ist LCM per `apt install lcm` aus dem eigenen Repo installier- und aktualisierbar. Der Job läuft nur auf den Kanal-Branches und nur, wenn tatsächlich ein Release ansteht (`RELEASE_NEEDED=true`).

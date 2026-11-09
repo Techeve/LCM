@@ -84,8 +84,17 @@ func TestApplySSHSocketPortsScript(t *testing.T) {
 	// die Ports auf Debian/Ubuntu aus sshd_config ableitet. Genau sein Fehlen
 	// war die Ursache - LCM ließ bei Socket-Aktivierung jeden Reload aus.
 	for _, script := range []string{script, both, back} {
-		if !strings.Contains(script, "systemctl daemon-reload && systemctl restart") {
+		if !strings.Contains(script, "systemctl daemon-reload") || !strings.Contains(script, `systemctl restart "$u"`) {
 			t.Errorf("daemon-reload + Neustart fehlen:\n%s", script)
+		}
+		// Läuft der Dienst noch, verweigert systemd der Socket-Unit den Start
+		// und sshd überlebt sein nächstes SIGHUP nicht.
+		if !strings.Contains(script, `systemctl stop "$s"`) || !strings.Contains(script, `s="${u%.socket}.service"`) {
+			t.Errorf("Dienst wird vor dem Neustart der Socket-Unit nicht gestoppt:\n%s", script)
+		}
+		// Ohne Portwechsel kein Neustart: Jeder Start zählt gegen das Startlimit.
+		if !strings.Contains(script, `!= "$before"`) {
+			t.Errorf("Neustart hängt nicht an geänderten Ports:\n%s", script)
 		}
 	}
 	if strings.Contains(back, "ListenStream=22") {
@@ -186,5 +195,13 @@ func TestRootLoginVerificationOhneErmittelbarenWert(t *testing.T) {
 	}
 	if err := rootLoginMismatch(true, effective, nil); err != nil {
 		t.Errorf("nicht ermittelbar darf kein fehlschlag sein: %v", err)
+	}
+}
+
+// Im Übergang des Portwechsels muss auch im eingeschränkten Modus die 22 in
+// sshd_config stehen, sonst lässt der Generator sie aus der Socket-Unit fallen.
+func TestHelperSSHOptionsKeepsPort22InTransition(t *testing.T) {
+	if !strings.Contains(lcmHelperScript, `if [ "$ports" != "22" ]; then body="${body}Port $p`) {
+		t.Fatal("der Helper lässt Port 22 im Übergang weg")
 	}
 }
