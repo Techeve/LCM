@@ -13,6 +13,7 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/crypto"
+	"LCM/internal/infrastructure/tlsx"
 	"LCM/internal/storage/repositories"
 )
 
@@ -37,6 +38,8 @@ func TestStageAndApplyRestore(t *testing.T) {
 		{Name: "app.db", Data: []byte("NEU-db-inhalt")},
 		{Name: crypto.KeyFileName, Data: []byte("NEU-key")},
 		{Name: "config.json", Data: []byte(`{"jwt_secret":"neues-secret-mit-mindestens-32-zeichen!"}`)},
+		{Name: tlsx.CAFileName, Data: []byte("NEU-ca")},
+		{Name: tlsx.CAKeyFileName, Data: []byte("NEU-ca-key")},
 	}, "pw")
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +84,14 @@ func TestStageAndApplyRestore(t *testing.T) {
 	if b, _ := os.ReadFile(configPath); string(b) == `{"jwt_secret":"alt"}` {
 		t.Error("config.json nicht wiederhergestellt")
 	}
+	for name, want := range map[string]string{tlsx.CAFileName: "NEU-ca", tlsx.CAKeyFileName: "NEU-ca-key"} {
+		if b, _ := os.ReadFile(filepath.Join(dataDir, name)); string(b) != want {
+			t.Errorf("%s nicht wiederhergestellt: %q", name, b)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(dataDir, tlsx.CAKeyFileName)); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("CA-Schlüssel nach dem Restore: %v", err)
+	}
 	// Staging ist aufgeräumt, ein zweiter Apply ist ein No-op.
 	if RestoreStaged(dataDir) {
 		t.Error("Staging sollte nach Apply entfernt sein")
@@ -99,7 +110,7 @@ func TestBackupPathAndHistoryRestore(t *testing.T) {
 	if err := db.AutoMigrate(&domain.Backup{}, &domain.GlobalSettings{}); err != nil {
 		t.Fatal(err)
 	}
-	bs := NewBackupService(db, repositories.NewSettingsRepository(db), dataDir,
+	bs := NewBackupService(repositories.NewDatabaseRepository(db), repositories.NewSettingsRepository(db), dataDir,
 		filepath.Join(dataDir, "app.db"), filepath.Join(dataDir, "config.json"))
 
 	// Ein gültiges Archiv ins Backup-Verzeichnis legen.
@@ -177,7 +188,7 @@ func TestAutoRestartEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Unsetenv(EnvRestoreAutoRestart)
-	bs2 := NewBackupService(db, settings, dataDir, "", "")
+	bs2 := NewBackupService(repositories.NewDatabaseRepository(db), settings, dataDir, "", "")
 	if !bs2.AutoRestartEnabled() {
 		t.Error("Einstellung RestoreAutoRestart=true → an")
 	}
@@ -326,5 +337,114 @@ func TestStageRestoreEnforcesExtractLimit(t *testing.T) {
 	// Ohne Grenze geht dasselbe Archiv durch.
 	if err := svc.StageRestoreReader(bytes.NewReader(archive), "pw", 0); err != nil {
 		t.Fatalf("ohne Grenze: %v", err)
+	}
+}
+
+// stageWithDatabasePath bereitet einen Restore vor, dessen Konfiguration den
+// angegebenen database_path nennt, und liefert Daten- und Konfig-Pfad. Die
+// laufende Konfiguration nennt currentDBPath.
+func stageWithDatabasePath(t *testing.T, currentDBPath, restoredDBPath string) (string, string) {
+	t.Helper()
+	dataDir := t.TempDir()
+	configPath := filepath.Join(dataDir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"database_path":"`+currentDBPath+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "app.db"), []byte("ALT-db"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := buildEncryptedArchive([]archiveFile{
+		{Name: "app.db", Data: []byte("NEU-db")},
+		{Name: "config.json", Data: []byte(`{"database_path":"app.db"}`)},
+	}, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&BackupService{dataDir: dataDir}).StageRestore(archive, "pw"); err != nil {
+		t.Fatal(err)
+	}
+	// Einen fremden Pfad ließe schon das Hochladen nicht ins Staging. Das
+	// Anwenden prüft trotzdem selbst - etwa ein Staging aus einer älteren
+	// Version -, deshalb kommt der Pfad hier erst danach hinein.
+	staged := filepath.Join(dataDir, restoreStagingName, "config.json")
+	if err := os.WriteFile(staged, []byte(`{"database_path":"`+restoredDBPath+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dataDir, configPath
+}
+
+// TestStageRestoreLehntDatenbankpfadAusserhalbAb: Schon beim Hochladen wird
+// ein Archiv abgelehnt, dessen Konfiguration die Datenbank außerhalb des
+// Datenverzeichnisses ablegt - der Admin sieht den Fehler sofort, und es
+// bleibt kein Staging liegen.
+func TestStageRestoreLehntDatenbankpfadAusserhalbAb(t *testing.T) {
+	archive, err := buildEncryptedArchive([]archiveFile{
+		{Name: "app.db", Data: []byte("NEU-db")},
+		{Name: "config.json", Data: []byte(`{"database_path":"../fremd.db"}`)},
+	}, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	if err := (&BackupService{dataDir: dataDir}).StageRestore(archive, "pw"); !errors.Is(err, ErrBackupDatabasePath) {
+		t.Fatalf("erwartet ErrBackupDatabasePath, bekam %v", err)
+	}
+	if RestoreStaged(dataDir) {
+		t.Error("abgelehntes Staging blieb liegen")
+	}
+}
+
+// TestRestoreLehntDatenbankpfadAusserhalbAb: Nennt die Konfiguration im
+// Backup einen Datenbankpfad außerhalb des Datenverzeichnisses, wird der
+// Restore vor dem ersten Austausch verworfen - keine fremde Datei wird
+// geschrieben, Konfiguration und Datenbank bleiben beim alten Stand.
+func TestRestoreLehntDatenbankpfadAusserhalbAb(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "fremd.db")
+	cases := map[string]string{"absolut": outside, "daneben": "../fremd.db", "verschachtelt": "sub/../../fremd.db"}
+	for name, restored := range cases {
+		t.Run(name, func(t *testing.T) {
+			dataDir, configPath := stageWithDatabasePath(t, "app.db", restored)
+			applied, err := ApplyStagedRestore(dataDir, configPath)
+			if err != nil || applied {
+				t.Fatalf("applied=%v err=%v, erwartet abgelehnt ohne Fehler", applied, err)
+			}
+			if _, err := os.Stat(outside); !os.IsNotExist(err) {
+				t.Error("Datei außerhalb des Datenverzeichnisses geschrieben")
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(dataDir), "fremd.db")); !os.IsNotExist(err) {
+				t.Error("Datei neben dem Datenverzeichnis geschrieben")
+			}
+			if b, _ := os.ReadFile(filepath.Join(dataDir, "app.db")); string(b) != "ALT-db" {
+				t.Errorf("Datenbank verändert: %q", b)
+			}
+			if b, _ := os.ReadFile(configPath); string(b) != `{"database_path":"app.db"}` {
+				t.Errorf("Konfiguration verändert: %s", b)
+			}
+			if RestoreStaged(dataDir) {
+				t.Error("abgelehntes Staging blieb liegen - der nächste Start scheiterte erneut")
+			}
+		})
+	}
+}
+
+// TestRestoreNimmtDatenbankpfadImDatenverzeichnis: Ein Pfad im
+// Datenverzeichnis gilt, ebenso der Pfad, den die laufende Konfiguration
+// schon nennt - auch außerhalb (vom Betreiber gesetzt).
+func TestRestoreNimmtDatenbankpfadImDatenverzeichnis(t *testing.T) {
+	dataDir, configPath := stageWithDatabasePath(t, "app.db", "lcm.db")
+	if applied, err := ApplyStagedRestore(dataDir, configPath); err != nil || !applied {
+		t.Fatalf("applied=%v err=%v", applied, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dataDir, "lcm.db")); string(b) != "NEU-db" {
+		t.Errorf("lcm.db nicht wiederhergestellt: %q", b)
+	}
+
+	operator := filepath.Join(t.TempDir(), "betreiber.db")
+	dataDir, configPath = stageWithDatabasePath(t, operator, operator)
+	if applied, err := ApplyStagedRestore(dataDir, configPath); err != nil || !applied {
+		t.Fatalf("Pfad des Betreibers: applied=%v err=%v", applied, err)
+	}
+	if b, _ := os.ReadFile(operator); string(b) != "NEU-db" {
+		t.Errorf("Datenbank am Pfad des Betreibers nicht wiederhergestellt: %q", b)
 	}
 }

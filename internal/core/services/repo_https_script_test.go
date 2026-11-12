@@ -117,6 +117,7 @@ func helperRepoScript(t *testing.T, call string) string {
 	return strings.Join([]string{
 		"set -u",
 		helperFunktion(t, "apt_update_ok"),
+		helperFunktion(t, "apt_backups"),
 		helperFunktion(t, "restore_sources"),
 		helperFunktion(t, "https_switch_file"),
 		helperFunktion(t, "repos_https"),
@@ -194,6 +195,43 @@ func TestHTTPSRueckstellungPrueftDieAusgabeVonApt(t *testing.T) {
 				t.Errorf("kein rollback: exit %d, quellen %q\n%s", failed.exitCode, failed.sources, failed.output)
 			}
 		})
+	}
+}
+
+// TestHTTPRueckstellungNurAnWortgrenzen: Zurückgestellt wurde jede Stelle,
+// an der die URL vorkam - .../debian drehte .../debian-security mit, und
+// eine Quelle auf einem Host, dessen Name mit dem gewählten nur beginnt,
+// gleich dazu.
+func TestHTTPRueckstellungNurAnWortgrenzen(t *testing.T) {
+	const before = "deb https://deb.debian.org/debian bookworm main\n" +
+		"deb https://deb.debian.org/debian-security bookworm-security main\n" +
+		"deb https://mirror.example bookworm main\n" +
+		"deb https://mirror.example.org/debian bookworm main\n" +
+		"URIs: https://deb.debian.org/debian/\n"
+	const after = "deb http://deb.debian.org/debian bookworm main\n" +
+		"deb https://deb.debian.org/debian-security bookworm-security main\n" +
+		"deb http://mirror.example bookworm main\n" +
+		"deb https://mirror.example.org/debian bookworm main\n" +
+		"URIs: http://deb.debian.org/debian/\n"
+	chosen := []string{"https://deb.debian.org/debian", "https://mirror.example"}
+	scripts := map[string]string{
+		"skript": revertHTTPSScript(chosen),
+		"helper": helperRepoScript(t, "repos_http "+strings.Join(chosen, " ")),
+	}
+	for label, script := range scripts {
+		t.Run(label, func(t *testing.T) {
+			run := runRepoScript(t, script, before, aptOutputOK, 0)
+			if run.exitCode != 0 || run.sources != after || run.leftover {
+				t.Errorf("rückstellung: exit %d, quellen\n%s\n%s", run.exitCode, run.sources, run.output)
+			}
+		})
+	}
+	// Steht die URL nur als Teil einer anderen da, bleibt die Datei, wie sie
+	// ist, und apt-get update läuft gar nicht erst.
+	const partial = "deb https://deb.debian.org/debian-security bookworm-security main\n"
+	run := runRepoScript(t, revertHTTPSScript([]string{"https://deb.debian.org/debian"}), partial, aptOutputOK, 0)
+	if run.sources != partial || run.updates != 0 || run.leftover {
+		t.Errorf("teiltreffer verändert: %d updates, quellen %q\n%s", run.updates, run.sources, run.output)
 	}
 }
 

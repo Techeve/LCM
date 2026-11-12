@@ -13,7 +13,7 @@
 // verwandelt - der Dienst läuft weiter.
 //
 // Die HTTP-Ebene ist separat abgesichert (Fibers recover-Middleware in
-// api/router und mcp), die geplanten Läufe über cron.Recover im Scheduler.
+// api/router und mcp), die geplanten Läufe im Paket cron (internal/cron).
 package safego
 
 import (

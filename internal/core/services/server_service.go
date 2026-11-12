@@ -184,6 +184,11 @@ type ServerService struct {
 	// agentCertFP liefert den SHA-256-Fingerprint des aktiven HTTPS-
 	// Zertifikats (fürs Cert-Pinning im Enrollment-Token). Optional.
 	agentCertFP func() (string, error)
+	// agentCAFP liefert den Fingerprint der LCM-CA fürs Token. Optional.
+	agentCAFP func() (string, error)
+	// agentDownloadPin liefert den Schlüssel-Pin desselben Zertifikats für
+	// den Download-Befehl (curl --pinnedpubkey). Optional.
+	agentDownloadPin func() (string, error)
 	// containerCheck überschreibt die Betriebsart-Erkennung in Tests;
 	// nil = die echte aus runtimeenv (siehe inContainer).
 	containerCheck func() bool
@@ -1255,13 +1260,50 @@ func wrapSudo(loginUser string, restricted bool, cmd string) string {
 // Dutzenden) warten so kaum, lange melden sich jede Sekunde. Ein sleep ohne
 // Bruchteile fällt auf ganze Sekunden zurück statt leer zu kreisen. Der Exit-Code
 // kommt aus `wait`; die Subshell fängt ein `exit` innerhalb von cmd ab.
+//
+// Die Datei liegt im ersten beschreibbaren Verzeichnis aus wrapperTempDirs.
+// Ist keines beschreibbar - etwa weil die Platte voll ist, genau dann, wenn
+// man LCM zum Aufräumen braucht -, läuft cmd direkt, ohne Weiterreichen und
+// ohne Schutz vor geerbten Deskriptoren, aber es läuft. cmd steht dafür
+// einmal als Funktion __run im Skript, nicht zweimal.
+//
+// Die Umleitung hängt an der Subshell `( __run )`, nicht an __run selbst:
+// Leitet man einen Funktionsaufruf um, legen BusyBox-ash und dash die alte
+// Ausgabe auf fd 10 und höher ab, um sie danach zurückzuholen. Diese Kopie
+// des SSH-Kanals erben die Hintergrundprozesse aus cmd, und der Lauf hängt,
+// bis sie enden.
 func detachBackgroundFDs(cmd string) string {
 	return strings.Join([]string{
-		`__lf=$(mktemp); ( ` + cmd + ` ) >"$__lf" 2>&1 </dev/null & __p=$!; __s=0; __d=0.05`,
+		"__run() (\n" + cmd + "\n)",
+		wrapperTempFile(),
+		`[ -n "$__lf" ] || { __run 2>&1 </dev/null; exit $?; }`,
+		`( __run ) >"$__lf" 2>&1 </dev/null & __p=$!; __s=0; __d=0.05`,
 		`__out() { __n=$(($(wc -c <"$__lf"))); [ "$__n" -gt "$__s" ] || return 0; tail -c +$((__s + 1)) "$__lf" | head -c $((__n - __s)); __s=$__n; }`,
 		`while kill -0 $__p 2>/dev/null; do sleep $__d 2>/dev/null || sleep 1; __out; case $__d in 0.05) __d=0.2 ;; *) __d=1 ;; esac; done`,
 		`wait $__p; __rc=$?; __out; rm -f "$__lf"; exit $__rc`,
 	}, "\n")
+}
+
+// wrapperTempDirs sind die Orte für die Ausgabedatei des Wrappers, in dieser
+// Reihenfolge: /tmp liegt oft auf der Root-Partition, /dev/shm und /run sind
+// tmpfs im Speicher und laufen mit der Platte nicht voll. /run/user/<uid>
+// gibt es für den eingeschränkten Service-User, /run selbst nur für root.
+// Eine Variable, damit der Test unbeschreibbare Orte einsetzen kann.
+var wrapperTempDirs = []string{`${TMPDIR:-/tmp}`, "/tmp", "/dev/shm", `/run/user/$(id -u)`, "/run"}
+
+// wrapperTempFile setzt __lf auf eine neue, beschreibbare Datei oder leer.
+// mktemp allein genügt nicht: Auf einer vollen Platte legt es die Datei noch
+// an (Inode frei), erst das Schreiben scheitert - daher die Probe mit einem
+// Byte (echo statt printf: Tests erkennen manche Kommandos an printf).
+func wrapperTempFile() string {
+	dirs := make([]string, len(wrapperTempDirs))
+	for i, d := range wrapperTempDirs {
+		dirs[i] = `"` + d + `"`
+	}
+	return `__lf=""; for __t in ` + strings.Join(dirs, " ") + `; do ` +
+		`__lf=$(mktemp "$__t/lcm.XXXXXX" 2>/dev/null) || { __lf=""; continue; }; ` +
+		`{ echo . >"$__lf" && : >"$__lf"; } 2>/dev/null && break; ` +
+		`rm -f "$__lf"; __lf=""; done`
 }
 
 // rootEscalation beschreibt, wie der Login-Benutzer beim Onboarding root
@@ -2003,7 +2045,7 @@ func (s *ServerService) runPackageJob(job *domain.Job, server *domain.Server, sc
 	}
 	conn, err := s.connect(server)
 	if err != nil {
-		_ = s.servers.UpdateFields(server.ID, unreachableFields(server, err))
+		recordUnreachable(s.servers, server, err)
 		s.jobs.Complete(job, "", nil, fmt.Errorf("verbindung: %w", err))
 		return
 	}

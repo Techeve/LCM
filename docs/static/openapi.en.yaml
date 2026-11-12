@@ -2713,7 +2713,7 @@ paths:
       - sessionAuth: []
       - apiKeyAuth: []
       description: |-
-        Global rule view across all visible groups (managers see only the rules of their groups).
+        Global rule view across all visible groups (managers see only the rules of their groups). Every rule carries `group_name`; a scheduled rule also carries `schedule_enabled`, whether its schedule runs. Only running rules count towards the precedence of several groups.
 
         Required permission: `rules:manage`.
       responses:
@@ -4930,6 +4930,65 @@ paths:
           description: Not signed in.
         '403':
           description: No permission.
+  /api/v1/servers/{id}/port-scan:
+    get:
+      tags:
+      - Servers
+      summary: Latest port scan from LCM with assessment.
+      operationId: portScanCtrl_Get
+      description: |-
+        Which common TCP ports the server actually offers as seen from LCM, per address (IPv4/IPv6). The assessment is made on read against the current LCM firewall rule set: `warning` = open but not allowed; `critical` = risky service (Telnet, Docker without TLS, databases, rpcbind). DSM and RouterOS are not compared (`firewall_compared` false). Never scanned: `scanned_at` is null.
+
+
+        Required permission: `servers:read`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Latest run (fields as in the German description).
+        '401':
+          description: Not authenticated.
+        '403':
+          description: Missing permission.
+        '404':
+          description: Server not found.
+    post:
+      tags:
+      - Servers
+      summary: Start a port scan from LCM.
+      operationId: portScanCtrl_Start
+      description: |-
+        Starts the port scan as a job: TCP connect to a fixed list of common ports (plus the server's SSH and DSM port) at the addresses of the stored server - never at an address from the request; no body is read. At most four connections at a time, two seconds per port. Blocked in the public demo, demo servers are never contacted.
+
+
+        Required permission: `servers:write`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job started (status, job_id, job_name).
+        '401':
+          description: Not authenticated.
+        '403':
+          description: Missing permission or public demo.
+        '404':
+          description: Server not found.
+        '409':
+          description: A job is already running on the server, or it has no scannable address (`server.portscan_no_target`).
   /api/v1/servers/{id}/repositories/revert-https:
     post:
       tags:
@@ -9090,6 +9149,29 @@ paths:
           description: Not signed in.
         '403':
           description: No permission.
+  /api/v1/system/tls/ca.pem:
+    get:
+      tags:
+      - System
+      summary: Certificate of the LCM TLS CA.
+      operationId: TLSCACert
+      description: >-
+        Public part of the CA that issues the LCM server certificate (PEM; for
+        an operator CA including the chain behind it). For import into
+        browsers or a reverse proxy that terminates TLS in front of the agent
+        port. Without TLS (`--dev`) there is no CA.
+
+
+        Required permission: `settings:manage`.
+      responses:
+        '200':
+          description: Successful (application/x-pem-file).
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+        '404':
+          description: No CA set up.
   /metrics:
     get:
       tags:

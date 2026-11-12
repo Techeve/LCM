@@ -257,21 +257,7 @@ func TestSelfRegisterSkipsWhenSSHUnreachable(t *testing.T) {
 // legt die Uebergabedatei bei jedem Lauf neu an; ohne den Vermerk kaeme der
 // Eintrag beim naechsten Paket-Update zurueck.
 func TestDecommissionLcmHostDisablesSelfRegistration(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("test-db: %v", err)
-	}
-	if sqlDB, err := db.DB(); err == nil {
-		sqlDB.SetMaxOpenConns(1)
-	}
-	if err := db.AutoMigrate(&domain.Server{}, &domain.GlobalSettings{}, &domain.Job{},
-		&domain.Package{}, &domain.SnapPackage{}, &domain.DockerContainer{},
-		&domain.DockerImage{}, &domain.Vulnerability{}, &domain.StorageHistory{},
-		&domain.AptRepository{}, &domain.ServerGroup{}, &domain.LinuxUser{},
-		&domain.SSHSession{}, &domain.SSHCommand{}, &domain.AuditLog{},
-		&domain.PendingUserSync{}, &domain.AdvisoryFinding{}, &domain.ServerCapability{}); err != nil {
-		t.Fatalf("migration: %v", err)
-	}
+	db := decommissionTestDB(t)
 	servers := repositories.NewServerRepository(db)
 
 	called := false
@@ -297,11 +283,15 @@ func TestDecommissionLcmHostDisablesSelfRegistration(t *testing.T) {
 	}
 }
 
-// TestDecommissionOtherServerKeepsSelfRegistration: Das Abschalten darf NUR
-// beim LCM-Host greifen - sonst wuerde das Entfernen eines beliebigen Servers
-// die Selbstaufnahme stilllegen.
-func TestDecommissionOtherServerKeepsSelfRegistration(t *testing.T) {
-	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+// decommissionTestDB liefert eine DB mit allen Tabellen, die das Löschen
+// eines Servers leert. Das storage-Paket (storage.Migrate) ist hier wegen des
+// Import-Zyklus nicht erreichbar.
+func decommissionTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("test-db: %v", err)
+	}
 	if sqlDB, err := db.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}
@@ -310,9 +300,22 @@ func TestDecommissionOtherServerKeepsSelfRegistration(t *testing.T) {
 		&domain.DockerImage{}, &domain.Vulnerability{}, &domain.StorageHistory{},
 		&domain.AptRepository{}, &domain.ServerGroup{}, &domain.LinuxUser{},
 		&domain.SSHSession{}, &domain.SSHCommand{}, &domain.AuditLog{},
-		&domain.PendingUserSync{}, &domain.AdvisoryFinding{}, &domain.ServerCapability{}); err != nil {
+		&domain.PendingUserSync{}, &domain.AdvisoryFinding{}, &domain.ServerCapability{},
+		&domain.DeepScanReport{}, &domain.DeepScanFinding{}, &domain.StorageHealth{},
+		&domain.DiskVolume{}, &domain.VolumeMonitor{}, &domain.DetectedApp{},
+		&domain.UnknownApp{}, &domain.PackagePin{}, &domain.AppliedProfilePath{},
+		&domain.HardenedPath{}, &domain.ServerUser{}, &domain.ServerUserBlock{},
+		&domain.ServerUserLogin{}, &domain.AlertEvent{}, &domain.PortScan{}); err != nil {
 		t.Fatalf("migration: %v", err)
 	}
+	return db
+}
+
+// TestDecommissionOtherServerKeepsSelfRegistration: Das Abschalten darf NUR
+// beim LCM-Host greifen - sonst wuerde das Entfernen eines beliebigen Servers
+// die Selbstaufnahme stilllegen.
+func TestDecommissionOtherServerKeepsSelfRegistration(t *testing.T) {
+	db := decommissionTestDB(t)
 	servers := repositories.NewServerRepository(db)
 
 	called := false

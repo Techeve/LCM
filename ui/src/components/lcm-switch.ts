@@ -5,7 +5,8 @@ import { baseStyles, emit, uid } from './shared.js';
 /**
  * <lcm-switch label="…" description="…" .checked=${…} on-text="…" off-text="…"> – Schalter (role=switch).
  * Mit `on-text`/`off-text` erscheint beim Überfahren eine Erklärblase: was „an“ und was „aus“ bewirkt.
- * Meldet `lcm-change` { checked }.
+ * Meldet `lcm-change` { checked } mit dem gewünschten Stand, ändert `checked` aber nicht selbst: Den Stand setzt
+ * der Aufrufer, etwa erst nach einer Rückfrage oder wenn der Server die Änderung angenommen hat.
  */
 export class LcmSwitch extends LitElement {
   static override properties = {
@@ -135,8 +136,7 @@ export class LcmSwitch extends LitElement {
   }
 
   private toggle(): void {
-    this.checked = !this.checked;
-    emit(this, 'lcm-change', { checked: this.checked });
+    emit(this, 'lcm-change', { checked: !this.checked });
   }
 
   override render() {

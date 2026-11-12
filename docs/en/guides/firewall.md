@@ -79,6 +79,10 @@ than `8080:80`).
 - **ufw** - declarative rebuild (`ufw --force reset` → rules → enable). A
   v4-only/v6-only rule is expressed via the destination `0.0.0.0/0` or `::/0`
   (a ufw particularity); without one, a rule applies to both families.
+  With `IPV6=no` in `/etc/default/ufw`, ufw rejects IPv6-only rules; LCM
+  then skips them (with a note in the job output) and applies the IPv4
+  parts. If SSH is allowed for IPv6 sources only, LCM stops before the
+  rebuild instead of locking SSH out.
 - **firewalld** - LCM manages the **default zone declaratively**: all ports
   and rich rules of the zone are re-set (rules with a family or source
   restriction become rich

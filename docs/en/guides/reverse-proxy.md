@@ -49,12 +49,18 @@ Entries are IP addresses, CIDR ranges or the keywords `localhost`/`private`.
 A request from any other address is taken at its peer address; the header
 does not count.
 
-:::caution[An empty list means: anyone may]
-`trust_proxy_header: true` without `trusted_proxies` believes the header from
-**every** peer (the behaviour of older versions; LCM warns at startup). That is
-acceptable only if the LCM port is reachable from the proxy alone. Otherwise a
-client that reaches the port directly gives itself any address with a forged
-header - into the allowlist and out of the login lockout.
+LCM reads the header from the right. Every proxy appends the address it
+received the request from. The first address from the right that is not a
+trusted proxy counts as the client. Whatever a client writes into the left part
+of the header itself does not count, also behind several proxies.
+
+:::caution[An empty list means: believe no one]
+Since 2.0, `trust_proxy_header: true` without `trusted_proxies` believes the
+header from **no** peer, and LCM warns at startup. Older versions believed every
+peer in that case. If LCM runs behind a proxy, put its address in the list.
+Otherwise the allowlist, the login lockout and the logs only see the proxy's
+address, all clients share one login lockout, and LCM no longer recognises
+HTTPS via `X-Forwarded-Proto`.
 :::
 
 The same rule decides whether LCM recognises a request as **HTTPS**:

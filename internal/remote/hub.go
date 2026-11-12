@@ -301,6 +301,11 @@ func (h *Hub) handleInventory(cl *mqtt.Client, sub packets.Subscription, pk pack
 	}
 	_ = h.servers.UpdateFields(server.ID, map[string]any{
 		"agent_version": inv.AgentVersion,
+		// Auch leer übernehmen: Ein auf eine ältere Fassung zurückgesetzter
+		// Agent führt die Pins nicht mehr und hielte die Umstellung sonst
+		// nicht auf.
+		"agent_key_pin": inv.KeyPin,
+		"agent_ca_pin":  inv.CAPin,
 	})
 	// Erst-Scan hier (nicht schon bei OnSessionEstablished) auslösen: das
 	// Inventar sendet der Agent NACH dem Abonnieren des Kommando-Topics,

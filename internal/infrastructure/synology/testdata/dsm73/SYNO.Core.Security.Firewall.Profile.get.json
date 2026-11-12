@@ -1,0 +1,47 @@
+{
+ "success": true,
+ "data": {
+  "global": {
+   "policy": "none",
+   "rules": [
+    {
+     "enable": true,
+     "log": false,
+     "name": "",
+     "policy": "allow",
+     "port_direction": "destination",
+     "port_group": "service",
+     "ports": "dms,dms_https",
+     "protocol": "tcp",
+     "source_ip": "all",
+     "source_ip_group": "all"
+    },
+    {
+     "enable": true,
+     "log": false,
+     "name": "",
+     "policy": "allow",
+     "port_direction": "destination",
+     "port_group": "service",
+     "ports": "http,https",
+     "protocol": "tcp",
+     "source_ip": "all",
+     "source_ip_group": "all"
+    },
+    {
+     "enable": true,
+     "log": false,
+     "name": "",
+     "policy": "drop",
+     "port_direction": "destination",
+     "port_group": "all",
+     "ports": "all",
+     "protocol": "all",
+     "source_ip": "all",
+     "source_ip_group": "all"
+    }
+   ]
+  },
+  "name": "default"
+ }
+}

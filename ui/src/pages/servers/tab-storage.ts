@@ -39,6 +39,9 @@ const POOL_KINDS: Record<string, string> = {
   btrfs: 'serverOps.storage.kind.btrfs',
   mdraid: 'serverOps.storage.kind.mdraid',
   lvm_thin: 'serverOps.storage.kind.lvmThin',
+  dsm_pool: 'serverOps.storage.kind.dsmPool',
+  dsm_volume: 'serverOps.storage.kind.dsmVolume',
+  dsm_disk: 'serverOps.storage.kind.dsmDisk',
 };
 
 function poolLevel(state: string): 'ok' | 'warn' | 'crit' | 'unknown' {

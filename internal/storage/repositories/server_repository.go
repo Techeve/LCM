@@ -39,6 +39,18 @@ func (r *ServerRepository) UpdateFields(id uint, fields map[string]any) error {
 	return r.db.Model(&domain.Server{}).Where("id = ?", id).Updates(fields).Error
 }
 
+// MarkUnreachable hält einen fehlgeschlagenen Kontakt fest: nicht erreichbar,
+// die Ursache und ein Fehlschlag mehr in Folge. Der Zähler wird in der
+// Datenbank erhöht, damit parallele Läufe sich nicht gegenseitig
+// überschreiben (Read-Modify-Write wäre hier eine Wettlaufstelle).
+func (r *ServerRepository) MarkUnreachable(id uint, lastError string) error {
+	return r.UpdateFields(id, map[string]any{
+		"reachable":     false,
+		"last_error":    lastError,
+		"failed_checks": gorm.Expr("failed_checks + 1"),
+	})
+}
+
 func (r *ServerRepository) FindByID(scope AccessScope, id uint) (*domain.Server, error) {
 	var server domain.Server
 	q := scope.scopeServers(r.db.Preload("Groups"))
@@ -183,62 +195,60 @@ func (r *ServerRepository) FindByAgentID(agentID string) (*domain.Server, error)
 	return &server, nil
 }
 
+// serverIDModels sind die Tabellen, deren Zeilen über server_id an einem
+// Server hängen und mit ihm verschwinden. Der Schema-Test
+// TestServerLoeschenRaeumtJedeServerTabelle meldet jede neue Tabelle mit
+// server_id oder server_ref, die hier fehlt.
+//
+// Die Reihenfolge zählt: Kinder vor ihren Eltern (Befunde vor Berichten,
+// Kommandos laufen über ihre Session).
+var serverIDModels = []any{
+	&domain.SnapPackage{},
+	&domain.DockerContainer{},
+	&domain.DockerImage{},
+	&domain.DeepScanFinding{},
+	&domain.DeepScanReport{},
+	&domain.StorageHistory{},
+	&domain.StorageHealth{},
+	&domain.DiskVolume{},
+	&domain.VolumeMonitor{},
+	&domain.AptRepository{},
+	&domain.ServerCapability{},
+	// Letzter Portscan von LCM aus.
+	&domain.PortScan{},
+	&domain.DetectedApp{},
+	&domain.UnknownApp{},
+	// Serverspezifische Paket-Pins; globale tragen server_id 0.
+	&domain.PackagePin{},
+	// Abgelegte Rechte und Pfad-Härtungen: Ohne Server gibt es nichts mehr
+	// zurückzunehmen.
+	&domain.AppliedProfilePath{},
+	&domain.HardenedPath{},
+	// Benutzer-Bestand des Servers samt Sperren und Anmeldungen. Offene
+	// Abgleiche verfallen mit dem Server - sie hätten sonst kein Ziel mehr.
+	&domain.ServerUser{},
+	&domain.ServerUserBlock{},
+	&domain.ServerUserLogin{},
+	&domain.PendingUserSync{},
+	// Alarm-Verlauf: wie Jobs und SSH-Protokolle ein Verlauf dieses Servers.
+	&domain.AlertEvent{},
+	&domain.Job{},
+}
+
+// serverRefModels hängen über das Server-Token server_ref am Server.
+var serverRefModels = []any{
+	&domain.Package{},
+	&domain.Vulnerability{},
+	&domain.AdvisoryFinding{},
+}
+
 // Delete entfernt den Server und ALLE damit verbundenen Daten restlos:
-// Pakete (apt + Snaps), CVE-Funde, Repos, Gruppen-/Benutzer-Zuordnungen, Jobs
-// sowie die SSH-Protokolle (Sessions samt Kommandos). Der tamper-evidente
-// Audit-Log bleibt als Compliance-Nachweis unberührt.
+// Bestand, Befunde, Zuordnungen, Jobs, Alarm-Verlauf und SSH-Protokolle
+// (Sessions samt Kommandos). Der tamper-evidente Audit-Log bleibt als
+// Compliance-Nachweis unberührt.
 func (r *ServerRepository) Delete(id uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("server_ref = ?", ServerRef(id)).Delete(&domain.Package{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_id = ?", id).Delete(&domain.SnapPackage{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_id = ?", id).Delete(&domain.DockerContainer{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_id = ?", id).Delete(&domain.DockerImage{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_ref = ?", ServerRef(id)).Delete(&domain.Vulnerability{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_ref = ?", ServerRef(id)).Delete(&domain.AdvisoryFinding{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_id = ?", id).Delete(&domain.StorageHistory{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_id = ?", id).Delete(&domain.AptRepository{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_id = ?", id).Delete(&domain.ServerCapability{}).Error; err != nil {
-			return err
-		}
-		// Offene Benutzer-Abgleiche verfallen mit dem Server - sie hätten
-		// sonst kein Ziel mehr.
-		if err := tx.Where("server_id = ?", id).Delete(&domain.PendingUserSync{}).Error; err != nil {
-			return err
-		}
-		server := domain.Server{ID: id}
-		if err := tx.Model(&server).Association("Groups").Clear(); err != nil {
-			return err
-		}
-		if err := tx.Model(&server).Association("LinuxUsers").Clear(); err != nil {
-			return err
-		}
-		// SSH-Protokolle löschen: erst die Kommandos der zugehörigen Sessions,
-		// dann die Sessions selbst.
-		if err := tx.Where("ssh_session_id IN (SELECT id FROM ssh_sessions WHERE server_id = ?)", id).
-			Delete(&domain.SSHCommand{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("server_id = ?", id).Delete(&domain.SSHSession{}).Error; err != nil {
-			return err
-		}
-		// Job-Historie dieses Servers löschen.
-		if err := tx.Where("server_id = ?", id).Delete(&domain.Job{}).Error; err != nil {
+		if err := deleteServerRows(tx, id); err != nil {
 			return err
 		}
 		res := tx.Delete(&domain.Server{}, id)
@@ -250,6 +260,35 @@ func (r *ServerRepository) Delete(id uint) error {
 		}
 		return nil
 	})
+}
+
+// deleteServerRows leert alle Tabellen, die auf den Server zeigen.
+func deleteServerRows(tx *gorm.DB, id uint) error {
+	for _, model := range serverRefModels {
+		if err := tx.Where("server_ref = ?", ServerRef(id)).Delete(model).Error; err != nil {
+			return err
+		}
+	}
+	server := domain.Server{ID: id}
+	for _, assoc := range []string{"Groups", "LinuxUsers"} {
+		if err := tx.Model(&server).Association(assoc).Clear(); err != nil {
+			return err
+		}
+	}
+	// SSH-Protokolle: erst die Kommandos der Sessions, dann die Sessions.
+	if err := tx.Where("ssh_session_id IN (SELECT id FROM ssh_sessions WHERE server_id = ?)", id).
+		Delete(&domain.SSHCommand{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("server_id = ?", id).Delete(&domain.SSHSession{}).Error; err != nil {
+		return err
+	}
+	for _, model := range serverIDModels {
+		if err := tx.Where("server_id = ?", id).Delete(model).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---- Pakete & Repositories (Scan-Ergebnisse) --------------------------------
@@ -336,6 +375,9 @@ func (r *ServerRepository) CountOutdatedPackages(serverID uint) (int64, error) {
 func (r *ServerRepository) NothingPending(serverID uint) (bool, error) {
 	var server domain.Server
 	if err := r.db.Select("update_check_error").First(&server, serverID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, ErrNotFound
+		}
 		return false, err
 	}
 	if server.UpdateCheckError != "" {
@@ -673,6 +715,9 @@ func (r *ServerRepository) FindDeepScanReports(serverID uint, limit int) ([]doma
 func (r *ServerRepository) FindDeepScanReport(serverID uint, reportID string) (*domain.DeepScanReport, error) {
 	var report domain.DeepScanReport
 	if err := r.db.Where("id = ? AND server_id = ?", reportID, serverID).First(&report).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
 	findings, err := r.findDeepScanFindingsOfReport(report.ID)

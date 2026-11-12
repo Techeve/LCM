@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"LCM/internal/safego"
 )
 
 // Rotierende Logdatei - selbst gebaut statt als Abhängigkeit: keine
@@ -17,9 +19,11 @@ import (
 // Regel: docs/reference/dependencies.md.
 //
 // Ablauf: Überschreitet ein Schreibvorgang die Höchstgröße, wandert der
-// aktuelle Stand mit Zeitstempel im Namen zur Seite, wird gzip-komprimiert und
-// die Datei beginnt von vorn. Anschließend fliegen Altstände raus, die zu alt
-// oder zu zahlreich sind.
+// aktuelle Stand mit Zeitstempel im Namen zur Seite und die Datei beginnt von
+// vorn. Im Hintergrund wird der Altstand gzip-komprimiert, danach fliegen
+// Altstände raus, die zu alt oder zu zahlreich sind. Im Hintergrund, weil der
+// Schreiber dabei die Sperre hält: Zehn Megabyte zu komprimieren hielt sonst
+// jede Logzeile des Prozesses auf, auch die der laufenden Anfragen.
 //
 // Aufräumen und Komprimieren sind bewusst fehlertolerant: ein Logger darf die
 // Anwendung nicht anhalten, nur weil ein Altstand klemmt.
@@ -39,6 +43,12 @@ type rotatingFile struct {
 	mu   sync.Mutex
 	file *os.File
 	size int64
+
+	// compress ist im Test ersetzbar. bgMu reiht Komprimieren und Aufräumen
+	// der Hintergrundläufe hintereinander, bg zählt die offenen (Close wartet).
+	compress func(path string)
+	bgMu     sync.Mutex
+	bg       sync.WaitGroup
 }
 
 func newRotatingFile(path string, maxSizeMB, maxBackups, maxAgeDays int) *rotatingFile {
@@ -48,6 +58,7 @@ func newRotatingFile(path string, maxSizeMB, maxBackups, maxAgeDays int) *rotati
 		maxBackups: maxBackups,
 		maxAge:     time.Duration(maxAgeDays) * 24 * time.Hour,
 		now:        time.Now,
+		compress:   compress,
 	}
 }
 
@@ -70,7 +81,9 @@ func (r *rotatingFile) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Close schließt die Datei und wartet, bis die Altstände komprimiert sind.
 func (r *rotatingFile) Close() error {
+	defer r.bg.Wait()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.file == nil {
@@ -114,9 +127,22 @@ func (r *rotatingFile) rotate() error {
 	if err := r.open(); err != nil {
 		return err
 	}
-	compress(backup)
-	r.prune()
+	r.compressInBackground(backup, r.now())
 	return nil
+}
+
+// compressInBackground komprimiert den Altstand und räumt danach auf, ohne
+// den Schreiber aufzuhalten. now kommt vom Schreiber mit, damit die Uhr nur
+// unter dessen Sperre gelesen wird.
+func (r *rotatingFile) compressInBackground(backup string, now time.Time) {
+	r.bg.Add(1)
+	safego.Go("log-rotate", func() {
+		defer r.bg.Done()
+		r.bgMu.Lock()
+		defer r.bgMu.Unlock()
+		r.compress(backup)
+		r.prune(now)
+	})
 }
 
 // backupPath baut "lcm-2026-08-18T14-05-09.123.log" aus "lcm.log".
@@ -151,9 +177,9 @@ func compress(path string) {
 // prune entfernt Altstände, die zu alt sind oder über die erlaubte Anzahl
 // hinausgehen. Fehler werden verschluckt: der nächste Durchlauf versucht es
 // erneut.
-func (r *rotatingFile) prune() {
+func (r *rotatingFile) prune(now time.Time) {
 	backups := r.backups()
-	cutoff := r.now().Add(-r.maxAge)
+	cutoff := now.Add(-r.maxAge)
 	for i, b := range backups {
 		tooMany := r.maxBackups > 0 && i >= r.maxBackups
 		tooOld := r.maxAge > 0 && b.stamp.Before(cutoff)

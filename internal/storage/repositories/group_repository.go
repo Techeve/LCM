@@ -74,7 +74,8 @@ func countACLCapable(group *domain.ServerGroup) {
 	}
 }
 
-// Disband löst eine Gruppe auf (Zuordnungen + Rules mit).
+// Disband löst eine Gruppe auf (Zuordnungen + Rules mit). Alarmregeln bleiben
+// bestehen und verlieren nur diese Gruppe (siehe detachAlertRules).
 func (r *GroupRepository) Disband(id uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		group := domain.ServerGroup{ID: id}
@@ -82,6 +83,9 @@ func (r *GroupRepository) Disband(id uint) error {
 			if err := tx.Model(&group).Association(assoc).Clear(); err != nil {
 				return err
 			}
+		}
+		if err := detachAlertRules(tx, id); err != nil {
+			return err
 		}
 		if err := tx.Where("group_id = ?", id).Delete(&domain.Rule{}).Error; err != nil {
 			return err
@@ -98,6 +102,26 @@ func (r *GroupRepository) Disband(id uint) error {
 		}
 		return nil
 	})
+}
+
+// detachAlertRules nimmt die Gruppe aus allen Alarmregeln. Eine Regel ohne
+// Gruppe gilt für alle Server - verliert sie hier ihre letzte Gruppe, wird
+// sie deshalb abgeschaltet statt still auf die ganze Flotte ausgeweitet.
+func detachAlertRules(tx *gorm.DB, groupID uint) error {
+	var ruleIDs []uint
+	if err := tx.Table("alert_rule_groups").Where("server_group_id = ?", groupID).
+		Pluck("alert_rule_id", &ruleIDs).Error; err != nil {
+		return err
+	}
+	if len(ruleIDs) == 0 {
+		return nil
+	}
+	if err := tx.Exec("DELETE FROM alert_rule_groups WHERE server_group_id = ?", groupID).Error; err != nil {
+		return err
+	}
+	return tx.Model(&domain.AlertRule{}).
+		Where("id IN ? AND id NOT IN (SELECT alert_rule_id FROM alert_rule_groups)", ruleIDs).
+		Update("enabled", false).Error
 }
 
 // ---- Zuordnungen -------------------------------------------------------------
@@ -252,6 +276,46 @@ func (r *GroupRepository) FindEnforceRulesForServer(serverID uint) ([]domain.Rul
 		return nil, err
 	}
 	return rules, nil
+}
+
+// FindActiveRulesOfTypesForServer liefert die Regeln der genannten Typen, die
+// auf dem Server tatsächlich laufen: aktive Grundsatz-Regeln und aktive Regeln
+// an einem aktiven Zeitplan, aus allen Gruppen des Servers und der
+// System-Gruppe. Eine Regel an einem abgeschalteten Zeitplan läuft nie und
+// zählt deshalb nicht mit.
+//
+// Die Gruppe wird mitgeladen - an ihrem Vorrang entscheidet sich, welche
+// Gruppe einen Typ mit Soll-Zustand auf dem Server führt (ruleOwners).
+func (r *GroupRepository) FindActiveRulesOfTypesForServer(serverID uint, types []string) ([]domain.Rule, error) {
+	var rules []domain.Rule
+	err := r.db.Preload("Group").Where(`type IN ? AND enabled = ?
+		AND (enforce = ? OR schedule_id IN (SELECT id FROM schedules WHERE enabled = ?))
+		AND (group_id IN (SELECT server_group_id FROM server_group_servers WHERE server_id = ?)
+			OR group_id IN (SELECT id FROM server_groups WHERE is_system = ?))`,
+		types, true, true, true, serverID, true).
+		Order("id").Find(&rules).Error
+	if err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
+// ScheduleStates liefert je Zeitplan, ob er aktiv ist - für die Regel-Sicht,
+// die zeigt, welche Gruppe auf einem Server Vorrang hat. Eine Regel an einem
+// abgeschalteten Zeitplan läuft nie und verdrängt deshalb auch keine andere.
+func (r *GroupRepository) ScheduleStates() (map[uint]bool, error) {
+	var rows []struct {
+		ID      uint
+		Enabled bool
+	}
+	if err := r.db.Model(&domain.Schedule{}).Select("id, enabled").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	states := make(map[uint]bool, len(rows))
+	for _, row := range rows {
+		states[row.ID] = row.Enabled
+	}
+	return states, nil
 }
 
 // ServersOfGroup liefert die Mitglieds-Server einer Gruppe.

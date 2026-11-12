@@ -11,16 +11,20 @@ import (
 
 // waitFor pollt eine Bedingung bis zu 2 Sekunden (für asynchron laufende
 // Jobs). Schlägt fehl, wenn die Bedingung nicht eintritt.
+// waitForLimit ist großzügig: Ist die Bedingung erfüllt, kehrt waitFor sofort
+// zurück. Zwei Sekunden reichten auf ausgelasteten Runnern nicht immer.
+const waitForLimit = 10 * time.Second
+
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(waitForLimit)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("bedingung nicht innerhalb von 2s erfüllt")
+	t.Fatalf("bedingung nicht innerhalb von %s erfüllt", waitForLimit)
 }
 
 // TestSchedulerSystemSchedulesFromSettings prüft, dass Backup und
@@ -130,10 +134,11 @@ func TestTriggerSystemSchedule(t *testing.T) {
 	// Cleanup läuft synchron genug: wir prüfen, dass kein Panik/Fehler
 	// auftritt und danach ein cleanup-job existiert.
 	env.Scheduler.TriggerSystem(services.KindCleanup, "admin")
-	// TriggerSystem startet eine Goroutine; wir warten kurz über einen
-	// erneuten Job-History-Poll (der Job wird protokolliert).
+	// TriggerSystem startet eine Goroutine; gewartet wird, bis der Job
+	// FERTIG ist, nicht nur angelegt. Sonst schreibt er unter Last noch ins
+	// Testverzeichnis, während das schon aufgeräumt wird.
 	waitFor(t, func() bool {
 		jobs, _, _ := env.Jobs.HistoryFiltered(repositories.ScopeAll(), repositories.JobFilter{Type: domain.RuleTypeCleanup, Limit: 50})
-		return len(jobs) > 0
+		return len(jobs) > 0 && jobs[0].FinishedAt != nil
 	})
 }

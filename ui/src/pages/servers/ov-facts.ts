@@ -5,7 +5,7 @@ import '../../components/lcm-card';
 import '../../components/lcm-notice';
 import { toast } from '../../components/lcm-toaster';
 import { baseStyles, utilStyles, type StatusLevel } from '../../components/shared';
-import { isApiDevice, type ServerItem } from '../../api/servers';
+import { isApiDevice, isVirtualDsm, type ServerItem } from '../../api/servers';
 import {
   clockState,
   detailApi,
@@ -192,6 +192,15 @@ export class SrvFacts extends LitElement {
     return html`${clock}${service}${container ? html`<p class="note">${t('serverDetail.facts.clock.container', { type: s.virtualization })}</p>` : nothing}`;
   }
 
+  /** CPU-Modell mit Kernzahl. VirtualDSM nennt kein Modell, nur seine vCPUs - das ist „virtuell“, nicht „unbekannt“. */
+  #cpu(): TemplateResult {
+    const s = this.server;
+    if (isVirtualDsm(s) && !s.cpu_model) {
+      return html`${t('serverDetail.facts.cpuVirtual')}${s.cpu_cores > 0 ? html`<span class="muted">(${t('serverDetail.facts.vcpuCount', { count: s.cpu_cores })})</span>` : nothing}`;
+    }
+    return html`${s.cpu_model || t('serverDetail.facts.unknown')}${s.cpu_cores > 0 ? html`<span class="muted">(${t('serverDetail.facts.coresCount', { count: s.cpu_cores })})</span>` : nothing}`;
+  }
+
   #hardwareRows(): Row[] {
     const s = this.server;
     const device = this.#device;
@@ -199,9 +208,7 @@ export class SrvFacts extends LitElement {
     const rows: Array<Row | null> = [
       device ? null : { label: t('serverDetail.facts.platform.label'), value: this.#platform() },
       model ? { label: t('serverDetail.facts.model'), value: model } : null,
-      s.cpu_model || s.cpu_cores > 0 || !device
-        ? { label: t('serverDetail.facts.cpu'), value: html`${s.cpu_model || t('serverDetail.facts.unknown')}${s.cpu_cores > 0 ? html`<span class="muted">(${t('serverDetail.facts.coresCount', { count: s.cpu_cores })})</span>` : nothing}` }
-        : null,
+      s.cpu_model || s.cpu_cores > 0 || !device || isVirtualDsm(s) ? { label: t('serverDetail.facts.cpu'), value: this.#cpu() } : null,
       { label: t('serverDetail.facts.ram'), value: this.#ram() },
       { label: t('serverDetail.facts.disk'), value: this.#disk() },
       device ? null : { label: t('serverDetail.facts.packageManagers'), value: html`${packageManagers(s).map((name) => html`<lcm-badge>${name}</lcm-badge>`)}` },

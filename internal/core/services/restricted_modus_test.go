@@ -228,7 +228,7 @@ func TestHelperLehntSchlechteParameterAb(t *testing.T) {
 		{"package-pins", "apt", "$(id)", "-"},
 		{"package-pins", "apt", "GROSS", "-"},
 		{"package-pins", "apt", "-o", "-"},
-		{"package-pins", "zypper", "-", "-"},
+		{"package-pins", "yum", "-", "-"},
 		{"firewall-apply", "nftables", zeilen("flush ruleset")},
 		{"firewall-apply", "nftables", zeilen("table inet lcm\ndelete table inet lcm\ntable inet lcm {\n    chain input {\n        type filter hook input priority 0; policy drop;\n        include \"/etc/shadow\"\n    }\n}")},
 		{"firewall-apply", "nftables", zeilen("table ip nat\n")},
@@ -281,6 +281,24 @@ func TestHelperLehntSchlechteParameterAb(t *testing.T) {
 		{"repos-https", "http://a.example/debian\nhttp://b.example/x"},
 		// Eine Leerzeile vorne darf den Rest des Regelsatzes nicht verdecken.
 		{"firewall-apply", "nftables", zeilen("\ninclude \"/etc/shadow\"\ntable inet lcm")},
+		// Verzeichnisrechte nur für Profilgruppen, nur auf freien Pfaden in
+		// kurzer Form.
+		{"profile-acl", "set", "Web", "read", "/srv/www"},
+		{"profile-acl", "set", "web", "all", "/srv/www"},
+		{"profile-acl", "set", "web", "read", "/etc/systemd"},
+		{"profile-acl", "set", "web", "readwrite", "/etc/cron.d"},
+		{"profile-acl", "set", "web", "readwrite", "/var"},
+		{"profile-acl", "set", "web", "read", "/srv/../etc"},
+		{"profile-acl", "set", "web", "read", "/srv/www/"},
+		{"profile-acl", "set", "web", "read", "/srv/www\n/etc"},
+		{"profile-acl", "remove", "web", "read", "/srv/www"},
+		{"profile-acl", "remove", "web", "-", "srv/www"},
+		{"profile-acl", "chmod", "web", "-", "/srv/www"},
+		// Das SFTP-Drop-in entsteht nur aus gültigen Slugs.
+		{"profile-sftp", "Web"},
+		{"profile-sftp", "web,../x"},
+		{"profile-sftp", "web\nMatch all\nPermitRootLogin yes"},
+		{"profile-sftp", ""},
 	}
 	for _, args := range cases {
 		cmd := exec.Command(sh, append([]string{helper}, args...)...)
@@ -409,9 +427,7 @@ func TestPinRuempfeSchreibenDieDateien(t *testing.T) {
 	lauf := func(restricted bool, mgr string, pins []domain.PackagePin) {
 		t.Helper()
 		script := pkgPinScript(restricted, mgr, pins)
-		for _, p := range []string{"/etc/apt/apt.conf.d", "/etc/dnf/protected.d", "/etc/pacman.d", "/etc/pacman.conf"} {
-			script = strings.ReplaceAll(script, p, dir+p)
-		}
+		script = pinTestRedirect(script, dir)
 		for _, p := range []string{"/etc/apt/apt.conf.d", "/etc/dnf/protected.d", "/etc/pacman.d"} {
 			_ = os.MkdirAll(dir+p, 0o755)
 		}
@@ -447,8 +463,9 @@ func TestPinRuempfeSchreibenDieDateien(t *testing.T) {
 		t.Errorf("ein reiner Hold-Pin gehört nicht in die Schutzdatei:\n%s", apt)
 	}
 	log, _ := os.ReadFile(marks)
-	if !strings.Contains(string(log), "unhold altes-paket") || !strings.Contains(string(log), "hold bash") {
-		t.Errorf("apt-mark: erst alte Holds lösen, dann bash setzen:\n%s", log)
+	// altes-paket hält ein Admin, nicht LCM: es bleibt gehalten.
+	if strings.Contains(string(log), "unhold") || !strings.Contains(string(log), "hold bash") {
+		t.Errorf("apt-mark: fremden Hold stehen lassen, bash setzen:\n%s", log)
 	}
 
 	lauf(false, pkgApt, nil)

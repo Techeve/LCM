@@ -2,15 +2,17 @@ package services
 
 import (
 	"fmt"
+	"hash/fnv"
 	"log/slog"
+	"maps"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/robfig/cron/v3"
-
 	"LCM/internal/core/domain"
+	"LCM/internal/cron"
 	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
@@ -20,16 +22,41 @@ import (
 // konfigurierbar (LogRetentionDays / BackupRetention).
 const cleanupCron = "30 3 * * *"
 
+// Die festen Takte unten hängen an der Uhr, nicht an „@every". Ein
+// @every-Eintrag zählt ab seiner Anlage, und Reload legt bei jedem Speichern
+// einer Regel oder der Einstellungen alle Einträge neu an: Wer öfter
+// speicherte, als der Takt lang war, verhinderte den Lauf ganz - Alarm-
+// Auswertung, Frühwarnung und Update-Prüfung blieben dann stumm. Ein
+// Minuten-Ausdruck überlebt jeden Reload, und die Übersicht zeigt damit den
+// echten nächsten Lauf.
+
 // alertCheckCron ist das feste Intervall der Alarm-Auswertung (alle 30 Min):
 // die Monitoring-/Trigger-Kriterien werden ausgewertet und lösen bei Bedarf
 // eine Benachrichtigung aus.
-const alertCheckCron = "@every 30m"
+const alertCheckCron = "*/30 * * * *"
 
-// updateCheckCron ist das feste Intervall der LCM-Selbst-Update-Prüfung
-// (alle 3 Stunden). Bewusst KEINE Einstellungsoption - die Prüfung, ob eine
-// neuere LCM-Version verfügbar ist, ist fest im Kern verankert und läuft
-// unabhängig von den globalen Einstellungen.
-const updateCheckCron = "@every 3h"
+// updateCheckCron ist das feste Intervall der LCM-Selbst-Update-Prüfung:
+// alle 3 Stunden. Minute und Stunde im Takt leiten sich aus dem Hostnamen ab
+// (updateCheckSpec): Eine feste Uhrzeit ließe jede Installation zur selben
+// Minute bei GitLab anfragen, früher verteilte sich das über die Startzeit.
+// Bewusst KEINE Einstellungsoption - die Prüfung ist fest im Kern verankert
+// und läuft unabhängig von den globalen Einstellungen.
+var updateCheckCron = updateCheckSpec(hostnameOrEmpty())
+
+// updateCheckSpec baut den Takt der Update-Prüfung für einen Host: dieselbe
+// Minute und Stunde bei jedem Start, aber je Host verschieden.
+func updateCheckSpec(host string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(host))
+	sum := h.Sum32()
+	return fmt.Sprintf("%d %d-23/3 * * *", sum%60, (sum/60)%3)
+}
+
+// hostnameOrEmpty liefert den Hostnamen, leer, wenn er nicht lesbar ist.
+func hostnameOrEmpty() string {
+	name, _ := os.Hostname()
+	return name
+}
 
 // cveDBUpdateCron gleicht die Trivy-Datenbank stündlich ab. Der Hersteller baut
 // sie alle sechs Stunden, und ein neuer Stand soll kurz nach dem Bau ankommen.
@@ -59,8 +86,9 @@ const cveDBUpdateCron = "10 * * * *"
 //
 // Der Takt kommt aus der Domaenenschicht, weil die Cache-Gueltigkeit sich an
 // ihm bemisst (domain.AdvisoryCacheTTLMin): Beide Werte duerfen nicht
-// unabhaengig voneinander verrutschen.
-var advisoryPollCron = fmt.Sprintf("@every %dm", domain.AdvisoryPollIntervalMinutes)
+// unabhaengig voneinander verrutschen. Als Minuten-Schritt taugt er nur, solange
+// er die Stunde teilt (15 tut das); TestSystemTakteHaengenAnDerUhr wacht darüber.
+var advisoryPollCron = fmt.Sprintf("*/%d * * * *", domain.AdvisoryPollIntervalMinutes)
 
 // advisoryEnrichCron holt das Ausnutzungs-Signal der EUVD. Taeglich, weil
 // sich die Liste in Tagen aendert; zeitlich nach dem CVE-Scan, damit die
@@ -107,6 +135,9 @@ type Scheduler struct {
 	mu sync.Mutex
 	// entries bildet die Schedule-ID auf ihre Cron-EntryID ab (für Reload).
 	entries map[uint]cron.EntryID
+	// system bildet die Art eines System-Schedules auf seine Cron-EntryID ab -
+	// daraus liest die Übersicht den echten nächsten Lauf.
+	system map[string]cron.EntryID
 	// updateCheck führt die Update-Prüfung aus (optional verdrahtet).
 	updateCheck func()
 	// subscriptionCheck führt das tägliche Subscription-Lebenszeichen aus
@@ -133,32 +164,16 @@ func (s *Scheduler) WithSubscriptionCheck(fn func()) *Scheduler {
 	return s
 }
 
-// cronSlogLogger verbindet robfig/cron mit dem strukturierten Log. Ohne ihn
-// würde die Recover-Kette ihre Panic-Meldung an einen Standard-Logger schicken
-// und damit an der Logdatei vorbei.
-type cronSlogLogger struct{}
-
-func (cronSlogLogger) Info(msg string, kv ...any) {
-	slog.Debug("cron: "+msg, kv...)
-}
-
-func (cronSlogLogger) Error(err error, msg string, kv ...any) {
-	slog.Error("cron: "+msg, append([]any{"error", err}, kv...)...)
-}
-
 func NewScheduler(groups *repositories.GroupRepository, settings *repositories.SettingsRepository, executor *Executor) *Scheduler {
 	return &Scheduler{
-		// Standard-Cron unterstützt 5-Feld-Ausdrücke und @every/@daily.
-		//
-		// cron.Recover ist zwingend: Ohne diese Kette würde ein Panic in einem
-		// geplanten Lauf (Backup, CVE-Scan, Alarm-Auswertung, Gruppen-Regel)
-		// den GESAMTEN Dienst beenden - robfig/cron startet jeden Lauf in einer
-		// eigenen Goroutine und fängt von sich aus nichts ab.
-		cron:     cron.New(cron.WithChain(cron.Recover(cronSlogLogger{}))),
+		// cron fängt Panics in jedem Lauf ab: Ein Fehler in Backup, CVE-Scan,
+		// Alarm-Auswertung oder Gruppen-Regel beendet nicht den Dienst.
+		cron:     cron.New(),
 		groups:   groups,
 		settings: settings,
 		executor: executor,
 		entries:  map[uint]cron.EntryID{},
+		system:   map[string]cron.EntryID{},
 	}
 }
 
@@ -174,8 +189,7 @@ func (s *Scheduler) Start() error {
 
 // Stop hält den Scheduler an (Graceful Shutdown).
 func (s *Scheduler) Stop() {
-	ctx := s.cron.Stop()
-	<-ctx.Done()
+	s.cron.Stop()
 }
 
 // Reload synchronisiert die registrierten Cron-Einträge mit dem aktuellen
@@ -189,6 +203,7 @@ func (s *Scheduler) Reload() error {
 		s.cron.Remove(e.ID)
 	}
 	s.entries = map[uint]cron.EntryID{}
+	s.system = map[string]cron.EntryID{}
 
 	// 1. Gruppen-Schedules (mit ihren Rules).
 	schedules, err := s.groups.FindAllSchedules()
@@ -219,87 +234,55 @@ func (s *Scheduler) Reload() error {
 		return err
 	}
 	if settings.BackupEnabled && settings.BackupIntervalHours > 0 {
-		if _, err := s.cron.AddFunc(backupCron(settings.BackupIntervalHours, settings.BackupTimeOrDefault()), func() {
+		s.addSystem(KindBackup, backupCron(settings.BackupIntervalHours, settings.BackupTimeOrDefault()), func() {
 			s.executor.RunBackup("scheduler")
-		}); err != nil {
-			slog.Error("backup schedule could not be registered", "error", err)
-		}
+		})
 		// Watchdog: holt überfällige Backups nach (siehe maybeCatchUpBackup).
-		if _, err := s.cron.AddFunc(backupWatchdogCron, s.maybeCatchUpBackup); err != nil {
-			slog.Error("backup watchdog could not be registered", "error", err)
-		}
+		s.addSystem("backup-watchdog", backupWatchdogCron, s.maybeCatchUpBackup)
 	}
 	if settings.LogRetentionDays > 0 {
-		if _, err := s.cron.AddFunc(cleanupCron, func() {
-			s.executor.RunCleanup("scheduler")
-		}); err != nil {
-			slog.Error("cleanup schedule could not be registered", "error", err)
-		}
+		s.addSystem(KindCleanup, cleanupCron, func() { s.executor.RunCleanup("scheduler") })
 	}
 	// CVE-Scan (Trivy) - täglicher Abgleich des Paketbestands.
 	if settings.CVEScanEnabled && settings.CVEScanCron != "" {
-		if _, err := s.cron.AddFunc(settings.CVEScanCron, func() {
-			s.executor.RunCVEScan("scheduler")
-		}); err != nil {
-			slog.Error("cve scan schedule could not be registered",
-				"expr", settings.CVEScanCron, "error", err)
-		}
+		s.addSystem(KindCVE, settings.CVEScanCron, func() { s.executor.RunCVEScan("scheduler") })
 	}
 	// Alarm-Auswertung (Monitoring & Trigger) - nur wenn verdrahtet.
 	if s.executor.HasAlerts() {
-		if _, err := s.cron.AddFunc(alertCheckCron, func() {
-			s.executor.RunAlertCheck("scheduler")
-		}); err != nil {
-			slog.Error("alert check schedule could not be registered", "error", err)
-		}
+		s.addSystem(KindAlert, alertCheckCron, func() { s.executor.RunAlertCheck("scheduler") })
 	}
 	// Trivy-Datenbank - stündlich abgleichen. Ohne Scanner ein No-op
 	// (RefreshCVEDB prüft das selbst).
-	if _, err := s.cron.AddFunc(cveDBUpdateCron, func() {
-		s.executor.RefreshCVEDB("scheduler")
-	}); err != nil {
-		slog.Error("cve db update schedule could not be registered",
-			"expr", cveDBUpdateCron, "error", err)
-	}
+	s.addSystem(KindCVEDB, cveDBUpdateCron, func() { s.executor.RefreshCVEDB("scheduler") })
 	// Fruehwarnung (OSV) - nur wenn verdrahtet.
 	if s.executor.HasAdvisories() {
-		if _, err := s.cron.AddFunc(advisoryPollCron, func() {
-			s.executor.RunAdvisoryPoll("scheduler")
-		}); err != nil {
-			slog.Error("advisory poll schedule could not be registered",
-				"expr", advisoryPollCron, "error", err)
-		}
-		if _, err := s.cron.AddFunc(advisoryMirrorCron, func() {
-			s.executor.RunAdvisoryMirror("scheduler")
-		}); err != nil {
-			slog.Error("advisory mirror schedule could not be registered",
-				"expr", advisoryMirrorCron, "error", err)
-		}
-		if _, err := s.cron.AddFunc(advisoryEnrichCron, func() {
-			s.executor.RunAdvisoryEnrich("scheduler")
-		}); err != nil {
-			slog.Error("advisory enrichment schedule could not be registered",
-				"expr", advisoryEnrichCron, "error", err)
-		}
+		s.addSystem("advisory-poll", advisoryPollCron, func() { s.executor.RunAdvisoryPoll("scheduler") })
+		s.addSystem("advisory-mirror", advisoryMirrorCron, func() { s.executor.RunAdvisoryMirror("scheduler") })
+		s.addSystem("advisory-enrich", advisoryEnrichCron, func() { s.executor.RunAdvisoryEnrich("scheduler") })
 	}
 	// Update-Prüfung - fragt fest alle 3 Stunden die GitLab-Releases ab.
 	// Bewusst NICHT über die Einstellungen schaltbar: fest im Kern verankert.
 	if s.updateCheck != nil {
-		if _, err := s.cron.AddFunc(updateCheckCron, s.updateCheck); err != nil {
-			slog.Error("update check schedule could not be registered",
-				"expr", updateCheckCron, "error", err)
-		}
+		s.addSystem(KindUpdate, updateCheckCron, s.updateCheck)
 	}
 	// Subscription-Lebenszeichen - täglich; ob überhaupt eine Subscription
 	// hinterlegt ist, entscheidet die Funktion selbst. Überfällige Prüfungen
 	// nach Neustarts holt CheckOnStartupIfStale nach.
 	if s.subscriptionCheck != nil {
-		if _, err := s.cron.AddFunc(subscriptionCheckCron, s.subscriptionCheck); err != nil {
-			slog.Error("subscription check schedule could not be registered",
-				"expr", subscriptionCheckCron, "error", err)
-		}
+		s.addSystem("subscription-check", subscriptionCheckCron, s.subscriptionCheck)
 	}
 	return nil
+}
+
+// addSystem registriert einen System-Schedule unter seiner Art. Erwartet den
+// gehaltenen Mutex (läuft aus Reload).
+func (s *Scheduler) addSystem(kind, spec string, run func()) {
+	id, err := s.cron.AddFunc(spec, run)
+	if err != nil {
+		slog.Error("system schedule could not be registered", "kind", kind, "expr", spec, "error", err)
+		return
+	}
+	s.system[kind] = id
 }
 
 // subscriptionCheckCron ist der feste Zeitplan des Subscription-
@@ -329,8 +312,9 @@ func backupCron(intervalHours int, at string) string {
 
 // backupWatchdogCron ist das Prüf-Intervall des Backup-Watchdogs - er darf
 // deutlich kürzer sein als das Backup-Intervall, weil maybeCatchUpBackup
-// selbst entscheidet, ob etwas zu tun ist.
-const backupWatchdogCron = "@every 10m"
+// selbst entscheidet, ob etwas zu tun ist. Fest an der Uhr wie die übrigen
+// Takte: Ein @every-Watchdog verhungerte beim häufigen Speichern genauso.
+const backupWatchdogCron = "*/10 * * * *"
 
 // backupOverdue meldet, ob das jüngste Backup älter als das Intervall ist
 // (bzw. noch gar keines existiert). backups kommt neueste-zuerst sortiert
@@ -407,11 +391,18 @@ func (s *Scheduler) Overview() ([]ScheduleOverview, error) {
 	}
 	// Kopie der Entry-Zuordnung unter Lock - Reload baut die Map parallel um.
 	s.mu.Lock()
-	entryFor := make(map[uint]cron.EntryID, len(s.entries))
-	for id, eid := range s.entries {
-		entryFor[id] = eid
-	}
+	entryFor := maps.Clone(s.entries)
+	systemFor := maps.Clone(s.system)
 	s.mu.Unlock()
+	// Der nächste Lauf eines System-Schedules kommt aus seinem Cron-Eintrag;
+	// nur ohne Eintrag (abgeschaltet, Cron noch nicht gestartet) wird er aus
+	// dem Ausdruck errechnet.
+	nextFor := func(kind, spec string) string {
+		if id, ok := systemFor[kind]; ok && nextByEntry[id] != "" {
+			return nextByEntry[id]
+		}
+		return s.nextForSpec(spec)
+	}
 
 	out := make([]ScheduleOverview, 0, len(schedules)+2)
 	for i := range schedules {
@@ -437,39 +428,39 @@ func (s *Scheduler) Overview() ([]ScheduleOverview, error) {
 		out = append(out, ScheduleOverview{
 			Kind: KindBackup, Name: "System-Backup", Type: domain.RuleTypeBackup,
 			CronExpr: spec,
-			NextRun:  s.nextForSpec(spec), Enabled: true,
+			NextRun:  nextFor(KindBackup, spec), Enabled: true,
 		})
 	}
 	if settings.LogRetentionDays > 0 {
 		out = append(out, ScheduleOverview{
 			Kind: KindCleanup, Name: "Log-Bereinigung", Type: domain.RuleTypeCleanup,
-			CronExpr: cleanupCron, NextRun: s.nextForSpec(cleanupCron), Enabled: true,
+			CronExpr: cleanupCron, NextRun: nextFor(KindCleanup, cleanupCron), Enabled: true,
 		})
 	}
 	if settings.CVEScanCron != "" {
 		out = append(out, ScheduleOverview{
 			Kind: KindCVE, Name: "CVE-Scan (Trivy)", Type: domain.RuleTypeCVEScan,
-			CronExpr: settings.CVEScanCron, NextRun: s.nextForSpec(settings.CVEScanCron),
+			CronExpr: settings.CVEScanCron, NextRun: nextFor(KindCVE, settings.CVEScanCron),
 			Enabled: settings.CVEScanEnabled,
 		})
 	}
 	if s.executor.HasAlerts() {
 		out = append(out, ScheduleOverview{
 			Kind: KindAlert, Name: "Alarm-Auswertung", Type: domain.RuleTypeAlertCheck,
-			CronExpr: alertCheckCron, NextRun: s.nextForSpec(alertCheckCron), Enabled: true,
+			CronExpr: alertCheckCron, NextRun: nextFor(KindAlert, alertCheckCron), Enabled: true,
 		})
 	}
 	if s.updateCheck != nil {
 		out = append(out, ScheduleOverview{
 			Kind: KindUpdate, Name: "Update-Prüfung", Type: KindUpdate,
-			CronExpr: updateCheckCron, NextRun: s.nextForSpec(updateCheckCron),
+			CronExpr: updateCheckCron, NextRun: nextFor(KindUpdate, updateCheckCron),
 			Enabled: true,
 		})
 	}
 	if s.executor.HasCVEScanner() {
 		out = append(out, ScheduleOverview{
 			Kind: KindCVEDB, Name: "CVE-Datenbank abgleichen", Type: KindCVEDB,
-			CronExpr: cveDBUpdateCron, NextRun: s.nextForSpec(cveDBUpdateCron),
+			CronExpr: cveDBUpdateCron, NextRun: nextFor(KindCVEDB, cveDBUpdateCron),
 			Enabled: true,
 		})
 	}
@@ -478,7 +469,7 @@ func (s *Scheduler) Overview() ([]ScheduleOverview, error) {
 
 // nextForSpec liefert den nächsten Lauf eines Cron-Ausdrucks als RFC3339.
 func (s *Scheduler) nextForSpec(spec string) string {
-	sched, err := cronParser.Parse(spec)
+	sched, err := cron.Parse(spec)
 	if err != nil {
 		return ""
 	}

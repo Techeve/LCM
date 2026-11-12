@@ -1,0 +1,18 @@
+{
+ "success": true,
+ "data": {
+  "packages": [
+   {
+    "id": "HyperBackup",
+    "name": "Hyper Backup",
+    "version": "4.1.1-4105"
+   },
+   {
+    "id": "ContainerManager",
+    "name": "Container Manager",
+    "version": "24.0.2-1543"
+   }
+  ],
+  "total": 2
+ }
+}

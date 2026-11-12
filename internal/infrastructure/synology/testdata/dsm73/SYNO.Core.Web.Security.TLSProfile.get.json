@@ -1,0 +1,4 @@
+{
+ "success": true,
+ "data": {"default-level":1,"services":{"ActiveProtectVault":{"current-level":0,"display-name":"ActiveProtect Vault","display-name-i18n":"SYNO.AEV.App.Instance:app:package_name"},"dsm":{"current-level":0,"display-name":"DSM Desktop Service","display-name-i18n":"common:web_desktop"},"smbftpd":{"current-level":0,"display-name":"FTPS","display-name-i18n":"ftp:ftps"}}}
+}

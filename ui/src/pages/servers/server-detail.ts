@@ -19,6 +19,7 @@ import { baseStyles } from '../../components/shared';
 import {
   activeJobUrl,
   hasConsole,
+  dsmUrl,
   isApiDevice,
   normaliseActiveJob,
   normaliseServers,
@@ -66,7 +67,7 @@ const TAB_MODULES: Record<ServerTab, () => Promise<unknown>> = {
   containers: () => import('./tab-containers'),
   apps: () => import('./tab-apps'),
   users: () => import('./tab-users'),
-  security: () => import('./tab-security'),
+  security: () => Promise.all([import('./tab-security'), import('./tab-device-security')]),
   'deep-scan': () => import('./tab-deep-scan'),
   storage: () => import('./tab-storage'),
   jobs: () => import('./tab-jobs'),
@@ -343,7 +344,7 @@ export class ServerDetail extends LitElement {
     const port = server.transport === 'agent' ? '' : `:${server.ssh_port}`;
     return html`<div>
       <div class="head">
-      <lcm-os os=${server.os_id || 'linux'} size="l"></lcm-os>
+      <lcm-os os=${server.os_id || 'linux'} product=${server.proxmox_type} model=${server.hardware_model} size="l"></lcm-os>
       <div class="title-row">
         <h2>${server.name}</h2>
         <lcm-status level=${STATUS_LEVEL[server.status]} label=${statusLabel(server.status)} variant="pill" insight-label=${t('servers.insights.show')}>
@@ -392,6 +393,9 @@ export class ServerDetail extends LitElement {
     const ssh = server.transport !== 'agent' && !device;
     const busy = this.#active.data !== null && this.#active.data !== undefined;
     return html`<div class="bar btn-group" role="group" aria-label=${t('serverDetail.more.label')}>
+      ${server.os_id === 'dsm'
+        ? html`<lcm-button icon="external" href=${dsmUrl(server)} target="_blank" title=${t('serverDetail.bar.openDsmHelp')}>${t('serverDetail.bar.openDsm')}</lcm-button>`
+        : nothing}
       ${auth.can('servers:console') && hasConsole(server)
         ? html`<lcm-button icon="terminal" @click=${() => router.setQuery({ terminal: 1 })}>${t('servers.bar.terminal.label')}</lcm-button>`
         : nothing}
@@ -525,7 +529,8 @@ export class ServerDetail extends LitElement {
       </lcm-empty-state>`;
     }
     if (!this._loaded.has(tab)) return html`<lcm-skeleton shape="block" lines="4" label=${t('servers.loading')}></lcm-skeleton>`;
-    const tag = unsafeStatic(TAB_TAGS[tab]);
+    // DSM und RouterOS bekommen einen eigenen Sicherheits-Reiter: Der für Linux liest Werkzeuge, CVE-Scan und Härtung.
+    const tag = unsafeStatic(tab === 'security' && isApiDevice(server) ? 'lcm-srv-device-security' : TAB_TAGS[tab]);
     return staticHtml`<${tag} .server=${server} ?can-write=${auth.can('servers:write')}></${tag}>`;
   }
 

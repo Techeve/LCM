@@ -139,6 +139,15 @@ rm -f /etc/sudoers.d/lcm-prof-<slug>
 groupdel lcm-prof-<slug>
 ```
 
+Profile mit dem Kontotyp „nur Dateizugriff“ bekommen zusätzlich einen Block in
+`/etc/ssh/sshd_config.d/70-lcm-profiles.conf` (`ForceCommand internal-sftp`),
+ihre Konten die Shell `nologin`:
+
+```sh
+rm -f /etc/ssh/sshd_config.d/70-lcm-profiles.conf
+systemctl reload sshd
+```
+
 ### Konto sperren oder deaktivieren
 
 Sperren setzt das Passwort auf gesperrt (`usermod -L` bzw. `passwd -l`),
@@ -209,8 +218,12 @@ Zwei Wirkungen, je nach Pin:
 
 - **Nicht entfernen** merkt LCM sich nur intern und lässt das Paket beim
   Aufräumen aus. Auf dem Server ändert sich nichts.
-- **Version einfrieren** setzt `apt-mark hold`. Beim Übernehmen hebt LCM
-  zuerst alle bestehenden Holds auf und setzt dann die aus den Pins.
+- **Version einfrieren** setzt `apt-mark hold`, bei dnf `versionlock` und bei
+  zypper eine Sperre. Was LCM selbst festhält, steht in
+  `/var/lib/lcm-managed/package-holds`. Nur diese Holds hebt LCM wieder auf,
+  wenn ein Pin wegfällt. Holds, die du selbst gesetzt hast, bleiben stehen,
+  auch wenn ein Pin auf dasselbe Paket zeigt. Beim ersten Abgleich nach dem
+  Update übernimmt LCM nur die Holds, die zu einem heutigen Pin passen.
 
 ```sh
 apt-mark showhold      # was ist eingefroren?

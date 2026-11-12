@@ -69,5 +69,6 @@ func SelfUpdateOnRestart(servers *repositories.ServerRepository, previous, curre
 		},
 		Note: "Mit diesem Lauf hat sich LCM selbst aktualisiert (" + previous + " → " + current +
 			") und dabei neu gestartet. Der Abbruch der Verbindung gehört dazu - das Update ist eingespielt.",
+		Outcome: hostPackageOutcome,
 	}
 }

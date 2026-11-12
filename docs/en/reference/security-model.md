@@ -89,7 +89,9 @@ The client IP is determined **once per request** (`middlewares.ResolveClientIP`)
 and shared by the IP allowlist, the login lockout, the access log and the
 security log. Behind a reverse proxy it comes from `X-Forwarded-For` - but only
 if `trust_proxy_header` is set **and** the peer is listed in `trusted_proxies`
-(`netfilter.ProxyTrust`). Without that, the address behind a proxy would be
+(`netfilter.ProxyTrust`). The header is read from the right: the first address
+that is not a trusted proxy counts. Whatever the client itself writes on the
+left does not count. Since 2.0 an empty list trusts no one. Without that, the address behind a proxy would be
 identical for **all** clients - five failed attempts by an attacker would have
 locked login for the entire installation; and without the list anyone reaching
 the port directly could choose their own address.
@@ -284,6 +286,14 @@ only if the host is restricted); a failure there only warns. Remote restricted
 servers are renewed by **Reconnect** with an admin login - a self-updating helper
 would be a free root path. Until then the status shows "helper outdated".
 
+**Source and checks.** The helper template is a shell script in
+`internal/core/services/lcm-helper.sh`, embedded into the binary;
+`lcm_helper.go` fills in the shared script parts at the `@@…@@` placeholders
+and derives the helper version from the template and those parts. The
+pipeline checks the rendered script with `sh -n` and, in the
+`helper-shellcheck` job, with shellcheck (POSIX sh, severity `warning` and
+above).
+
 **Proof instead of assumption.** After switching, LCM checks - as the
 restricted user - whether the helper and the system's package manager really
 are reachable via `sudo`. If not, full mode is restored within the same run and
@@ -344,11 +354,37 @@ audit entry. The list is deliberately **not** exhaustive: it catches the common
 cases, the responsibility for composing a profile stays with the operator.
 
 In **restricted mode** it is not LCM that writes the file but the
-`lcm-helper` - and it does not take the specification on trust: every line must
-be issued to its own profile group and must not carry `ALL` as the command,
-after which `visudo` runs. Without that check a compromised LCM could hand the
-restricted service user exactly the full rights back through a profile file
-that the mode is meant to prevent.
+`lcm-helper` - and it does not take the specification on trust. It accepts only
+exactly the line form LCM writes itself: its own profile group, one target user,
+only `NOPASSWD:` or `PASSWD:`, an absolute path or `sudoedit <file>`. It rejects
+`ALL` in any form, commas, wildcards, `#include` lines and every program from
+the same list of root-equivalent programs LCM checks when saving. After that
+`visudo` runs. Without that check a compromised LCM could hand the restricted
+service user exactly the full rights back through a profile file that the mode
+is meant to prevent. Confirmed root-equivalent rules are therefore dropped in
+restricted mode, with a note in the job log. Likewise `repo-add` accepts no
+source with `trusted`, `Trusted:` or `allow-insecure`.
+
+A Linux user with the profile "full root rights", on the other hand, gets root
+in restricted mode too. The mode limits LCM's service access, not the rights LCM
+deliberately gives a user. The interface says so when assigning it.
+
+**Paths that mean root.** File and directory rules may not open paths through
+which code can be started as root: `/etc/cron*`, `/var/spool/cron`,
+`/etc/systemd`, `/run/systemd`, `/etc/pam.d`, `/etc/ld.so.*`, `/etc/profile*`,
+`/etc/environment`, `/etc/sudo*`, `/etc/init.d`, `/etc/logrotate*`,
+`/etc/apt/apt.conf.d` and more, plus the service user's home. For read and write
+a path above them is blocked too, such as `/var`, because the grant reaches down
+recursively. Stored rules on paths blocked since then drop out visibly at the
+next sync. The helper checks the same list again.
+
+**Directory rights and SFTP in restricted mode.** The helper sets and removes
+the profiles' access rights through `profile-acl`: only for `lcm-prof-*` groups,
+only on checked paths and never through a symlink. Removal uses the group name
+and happens before `groupdel`, so no right stays attached to a group number that
+becomes free. SFTP accounts get the `nologin` shell here as well, and through
+`profile-sftp` the same block with `ForceCommand internal-sftp` as in full mode,
+checked with `sshd -t`.
 
 ## SSH hardening: proven, not claimed
 

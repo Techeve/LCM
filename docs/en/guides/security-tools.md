@@ -279,11 +279,13 @@ What LCM sets up:
   stack in the auth section is disabled - otherwise a password prompt would
   follow the code. All changes are marker-based and fully reversible on
   removal (backup: `/etc/pam.d/sshd.lcm-backup`).
-- An sshd drop-in (`55-lcm-2fa.conf`) sets
+- An sshd drop-in (`40-lcm-2fa.conf`, formerly `55-lcm-2fa.conf`) sets
   `AuthenticationMethods publickey,keyboard-interactive:pam` - deliberately
-  sorted alphabetically **before** the hardening drop-in (OpenSSH takes the
-  first value found per option). Pure password logins via SSH are gone after
-  this.
+  sorted alphabetically **before** the hardening drop-in and before
+  `50-redhat.conf` of RHEL 9 and its clones (OpenSSH takes the first value
+  found per option). Pure password logins via SSH are gone after this.
+- If the setup fails half-way, LCM rolls back the PAM change and the drop-in
+  right away.
 
 **Gentle rollout (`nullok`):** users **without** TOTP set up still get in
 with their key - nobody is locked out by enabling the feature. Enrollment is

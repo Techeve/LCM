@@ -129,7 +129,7 @@ func TestComputeForecast(t *testing.T) {
 	// Flacher Verlauf (kein Zuwachs) → Unlimited.
 	flat := make([]domain.StorageHistory, 10)
 	for i := range flat {
-		flat[i] = domain.StorageHistory{DiskTotalMB: 40000, DiskUsedMB: 10000}
+		flat[i] = domain.StorageHistory{Day: dayOf(i), DiskTotalMB: 40000, DiskUsedMB: 10000}
 	}
 	f = domain.ComputeForecast(flat, 40000)
 	if !f.Unlimited {
@@ -139,7 +139,7 @@ func TestComputeForecast(t *testing.T) {
 	// Sehr langsames Wachstum → Horizont > 365 Tage → Unlimited.
 	slow := make([]domain.StorageHistory, 10)
 	for i := range slow {
-		slow[i] = domain.StorageHistory{DiskTotalMB: 100000, DiskUsedMB: int64(10000 + i*1)}
+		slow[i] = domain.StorageHistory{Day: dayOf(i), DiskTotalMB: 100000, DiskUsedMB: int64(10000 + i*1)}
 	}
 	f = domain.ComputeForecast(slow, 100000)
 	if !f.Unlimited {
@@ -150,7 +150,7 @@ func TestComputeForecast(t *testing.T) {
 	// (last = 40000+9*1000=49000, remaining = 100000-49000=51000) → ~51 Tage.
 	fast := make([]domain.StorageHistory, 10)
 	for i := range fast {
-		fast[i] = domain.StorageHistory{DiskTotalMB: 100000, DiskUsedMB: int64(40000 + i*1000)}
+		fast[i] = domain.StorageHistory{Day: dayOf(i), DiskTotalMB: 100000, DiskUsedMB: int64(40000 + i*1000)}
 	}
 	f = domain.ComputeForecast(fast, 100000)
 	if f.Unlimited || f.InsufficientData {
@@ -163,7 +163,7 @@ func TestComputeForecast(t *testing.T) {
 	// Demo-Szenario db01: 30 Punkte, 310 MB/Tag, ~11410 MB verbleibend → ~37 Tage.
 	db01 := make([]domain.StorageHistory, 30)
 	for i := range db01 {
-		db01[i] = domain.StorageHistory{DiskTotalMB: 102400, DiskUsedMB: int64(82000 + i*310)}
+		db01[i] = domain.StorageHistory{Day: dayOf(i), DiskTotalMB: 102400, DiskUsedMB: int64(82000 + i*310)}
 	}
 	f = domain.ComputeForecast(db01, 102400)
 	if f.Unlimited || f.InsufficientData {
@@ -171,5 +171,39 @@ func TestComputeForecast(t *testing.T) {
 	}
 	if f.DaysRemaining < 30 || f.DaysRemaining > 45 {
 		t.Errorf("db01 DaysRemaining = %d, erwartet ~37", f.DaysRemaining)
+	}
+}
+
+// dayOf liefert den Tag i Tage nach dem 1. Juni 2026 im Format der Tabelle.
+func dayOf(i int) string {
+	return time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format(time.DateOnly)
+}
+
+// TestComputeForecastRechnetMitDemDatum: Ein Server war zehn Tage aus. Der
+// Zuwachs dieser Tage steht in der ersten Zeile danach - gezählt nach dem
+// Index sähe das aus wie ein Sprung an einem Tag, und die Prognose meldete die
+// Platte nach gut einem Monat voll statt nach knapp drei.
+func TestComputeForecastRechnetMitDemDatum(t *testing.T) {
+	var hist []domain.StorageHistory
+	for _, day := range []int{0, 1, 2, 3, 14, 15, 16} {
+		hist = append(hist, domain.StorageHistory{Day: dayOf(day), DiskTotalMB: 20000, DiskUsedMB: int64(10000 + 100*day)})
+	}
+
+	f := domain.ComputeForecast(hist, 20000)
+
+	// 100 MB je Tag, 20000 - 11600 = 8400 MB frei → 84 Tage.
+	if f.Unlimited || f.InsufficientData || f.DaysRemaining != 84 {
+		t.Errorf("Prognose = %+v, erwartet 84 Tage", f)
+	}
+}
+
+// TestComputeForecastOhneLesbarenTag: Zeilen ohne Datum zählen nicht mit.
+func TestComputeForecastOhneLesbarenTag(t *testing.T) {
+	hist := make([]domain.StorageHistory, 10)
+	for i := range hist {
+		hist[i] = domain.StorageHistory{DiskTotalMB: 100000, DiskUsedMB: int64(40000 + i*1000)}
+	}
+	if f := domain.ComputeForecast(hist, 100000); !f.InsufficientData {
+		t.Errorf("ohne Tag erwartet InsufficientData, bekam %+v", f)
 	}
 }

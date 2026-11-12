@@ -63,20 +63,101 @@ func checkRequest(c fiber.Ctx) error {
 	if inputcheck.LooksLikeSQL(c.Path()) {
 		return refuseSQL(c, "path")
 	}
-	for key, value := range c.Queries() {
+	if err := checkQuery(c); err != nil {
+		return err
+	}
+	switch bodyMediaType(c.Get(fiber.HeaderContentType)) {
+	case fiber.MIMEApplicationJSON:
+		return checkJSONBody(c)
+	case fiber.MIMEApplicationForm:
+		return checkFormBody(c)
+	case fiber.MIMEMultipartForm:
+		return checkMultipartBody(c)
+	case fiber.MIMEApplicationXML, fiber.MIMETextXML, fiber.MIMEApplicationMsgPack, fiber.MIMEApplicationCBOR:
+		// Fiber bindet auch diese Formate in dieselben Strukturen, die Prüfung
+		// liest sie nicht. LCM selbst schickt keines davon.
+		return errUnsupportedBody
+	}
+	return nil
+}
+
+// bodyMediaType liest den Medientyp so, wie Fiber ihn zum Binden liest: ohne
+// Groß- und Kleinschreibung, ohne Parameter, ein Herstellertyp mit Suffix
+// (application/vnd.api+json) als sein Grundtyp. Ein Vergleich nur auf
+// „application/json" ließ „Application/JSON" ungeprüft durch, gebunden wurde
+// der Rumpf trotzdem.
+func bodyMediaType(contentType string) string {
+	mediaType, _, _ := strings.Cut(strings.ToLower(contentType), ";")
+	mediaType = strings.TrimSpace(mediaType)
+	plus := strings.LastIndexByte(mediaType, '+')
+	slash := strings.IndexByte(mediaType, '/')
+	if plus > slash && slash >= 0 {
+		mediaType = mediaType[:slash+1] + mediaType[plus+1:]
+	}
+	return mediaType
+}
+
+// restoreUploadPath nimmt die Prüfung der Multipart-Felder aus: Das Archiv
+// ist groß und wird gestreamt, sein einziges Textfeld ist die Passphrase.
+const restoreUploadPath = "/api/v1/system/backups/restore-upload"
+
+// checkMultipartBody prüft die Textfelder eines Multipart-Rumpfs, Dateien
+// nicht. Auch ihn bindet c.Bind().Body in dieselben Strukturen wie JSON.
+func checkMultipartBody(c fiber.Ctx) error {
+	if strings.EqualFold(strings.TrimRight(c.Path(), "/"), restoreUploadPath) {
+		return nil
+	}
+	form, err := c.MultipartForm()
+	if err != nil {
+		return nil // unlesbar: Das Binden im Handler scheitert dann selbst
+	}
+	for key, values := range form.Value {
+		for _, value := range values {
+			if err := checkField(c, key, value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkQuery prüft JEDES Vorkommen eines Parameters. c.Queries() liefert je
+// Name nur einen Wert; liest ein Handler einen anderen, käme
+// ?q=harmlos&q=... ungeprüft bei ihm an (HTTP Parameter Pollution).
+func checkQuery(c fiber.Ctx) error {
+	for k, v := range c.RequestCtx().QueryArgs().All() {
+		key, value := string(k), string(v)
 		if bound, ok := queryNumbers[key]; ok {
 			if err := checkQueryNumber(key, value, bound); err != nil {
 				return err
 			}
 		}
-		if !sqlExemptKeys[key] && inputcheck.LooksLikeSQL(value) {
-			return refuseSQL(c, key)
+		if err := checkField(c, key, value); err != nil {
+			return err
 		}
 	}
-	if !strings.HasPrefix(c.Get(fiber.HeaderContentType), fiber.MIMEApplicationJSON) {
-		return nil
+	return nil
+}
+
+// checkFormBody prüft jedes Feld eines Formular-Rumpfs. c.Bind().Body bindet
+// ihn wie JSON in dieselben Strukturen - ohne diese Prüfung ginge er an ihr
+// vorbei.
+func checkFormBody(c fiber.Ctx) error {
+	for k, v := range c.Request().PostArgs().All() {
+		if err := checkField(c, string(k), string(v)); err != nil {
+			return err
+		}
 	}
-	return checkJSONBody(c)
+	return nil
+}
+
+// checkField lehnt einen SQL-artigen Wert ab, außer im Feld steht
+// erwartbar Freitext (sqlExemptKeys).
+func checkField(c fiber.Ctx, key, value string) error {
+	if !sqlExemptKeys[key] && inputcheck.LooksLikeSQL(value) {
+		return refuseSQL(c, key)
+	}
+	return nil
 }
 
 func checkQueryNumber(key, value string, bound numberRange) error {

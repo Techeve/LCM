@@ -82,6 +82,10 @@ Container-Veröffentlichung (`127.0.0.1:8080:80` statt `8080:80`).
 - **ufw** - deklarativer Neuaufbau (`ufw --force reset` → Regeln → enable).
   Eine reine IPv4-/IPv6-Freigabe wird über die Zieladresse `0.0.0.0/0` bzw.
   `::/0` ausgedrückt (ufw-Eigenheit); ohne Angabe gilt die Regel für beide.
+  Steht in `/etc/default/ufw` `IPV6=no`, lehnt ufw reine IPv6-Freigaben ab;
+  LCM lässt sie dann aus (Hinweis in der Job-Ausgabe) und setzt die
+  IPv4-Teile. Ist SSH nur für IPv6-Quellen freigegeben, bricht LCM vor dem
+  Neuaufbau ab, statt SSH auszusperren.
 - **firewalld** - LCM verwaltet die **Default-Zone deklarativ**: alle Ports
   und Rich-Rules der Zone werden neu gesetzt (Freigaben mit Familie oder
   Quell-Einschränkung als Rich-Rules). Zonen-*Services* (z. B. der vorkonfigurierte ssh-Service)

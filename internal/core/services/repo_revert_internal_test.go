@@ -39,7 +39,7 @@ func TestRueckstellungRolltZurueck(t *testing.T) {
 		aptUpdateProbe,         // Probe danach
 		rollbackSourcesScript,  // Rückrollen
 		"exit 1",               // und als Fehler melden
-		`sed -i "s|$u|http://${u#https://}|g" "$f"`, // nur das Schema tauschen
+		httpURLSed,             // nur das Schema tauschen, an Wortgrenzen
 	} {
 		if !strings.Contains(script, part) {
 			t.Errorf("im Skript fehlt %q:\n%s", part, script)

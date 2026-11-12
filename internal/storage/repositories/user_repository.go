@@ -57,6 +57,11 @@ func (r *UserRepository) Delete(id uint) error {
 		if err := tx.Exec("DELETE FROM user_roles WHERE user_id = ?", id).Error; err != nil {
 			return err
 		}
+		// Betreute Gruppen: Die Gruppe bleibt, nur der Benutzer fällt als
+		// Verwalter heraus. Sonst hält die Zuordnung ihren Fremdschlüssel.
+		if err := tx.Exec("DELETE FROM server_group_managers WHERE user_id = ?", id).Error; err != nil {
+			return err
+		}
 		res := tx.Delete(&domain.User{}, id)
 		if res.Error != nil {
 			return res.Error

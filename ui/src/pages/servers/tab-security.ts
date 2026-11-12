@@ -13,6 +13,7 @@ import { baseStyles } from '../../components/shared';
 import { IP_ALLOWLISTS_URL, normalizeAllowlists, type IpAllowlist } from '../../api/groups';
 import { serverPath, serversApi } from '../../api/servers';
 import { vulnerabilitiesUrl } from '../../api/server-data';
+import { canPortScan } from '../../api/servers-portscan';
 import {
   SECURITY_TOOLS,
   filterVulns,
@@ -33,6 +34,7 @@ import { LiveData } from '../../lib/live-data';
 import { router } from '../../lib/router';
 import '../security/sec-cell';
 import './sec-harden';
+import './sec-portscan';
 import './sec-tool';
 import './srv-action';
 import './set-action';
@@ -191,7 +193,9 @@ export class SrvSecurity extends SrvTab {
   }
 
   #renderSecurity(s: ServerSecurity): TemplateResult {
-    return html`${this.#renderProtection(s)} ${this.#renderTwoFactor(s)} ${this.#renderTools(s)}
+    return html`${this.#renderProtection(s)}
+      ${canPortScan(this.server) ? html`<lcm-srv-portscan server-id=${this.server.id} server-name=${this.server.name} ?can-write=${this.canWrite}></lcm-srv-portscan>` : nothing}
+      ${this.#renderTwoFactor(s)} ${this.#renderTools(s)}
       <lcm-srv-harden server-id=${this.server.id} server-name=${this.server.name} ?has-acl=${s.hasAcl} ?acl-usable=${s.aclUsable} ?can-write=${this.canWrite}></lcm-srv-harden>
       ${this.#renderInstall(s)}`;
   }

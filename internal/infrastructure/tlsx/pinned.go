@@ -1,12 +1,11 @@
 package tlsx
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 )
 
@@ -33,29 +32,26 @@ func IsNotTLS(err error) bool {
 // keine Antwort: Wir vergleichen, ob die Gegenstelle exakt das Zertifikat
 // vorzeigt, das hier auf der Platte liegt. Findet sich keins, bleibt nur die
 // Erreichbarkeit - das ist ehrlicher als ein erfundener Vertrauensanker.
+//
+// Verglichen werden die Bytes, keine Kette: Eine Kettenpruefung gegen die
+// Datei nahm jedes Zertifikat an, das die mitgelieferte CA ausgestellt hat,
+// und lehnte das richtige ab, sobald es abgelaufen war. Ob der Dienst lebt,
+// haengt aber nicht an der Laufzeit seines Zertifikats.
 func PinnedTo(dataDir string) *tls.Config {
-	pem, err := os.ReadFile(filepath.Join(dataDir, CertFileName))
+	want, err := firstCertificate(filepath.Join(dataDir, CertFileName))
 	if err != nil {
 		return &tls.Config{InsecureSkipVerify: true} //nolint:gosec // siehe Kommentar: nur Loopback, kein Anker vorhanden
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return &tls.Config{InsecureSkipVerify: true} //nolint:gosec // unlesbares Zertifikat, siehe oben
-	}
 	return &tls.Config{
-		// Die Namenspruefung uebernimmt VerifyPeerCertificate; ohne das
-		// scheitert schon der Handshake an der Adresse 127.0.0.1.
+		// Die Pruefung uebernimmt VerifyPeerCertificate; ohne das scheitert
+		// schon der Handshake an der Adresse 127.0.0.1.
 		InsecureSkipVerify: true, //nolint:gosec // ersetzt durch die Pinnung unten
 		VerifyPeerCertificate: func(raw [][]byte, _ [][]*x509.Certificate) error {
 			if len(raw) == 0 {
 				return errors.New("die Gegenstelle zeigt kein Zertifikat vor")
 			}
-			cert, err := x509.ParseCertificate(raw[0])
-			if err != nil {
-				return err
-			}
-			if _, err := cert.Verify(x509.VerifyOptions{Roots: pool}); err != nil {
-				return fmt.Errorf("das vorgezeigte Zertifikat ist nicht das aus dem Datenverzeichnis: %w", err)
+			if !bytes.Equal(raw[0], want) {
+				return errors.New("das vorgezeigte Zertifikat ist nicht das aus dem Datenverzeichnis")
 			}
 			return nil
 		},

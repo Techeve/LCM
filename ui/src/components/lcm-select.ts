@@ -10,7 +10,9 @@ export interface Option {
 }
 
 /**
- * <lcm-select label="Gruppe" .options=${[…]} .value=${…} width="m"> – natives Auswahlfeld im LCM-Look. Meldet `lcm-change` { value }.
+ * <lcm-select label="Gruppe" .options=${[…]} .value=${…} width="m"> – natives Auswahlfeld im LCM-Look. Meldet `lcm-change` { value }
+ * mit der gewählten Option, ändert `value` aber nicht selbst: Den Wert setzt der Aufrufer. Übernimmt er ihn nicht,
+ * springt die Anzeige auf `value` zurück.
  * `width` (xs, s, m, l, full; Vorgabe m) richtet die Breite nach den Einträgen, siehe `FieldWidth`.
  */
 export class LcmSelect extends LitElement {
@@ -65,6 +67,12 @@ export class LcmSelect extends LitElement {
     this.disabled = false;
   }
 
+  /** Hält die native Auswahl auf `value`, auch wenn der Aufrufer eine Wahl nicht übernommen hat. */
+  override updated(): void {
+    const select = this.renderRoot.querySelector('select');
+    if (select && select.value !== this.value && this.options.some((o) => o.value === this.value)) select.value = this.value;
+  }
+
   override render() {
     return html`<div class="field">
       <label for=${this.selectId}>${this.label}</label>
@@ -73,8 +81,8 @@ export class LcmSelect extends LitElement {
           id=${this.selectId}
           ?disabled=${this.disabled}
           @change=${(e: Event) => {
-            this.value = (e.target as HTMLSelectElement).value;
-            emit(this, 'lcm-change', { value: this.value });
+            emit(this, 'lcm-change', { value: (e.target as HTMLSelectElement).value });
+            this.requestUpdate();
           }}
         >
           ${this.options.map((o) => html`<option value=${o.value} ?selected=${o.value === this.value}>${o.label}</option>`)}

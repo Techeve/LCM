@@ -110,6 +110,8 @@ export interface AgentResult {
   server: JoinedServer;
   /** Wird genau einmal ausgeliefert; LCM speichert nur einen Hash. */
   token: string;
+  /** Pin des Zertifikatsschlüssels für curl --pinnedpubkey, leer ohne TLS. */
+  download_pin?: string;
 }
 
 /** Liest den Host-Schlüssel des Zielservers, ohne Zugangsdaten zu senden. */

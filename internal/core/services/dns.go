@@ -15,7 +15,7 @@ import (
 
 // DNS-Konfiguration & -Verfügbarkeitstest. Aufbau bewusst analog zum APT-Cache
 // (aptproxy.go): ein Inline-Skript für den Voll-Sudo-Modus, ein validierendes
-// Helper-Unterkommando (lcm_helper.go, dns()) für den eingeschränkten Modus,
+// Helper-Unterkommando (lcm-helper.sh, dns()) für den eingeschränkten Modus,
 // jeweils mit Auflösungstest + Rollback. Der Test selbst ist rein lesend.
 
 var (
@@ -28,12 +28,6 @@ var (
 // reDNSDomain lässt nur unbedenkliche Domain-Zeichen zu (die Domains stammen aus
 // den Einstellungen, werden aber wörtlich in ein Server-Skript eingesetzt).
 var reDNSDomain = regexp.MustCompile(`^[A-Za-z0-9._-]{1,253}$`)
-
-// dnsResolvConf/dnsResolvedDropin sind die von LCM verwalteten Pfade.
-const (
-	dnsResolvConf     = "/etc/resolv.conf"
-	dnsResolvedDropin = "/etc/systemd/resolved.conf.d/lcm-dns.conf"
-)
 
 // validDNSServers validiert die gewünschten Nameserver: höchstens MaxDNSServers,
 // jeder eine gültige IPv4/IPv6-Adresse. Liefert die bereinigte Liste zurück.
@@ -94,9 +88,9 @@ func sanitizeDNSDomains(domains []string) []string {
 	return out
 }
 
-// dnsApplyScript schreibt die Nameserver auf den Server (systemd-resolved-Drop-in
-// wenn aktiv, sonst /etc/resolv.conf - dort liest glibc nur die ersten drei,
-// die Oberfläche sagt das dazu) und verifiziert die Auflösung mit
+// dnsApplyScript setzt die Nameserver wirksam (dnsShellFuncs: Drop-in für
+// systemd-resolved oder /etc/resolv.conf, dazu Schutz vor dem Überschreiben
+// durch Proxmox und DHCP-Clients) und verifiziert die Auflösung mit
 // testDomain; scheitert der Test, wird die Änderung zurückgerollt (exit 1).
 // Leere Server-Liste = Rückbau der LCM-Verwaltung (dnsUnmanageScript).
 func dnsApplyScript(servers []string, testDomain string) string {
@@ -106,66 +100,36 @@ func dnsApplyScript(servers []string, testDomain string) string {
 	if testDomain == "" {
 		testDomain = "deb.debian.org"
 	}
-	var nsLines strings.Builder
-	for _, ip := range servers {
-		nsLines.WriteString("nameserver " + ip + "\n")
-	}
-	return fmt.Sprintf(`resolve_ok() { getent hosts "$1" >/dev/null 2>&1 || nslookup "$1" >/dev/null 2>&1; }
-if command -v resolvectl >/dev/null 2>&1 && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-  install -d -m 755 /etc/systemd/resolved.conf.d
-  [ -f %[1]s ] && cp -f %[1]s %[1]s.lcm-bak
-  printf '[Resolve]\nDNS=%[2]s\n' > %[1]s
-  systemctl restart systemd-resolved 2>/dev/null || true
-  if resolve_ok '%[4]s'; then
-    echo 'LCM: DNS gesetzt (systemd-resolved): %[2]s'
-  else
-    rm -f %[1]s; [ -f %[1]s.lcm-bak ] && mv %[1]s.lcm-bak %[1]s
-    systemctl restart systemd-resolved 2>/dev/null || true
-    echo 'LCM: DNS-Test nach dem Setzen fehlgeschlagen - zurueckgerollt'; exit 1
-  fi
-else
-  [ -e %[3]s.lcm-bak ] || cp -f %[3]s %[3]s.lcm-bak 2>/dev/null || true
-  [ -L %[3]s ] && rm -f %[3]s
-  printf '%[5]s' > %[3]s
-  if resolve_ok '%[4]s'; then
-    echo 'LCM: DNS gesetzt (/etc/resolv.conf): %[2]s'
-  else
-    [ -e %[3]s.lcm-bak ] && cp -f %[3]s.lcm-bak %[3]s
-    echo 'LCM: DNS-Test nach dem Setzen fehlgeschlagen - zurueckgerollt'; exit 1
-  fi
-fi`,
-		dnsResolvedDropin,          // %[1]s
-		strings.Join(servers, " "), // %[2]s (resolved DNS= und Meldung)
-		dnsResolvConf,              // %[3]s
-		testDomain,                 // %[4]s
-		nsLines.String(),           // %[5]s (nameserver-Zeilen, printf-Format)
-	)
+	return dnsShellFuncs + "\nlcm_dns_set " + shellQuote(strings.Join(servers, " ")) + " " +
+		shellQuote(testDomain) + " || exit 1"
 }
 
-// dnsUnmanageScript entfernt die LCM-DNS-Verwaltung wieder: Drop-in weg +
-// systemd-resolved neu starten, bzw. das resolv.conf-Backup zurückspielen.
+// dnsUnmanageScript entfernt die LCM-DNS-Verwaltung wieder und stellt den
+// Zustand vor der ersten Verwaltung her.
 func dnsUnmanageScript() string {
-	return fmt.Sprintf(`if command -v resolvectl >/dev/null 2>&1 && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-  rm -f %[1]s %[1]s.lcm-bak
-  systemctl restart systemd-resolved 2>/dev/null || true
-  echo 'LCM: DNS-Verwaltung entfernt (systemd-resolved)'
-else
-  if [ -e %[2]s.lcm-bak ]; then mv -f %[2]s.lcm-bak %[2]s; fi
-  echo 'LCM: DNS-Verwaltung entfernt (/etc/resolv.conf)'
-fi`, dnsResolvedDropin, dnsResolvConf)
+	return dnsShellFuncs + "\nlcm_dns_unset"
 }
 
-// dnsCurrentScript liest die tatsächlich aktiven Resolver: bevorzugt die echten
-// Upstreams von systemd-resolved (resolvectl), sonst die nameserver aus
-// /etc/resolv.conf (ohne den 127.0.0.53-Stub). Ausgabe: IPs, leerzeichengetrennt.
+// dnsCurrentScript liest die Resolver, die Anwendungen tatsächlich fragen.
+// Maßgeblich ist /etc/resolv.conf: Steht dort der Stub von systemd-resolved,
+// zählen dessen Server, bei Domains=~. nur die globalen. Sonst gelten die
+// nameserver-Zeilen der Datei, davon liest glibc höchstens drei. Wer nur
+// resolvectl fragt, sieht Server, die keine Anwendung erreicht, sobald die
+// Datei an systemd-resolved vorbeiführt. Ausgabe: IPs, leerzeichengetrennt.
 func dnsCurrentScript() string {
-	return `out=""
-if command -v resolvectl >/dev/null 2>&1; then
-  out=$(resolvectl dns 2>/dev/null | sed 's/^[^:]*: *//' | tr ' ' '\n' | grep -E '^[0-9a-fA-F.:]+$' | sort -u | tr '\n' ' ')
-fi
-if [ -z "$(printf %s "$out" | tr -d ' ')" ]; then
-  out=$(awk '/^nameserver/ && $2 != "127.0.0.53" {print $2}' /etc/resolv.conf 2>/dev/null | sort -u | tr '\n' ' ')
-fi
+	return `ip_only() { tr ' ' '\n' | sed 's/[#%].*//' | grep -E '^[0-9a-fA-F.:]+$' | awk '!seen[$0]++' | tr '\n' ' '; }
+ns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | tr '\n' ' ')
+out=""
+case " $ns " in
+  *" 127.0.0.53 "*|*" 127.0.0.54 "*)
+    if command -v resolvectl >/dev/null 2>&1; then
+      if resolvectl domain 2>/dev/null | grep -E '^Global:' | grep -q '~\.'; then
+        out=$(resolvectl dns 2>/dev/null | sed -n 's/^Global: *//p' | ip_only)
+      fi
+      [ -n "$(printf %s "$out" | tr -d ' ')" ] || out=$(resolvectl dns 2>/dev/null | sed 's/^[^:]*: *//' | ip_only)
+    fi ;;
+  *) out=$(printf %s "$ns" | ip_only | awk '{print $1, $2, $3}') ;;
+esac
 printf '%s\n' "$out"`
 }
 

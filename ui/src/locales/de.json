@@ -1516,6 +1516,7 @@
         "deepScan": "Tiefenprüfung mit Befunden",
         "cveDbStale": "CVE-Datenbank veraltet",
         "backupStale": "System-Backup überfällig",
+        "tlsCertExpiring": "TLS-Zertifikat läuft bald ab",
         "advisory": "Frühwarnung: neue Befunde"
       },
       "hints": {
@@ -1531,6 +1532,7 @@
         "deepScan": "Löst aus, wenn die letzte Tiefenprüfung eines Servers Warnungen meldet oder einen Neustart für den Kernel verlangt.",
         "cveDbStale": "Löst aus, wenn die Schwachstellen-Datenbank älter als 48 Stunden ist. Eine alte Datenbank meldet keinen Fehler, sie findet nur Neues nicht: Das sieht aus wie „alles sicher“.",
         "backupStale": "Löst aus, wenn automatische Backups an sind, das jüngste aber älter als zwei Intervalle ist oder es noch keines gibt. Gemessen wird das Ergebnis, nicht einzelne Fehlversuche.",
+        "tlsCertExpiring": "Löst ab 60 Tagen vor Ablauf des LCM-Zertifikats aus, wenn LCM es nicht selbst erneuert: bei einem eigenen Zertifikat oder solange Agenten nur das alte Zertifikat kennen. Die Meldung nennt diese Agenten. Ein Jahr vor dem Ende der LCM-CA löst er ebenfalls aus.",
         "advisory": "Meldet offene Frühwarn-Befunde ab der gewählten Schwere. Bösartige Pakete lösen immer aus. Befunde, die du unter Sicherheit zur Kenntnis nimmst, lösen danach nicht mehr aus."
       },
       "severity": {
@@ -1762,6 +1764,7 @@
       "totp_setup_required": "Für deine Rolle ist Zwei-Faktor-Authentifizierung Pflicht – richte sie zuerst ein"
     },
     "backup": {
+      "database_path": "Das Archiv legt die Datenbank außerhalb des Datenverzeichnisses ab. LCM spielt es deshalb nicht ein.",
       "failed": "Das Backup ist fehlgeschlagen",
       "incomplete": "Das Archiv enthält keine Datenbank",
       "invalid_archive": "Das ist kein gültiges LCM-Backup-Archiv",
@@ -1795,7 +1798,7 @@
     },
     "command": {
       "empty": "Die Regel braucht ein Kommando",
-      "meta_characters": "Shell-Sonderzeichen sind im Kommando nicht erlaubt",
+      "meta_characters": "Im Kommando sind nur Buchstaben ohne Umlaute, Ziffern, Leerzeichen und ._+@%:=~^/- erlaubt",
       "needs_arguments": "Dieses Kommando braucht feste Argumente – ohne sie erlaubt es jede Unteraktion",
       "relative": "Das Kommando muss mit einem absoluten Pfad beginnen",
       "wildcard": "Platzhalter sind im Kommando nicht erlaubt"
@@ -1922,12 +1925,15 @@
     },
     "path": {
       "invalid_mode": "Ungültiger Modus – erlaubt sind read, readwrite und deny",
-      "meta_characters": "Shell-Sonderzeichen und Platzhalter sind im Pfad nicht erlaubt",
+      "meta_characters": "Im Pfad sind nur Buchstaben ohne Umlaute, Ziffern und ._+@%:=~^/- erlaubt",
+      "parent_reference": "Der Pfad darf kein „..“ enthalten",
       "protected": "Dieser Pfad ist gesperrt – an ihm hängt der Betrieb des Systems oder der Zugang von LCM",
-      "relative": "Der Pfad muss absolut sein"
+      "relative": "Der Pfad muss absolut sein",
+      "root_equivalent": "Zugriff auf diesen Pfad bedeutet Root-Rechte – was dort liegt, führt das System als root aus (cron, systemd, PAM, Login-Skripte, sudo), oder es ist der Zugang von LCM"
     },
     "profile": {
       "builtin": "Mitgelieferte Profile lassen sich nicht ändern oder löschen – lege für eigene Regeln ein neues an",
+      "in_use": "Das Profil ist noch zugewiesen – als Standardprofil eines Benutzers oder an einer Server- oder Gruppen-Zuweisung. Löse zuerst diese Zuweisungen",
       "invalid_slug": "Ungültiger Kurzname – erlaubt sind Kleinbuchstaben, Ziffern und Bindestrich, höchstens {limit} Zeichen",
       "name_required": "Das Profil braucht einen Namen",
       "name_taken": "Dieser Name ist schon vergeben",
@@ -1945,6 +1951,7 @@
       "invalid_filter": "Ungültiger Filterwert für {filter}",
       "invalid_id": "Ungültige ID",
       "length_required": "Die Anfrage braucht eine Längenangabe (Content-Length)",
+      "unsupported_media_type": "Die Schnittstelle nimmt nur JSON, Formulare und Multipart an",
       "missing_fields": "Pflichtfelder fehlen: {fields}",
       "rate_limited": "Zu viele Anfragen – bitte später erneut versuchen",
       "unknown_endpoint": "Unbekannter API-Endpunkt"
@@ -2012,7 +2019,9 @@
       "routeros_unsupported": "Für MikroTik RouterOS nicht verfügbar",
       "unknown_capability": "Unbekannte Kategorie der Betriebsfähigkeit",
       "unknown_repair_action": "Unbekannte Reparatur-Aktion",
-      "volume_not_monitorable": "Dieses Volume lässt sich nicht überwachen"
+      "volume_not_monitorable": "Dieses Volume lässt sich nicht überwachen",
+      "portscan_no_target": "Für diesen Server gibt es keine Adresse, die LCM prüfen kann - etwa der LCM-Host selbst oder ein Agent-Server ohne Adresse.",
+      "not_dsm": "Nur für Synology DSM verfügbar"
     },
     "server_user": {
       "invalid_username": "Ungültiger Benutzername",
@@ -2100,6 +2109,10 @@
     },
     "system": {
       "maintenance": "LCM wird gerade aktualisiert. Bis zum Neustart sind alle Aktionen gesperrt."
+    },
+    "dsm": {
+      "not_settable": "LCM setzt diese DSM-Einstellung nicht.",
+      "firewall_not_settable": "LCM schaltet die DSM-Firewall nicht. Ihre Regeln bleiben Sache von DSM."
     }
   },
   "insights": {
@@ -2224,7 +2237,34 @@
       "scanner_unavailable": "CVE-Scanner nicht verfügbar",
       "unknown": "Ursache unbekannt - Details stehen in der Job-Ausgabe"
     },
-    "jobSuffix": " - Job: {job}"
+    "jobSuffix": " - Job: {job}",
+    "dsmFirewallOff": "DSM-Firewall ist ausgeschaltet - einschalten unter Systemsteuerung → Sicherheit → Firewall",
+    "dsmFirewallNoRules": "DSM-Firewall ist an, das aktive Profil „{profile}“ hat aber keine Regeln und lässt alles durch - Regeln anlegen unter Systemsteuerung → Sicherheit → Firewall",
+    "dsmFirewallNoDeny": "DSM-Firewall ist an, im aktiven Profil „{profile}“ verweigert aber keine Regel den übrigen Verkehr - am Ende eine Regel „alles verweigern“ anlegen oder für „Wenn keine Regel zutrifft“ den Zugriff verweigern, unter Systemsteuerung → Sicherheit → Firewall",
+    "dsmSkipIpCheck": "DSM verzichtet auf die IP-Prüfung der Sitzung - ausschalten unter Systemsteuerung → Sicherheit → Sicherheit („Browser-Kompatibilität durch Verzicht auf IP-Prüfung verbessern“)",
+    "dsmCsrfOff": "DSM-Schutz vor Cross-Site-Request-Forgery ist aus - einschalten unter Systemsteuerung → Sicherheit → Sicherheit",
+    "dsmCspOff": "DSM sendet keine HTTP Content Security Policy - einschalten unter Systemsteuerung → Sicherheit → Sicherheit",
+    "dsmIframeAllowed": "DSM lässt sich in fremde Seiten (iFrame) einbetten - „Einbetten in einen iFrame verhindern“ einschalten unter Systemsteuerung → Sicherheit → Sicherheit",
+    "dsmSessionsKept": "DSM behält Anmeldesitzungen über einen Neustart - „Sitzungen beim Neustart löschen“ einschalten unter Systemsteuerung → Sicherheit → Sicherheit",
+    "dsmAutoBlockOff": "DSM-Funktion „automatisch blockieren“ ist aus - einschalten (höchstens 10 Versuche in 5 Minuten) unter Systemsteuerung → Sicherheit → Schutz",
+    "dsmAutoBlockWeak": "DSM blockiert erst nach {attempts} Fehlversuchen in {minutes} Minuten - höchstens 10 Versuche in 5 Minuten einstellen unter Systemsteuerung → Sicherheit → Schutz",
+    "dsmDosOff": "DSM-DoS-Schutz ist aus - ist das Gerät aus dem Internet erreichbar, einschalten unter Systemsteuerung → Sicherheit → Schutz",
+    "dsmTlsProfile": "DSM-TLS/SSL-Profilstufe ist „{level}“ statt „moderne Kompatibilität“ - umstellen unter Systemsteuerung → Sicherheit → Erweitert",
+    "dsmSpectreOff": "DSM-Schutz vor Spectre und Meltdown ist aus - einschalten unter Systemsteuerung → Sicherheit → Erweitert",
+    "dsmChecksUnknown": {
+      "one": "1 DSM-Sicherheitseinstellung ließ sich nicht lesen - die Rohantwort steht im Job-Protokoll der Erfassung",
+      "other": "{count} DSM-Sicherheitseinstellungen ließen sich nicht lesen - die Rohantwort steht im Job-Protokoll der Erfassung"
+    },
+    "dsmPoolDegraded": "Speicherpool {name} läuft ohne die vorgesehene Redundanz - Laufwerke prüfen und im Speicher-Manager reparieren",
+    "dsmPoolCrashed": "Speicherpool {name} ist ausgefallen - die Daten darauf sind gefährdet (Speicher-Manager)",
+    "dsmPoolRepairing": "Speicherpool {name} wird repariert - bis zum Abschluss ohne volle Redundanz",
+    "dsmVolumeDegraded": "Volume {name} ist beeinträchtigt - Zustand des Speicherpools darunter prüfen",
+    "dsmVolumeCrashed": "Volume {name} ist abgestürzt - Daten sichern und im Speicher-Manager prüfen",
+    "dsmVolumeReadOnly": "Volume {name} ist nur lesbar eingehängt - DSM hat es nach einem Fehler abgesichert",
+    "dsmDiskFailed": "Laufwerk {name} ist ausgefallen (DSM: {rawState}) - austauschen (Speicher-Manager → HDD/SSD)",
+    "dsmDiskSmart": "Laufwerk {name}: SMART meldet ein Problem - Austausch vorbereiten (Speicher-Manager → HDD/SSD)",
+    "dsmDiskBadSectors": "Laufwerk {name}: defekte Sektoren über der Warnschwelle - Austausch vorbereiten",
+    "dsmDiskWearOut": "Laufwerk {name}: Restlebensdauer unter der Warnschwelle - Austausch vorbereiten"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -2351,6 +2391,7 @@
       "reboot-if-needed": "Neustart bei Bedarf",
       "dns-test": "DNS-Test",
       "deep-scan": "Deep-Scan",
+      "port-scan": "Portscan",
       "acl-setup": "ACL einrichten",
       "perm-sync": "Rechte abgleichen",
       "hardware-refresh": "Hardware einlesen",
@@ -2358,7 +2399,8 @@
       "repair-dpkg": "dpkg reparieren",
       "repair-deps": "Abhängigkeiten reparieren",
       "join": "Server einrichten",
-      "harden-ssh": "SSH härten"
+      "harden-ssh": "SSH härten",
+      "dsm-apply": "DSM-Sollwerte setzen"
     },
     "palette": {
       "running": "Laufende Jobs zeigen",
@@ -2636,7 +2678,7 @@
     "overview": {
       "facts": "Eckdaten",
       "priority": "Vorrang",
-      "priorityHint": "Bei Grundsatz-Regeln gleichen Typs setzt sich die Gruppe mit der kleineren Zahl durch.",
+      "priorityHint": "Regeln mehrere Gruppen die Firewall oder den APT-Cache eines Servers, setzt sich die Gruppe mit der kleineren Zahl durch, ob am Zeitplan oder als Grundsatz-Regel.",
       "acl": "ACL",
       "aclHint": "Profile mit Verzeichnisrechten wirken nur auf Servern, die ACLs nutzen können.",
       "aclNone": "Ohne Server gibt es nichts zu prüfen.",
@@ -2648,8 +2690,8 @@
         "other": "{count} Regeln ({enforce} Grundsatz)"
       },
       "overridden": {
-        "one": "Eine Grundsatz-Regel dieser Gruppe wird auf manchen Servern von einer anderen Gruppe verdrängt. Details stehen unter Regeln.",
-        "other": "{count} Grundsatz-Regeln dieser Gruppe werden auf manchen Servern von einer anderen Gruppe verdrängt. Details stehen unter Regeln."
+        "one": "Eine Regel dieser Gruppe wird auf manchen Servern von einer anderen Gruppe verdrängt. Details stehen unter Regeln.",
+        "other": "{count} Regeln dieser Gruppe werden auf manchen Servern von einer anderen Gruppe verdrängt. Details stehen unter Regeln."
       }
     },
     "managers": {
@@ -2898,7 +2940,8 @@
     "conflict": {
       "overridden": "Wird auf {servers} zurückgestellt: Die Regel der Gruppe {groups} hat Vorrang.",
       "wins": "Setzt sich auf {servers} gegen die Gruppe {groups} durch.",
-      "tie": "Gleicher Vorrang: Es entscheidet nur die Gruppen-ID. Setze den Vorrang ausdrücklich."
+      "tie": "Gleicher Vorrang: Es entscheidet nur die Gruppen-ID. Setze den Vorrang ausdrücklich.",
+      "runLabel": "Vorrang"
     },
     "form": {
       "newTitle": "Regel hinzufügen",
@@ -4156,6 +4199,7 @@
       "profile": "Standardprofil",
       "profileHint": "Gilt auf allen Servern, für die du je Gruppe nichts anderes wählst.",
       "fullRoot": "volle Root-Rechte",
+      "fullRootHint": "Uneingeschränktes sudo, auch auf Servern im eingeschränkten Modus.",
       "active": "Konto aktiv",
       "activeOnLabel": "Aktiv:",
       "activeOn": "Der Benutzer kann sich auf seinen Servern anmelden.",
@@ -4438,7 +4482,7 @@
     "clone": "Kopie anlegen",
     "copySuffix": "(Kopie)",
     "fullRoot": "volle Root-Rechte",
-    "fullRootHint": "Dieses Profil gibt uneingeschränktes sudo. Es lässt sich nicht bearbeiten.",
+    "fullRootHint": "Dieses Profil gibt uneingeschränktes sudo, auch auf Servern im eingeschränkten Modus. Es lässt sich nicht bearbeiten.",
     "empty": {
       "title": "Noch keine Profile"
     },
@@ -4784,7 +4828,7 @@
       "portHint": "Das Token gilt nur für diesen Server. Der Agent verbindet sich auf Port {port}; der muss vom Server aus erreichbar sein.",
       "manual": "Ohne Paketquelle",
       "manualLabel": "Agent direkt von LCM laden und verbinden",
-      "manualHint": "Lädt das Programm von diesem LCM (-k: selbstsigniertes Zertifikat, der Agent pinnt es danach über das Token). Für ARM64-Server amd64 durch arm64 ersetzen.",
+      "manualHint": "Lädt das Programm von diesem LCM. Das selbstsignierte Zertifikat nimmt curl nur mit dem Schlüssel dieses LCM an. Hinter einem Reverse-Proxy prüft der zweite Versuch ganz normal. Für ARM64-Server amd64 durch arm64 ersetzen.",
       "after": "Nach dem Verbinden geht der Server online und der erste Scan startet von selbst."
     },
     "routeros": {
@@ -5438,7 +5482,10 @@
         "zfs": "ZFS-Pool",
         "btrfs": "Btrfs",
         "mdraid": "Software-RAID",
-        "lvmThin": "LVM-Thin-Pool"
+        "lvmThin": "LVM-Thin-Pool",
+        "dsmPool": "Speicherpool",
+        "dsmVolume": "Volume",
+        "dsmDisk": "Laufwerk"
       },
       "fillData": "Daten {percent} %",
       "fillMeta": "Metadaten {percent} %"
@@ -5852,7 +5899,12 @@
         "other": "{count} davon sind an keine bestimmte Adresse gebunden und gelten für jede Schnittstelle des Servers."
       },
       "dockerBypassShow": "Ports anzeigen",
-      "dockerBypassOnly": "nur"
+      "dockerBypassOnly": "nur",
+      "cpuVirtual": "virtuell",
+      "vcpuCount": {
+        "one": "1 vCPU",
+        "other": "{count} vCPUs"
+      }
     },
     "kernels": {
       "title": "Installierte Kernel",
@@ -6035,6 +6087,8 @@
     "bar": {
       "refreshHardware": "Hardware aktualisieren",
       "refreshAll": "Alles aktualisieren",
+      "openDsm": "DSM öffnen",
+      "openDsmHelp": "Öffnet die Anmeldeseite der DSM-Oberfläche in einem neuen Tab.",
       "unharden": "Härtung aufheben",
       "hardenHeading": "SSH auf {name} härten?",
       "unhardenHeading": "SSH-Härtung auf {name} aufheben?",
@@ -6257,6 +6311,148 @@
       "unusedCount": "{count} in ungenutzten Images",
       "unusedHint": "Aus Docker-Images, die kein Container verwendet. Angezeigt, aber nicht mitgezählt: Ein Image, das nirgends läuft, bietet keine Angriffsfläche.",
       "listening": "Höher gewichtet, weil sie auf von außen erreichbaren Ports lauschen:"
+    },
+    "portScan": {
+      "title": "Offene Ports",
+      "subtitle": "Welche Dienste der Server von LCM aus anbietet",
+      "lastScan": "Zuletzt geprüft {when}",
+      "run": {
+        "label": "Ports prüfen",
+        "help": "LCM baut zu gängigen Ports des Servers eine Verbindung auf und zeigt, welche antworten - und ob die LCM-Firewall sie freigibt.",
+        "meaning": "Nur ein Verbindungsaufbau von LCM aus, am Server ändert sich nichts. Eine Angriffserkennung wie CrowdSec kann den Scan als Portscan werten - die Adresse von LCM gehört dort auf die Ausnahmeliste.",
+        "heading": "Ports von {name} prüfen?",
+        "done": "Portscan für {name} läuft"
+      },
+      "never": {
+        "title": "Noch nicht geprüft",
+        "text": "„Ports prüfen“ zeigt, welche Dienste der Server ins Netz anbietet, damit du sie freigeben oder sperren kannst."
+      },
+      "none": {
+        "title": "Kein offener Port",
+        "text": "Von LCM aus antwortet keiner der geprüften Ports."
+      },
+      "targets": "Geprüft von LCM aus: {addresses}",
+      "silent": "{address} hat auf keinen Port geantwortet - die Adresse ist von LCM aus nicht erreichbar, oder eine Firewall verwirft alles.",
+      "noCompare": "LCM führt für dieses Gerät keinen Firewall-Regelsatz. Bewertet werden nur riskante Dienste.",
+      "firewallOff": "Die LCM-Firewall ist auf diesem Server nicht eingeschaltet - jeder offene Port ist ungefiltert erreichbar.",
+      "count": {
+        "critical": "{count} kritisch",
+        "warning": {
+          "one": "{count} Warnung",
+          "other": "{count} Warnungen"
+        }
+      },
+      "column": {
+        "rating": "Bewertung",
+        "port": "Port",
+        "service": "Dienst",
+        "family": "Adresse",
+        "hint": "Hinweis"
+      },
+      "severity": {
+        "critical": "kritisch",
+        "warning": "Warnung",
+        "ok": "in Ordnung"
+      },
+      "reason": {
+        "risky_service": "riskanter Dienst",
+        "not_in_firewall": "nicht in der LCM-Firewall freigegeben"
+      },
+      "hint": {
+        "ftp": "Dateiübertragung ohne Verschlüsselung - besser SFTP über SSH.",
+        "ssh": "Fernzugang. LCM gibt ihn in der Firewall immer frei.",
+        "telnet": "Anmeldung im Klartext - abschalten und SSH verwenden.",
+        "http": "Webserver ohne Verschlüsselung, meist nur die Weiterleitung auf HTTPS.",
+        "rpcbind": "Portmapper für NFS - gehört nicht ins offene Netz.",
+        "netbios": "Alte Windows-Dateifreigabe - nur im lokalen Netz.",
+        "ldap": "Verzeichnisdienst ohne Verschlüsselung - besser LDAPS oder StartTLS.",
+        "https": "Webserver mit Verschlüsselung.",
+        "smb": "Windows-Dateifreigabe - nur im lokalen Netz freigeben.",
+        "ldaps": "Verzeichnisdienst mit Verschlüsselung.",
+        "mqtt": "MQTT ohne Verschlüsselung - besser Port 8883 mit TLS.",
+        "nfs": "Netzwerk-Dateisystem - nur für bekannte Clients freigeben.",
+        "docker": "Docker-API ohne TLS - wer sie erreicht, ist root auf dem Server.",
+        "docker-tls": "Docker-API mit TLS - nur mit Client-Zertifikaten betreiben.",
+        "database": "Datenbank - nur für die Anwendungen freigeben, die sie brauchen.",
+        "redis": "Redis läuft oft ohne Passwort - nie offen erreichbar machen.",
+        "rdp": "Remote-Desktop - nicht offen ins Internet stellen.",
+        "dsm-http": "DSM-Oberfläche ohne Verschlüsselung - besser nur 5001.",
+        "dsm-https": "DSM-Oberfläche mit Verschlüsselung.",
+        "vnc": "Bildschirmfreigabe, oft schwach geschützt - nur über VPN oder SSH-Tunnel.",
+        "kubernetes": "Kubernetes-API - nur für die Verwaltung erreichbar machen.",
+        "kubelet": "Kubelet eines Kubernetes-Knotens - nicht offen erreichbar machen.",
+        "admin": "Verwaltungsoberfläche - nur aus dem Verwaltungsnetz erreichbar machen.",
+        "http-alt": "Webdienst auf einem Ausweichport, oft eine Entwickler- oder Admin-Oberfläche.",
+        "routeros-api": "RouterOS-API ohne Verschlüsselung - besser 8729.",
+        "routeros-api-tls": "RouterOS-API mit Verschlüsselung.",
+        "mqtt-tls": "MQTT mit Verschlüsselung."
+      }
+    },
+    "device": {
+      "title": "Sicherheitseinstellungen von DSM",
+      "notRead": "LCM hat die Einstellungen noch nicht gelesen. Sie kommen mit der nächsten Erfassung.",
+      "state": {
+        "ok": "Soll",
+        "deviation": "abweichend",
+        "unknown": "unbekannt"
+      },
+      "check": {
+        "firewall": "Firewall",
+        "skipIpCheck": "Browser-Kompatibilität durch Verzicht auf IP-Prüfung aus",
+        "csrf": "Schutz vor Cross-Site-Request-Forgery",
+        "csp": "HTTP Content Security Policy",
+        "iframe": "Einbetten in einen iFrame verhindern",
+        "sessionClear": "Sitzungen beim Neustart löschen",
+        "autoBlock": "Automatisches Blockieren, höchstens 10 Versuche in 5 Minuten",
+        "dos": "DoS-Schutz, wenn aus dem Internet erreichbar",
+        "tlsProfile": "TLS/SSL-Profilstufe moderne Kompatibilität",
+        "spectre": "Schutz vor Spectre und Meltdown"
+      },
+      "firewallNote": "LCM schaltet die Firewall nicht. Unpassende Regeln können LCM und dich aussperren. Die Regeln bleiben Sache von DSM.",
+      "target": {
+        "on": "an",
+        "off": "aus",
+        "autoBlock": "an, höchstens 10 Versuche in mindestens 5 Minuten",
+        "tlsProfile": "moderne Kompatibilität"
+      },
+      "apply": {
+        "one": "Auf Sollwert setzen",
+        "all": "Alle Abweichungen beheben",
+        "heading": "DSM-Sollwerte setzen auf {name}",
+        "message": "LCM ändert diese Einstellungen in DSM. Alles andere bleibt, wie es ist.",
+        "change": "jetzt {current}, danach {target}",
+        "confirm": "Sollwerte setzen",
+        "jobLabel": "DSM-Sollwerte setzen",
+        "hint": {
+          "dos": "Nur sinnvoll, wenn das Gerät aus dem Internet erreichbar ist.",
+          "tlsProfile": "Ältere Geräte und Apps können die Verbindung verlieren.",
+          "spectre": "Wirkt erst nach einem Neustart des Geräts."
+        }
+      },
+      "firewall": {
+        "heading": "Firewall-Regeln · Profil {profile}",
+        "readOnly": "Nur zur Ansicht. Die Regeln pflegst du in DSM unter Systemsteuerung → Sicherheit → Firewall.",
+        "allInterfaces": "Alle Schnittstellen",
+        "column": {
+          "action": "Aktion",
+          "protocol": "Protokoll",
+          "ports": "Ports",
+          "source": "Quelle"
+        },
+        "action": {
+          "allow": "Erlauben",
+          "deny": "Verwerfen"
+        },
+        "all": "alle",
+        "off": "aus",
+        "noRules": "Keine Regeln.",
+        "fallback": "Wenn keine Regel zutrifft: {policy}",
+        "default": {
+          "none": "nicht festgelegt",
+          "allow": "Zugriff erlauben",
+          "deny": "Zugriff verweigern"
+        }
+      }
     }
   },
   "previews": {
@@ -6303,6 +6499,7 @@
       "apt_cache_enforced": "Eine Grundsatz-Regel der Gruppe bindet den Server beim nächsten Health-Check wieder an.",
       "dns_unmanage": "LCM gibt die DNS-Verwaltung frei und stellt den vorherigen Stand wieder her.",
       "dns_servers": "Nameserver danach: {servers}.",
+      "dns_guard": "Damit die Server auch nach einem Neustart gelten, überschreiben Proxmox und DHCP-Clients /etc/resolv.conf danach nicht mehr.",
       "dns_test_rollback": "LCM prüft die Namensauflösung mit {domain}; bricht sie, nimmt es die Änderung zurück.",
       "timezone": "Zeitpläne (cron) und Protokolle zeigen danach die Ortszeit von {timezone}. Die Uhr selbst bleibt richtig.",
       "ntp_servers": "Zeitserver danach: {servers}.",

@@ -1,0 +1,31 @@
+# Namen, die nur Techeve intern kennt. Sie dürfen nicht in Texten stehen, die
+# Anwender lesen: CHANGELOG.md (Doku-Seite, öffentliche Releases auf GitLab
+# und GitHub), release-info/*.md (Fenster nach dem Update) und Commit-Betreffe
+# (daraus entsteht das Changelog, und die Historie wird öffentlich gespiegelt).
+#
+# Eine Zeile ist ein erweiterter regulärer Ausdruck (grep -E), Groß- und
+# Kleinschreibung zählt nicht. Leerzeilen und Zeilen mit # am Anfang zählen
+# nicht. Neue interne Systeme hier ergänzen.
+
+# Eigene Server, Container und Proxmox-Knoten
+lcm-prod
+lcm-test
+lcm-purge
+pve-test
+pve-mini
+vmh0[0-9]
+runner-0[0-9]
+teck-manager
+odoo-dev
+
+# Gast-Nummern aus Proxmox, etwa CT 120 oder VM 150
+(^|[^[:alnum:]])(ct|vm) ?[0-9]{3}([^[:alnum:]]|$)
+
+# Eigene Netze; private Beispielnetze wie 192.168.1.0/24 bleiben erlaubt
+192\.168\.(4|6)\.
+10\.21\.
+
+# Internes Repository und Personen
+lcm-intern
+(^|[^[:alnum:]])tony([^[:alnum:]]|$)
+gr(ä|ae)tscher

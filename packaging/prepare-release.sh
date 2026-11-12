@@ -128,6 +128,16 @@ printf '%s\n' "$NEXT_VERSION" > VERSION
 } > CHANGELOG.md
 rm -f "${TMP_SNIP}.rest"
 
+# Changelog und Hinweise lesen Anwender, und das Changelog steht öffentlich
+# in der Doku und in den Releases auf GitLab und GitHub: keine internen Namen
+# (tools/internal-terms.txt). Ohne Commit abbrechen, damit man nachbessert.
+if ! sh tools/check-internal-terms.sh CHANGELOG.md release-info/*.md; then
+  echo ">> VERSION und CHANGELOG.md sind geschrieben, aber nicht committet." >&2
+  echo "   Fundstellen umformulieren, dann:" >&2
+  echo "   git add VERSION CHANGELOG.md && git commit -m \"release: v${NEXT_VERSION} - Version & Changelog vorbereitet\"" >&2
+  exit 1
+fi
+
 git add VERSION CHANGELOG.md
 git commit -m "release: v${NEXT_VERSION} - Version & Changelog vorbereitet"
 

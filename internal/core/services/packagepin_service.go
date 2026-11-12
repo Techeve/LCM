@@ -35,7 +35,19 @@ var (
 	// Bewusst getrennt von ErrProtectedPackage (fest eingebauter Schutz) -
 	// diesen hier kann der Anwender selbst aufheben.
 	ErrPinnedPackage = errors.New("dieses paket ist per pin vor dem entfernen geschuetzt - zuerst den pin loesen")
+	// ErrGlobalPinScope: globale Pins wirken auf ALLE Server. Anlegen und
+	// loeschen darf sie nur, wer alle Server sieht - ein Gruppenverwalter
+	// aendert sonst das Verhalten fremder Server.
+	ErrGlobalPinScope = errors.New("globale paket-pins darf nur aendern, wer alle server sieht")
 )
+
+// checkPinScope verlangt fuer einen globalen Pin die Sicht auf alle Server.
+func checkPinScope(scope repositories.AccessScope, global bool) error {
+	if global && !scope.All {
+		return ErrGlobalPinScope
+	}
+	return nil
+}
 
 // WithPackagePins verdrahtet den Pin-Speicher. Optional - ohne ihn melden die
 // Pin-Aktionen ErrPackagePinsNotWired, statt zu paniken.
@@ -151,6 +163,9 @@ func (s *ServerService) CreatePackagePin(scope repositories.AccessScope, id uint
 	if err != nil {
 		return nil, err
 	}
+	if err := checkPinScope(scope, in.Global); err != nil {
+		return nil, err
+	}
 	if err := s.ensurePinsAvailable(server); err != nil {
 		return nil, err
 	}
@@ -197,6 +212,9 @@ func (s *ServerService) DeletePackagePin(scope repositories.AccessScope, id, pin
 	if !pin.IsGlobal() && pin.ServerID != server.ID {
 		return repositories.ErrNotFound
 	}
+	if err := checkPinScope(scope, pin.IsGlobal()); err != nil {
+		return err
+	}
 	if err := s.pins.Delete(pinID); err != nil {
 		return err
 	}
@@ -211,6 +229,9 @@ func (s *ServerService) DeletePackagePin(scope repositories.AccessScope, id, pin
 func (s *ServerService) PinKernelPreset(scope repositories.AccessScope, id uint, global bool, actor string) ([]domain.PackagePin, error) {
 	server, err := s.servers.FindByID(scope, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkPinScope(scope, global); err != nil {
 		return nil, err
 	}
 	if err := s.ensurePinsAvailable(server); err != nil {

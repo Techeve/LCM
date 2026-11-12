@@ -88,7 +88,7 @@ func (s *ServerService) runRefreshJob(job *domain.Job, server *domain.Server, ac
 	if server.IsSynologyDSM() {
 		out, err := s.refreshDSM(server)
 		if err != nil {
-			_ = s.servers.UpdateFields(server.ID, unreachableFields(server, err))
+			recordUnreachable(s.servers, server, err)
 			s.jobs.Complete(job, "", nil, err)
 			return
 		}
@@ -97,7 +97,7 @@ func (s *ServerService) runRefreshJob(job *domain.Job, server *domain.Server, ac
 	}
 	conn, err := s.connect(server)
 	if err != nil {
-		_ = s.servers.UpdateFields(server.ID, unreachableFields(server, err))
+		recordUnreachable(s.servers, server, err)
 		s.jobs.Complete(job, "", nil, fmt.Errorf("verbindung: %w", err))
 		return
 	}

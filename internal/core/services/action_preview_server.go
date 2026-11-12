@@ -387,6 +387,7 @@ func (s *ServerService) previewDNS(server *domain.Server, servers []string) (*Ac
 		p.note("preview.dns_unmanage")
 	} else {
 		p.note("preview.dns_servers", "servers", strings.Join(clean, ", "))
+		p.note("preview.dns_guard")
 	}
 	p.note("preview.dns_test_rollback", "domain", testDomain)
 	p.Duration = roughDuration(2, 0, 30, 0, 0)

@@ -209,6 +209,7 @@ func (s *CapabilityService) recordSuccess(serverID uint, job *domain.Job) {
 	// Wer einen Job ausführen konnte, erreicht den Server.
 	s.healConnection(serverID)
 	s.healWhenNothingPending(serverID, job)
+	s.healScanByRefresh(serverID, job)
 
 	category := domain.CapabilityCategoryFor(job.Type)
 	if category == domain.CapabilityConnection {
@@ -249,6 +250,29 @@ func (s *CapabilityService) healWhenNothingPending(serverID uint, job *domain.Jo
 	}
 	s.update(serverID, domain.CapabilityPackages, func(c *domain.ServerCapability) bool {
 		if c.State != domain.CapabilityFailed || !c.InstallFailed() {
+			return false
+		}
+		resetToOK(c)
+		return true
+	})
+}
+
+// healScanByRefresh: „Alles aktualisieren“ liest die Paketliste ebenso wie
+// der tägliche Lauf „Paketliste aktualisieren“. Ist dieser gescheitert, heilt
+// ihn ein erfolgreiches Aktualisieren, sonst stünde der Befund bis zum
+// nächsten Morgen, obwohl die Pakete längst wieder gelesen werden. Meldet
+// die Paketabfrage eine ausgefallene Quelle, bleibt er. Eine gescheiterte
+// Installation heilt hier nichts (siehe healWhenNothingPending).
+func (s *CapabilityService) healScanByRefresh(serverID uint, job *domain.Job) {
+	if job.Type != JobTypeFullRefresh {
+		return
+	}
+	refresh := domain.ClassifyRefresh(job.Output)
+	if refresh.Failed() || refresh.PartiallyFailed() {
+		return
+	}
+	s.update(serverID, domain.CapabilityPackages, func(c *domain.ServerCapability) bool {
+		if c.State != domain.CapabilityFailed || c.LastJobType != domain.RuleTypePackageScan {
 			return false
 		}
 		resetToOK(c)

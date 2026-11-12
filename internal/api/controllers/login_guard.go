@@ -25,6 +25,8 @@ type loginGuard struct {
 	mu    sync.Mutex
 	state map[string]*attemptState
 	now   func() time.Time // in Tests überschreibbar
+	// lastSweep ist der letzte Lauf von sweepLocked.
+	lastSweep time.Time
 }
 
 type attemptState struct {
@@ -49,6 +51,8 @@ const (
 	// kann (Account-Lockout-DoS). Die Sperre ist zudem auf loginLockoutMax
 	// gedeckelt und zerfällt.
 	maxAccountFails = 15
+	// loginSweepInterval: so oft räumt der Guard höchstens auf (sweepLocked).
+	loginSweepInterval = time.Minute
 )
 
 func newLoginGuard() *loginGuard {
@@ -85,8 +89,8 @@ func (g *loginGuard) blocked(key string) (bool, time.Duration) {
 // getrennten blocked() und fail() liegt der argon2id-Vergleich (~50-100 ms).
 // Hunderte parallele Requests kamen dadurch alle an der Prüfung vorbei, bevor
 // der erste Fehlversuch verbucht war - die Schwelle ließ sich um Größenordnungen
-// überschreiten. Der Aufrufer ruft bei ERFOLG reset(key) auf; bei Misserfolg
-// ist der Versuch bereits gezählt.
+// überschreiten. Der Aufrufer ruft bei ERFOLG reset(key) oder uncount(key)
+// auf; bei Misserfolg ist der Versuch bereits gezählt.
 func (g *loginGuard) beginAttempt(key string, threshold int) (bool, time.Duration) {
 	key = guardKey(key)
 	g.mu.Lock()
@@ -133,20 +137,62 @@ func (g *loginGuard) recordFailLocked(key string, threshold int) {
 		}
 		st.until = g.now().Add(lockout)
 	}
-	// Gelegentliche Bereinigung, damit die Map nicht unbegrenzt wächst.
-	if len(g.state) > 10_000 {
-		for k, v := range g.state {
-			if v.until.Before(g.now()) && v.fails < threshold {
-				delete(g.state, k)
-			}
+	g.sweepLocked()
+}
+
+// sweepLocked entfernt höchstens einmal je loginSweepInterval die Einträge,
+// die nichts mehr bewirken: Sperre abgelaufen und letzter Fehlversuch älter
+// als das Zerfallsfenster - der nächste Fehlversuch begänne ohnehin bei null.
+// So hält die Map nur die Schlüssel der letzten Viertelstunde, egal wie viele
+// Namen und Adressen ein Angreifer durchprobiert. Aktive Zähler bleiben
+// unberührt; früher räumte erst ein Füllstand von 10 000 auf und warf dann
+// auch frische Zähler unter der Schwelle weg.
+func (g *loginGuard) sweepLocked() {
+	now := g.now()
+	if now.Sub(g.lastSweep) < loginSweepInterval {
+		return
+	}
+	g.lastSweep = now
+	for k, st := range g.state {
+		if !now.Before(st.until) && now.Sub(st.last) > loginDecayWindow {
+			delete(g.state, k)
 		}
 	}
 }
 
-// reset löscht den Zähler nach einer erfolgreichen Anmeldung.
+// reset löscht den Zähler nach einer erfolgreichen Anmeldung. Nur für
+// kontobezogene Schlüssel: Wer das Passwort eines Kontos kennt, darf dessen
+// Zähler leeren, nicht aber den seiner Adresse (siehe uncount).
 func (g *loginGuard) reset(key string) {
 	key = guardKey(key)
 	g.mu.Lock()
 	delete(g.state, key)
 	g.mu.Unlock()
+}
+
+// uncount nimmt nach einer erfolgreichen Anmeldung den Versuch zurück, den
+// beginAttempt schon gezählt hat - und nur diesen. Die Fehlversuche davor
+// bleiben stehen. Für den Adress-Schlüssel: Ein Angreifer mit EINEM gültigen
+// Konto setzte mit reset nach jeder echten Anmeldung den Zähler seiner
+// Adresse zurück und könnte so unbegrenzt fremde Konten raten.
+//
+// Fällt der Zähler unter die Schwelle, war es dieser Versuch, der die Sperre
+// gesetzt hat - sie entfällt. Bleibt er auf oder über der Schwelle, bleibt
+// auch die Sperre: Sie kann von parallel gezählten Fehlversuchen stammen.
+func (g *loginGuard) uncount(key string, threshold int) {
+	key = guardKey(key)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.state[key]
+	if st == nil {
+		return
+	}
+	st.fails--
+	if st.fails <= 0 {
+		delete(g.state, key)
+		return
+	}
+	if st.fails < threshold {
+		st.until = time.Time{}
+	}
 }

@@ -1,0 +1,10 @@
+{
+ "success": true,
+ "data": {
+  "enable": true,
+  "attempts": 10,
+  "within_mins": 5,
+  "expire_day": 0,
+  "enable_expire": false
+ }
+}

@@ -97,6 +97,27 @@ func (r *PrivilegeProfileRepository) Delete(id uint) error {
 	})
 }
 
+// AssignmentCount zählt, wo ein Profil noch zugewiesen ist: als Standardprofil
+// eines Benutzers, an einer Server- oder an einer Gruppen-Zuweisung.
+func (r *PrivilegeProfileRepository) AssignmentCount(id uint) (int64, error) {
+	var total int64
+	for _, ref := range []struct {
+		model  any
+		column string
+	}{
+		{&domain.LinuxUser{}, "default_profile_id"},
+		{&domain.ServerLinuxUser{}, "profile_id"},
+		{&domain.ServerGroupLinuxUser{}, "profile_id"},
+	} {
+		var n int64
+		if err := r.db.Model(ref.model).Where(ref.column+" = ?", id).Count(&n).Error; err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
 // deleteRulesOf räumt die Regeln eines Profils ab. SQLite setzt
 // Fremdschlüssel-Kaskaden nicht in jedem Fall durch - deshalb ausdrücklich.
 func deleteRulesOf(tx *gorm.DB, profileID uint) error {

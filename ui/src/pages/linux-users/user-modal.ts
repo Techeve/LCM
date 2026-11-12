@@ -263,7 +263,7 @@ export class LcmLuUserModal extends LitElement {
         ?disabled=${!this.canWrite}
         @lcm-change=${(e: CustomEvent<{ value: string }>) => this.#set({ profile_id: e.detail.value })}
       ></lcm-select>
-      ${profile?.grants_full_root ? html`<div class="chips"><lcm-badge tone="warn">${t('linuxUsers.form.fullRoot')}</lcm-badge></div>` : nothing}`;
+      ${profile?.grants_full_root ? html`<div class="chips"><lcm-badge tone="warn">${t('linuxUsers.form.fullRoot')}</lcm-badge><span>${t('linuxUsers.form.fullRootHint')}</span></div>` : nothing}`;
   }
 
   #activeSwitch() {

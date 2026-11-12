@@ -69,7 +69,7 @@ chmod 0700 "$DATA_DIR"
 chmod 0770 "$CONF_DIR"
 # Files the service created earlier (key, database, backups) - tighten on
 # upgrade too; nothing outside the service user may read them.
-chmod 0600 "$DATA_DIR"/lcm.key "$DATA_DIR"/lcm-key.pem "$DATA_DIR"/*.db "$DATA_DIR"/*.db-wal "$DATA_DIR"/*.db-shm 2>/dev/null || true
+chmod 0600 "$DATA_DIR"/lcm.key "$DATA_DIR"/lcm-key.pem "$DATA_DIR"/lcm-ca-key.pem "$DATA_DIR"/*.db "$DATA_DIR"/*.db-wal "$DATA_DIR"/*.db-shm 2>/dev/null || true
 chmod 0700 "$DATA_DIR"/backups "$DATA_DIR"/logs 2>/dev/null || true
 chmod 0600 "$DATA_DIR"/backups/*.lcmbak 2>/dev/null || true
 

@@ -144,3 +144,107 @@ func TestNichtWidersprechendeTypenBleibenAlle(t *testing.T) {
 		t.Fatalf("nicht widersprechende Typen dürfen nicht zurückgestellt werden: %+v / %+v", active, superseded)
 	}
 }
+
+// scheduledIn baut eine geplante Regel in einer Gruppe mit gegebenem Vorrang.
+func scheduledIn(ruleID, groupID uint, groupName string, priority int, ruleType, ruleName string) domain.Rule {
+	rule := ruleIn(ruleID, groupID, groupName, priority, ruleType, ruleName)
+	rule.Enforce = false
+	scheduleID := ruleID + 100
+	rule.ScheduleID = &scheduleID
+	return rule
+}
+
+// TestGeplanteRegelWeichtDerStaerkerenGruppe: Zwei Gruppen planen je eine
+// Firewall-Regel für denselben Server. Vorher liefen beide zu ihrer Uhrzeit,
+// und die spätere gewann. Jetzt führt die Gruppe mit dem stärkeren Vorrang.
+func TestGeplanteRegelWeichtDerStaerkerenGruppe(t *testing.T) {
+	stark := scheduledIn(1, 3, "Basis", 10, domain.RuleTypeFirewall, "Basis-Firewall")
+	schwach := scheduledIn(2, 7, "Web", 100, domain.RuleTypeFirewall, "Web-Firewall")
+	owners := ruleOwners([]domain.Rule{schwach, stark})
+
+	if _, yields := yieldsTo(&stark, owners); yields {
+		t.Error("die Regel der stärkeren Gruppe darf nicht weichen")
+	}
+	s, yields := yieldsTo(&schwach, owners)
+	if !yields || s.Winner.Name != "Basis-Firewall" || s.Tie {
+		t.Fatalf("die schwächere Regel muss der Basis weichen, bekam %+v (weicht: %v)", s, yields)
+	}
+	note := yieldNote(s)
+	for _, want := range []string{"Basis", "10", "Basis-Firewall", "firewall"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("Bericht nennt %q nicht: %s", want, note)
+		}
+	}
+}
+
+// TestRegelnDerselbenGruppeWeichenEinanderNicht: Was eine Gruppe am Zeitplan
+// und als Grundsatz regelt, entscheidet sie selbst.
+func TestRegelnDerselbenGruppeWeichenEinanderNicht(t *testing.T) {
+	geplant := scheduledIn(1, 3, "Basis", 10, domain.RuleTypeFirewall, "Nachts")
+	grundsatz := ruleIn(2, 3, "Basis", 10, domain.RuleTypeFirewall, "Immer")
+	owners := ruleOwners([]domain.Rule{geplant, grundsatz})
+
+	for _, rule := range []domain.Rule{geplant, grundsatz} {
+		if _, yields := yieldsTo(&rule, owners); yields {
+			t.Errorf("%s darf der eigenen Gruppe nicht weichen", rule.Name)
+		}
+	}
+}
+
+// TestGrundsatzRegelWeichtGeplanterRegelDerStaerkerenGruppe: Eine Grundsatz-
+// Regel der schwächeren Gruppe drehte die geplante der stärkeren beim
+// nächsten Health-Ping zurück. Sie wird jetzt benannt zurückgestellt.
+func TestGrundsatzRegelWeichtGeplanterRegelDerStaerkerenGruppe(t *testing.T) {
+	grundsatz := ruleIn(1, 7, "Web", 100, domain.RuleTypeFirewall, "Web-Firewall")
+	cache := ruleIn(2, 7, "Web", 100, domain.RuleTypeAptProxy, "Web-Cache")
+	geplant := scheduledIn(3, 3, "Basis", 10, domain.RuleTypeFirewall, "Basis-Firewall")
+
+	active, superseded := resolveEnforceRules([]domain.Rule{grundsatz, cache})
+	active, superseded = yieldEnforceToOwners(active, superseded, ruleOwners([]domain.Rule{grundsatz, cache, geplant}))
+
+	if len(active) != 1 || active[0].Name != "Web-Cache" {
+		t.Fatalf("nur der APT-Cache darf bleiben, bekam %+v", active)
+	}
+	if len(superseded) != 1 || superseded[0].Winner.Name != "Basis-Firewall" {
+		t.Fatalf("die Firewall muss der geplanten Regel der Basis weichen, bekam %+v", superseded)
+	}
+}
+
+// TestZurueckgestellteRegelNenntDieFuehrendeGruppe: Weicht die Gewinnerin
+// unter den Grundsatz-Regeln selbst einer geplanten Regel, nennt auch die
+// schon zurückgestellte Regel die Gruppe, die wirklich führt.
+func TestZurueckgestellteRegelNenntDieFuehrendeGruppe(t *testing.T) {
+	mittel := ruleIn(1, 5, "Mittel", 50, domain.RuleTypeFirewall, "Mittel-Firewall")
+	schwach := ruleIn(2, 7, "Web", 100, domain.RuleTypeFirewall, "Web-Firewall")
+	geplant := scheduledIn(3, 3, "Basis", 10, domain.RuleTypeFirewall, "Basis-Firewall")
+
+	active, superseded := resolveEnforceRules([]domain.Rule{mittel, schwach})
+	active, superseded = yieldEnforceToOwners(active, superseded, ruleOwners([]domain.Rule{mittel, schwach, geplant}))
+
+	if len(active) != 0 || len(superseded) != 2 {
+		t.Fatalf("beide Grundsatz-Regeln müssen weichen, aktiv %+v, zurückgestellt %+v", active, superseded)
+	}
+	for _, s := range superseded {
+		if s.Winner.Name != "Basis-Firewall" {
+			t.Errorf("%s nennt %q statt der Basis", s.Rule.Name, s.Winner.Name)
+		}
+	}
+}
+
+// TestGleichstandUeberGeplanteRegelnWirdGemeldet: Gleicher Vorrang in zwei
+// Gruppen entscheidet die ältere Gruppe - und der Bericht sagt das, je Gruppe
+// einmal.
+func TestGleichstandUeberGeplanteRegelnWirdGemeldet(t *testing.T) {
+	alt := scheduledIn(4, 5, "Alt", domain.DefaultGroupPriority, domain.RuleTypeAptProxy, "Cache alt")
+	neu := scheduledIn(9, 12, "Neu", domain.DefaultGroupPriority, domain.RuleTypeAptProxy, "Cache neu")
+	auchNeu := scheduledIn(10, 12, "Neu", domain.DefaultGroupPriority, domain.RuleTypeAptProxy, "Cache neu 2")
+
+	yielded := yieldedRules([]domain.Rule{neu, auchNeu, alt})
+
+	if len(yielded) != 1 || yielded[0].Rule.GroupID != 12 || !yielded[0].Tie {
+		t.Fatalf("erwartet eine Gleichstand-Meldung für Gruppe Neu, bekam %+v", yielded)
+	}
+	if note := yieldNote(yielded[0]); !strings.Contains(note, "Gleichstand") {
+		t.Errorf("Bericht benennt den Gleichstand nicht: %s", note)
+	}
+}

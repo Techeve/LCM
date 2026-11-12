@@ -101,6 +101,27 @@ func TestCompareRPM(t *testing.T) {
 	}
 }
 
+// TestCompareAPK: apk ordnet die Vorab-Endungen vor die nackte Version,
+// dpkg las den Unterstrich als Zeichen dahinter.
+func TestCompareAPK(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want int
+	}{
+		{"3.5.0_rc1-r0", "3.5.0-r0", -1},
+		{"3.5.0_alpha1-r0", "3.5.0_beta1-r0", -1},
+		{"3.5.0_pre1-r0", "3.5.0_rc1-r0", -1},
+		{"1.2.3_p1-r0", "1.2.3-r0", 1},
+		{"1.36.1-r15", "1.36.1-r2", 1},
+		{"1.2.3a-r0", "1.2.3-r0", 1},
+		{"1.2.3-r0", "1.2.3-r0", 0},
+	} {
+		if got := CompareVersions("apk", c.a, c.b); got != c.want {
+			t.Errorf("apk %s <> %s = %d, erwartet %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 // TestCompareVersionsWaehltDasVerfahren: Derselbe Text kann je nach Pakettyp
 // verschieden geordnet sein - hier am Trennzeichen, das rpm ignoriert und
 // dpkg bewertet.

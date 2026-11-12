@@ -58,7 +58,6 @@ var sqlSignals = []sqlSignal{
 	signal("where_clause", weightMedium, `\bwhere\s+\S+\s*(=|like\b)`),
 	signal("order_by_number", weightMedium, `\b(order|group)\s+by\s+\d+`),
 	signal("terminated_comment", weightMedium, `;\s*(--|#)`),
-	signal("terminated_comment", weightMedium, `;\s*(--|#)`),
 
 	signal("trailing_comment", weightWeak, `(--|#)\s*$`),
 	signal("block_comment", weightWeak, `/\*`),

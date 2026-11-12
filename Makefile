@@ -76,8 +76,14 @@ frontend-audit:
 frontend-build:
 	cd $(FRONTEND) && npm ci --no-audit --ignore-scripts && npm run build
 
+# Feste Versionen wie in der CI (.gitlab-ci.yml), von Renovate gepflegt.
+# renovate: datasource=go depName=golang.org/x/vuln
+GOVULNCHECK_VERSION ?= v1.9.0
+# renovate: datasource=go depName=github.com/goreleaser/nfpm/v2
+NFPM_VERSION ?= v2.48.0
+
 go-vulncheck:
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 go-build: bump-build
 	mkdir -p $(BUILD_DIR)
@@ -126,7 +132,7 @@ build-probe: bump-build
 # Erzeugt installierbare .deb-Pakete mit systemd-Dienst für Ubuntu/Debian.
 # nfpm läuft plattformunabhängig (auch auf macOS) und packt die zuvor
 # cross-kompilierten Linux-Binaries. Version = Inhalt der VERSION-Datei.
-NFPM = go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+NFPM = go run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION)
 
 # Das Server-Paket enthält zusätzlich beide Agent-Binaries
 # (/usr/share/lcm/agent - der Server liefert sie per Download-Endpunkt aus).
@@ -261,7 +267,7 @@ lint:
 update-deps:
 	go get -u ./...
 	go mod tidy
-	cd $(FRONTEND) && npm update
+	cd $(FRONTEND) && npm update --ignore-scripts
 
 clean:
 	rm -rf $(BUILD_DIR) $(FRONTEND)/dist $(FRONTEND)/e2e/.run

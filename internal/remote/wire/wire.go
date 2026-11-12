@@ -108,15 +108,33 @@ type Inventory struct {
 	AgentVersion string `json:"agent_version"`
 	Hostname     string `json:"hostname"`
 	Kernel       string `json:"kernel,omitempty"`
+	// KeyPin ist der Schlüssel-Pin, den der Agent führt (SHA-256 über die
+	// SubjectPublicKeyInfo des LCM-Zertifikats, hex). Agenten bis 2.0
+	// schicken ihn nicht - sie pinnen nur das Zertifikat selbst, und LCM
+	// stellt sein Zertifikat erst um, wenn kein solcher Agent mehr übrig ist.
+	KeyPin string `json:"key_pin,omitempty"`
+	// CAPin ist der Fingerprint der LCM-CA, der der Agent vertraut (SHA-256
+	// über das CA-Zertifikat, hex). Erst wenn jeder Agent ihn meldet, bekommt
+	// das Server-Zertifikat bei der Erneuerung einen neuen Schlüssel.
+	CAPin string `json:"ca_pin,omitempty"`
 }
 
+// ServerCertMarker steht als URI im Server-Zertifikat, das die LCM-CA
+// ausstellt. Ein Agent, der die CA pinnt, nimmt nur ein Zertifikat mit dieser
+// Kennung an - eine CA des Betreibers stellt oft auch Zertifikate für andere
+// Dienste aus, und die sollen sich nicht als LCM ausgeben können.
+const ServerCertMarker = "urn:lcm:server"
+
 // MaxPacketSize ist die Broker-Obergrenze je MQTT-Paket; MaxOutputBytes das
-// Agent-Limit für den kombinierten Kommando-Output (darüber wird gekürzt,
-// Truncated=true). Das Output-Limit liegt bewusst unter der Paketgrenze
-// (JSON-Overhead + Reserve).
+// Agent-Limit für den kombinierten Kommando-Output, den er im Speicher hält
+// (Anfang und Ende, Truncated=true). MaxResultBytes begrenzt das
+// serialisierte Result: die Paketgrenze abzüglich Reserve für Topic und
+// MQTT-Kopf. Darauf kommt es an - JSON kann die Rohausgabe bis aufs Sechsfache
+// aufblähen, der Agent kürzt deshalb nach der kodierten Größe nach.
 const (
 	MaxPacketSize  = 8 * 1024 * 1024
 	MaxOutputBytes = 4 * 1024 * 1024
+	MaxResultBytes = MaxPacketSize - 64*1024
 	StatusOnline   = "online"
 	StatusOffline  = "offline"
 )
@@ -135,36 +153,50 @@ func HashSecret(secret string) string {
 // die "1" ist die Formatversion.
 const TokenPrefix = "lcma1."
 
+// Token ist der Inhalt eines Enrollment-Tokens.
+type Token struct {
+	AgentID string // MQTT-Username/Client-ID
+	Secret  string // Credential (at rest nur als SHA-256-Hash)
+	// CertFingerprint ist der SHA-256 (hex) des Server-Zertifikats, leer =
+	// kein Pin.
+	CertFingerprint string
+	// CAFingerprint ist der SHA-256 (hex) der LCM-CA, die das
+	// Server-Zertifikat ausstellt. Tokens älterer LCM tragen ihn nicht, ältere
+	// Agenten überlesen ihn.
+	CAFingerprint string
+}
+
 // tokenPayload ist der base64url-kodierte JSON-Inhalt des Tokens.
 // Bewusst kurze Feldnamen - das Token wird von Hand kopiert.
 type tokenPayload struct {
-	AgentID     string `json:"u"` // MQTT-Username/Client-ID
-	Secret      string `json:"k"` // Credential (at rest nur als SHA-256-Hash)
-	Fingerprint string `json:"f"` // SHA-256 (hex) des Server-Zertifikats, leer = kein Pin
+	AgentID     string `json:"u"`
+	Secret      string `json:"k"`
+	Fingerprint string `json:"f"`
+	CA          string `json:"c,omitempty"`
 }
 
 // EncodeToken baut das Klartext-Token für die einmalige Anzeige (Server)
 // bzw. fürs Enrollment (Agent).
-func EncodeToken(agentID, secret, certFP string) string {
-	raw, _ := json.Marshal(tokenPayload{AgentID: agentID, Secret: secret, Fingerprint: certFP})
+func EncodeToken(t Token) string {
+	raw, _ := json.Marshal(tokenPayload{AgentID: t.AgentID, Secret: t.Secret, Fingerprint: t.CertFingerprint, CA: t.CAFingerprint})
 	return TokenPrefix + base64.RawURLEncoding.EncodeToString(raw)
 }
 
 // ParseToken zerlegt ein Klartext-Token (Gegenstück zu EncodeToken).
-func ParseToken(token string) (agentID, secret, certFP string, err error) {
+func ParseToken(token string) (Token, error) {
 	if !strings.HasPrefix(token, TokenPrefix) {
-		return "", "", "", errors.New("kein LCM-Agent-Token (Präfix lcma1. fehlt)")
+		return Token{}, errors.New("kein LCM-Agent-Token (Präfix lcma1. fehlt)")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, TokenPrefix))
 	if err != nil {
-		return "", "", "", fmt.Errorf("token dekodieren: %w", err)
+		return Token{}, fmt.Errorf("token dekodieren: %w", err)
 	}
 	var p tokenPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", "", "", fmt.Errorf("token lesen: %w", err)
+		return Token{}, fmt.Errorf("token lesen: %w", err)
 	}
 	if p.AgentID == "" || p.Secret == "" {
-		return "", "", "", errors.New("unvollständiges Token")
+		return Token{}, errors.New("unvollständiges Token")
 	}
-	return p.AgentID, p.Secret, p.Fingerprint, nil
+	return Token{AgentID: p.AgentID, Secret: p.Secret, CertFingerprint: p.Fingerprint, CAFingerprint: p.CA}, nil
 }

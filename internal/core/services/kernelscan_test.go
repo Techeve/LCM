@@ -3,6 +3,8 @@ package services
 import (
 	"strings"
 	"testing"
+
+	"LCM/internal/core/domain"
 )
 
 // TestKernelListCommandProxmox: Auf einem Proxmox-Host stellen NICHT
@@ -103,6 +105,41 @@ func TestParseKernelListPacman(t *testing.T) {
 	}
 	if pkgs[0].Release == "" {
 		t.Errorf("Fassung aus der Version nicht abgeleitet: %+v", pkgs[0])
+	}
+}
+
+// TestKernelFassungWieUname: pacman schreibt "7.2.14.arch1-1", der Kernel
+// meldet sich als "7.2.14-arch1-1"; apk "linux-lts-6.12.115-r0" gegen
+// "6.12.115-0-lts". Ohne Angleichung fand der Abgleich auf Arch und Alpine
+// den laufenden Kernel nie, und ein x.y.0-Kernel ("6.12.arch1-1") fiel
+// ganz heraus. Die Paare stammen aus archlinux und Alpine 3.22
+// (Paketversion gegen /usr/lib/modules).
+func TestKernelFassungWieUname(t *testing.T) {
+	arch := parseKernelList(pkgPacman, "linux 7.2.14.arch1-1\nlinux-lts 6.18.60-1\nlinux-hardened 6.12.hardened1-1\n")
+	alpine := parseKernelList(pkgApk, "linux-lts-6.12.115-r0\nlinux-virt-6.12.115-r0\n")
+	want := map[string]string{
+		"linux": "7.2.14-arch1-1", "linux-lts": "6.18.60-1-lts", "linux-hardened": "6.12.0-hardened1-1-hardened",
+		"linux-lts-6.12.115-r0": "6.12.115-0-lts", "linux-virt-6.12.115-r0": "6.12.115-0-virt",
+	}
+	got := map[string]string{}
+	for _, p := range append(arch, alpine...) {
+		got[p.Name] = p.Release
+	}
+	for name, release := range want {
+		if got[name] != release {
+			t.Errorf("%s: fassung %q, erwartet %q", name, got[name], release)
+		}
+	}
+	// Läuft der virt-Kernel, ist nur er markiert - nicht auch linux-lts
+	// derselben Version.
+	info := domain.BuildKernelInfo("6.12.115-0-virt", "kvm", alpine)
+	for _, p := range info.Installed {
+		if p.Running != (p.Name == "linux-virt-6.12.115-r0") {
+			t.Errorf("%s: running=%v", p.Name, p.Running)
+		}
+	}
+	if info := domain.BuildKernelInfo("6.18.60-1-lts", "kvm", arch); !info.Installed[1].Running {
+		t.Errorf("laufender arch-kernel nicht erkannt: %+v", info.Installed)
 	}
 }
 

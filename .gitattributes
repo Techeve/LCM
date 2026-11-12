@@ -1,0 +1,4 @@
+# Shell-Skripte immer mit LF: lcm-helper.sh wird per go:embed ins Binary
+# übernommen. Ein Rohstring in Go verwarf CR noch selbst, embed nicht - ein
+# Checkout mit autocrlf brächte sonst CRLF in das Root-Skript.
+*.sh text eol=lf

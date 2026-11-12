@@ -1,0 +1,4 @@
+{
+ "success": true,
+ "data": {"enable_block":true,"whitelist":["gofile.me/","find.synology.com/"]}
+}

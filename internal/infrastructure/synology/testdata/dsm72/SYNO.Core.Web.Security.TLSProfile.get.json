@@ -1,0 +1,12 @@
+{
+ "success": true,
+ "data": {
+  "default-level": "modern",
+  "services": [
+   {
+    "name": "DSM Desktop Service",
+    "level": "default"
+   }
+  ]
+ }
+}

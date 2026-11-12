@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"LCM/internal/core/domain"
@@ -18,6 +19,10 @@ var (
 	ErrProfileSlugTaken = errors.New("dieser slug ist bereits vergeben")
 	// ErrProfileNameTaken meldet einen bereits vergebenen Namen.
 	ErrProfileNameTaken = errors.New("dieser name ist bereits vergeben")
+	// ErrProfileInUse: Ein gelöschtes, aber noch zugewiesenes Profil ließ den
+	// Benutzer-Sync auf jedem betroffenen Server scheitern, weil sich das
+	// wirksame Profil nicht mehr laden ließ.
+	ErrProfileInUse = errors.New("das profil ist noch zugewiesen (als Standardprofil eines Benutzers oder an einer Server- oder Gruppen-Zuweisung) - erst die Zuweisungen lösen")
 )
 
 // PrivilegeProfileService verwaltet die Berechtigungsprofile.
@@ -174,6 +179,13 @@ func (s *PrivilegeProfileService) Delete(id uint, actor string) error {
 	if profile.Builtin {
 		return ErrProfileBuiltin
 	}
+	assigned, err := s.repo.AssignmentCount(id)
+	if err != nil {
+		return err
+	}
+	if assigned > 0 {
+		return ErrProfileInUse
+	}
 	if err := s.repo.Delete(id); err != nil {
 		return err
 	}
@@ -257,10 +269,13 @@ func checkedSudoRules(rules []domain.ProfileSudoRule) ([]domain.ProfileSudoRule,
 		if !domain.ValidLinuxUsername(rule.RunAs) {
 			return nil, fmt.Errorf("ungültiger zielbenutzer %q", rule.RunAs)
 		}
-		if seen[rule.Command] {
-			continue // dieselbe Zeile zweimal ist keine zweite Erlaubnis
+		// Dieselbe Zeile zweimal ist keine zweite Erlaubnis. Dasselbe Kommando
+		// als anderer Benutzer dagegen schon - der Schlüssel trägt beides.
+		key := rule.RunAs + "\x00" + rule.Command
+		if seen[key] {
+			continue
 		}
-		seen[rule.Command] = true
+		seen[key] = true
 		out = append(out, rule)
 	}
 	return out, nil
@@ -275,6 +290,7 @@ func checkedEditRules(rules []domain.ProfileEditRule) ([]domain.ProfileEditRule,
 		if err := domain.ValidateEditPath(rule.Path); err != nil {
 			return nil, err
 		}
+		rule.Path = path.Clean(rule.Path) // so, wie sudo und der Helper ihn sehen
 		if seen[rule.Path] {
 			continue
 		}
@@ -297,6 +313,7 @@ func checkedPathRules(rules []domain.ProfilePathRule) ([]domain.ProfilePathRule,
 		if err := domain.ValidatePathRule(rule.Path, rule.Mode); err != nil {
 			return nil, err
 		}
+		rule.Path = path.Clean(rule.Path)
 		if seen[rule.Path] {
 			return nil, fmt.Errorf("der pfad %q kommt mehrfach vor - je Pfad ist nur eine Regel möglich", rule.Path)
 		}

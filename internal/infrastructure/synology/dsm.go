@@ -6,8 +6,8 @@
 // synopkg statt apt, und Benutzer/Dienste verwaltet DSM selbst. Ein
 // LCM-Service-User mit sudo würde mit DSMs eigener Konfigurationsverwaltung
 // kollidieren. Die dokumentierte Web-API liefert dagegen genau das, was LCM
-// für die Überwachung braucht: Version, Updates, Pakete, Volumes, Zeit/NTP
-// und die Befunde des DSM-eigenen Security Advisors.
+// für die Überwachung braucht: Version, Updates, Pakete, Speicher, Zeit/NTP,
+// die Befunde des DSM-eigenen Security Advisors und die Sicherheitseinstellungen.
 package synology
 
 import (
@@ -64,6 +64,8 @@ type Client struct {
 	base string
 	http *http.Client
 	sid  string
+	// apis ist das Verzeichnis aus SYNO.API.Info (nil = nicht abfragbar).
+	apis map[string]apiInfo
 }
 
 // Config sind die Verbindungsdaten eines DSM-Geräts.
@@ -88,24 +90,31 @@ func New(cfg Config) *Client {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			// Selbstsigniert ist bei DSM der Normalfall - statt der Kette
-			// prüfen wir den gepinnten Fingerprint (siehe VerifyPeerCert).
-			InsecureSkipVerify: true, //nolint:gosec // Pinning statt Kettenprüfung, siehe unten
-			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-				if pin == "" {
-					return nil
-				}
-				for _, raw := range rawCerts {
-					if fingerprintOf(raw) == pin {
-						return nil
-					}
-				}
-				return ErrCertMismatch
-			},
+			// prüfen wir den gepinnten Fingerprint (siehe verifyPin).
+			InsecureSkipVerify:    true, //nolint:gosec // Pinning statt Kettenprüfung, siehe unten
+			VerifyPeerCertificate: verifyPin(pin),
 		},
 	}
 	return &Client{
 		base: fmt.Sprintf("https://%s:%d/webapi/", cfg.Host, port),
 		http: &http.Client{Transport: tr, Timeout: requestTimeout},
+	}
+}
+
+// verifyPin prüft das Server-Zertifikat gegen den Pin. Zählt nur das erste
+// Zertifikat der Kette, das des Servers selbst: Alles dahinter kann ein
+// Angreifer im Netz frei anhängen, auch das echte DSM-Zertifikat, das er
+// vorher einmal abgerufen hat. Den Schlüssel dazu hat er nicht, den TLS-
+// Handshake führt er aber mit dem ersten Zertifikat - mit seinem eigenen.
+func verifyPin(pin string) func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if pin == "" {
+			return nil
+		}
+		if len(rawCerts) == 0 || fingerprintOf(rawCerts[0]) != pin {
+			return ErrCertMismatch
+		}
+		return nil
 	}
 }
 
@@ -155,20 +164,30 @@ type envelope struct {
 
 // call führt einen API-Aufruf aus und liefert das data-Feld. Die Session-ID
 // wird angehängt, sobald eine besteht.
+//
+// Die Parameter gehen als Formular im Rumpf eines POST, nicht in der URL:
+// Dort stünden Passwort und Session-ID in jedem Fehlertext eines
+// Netzfehlers (net/http nennt die volle URL) und damit im Log.
 func (c *Client) call(api, version, method string, params map[string]string, out any) error {
-	q := url.Values{}
-	q.Set("api", api)
-	q.Set("version", version)
-	q.Set("method", method)
+	return c.callAt("entry.cgi", api, version, method, params, out)
+}
+
+// callAt ist call mit ausdrücklichem CGI-Pfad - SYNO.API.Info liegt unter
+// query.cgi, und das Verzeichnis nennt für jede API ihren eigenen Pfad.
+func (c *Client) callAt(path, api, version, method string, params map[string]string, out any) error {
+	form := url.Values{}
+	form.Set("api", api)
+	form.Set("version", version)
+	form.Set("method", method)
 	for k, v := range params {
-		q.Set(k, v)
+		form.Set(k, v)
 	}
 	if c.sid != "" {
-		q.Set("_sid", c.sid)
+		form.Set("_sid", c.sid)
 	}
-	resp, err := c.http.Get(c.base + "entry.cgi?" + q.Encode())
+	resp, err := c.http.PostForm(c.base+path, form)
 	if err != nil {
-		return fmt.Errorf("%s.%s: %w", api, method, err)
+		return fmt.Errorf("%s.%s: %w", api, method, withoutURL(err))
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -193,6 +212,18 @@ func (c *Client) call(api, version, method string, params map[string]string, out
 		return nil
 	}
 	return json.Unmarshal(env.Data, out)
+}
+
+// withoutURL nimmt die URL aus einem Fehler von net/http. Sie enthält zwar
+// seit dem Umstieg auf POST nichts Geheimes mehr, gehört aber trotzdem nicht
+// in Fehlertexte: Der Fehler wandert bis in Job-Protokoll und Log, und was
+// dort einmal steht, bleibt dort stehen.
+func withoutURL(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
 }
 
 // Login meldet sich an und merkt sich die Sitzungs-ID.
@@ -227,10 +258,15 @@ func (c *Client) Logout() {
 
 // Info ist der erhobene Zustand eines DSM-Geräts.
 type Info struct {
-	Model      string // z.B. "DS923+", "VirtualDSM"
-	Version    string // z.B. "DSM 7.3.2-86009"
-	Serial     string
+	Model   string // z.B. "DS923+", "VirtualDSM"
+	Version string // z.B. "DSM 7.3.2-86009"
+	Serial  string
+	// CPUModel setzt sich aus Hersteller, Familie und Serie zusammen
+	// ("AMD Ryzen R1600"). VirtualDSM meldet nichts davon, nur die Zahl der
+	// vCPUs - siehe Virtual.
+	CPUModel   string
 	CPUCores   int
+	Virtual    bool // Modell VirtualDSM: CPU und Platten sind virtuell
 	RAMSizeMB  int
 	UptimeSec  int64
 	Timezone   string // DSM-Bezeichnung, z.B. "Amsterdam"
@@ -248,9 +284,15 @@ type Info struct {
 	VolumeTotalMB int
 	VolumeUsedMB  int
 	VolumeStatus  string // "normal" oder der schlechteste abweichende Zustand
+	// Storage sind Pools, Volumes und Platten einzeln (nil = load_info nicht
+	// lesbar; dann bleibt der zuletzt erfasste Stand stehen).
+	Storage *Storage
 
 	SecurityRisks   int
 	SecuritySummary string
+
+	// Settings sind Firewall und Sicherheitseinstellungen.
+	Settings Settings
 }
 
 // Package ist ein installiertes DSM-Paket.
@@ -265,16 +307,19 @@ type Package struct {
 // nur System.info ist Pflicht, denn ohne sie ist das Gerät nicht erkannt.
 func (c *Client) Collect() (*Info, error) {
 	var sys struct {
-		Model      string `json:"model"`
-		FirmwareV  string `json:"firmware_ver"`
-		Serial     string `json:"serial"`
-		CPUCores   string `json:"cpu_cores"`
-		RAMSize    int    `json:"ram_size"`
-		UpTime     string `json:"up_time"`
-		TimeZone   string `json:"time_zone"`
-		NTPEnabled bool   `json:"enabled_ntp"`
-		NTPServer  string `json:"ntp_server"`
-		Time       string `json:"time"`
+		Model      string  `json:"model"`
+		FirmwareV  string  `json:"firmware_ver"`
+		Serial     string  `json:"serial"`
+		CPUCores   flexInt `json:"cpu_cores"`
+		CPUVendor  string  `json:"cpu_vendor"`
+		CPUFamily  string  `json:"cpu_family"`
+		CPUSeries  string  `json:"cpu_series"`
+		RAMSize    int     `json:"ram_size"`
+		UpTime     string  `json:"up_time"`
+		TimeZone   string  `json:"time_zone"`
+		NTPEnabled bool    `json:"enabled_ntp"`
+		NTPServer  string  `json:"ntp_server"`
+		Time       string  `json:"time"`
 	}
 	if err := c.call("SYNO.Core.System", "3", "info", nil, &sys); err != nil {
 		return nil, err
@@ -289,9 +334,9 @@ func (c *Client) Collect() (*Info, error) {
 		NTPServer:  sys.NTPServer,
 		DeviceTime: sys.Time,
 		UptimeSec:  parseUptime(sys.UpTime),
-	}
-	if n, err := strconv.Atoi(strings.TrimSpace(sys.CPUCores)); err == nil {
-		info.CPUCores = n
+		CPUCores:   int(sys.CPUCores),
+		CPUModel:   joinNonEmpty(sys.CPUVendor, sys.CPUFamily, sys.CPUSeries),
+		Virtual:    isVirtualModel(sys.Model),
 	}
 
 	// Ab hier best effort: was nicht antwortet, bleibt leer.
@@ -316,42 +361,9 @@ func (c *Client) Collect() (*Info, error) {
 
 	c.collectStorage(info)
 	c.collectSecurity(info)
+	c.discoverAPIs()
+	info.Settings = c.collectSettings()
 	return info, nil
-}
-
-// collectStorage liest Volume-Größe/-Belegung und den schlechtesten Zustand.
-func (c *Client) collectStorage(info *Info) {
-	var st struct {
-		Volumes []struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-			Size   struct {
-				Total string `json:"total"`
-				Used  string `json:"used"`
-			} `json:"size"`
-		} `json:"volumes"`
-	}
-	if err := c.call("SYNO.Storage.CGI.Storage", "1", "load_info", nil, &st); err != nil {
-		return
-	}
-	var total, used int64
-	status := ""
-	for _, v := range st.Volumes {
-		t, _ := strconv.ParseInt(v.Size.Total, 10, 64)
-		u, _ := strconv.ParseInt(v.Size.Used, 10, 64)
-		total += t
-		used += u
-		// „normal" ist der gute Fall; jeder abweichende Zustand (degraded,
-		// crashed …) gehört sichtbar gemacht.
-		if v.Status != "" && v.Status != "normal" {
-			status = v.Status
-		} else if status == "" {
-			status = v.Status
-		}
-	}
-	info.VolumeTotalMB = int(total / (1 << 20))
-	info.VolumeUsedMB = int(used / (1 << 20))
-	info.VolumeStatus = status
 }
 
 // collectSecurity übernimmt die Bewertung des DSM-eigenen Security Advisors:
@@ -407,6 +419,22 @@ func parseUptime(s string) int64 {
 		total += n * mult
 	}
 	return total
+}
+
+// isVirtualModel erkennt VirtualDSM (Synologys DSM als virtuelle Maschine).
+func isVirtualModel(model string) bool {
+	return strings.Contains(strings.ToLower(model), "virtualdsm")
+}
+
+// joinNonEmpty verbindet die belegten Teile mit Leerzeichen.
+func joinNonEmpty(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 func firstNonEmpty(vals ...string) string {

@@ -70,9 +70,30 @@ LCM meldet solche Fälle deshalb beim Start im Protokoll und weist im
 Health-Bericht auf den Gleichstand hin. Setze den Vorrang dann ausdrücklich.
 
 Regeln **verschiedener** Typen stehen nicht im Widerspruch (Firewall und
-APT-Cache betreffen Verschiedenes) - die laufen weiterhin alle. Und geplante
-Regeln sind vom Vorrang gar nicht betroffen: Zwei Update-Läufe aus zwei Gruppen
-sind kein Konflikt, sondern zwei Jobs.
+APT-Cache betreffen Verschiedenes) - die laufen weiterhin alle.
+
+Für **Firewall** und **APT-Cache** gilt der Vorrang auch über geplante Regeln
+hinweg: Je Server führt die Gruppe mit dem stärksten Vorrang unter allen
+Gruppen, die den Typ dort mit einer laufenden Regel regeln - gleich, ob am
+Zeitplan oder als Grundsatz-Regel. Nur ihre Regeln dieses Typs greifen auf dem
+Server. Die geplante Regel einer anderen Gruppe läuft dort nicht; ihr Job endet
+grün mit einem Bericht, der die führende Gruppe und deren Regel nennt:
+
+```
+übersprungen - auf diesem Server führt Gruppe "Basis-Härtung" (Vorrang 10) den Typ "firewall" mit der Regel "Basis-Firewall"; Regeln anderer Gruppen dieses Typs greifen hier nicht.
+```
+
+Ebenso weicht eine Grundsatz-Regel einer schwächeren Gruppe, wenn die stärkere
+denselben Typ nur am Zeitplan regelt - sonst drehte der nächste Health-Check
+zurück, was der Zeitplan nachts angewendet hat. Regeln an einem abgeschalteten
+Zeitplan laufen nie und zählen deshalb nicht mit. Innerhalb einer Gruppe weichen
+geplante Regeln einander nicht. Im Reiter **Regeln** steht an jeder betroffenen
+Regel, auf welchen Servern sie zurückgestellt wird oder sich durchsetzt, und der
+Bestätigungsdialog von „Jetzt ausführen" nennt die Server, auf denen der Lauf
+übersprungen wird.
+
+Alle übrigen geplanten Regeln sind vom Vorrang nicht betroffen: Zwei
+Update-Läufe aus zwei Gruppen sind kein Konflikt, sondern zwei Jobs.
 
 :::caution[Firewall-Grundsatzregel: der Soll-Zustand ist Pflicht]
 Eine Firewall-Grundsatzregel muss ausdrücklich sagen, welche Ports offen sein

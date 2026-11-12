@@ -635,3 +635,26 @@ func TestScanMitAusgefallenerQuelleHeiltNicht(t *testing.T) {
 
 	requireState(t, repo, domain.CapabilityPackages, domain.CapabilityFailed)
 }
+
+// TestAktualisierenHeiltGescheitertePaketliste: Scheitert der tägliche Lauf
+// „Paketliste aktualisieren“ einmal (Netz weg), heilt ihn ein erfolgreiches
+// „Alles aktualisieren“ - es liest die Pakete ebenso. Eine gescheiterte
+// Installation und eine ausgefallene Quelle bleiben stehen.
+func TestAktualisierenHeiltGescheitertePaketliste(t *testing.T) {
+	svc, repo, _ := newCapabilityTest(t)
+	svc.RecordJob(failedJob(domain.RuleTypePackageScan, "FEHLER: DSM-Anmeldung fehlgeschlagen: context deadline exceeded", 1))
+	requireState(t, repo, domain.CapabilityPackages, domain.CapabilityFailed)
+
+	svc.RecordJob(successJob(JobTypeFullRefresh, "Pakete: 12 installiert"))
+	requireState(t, repo, domain.CapabilityPackages, domain.CapabilityOK)
+
+	svc, repo, _ = newCapabilityTest(t)
+	svc.RecordJob(failedJob(domain.RuleTypeUpdate, brokenDepsOutput, 100))
+	svc.RecordJob(successJob(JobTypeFullRefresh, "Reading package lists... Done"))
+	requireState(t, repo, domain.CapabilityPackages, domain.CapabilityFailed)
+
+	svc, repo, _ = newCapabilityTest(t)
+	svc.RecordJob(failedJob(domain.RuleTypePackageScan, "x", 1))
+	svc.RecordJob(successJob(JobTypeFullRefresh, zypperRefreshPartialOutput))
+	requireState(t, repo, domain.CapabilityPackages, domain.CapabilityFailed)
+}

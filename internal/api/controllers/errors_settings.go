@@ -50,6 +50,7 @@ var (
 	errBackupWrongSecret   = apierr.Define(400, "backup.wrong_passphrase", "wrong passphrase or key, or the file is damaged")
 	errBackupFormat        = apierr.Define(400, "backup.invalid_archive", "not a valid LCM backup archive")
 	errBackupIncomplete    = apierr.Define(400, "backup.incomplete", "the archive contains no database")
+	errBackupDatabasePath  = apierr.Define(400, "backup.database_path", "the archive places the database outside the data directory")
 	errRestoreFailed       = apierr.Define(500, "backup.restore_failed", "restore failed")
 	errBackupUploadMissing = apierr.Define(400, "backup.upload_missing", "no backup file in the field archive")
 	errBackupUploadSize    = apierr.Define(413, "backup.upload_too_large", "the backup file is too large")
@@ -79,6 +80,7 @@ var restoreErrors = []sentinelCode{
 	{services.ErrBackupPassphrase, errBackupWrongSecret},
 	{services.ErrBackupFormat, errBackupFormat},
 	{services.ErrBackupIncomplete, errBackupIncomplete},
+	{services.ErrBackupDatabasePath, errBackupDatabasePath},
 }
 
 // subscriptionChannelErrors ordnet die Fehler des Kanalwechsels zu.

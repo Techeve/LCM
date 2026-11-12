@@ -33,8 +33,14 @@ import (
 // ssh2faDropinPath: alphabetisch VOR 60-lcm-hardening.conf - OpenSSH nimmt
 // je Option den ZUERST gefundenen Wert, und das Härtungs-Drop-in setzt
 // ChallengeResponseAuthentication no. Deshalb steht diese Option auch nicht in
-// 00-lcm-hardening.conf.
-const ssh2faDropinPath = "/etc/ssh/sshd_config.d/55-lcm-2fa.conf"
+// 00-lcm-hardening.conf. Aus demselben Grund vor 50-redhat.conf: RHEL 9 und
+// seine Klone setzen dort ChallengeResponseAuthentication no, mit dem alten
+// Namen 55- scheiterte dort jede Aktivierung an `sshd -t`.
+const ssh2faDropinPath = "/etc/ssh/sshd_config.d/40-lcm-2fa.conf"
+
+// ssh2faLegacyDropinPath ist der Name bis Release B. Wo die 2FA schon damit
+// läuft, räumt das Einrichten ihn ab, Rückbau und Scan kennen ihn weiter.
+const ssh2faLegacyDropinPath = "/etc/ssh/sshd_config.d/55-lcm-2fa.conf"
 
 const pamSSHDPath = "/etc/pam.d/sshd"
 
@@ -76,8 +82,11 @@ func ssh2faPAMScript() string {
 		fmt.Sprintf(`sed -i '/^# >>> LCM 2FA >>>/,/^# <<< LCM 2FA <<</d' %s`, pamSSHDPath),
 		fmt.Sprintf(`sed -i 's/^#LCM-2FA# //' %s`, pamSSHDPath),
 		// Debian: "@include common-auth" - RHEL: "auth substack password-auth"
-		// - openSUSE: "auth include common-auth".
-		fmt.Sprintf(`sed -i -E 's/^(@include[[:space:]]+common-auth)/#LCM-2FA# \1/; s/^(auth[[:space:]]+(include|substack)[[:space:]]+(common-auth|system-auth|password-auth))/#LCM-2FA# \1/' %s`, pamSSHDPath),
+		// - openSUSE: "auth include common-auth" - Arch: "auth include
+		// system-remote-login". Bleibt Archs Zeile stehen, fragt PAM nach dem
+		// Code zusätzlich das Passwort ab, und wer nur einen Key hat, kommt
+		// nicht mehr herein.
+		fmt.Sprintf(`sed -i -E 's/^(@include[[:space:]]+common-auth)/#LCM-2FA# \1/; s/^(auth[[:space:]]+(include|substack)[[:space:]]+(common-auth|system-auth|password-auth|system-remote-login))/#LCM-2FA# \1/' %s`, pamSSHDPath),
 		`PAMTMP=$(mktemp)`,
 		strings.Join([]string{
 			`{ echo '# >>> LCM 2FA >>>'`,
@@ -122,6 +131,7 @@ func ssh2faDropinScript(serviceUser string) string {
 	return strings.Join([]string{
 		sshdEnsureIncludeScript,
 		"install -d -m 755 /etc/ssh/sshd_config.d",
+		"rm -f " + ssh2faLegacyDropinPath,
 		"printf '%s' " + shellQuote(content) + " > " + ssh2faDropinPath,
 		"sshd -t",
 		sshdReloadScript,
@@ -150,7 +160,7 @@ func ssh2faInstallScript(mgr, serviceUser string) (string, error) {
 // und der nächste Versuch spart den Download.
 func ssh2faRollbackScript() string {
 	return strings.Join([]string{
-		"rm -f " + ssh2faDropinPath,
+		"rm -f " + ssh2faDropinPath + " " + ssh2faLegacyDropinPath,
 		ssh2faPAMRestoreScript(),
 		"sshd -t",
 		sshdReloadScript,
@@ -238,6 +248,15 @@ func (s *ServerService) runSSH2FAJob(job *domain.Job, server *domain.Server, ena
 		runErr = fmt.Errorf("ssh-2fa endete mit exit-code %d", code)
 	}
 	if runErr != nil {
+		// Bricht das Einrichten mittendrin ab, ist der Passwort-Stack womöglich
+		// schon stillgelegt (laufender sshd mit Passwort-Login nimmt dann
+		// JEDES Passwort) und ein Drop-in liegt da, an dem `sshd -t`
+		// scheitert (beim nächsten Start bliebe sshd aus). Deshalb auch hier
+		// zurückrollen, nicht nur nach der Aussperr-Probe.
+		if enable {
+			rbOut, _, _ := conn.Run(privRun(server, plan.rollback))
+			output += "\n\nROLLBACK:\n" + rbOut
+		}
 		s.jobs.Complete(job, output, ptrInt(code), runErr)
 		return
 	}

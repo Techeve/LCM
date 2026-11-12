@@ -2,7 +2,9 @@ package services
 
 import (
 	"bufio"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -69,5 +71,62 @@ func TestDetachKeepsShortCommandsFast(t *testing.T) {
 	}
 	if strings.Join(lines, ",") != "a,b" {
 		t.Errorf("ausgabe %q", lines)
+	}
+}
+
+// withTempDirs setzt die Orte der Ausgabedatei für die Dauer eines Tests.
+func withTempDirs(t *testing.T, dirs ...string) {
+	t.Helper()
+	old := wrapperTempDirs
+	wrapperTempDirs = dirs
+	t.Cleanup(func() { wrapperTempDirs = old })
+}
+
+// unwritableDirs liefert Orte, an denen mktemp scheitert: einen fehlenden
+// und - außer für root, den Rechte nicht aufhalten - einen schreibgeschützten.
+func unwritableDirs(t *testing.T) []string {
+	t.Helper()
+	dirs := []string{filepath.Join(t.TempDir(), "fehlt")}
+	if os.Geteuid() != 0 {
+		ro := filepath.Join(t.TempDir(), "nurlesen")
+		if err := os.Mkdir(ro, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
+		dirs = append(dirs, ro)
+	}
+	return dirs
+}
+
+// TestDetachFallsBackToNextTempDir: Ist /tmp voll oder gesperrt, weicht der
+// Wrapper auf den nächsten Ort aus und räumt die Datei dort wieder ab.
+func TestDetachFallsBackToNextTempDir(t *testing.T) {
+	spare := t.TempDir()
+	withTempDirs(t, append(unwritableDirs(t), spare)...)
+
+	lines, _, exit := runWrapped(t, `echo "lf=$__lf"; exit 5`)
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "lf="+spare+"/lcm.") {
+		t.Fatalf("ausgabe %q, erwartet eine datei unter %s", lines, spare)
+	}
+	if exit != 5 {
+		t.Errorf("exit-code %d, erwartet 5", exit)
+	}
+	if left, _ := os.ReadDir(spare); len(left) != 0 {
+		t.Errorf("ausgabedatei liegt noch da: %v", left)
+	}
+}
+
+// TestDetachRunsDirectlyWithoutTempDir: Ist kein Ort beschreibbar, läuft das
+// Kommando direkt - früher leitete die Subshell nach "" um, und LCM kam auf
+// einem vollen Server an kein einziges Kommando mehr heran.
+func TestDetachRunsDirectlyWithoutTempDir(t *testing.T) {
+	withTempDirs(t, unwritableDirs(t)...)
+
+	lines, _, exit := runWrapped(t, `echo "lf=$__lf"; echo fehler >&2; exit 4`)
+	if strings.Join(lines, ",") != "lf=,fehler" {
+		t.Fatalf("ausgabe %q, erwartet lf=,fehler", lines)
+	}
+	if exit != 4 {
+		t.Errorf("exit-code %d, erwartet 4", exit)
 	}
 }

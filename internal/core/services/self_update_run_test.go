@@ -28,6 +28,21 @@ type startedJob struct {
 	after   func(ok bool)
 }
 
+// waitForAfter wartet, bis der Update-Job angestoßen ist, und liefert seine
+// Abschlussfunktion. Die Phase steht schon vor dem Anstoß auf running, ein
+// Blick nur auf die Phase reicht deshalb auf einem langsamen Runner nicht.
+func (s *startedJob) waitForAfter(t *testing.T) func(bool) {
+	t.Helper()
+	var after func(bool)
+	waitFor(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		after = s.after
+		return after != nil
+	})
+	return after
+}
+
 func (s *startedJob) snapshot() startedJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,7 +107,7 @@ func TestSelfUpdateScriptSurvivesTheRestart(t *testing.T) {
 
 	// Im eingeschränkten Modus darf der Service-User kein systemd-run - der
 	// Lauf geht deshalb über das Helper-Unterkommando, das denselben Ablauf
-	// als root trägt (siehe lcm_helper.go, host-self-update).
+	// als root trägt (siehe lcm-helper.sh, host-self-update).
 	restricted := services.SelfUpdateScriptForTest(true)
 	if restricted != "lcm-helper host-self-update" {
 		t.Errorf("eingeschränkter Modus muss über den Helper laufen, bekam:\n%s", restricted)
@@ -131,6 +146,7 @@ func TestSelfUpdateWaitsForRunningJobs(t *testing.T) {
 	env.Jobs.Complete(job, "fertig", ptrIntT(0), nil)
 
 	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
+	started.waitForAfter(t)
 	call := started.snapshot()
 	if call.jobType != domain.RuleTypeUpdate {
 		// Nur diese Art wertet der Wiederanlauf als „durch das Update
@@ -193,6 +209,7 @@ func TestSelfUpdateSichertVorher(t *testing.T) {
 		t.Fatalf("selbst-update anfordern: %v", err)
 	}
 	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
+	started.waitForAfter(t)
 
 	if backupCalls != 1 {
 		t.Errorf("Sicherung lief %d-mal, erwartet genau einmal", backupCalls)
@@ -338,10 +355,7 @@ func TestSelfUpdateGescheiterterLaufHebtDieSperreAuf(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
-
-	started.mu.Lock()
-	after := started.after
-	started.mu.Unlock()
+	after := started.waitForAfter(t)
 	after(false)
 	if st := svc.Status(); st.Phase != services.SelfUpdateFailed || st.Error == "" {
 		t.Errorf("erwartet failed mit Begründung, bekam %+v", st)
@@ -366,9 +380,7 @@ func TestSelfUpdateOhneNeustartHebtDieSperreAuf(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
-	started.mu.Lock()
-	after := started.after
-	started.mu.Unlock()
+	after := started.waitForAfter(t)
 	after(true)
 	if st := svc.Status(); st.Phase != services.SelfUpdateFailed || !strings.Contains(st.Error, "journalctl") {
 		t.Errorf("erwartet failed mit Hinweis aufs Protokoll, bekam %+v", st)
@@ -406,6 +418,7 @@ func TestSelfUpdateAbbruchUndNeustartLaufenNichtDoppelt(t *testing.T) {
 
 	env.Jobs.Complete(running, "", ptrIntTest(0), nil)
 	waitFor(t, func() bool { return svc.Status().Phase == services.SelfUpdateRunning })
+	started.waitForAfter(t)
 	time.Sleep(30 * time.Millisecond) // dem alten Lauf Gelegenheit geben, sich (fälschlich) zu melden
 	if n := started.snapshot().calls; n != 1 {
 		t.Errorf("erwartet genau einen Update-Lauf, gestartet wurden %d", n)

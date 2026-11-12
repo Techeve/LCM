@@ -140,7 +140,11 @@ func (ctrl *ServerController) CreateAgent(c fiber.Ctx) error {
 	if err != nil {
 		return mapServerError(err)
 	}
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"server": server, "token": token})
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"server": server, "token": token,
+		// Pin für den Download-Befehl (curl --pinnedpubkey), leer ohne TLS.
+		"download_pin": ctrl.servers.AgentDownloadPin(),
+	})
 }
 
 // CreateRouterOS - POST /api/v1/servers/routeros (servers:write)
@@ -245,6 +249,33 @@ func (ctrl *ServerController) CreateDSM(c fiber.Ctx) error {
 		return mapServerError(err)
 	}
 	return c.Status(fiber.StatusCreated).JSON(server)
+}
+
+// ApplyDSMTargets - POST /api/v1/servers/:id/dsm/apply (servers:write)
+// Body {keys:["csp", …]}: setzt die genannten DSM-Sicherheitseinstellungen
+// als Job auf ihren Sollwert. Nur Schlüssel aus domain.DSMSettable; die
+// Firewall bekommt eine eigene Absage, weil sie bewusst fehlt.
+func (ctrl *ServerController) ApplyDSMTargets(c fiber.Ctx) error {
+	var req struct {
+		Keys []string `json:"keys"`
+	}
+	if err := bindBody(c, &req); err != nil {
+		return err
+	}
+	if len(req.Keys) == 0 {
+		return missingFields("keys")
+	}
+	for _, key := range req.Keys {
+		if key == domain.DSMCheckFirewall {
+			return errDSMFirewallNotSettable
+		}
+		if !domain.IsDSMSettable(key) {
+			return errDSMNotSettable.With("key", key)
+		}
+	}
+	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
+		return ctrl.servers.ApplyDSMTargets(scopeFor(c), id, req.Keys, actor(c))
+	})
 }
 
 // RegenerateAgentToken - POST /api/v1/servers/:id/agent-token (servers:write)
@@ -1853,7 +1884,7 @@ func (ctrl *ServerController) SecurityToolBans(c fiber.Ctx) error {
 	}
 	bans, err := ctrl.servers.SecurityToolBans(scopeFor(c), id, c.Query("tool"), actor(c))
 	if err != nil {
-		return err
+		return mapServerActionError(err)
 	}
 	return c.JSON(fiber.Map{"bans": bans})
 }

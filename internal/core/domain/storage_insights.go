@@ -88,11 +88,15 @@ func storageHealthInsights(befundeIn []StorageHealth) []StatusInsight {
 		if !h.Beanstandet() {
 			continue
 		}
-		befunde = append(befunde, insight(h.Severity(), "storageDefect",
+		key := "storageDefect"
+		if h.Cause != "" {
+			key = h.Cause
+		}
+		befunde = append(befunde, insight(h.Severity(), key,
 			storageKindLabel(h.Kind)+" "+h.Name+": "+h.Message,
 			map[string]string{
 				"kind": h.Kind, "kindLabel": storageKindLabel(h.Kind), "name": h.Name,
-				"state": h.State, "message": h.Message,
+				"state": h.State, "rawState": h.RawState, "message": h.Message,
 			}))
 	}
 	return befunde
@@ -109,6 +113,12 @@ func storageKindLabel(kind string) string {
 		return "RAID-Verbund"
 	case StorageKindLVMThin:
 		return "LVM-Thin-Pool"
+	case StorageKindDSMPool:
+		return "Speicherpool"
+	case StorageKindDSMVolume:
+		return "Volume"
+	case StorageKindDSMDisk:
+		return "Laufwerk"
 	}
 	return "Speicher"
 }

@@ -1,0 +1,9 @@
+{
+ "success": true,
+ "data": [
+  {
+   "adapter": "eth0",
+   "dos_protect": false
+  }
+ ]
+}

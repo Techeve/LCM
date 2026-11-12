@@ -194,7 +194,7 @@ func (s *JobService) start(serverID, ruleID *uint, jobType, name, triggeredBy st
 		return job, ErrMaintenance
 	}
 	if serverID != nil {
-		running, err := s.jobs.HasRunningForServer(*serverID)
+		running, err := s.busyLocked(*serverID)
 		if err != nil {
 			return nil, err
 		}
@@ -213,6 +213,21 @@ func (s *JobService) start(serverID, ruleID *uint, jobType, name, triggeredBy st
 	// Job später abbrechen und seine Verbindungen schließen.
 	s.active[job.ID] = &activeJob{serverID: job.ServerID}
 	return job, nil
+}
+
+// busyLocked meldet, ob auf dem Server ein Job läuft. Zuerst zählt das
+// Laufzeit-Handle im Speicher: startNext setzt den Wartenden unter dem Mutex
+// auf „läuft", schreibt die Zeile aber erst danach. Wer in dieser Lücke nur
+// die Datenbank fragte, sah einen freien Server und startete einen zweiten
+// Job daneben. Ein abgebrochener Job (finalized) belegt den Server nicht mehr
+// - abort() hat ihn bereits freigegeben. Erwartet den gehaltenen Mutex.
+func (s *JobService) busyLocked(serverID uint) (bool, error) {
+	for _, entry := range s.active {
+		if !entry.finalized && entry.serverID != nil && *entry.serverID == serverID {
+			return true, nil
+		}
+	}
+	return s.jobs.HasRunningForServer(serverID)
 }
 
 // --- Warteschlange je Server ------------------------------------------------
@@ -297,7 +312,7 @@ func (s *JobService) enqueue(in QueuedStart) (*domain.Job, *queuedJob, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	running, err := s.jobs.HasRunningForServer(in.ServerID)
+	running, err := s.busyLocked(in.ServerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -417,10 +432,10 @@ func (s *JobService) startNext(serverID uint) {
 		s.mu.Unlock()
 		return // während der Wartung bleibt die Schlange stehen, EndMaintenance stößt sie an
 	}
-	// Auch hier gegen die Datenbank prüfen: Zwischen dem Ende des einen und
-	// der Weitergabe kann eine unmittelbare Aktion dazwischengegangen sein.
-	// Sie darf vor, aber nicht neben dem Wartenden laufen.
-	running, err := s.jobs.HasRunningForServer(serverID)
+	// Auch hier prüfen: Zwischen dem Ende des einen und der Weitergabe kann
+	// eine unmittelbare Aktion dazwischengegangen sein. Sie darf vor, aber
+	// nicht neben dem Wartenden laufen.
+	running, err := s.busyLocked(serverID)
 	if err != nil || running {
 		s.mu.Unlock()
 		return
@@ -553,10 +568,12 @@ func (s *JobService) complete(job *domain.Job, output string, exitCode *int, run
 	aborted := entry != nil && entry.finalized
 	s.mu.Unlock()
 	s.stopWatching(job.ID)
-	// Der Server ist frei - der nächste Wartende darf. Auch im
-	// Abbruch-Fall: Dort hat abort() die Zeile schon geschlossen, die
-	// Warteschlange muss trotzdem weiterfließen.
-	defer s.releaseServer(job)
+	// Der Server ist frei - der nächste Wartende darf. Nach einem Abbruch
+	// hat abort() ihn schon weitergegeben; ein zweites Freigeben gäbe ihn an
+	// einen weiteren Wartenden, während der erste bereits läuft.
+	if !aborted {
+		defer s.releaseServer(job)
+	}
 	// Die Meldung kommt nach dem Verwerfen der Ampel (onFinished läuft als
 	// Erstes) und vor der Weitergabe an den nächsten Wartenden. Bei einem
 	// Abbruch hat abort() schon gemeldet.
@@ -834,6 +851,31 @@ func (s *JobService) releaseServer(job *domain.Job) {
 type SelfUpdateRecovery struct {
 	Match func(*domain.Job) bool
 	Note  string
+	// Outcome liefert, falls vorhanden, das Ergebnis des abgekoppelten
+	// Paketlaufs zum Job (hostPackageOutcome): Text fürs Protokoll und den
+	// Exit-Code, nil solange der Lauf noch nicht fertig ist. Optional.
+	Outcome func(*domain.Job) (text string, exitCode *int)
+}
+
+// complete schließt einen vom Update abgeschnittenen Job ab. Ohne Ergebnis
+// des abgekoppelten Laufs gilt der Versionswechsel als Beleg für den Erfolg;
+// liegt eines vor, entscheidet sein Exit-Code - auch ein Lauf, der LCM
+// aktualisiert hat, kann danach an einem anderen Paket gescheitert sein.
+func (r *SelfUpdateRecovery) complete(job *domain.Job) {
+	job.Status = domain.JobStatusSuccess
+	job.ExitCode = new(int) // 0 - der Lauf hat sein Ziel erreicht
+	job.Output += r.Note
+	if r.Outcome == nil {
+		return
+	}
+	text, code := r.Outcome(job)
+	if text != "" {
+		job.Output += "\n\n" + text
+	}
+	if code != nil && *code != 0 {
+		job.Status = domain.JobStatusFailed
+		job.ExitCode = code
+	}
 }
 
 // FailInterruptedOnStartup räumt verwaiste Jobs nach einem Dienst-Neustart
@@ -872,9 +914,7 @@ func (s *JobService) FailInterruptedOnStartup(self *SelfUpdateRecovery) {
 			job.Output += "Nicht ausgeführt: stand beim Dienst-Neustart noch in der Warteschlange."
 			queued++
 		case self != nil && self.Match != nil && self.Match(job):
-			job.Status = domain.JobStatusSuccess
-			job.ExitCode = new(int) // 0 - der Lauf hat sein Ziel erreicht
-			job.Output += self.Note
+			self.complete(job)
 			selfUpdate++
 		default:
 			job.Status = domain.JobStatusFailed
@@ -884,6 +924,12 @@ func (s *JobService) FailInterruptedOnStartup(self *SelfUpdateRecovery) {
 		if err := s.jobs.Update(job); err != nil {
 			slog.Error("orphaned job could not be completed", "job", job.ID, "error", err)
 		}
+		// Ein Laufzeit-Handle gibt es nach einem echten Neustart nicht; bleibt
+		// doch eines stehen, hielte es die Sperre (busyLocked) über den Abschluss
+		// hinaus fest.
+		s.mu.Lock()
+		delete(s.active, job.ID)
+		s.mu.Unlock()
 	}
 	if failed > 0 {
 		slog.Warn("orphaned jobs marked as failed after restart", "count", failed)

@@ -1,0 +1,161 @@
+{
+ "success": true,
+ "data": {
+  "disks": [
+   {
+    "id": "sata1",
+    "name": "Drive 1",
+    "longName": "Drive 1",
+    "device": "/dev/sata1",
+    "model": "HAT5300-8T ",
+    "vendor": "Synology",
+    "diskType": "SATA",
+    "isSsd": false,
+    "status": "normal",
+    "smart_status": "normal",
+    "overview_status": "normal",
+    "temp": 36,
+    "used_by": "reuse_1",
+    "size_total": "8001563222016",
+    "exceed_bad_sector_thr": false,
+    "below_remain_life_thr": false,
+    "unc": 0,
+    "remain_life": -1
+   },
+   {
+    "id": "sata2",
+    "name": "Drive 2",
+    "longName": "Drive 2",
+    "device": "/dev/sata2",
+    "model": "HAT5300-8T ",
+    "vendor": "Synology",
+    "diskType": "SATA",
+    "isSsd": false,
+    "status": "crashed",
+    "smart_status": "failing",
+    "overview_status": "danger",
+    "temp": 44,
+    "used_by": "reuse_1",
+    "size_total": "8001563222016",
+    "exceed_bad_sector_thr": true,
+    "below_remain_life_thr": false,
+    "unc": 112,
+    "remain_life": -1
+   },
+   {
+    "id": "nvme0n1",
+    "name": "M.2 Drive 1",
+    "longName": "M.2 Drive 1",
+    "device": "/dev/nvme0n1",
+    "model": "SNV3410-400G",
+    "vendor": "Synology",
+    "diskType": "M.2 NVMe",
+    "isSsd": true,
+    "status": "normal",
+    "smart_status": "attention",
+    "overview_status": "warning",
+    "temp": 49,
+    "used_by": "reuse_2",
+    "size_total": "400088457216",
+    "exceed_bad_sector_thr": false,
+    "below_remain_life_thr": true,
+    "unc": 0,
+    "remain_life": {
+     "value": 4,
+     "trustable": true
+    }
+   }
+  ],
+  "storagePools": [
+   {
+    "id": "reuse_1",
+    "num_id": 1,
+    "pool_path": "reuse_1",
+    "desc": "",
+    "device_type": "shr_with_1_disk_protect",
+    "raidType": "single",
+    "status": "degraded",
+    "disks": [
+     "sata1",
+     "sata2"
+    ],
+    "size": {
+     "total": "7672969265152",
+     "used": "7612841226240"
+    },
+    "progress": {
+     "percent": "37",
+     "step": "repairing"
+    },
+    "is_actioning": true,
+    "scrubbingStatus": "has_not_run_yet"
+   },
+   {
+    "id": "reuse_2",
+    "num_id": 2,
+    "pool_path": "reuse_2",
+    "desc": "",
+    "device_type": "basic",
+    "raidType": "single",
+    "status": "normal",
+    "disks": [
+     "nvme0n1"
+    ],
+    "size": {
+     "total": "380633300992",
+     "used": "375881842688"
+    },
+    "progress": {
+     "percent": "-1",
+     "step": "none"
+    },
+    "is_actioning": false,
+    "scrubbingStatus": "done"
+   }
+  ],
+  "volumes": [
+   {
+    "id": "volume_1",
+    "num_id": 1,
+    "vol_path": "/volume1",
+    "fs_type": "btrfs",
+    "status": "degraded",
+    "is_writable": true,
+    "pool_path": "reuse_1",
+    "device_type": "shr_with_1_disk_protect",
+    "size": {
+     "total": "7489556193280",
+     "used": "5240121606144",
+     "total_device": "7672969265152"
+    },
+    "progress": {
+     "percent": "-1",
+     "step": "none"
+    }
+   },
+   {
+    "id": "volume_2",
+    "num_id": 2,
+    "vol_path": "/volume2",
+    "fs_type": "ext4",
+    "status": "normal",
+    "is_writable": false,
+    "pool_path": "reuse_2",
+    "device_type": "basic",
+    "size": {
+     "total": "367001600000",
+     "used": "120259084288",
+     "total_device": "380633300992"
+    },
+    "progress": {
+     "percent": "-1",
+     "step": "none"
+    }
+   }
+  ],
+  "env": {
+   "system_crashed": false,
+   "system_need_repair": true
+  }
+ }
+}

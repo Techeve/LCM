@@ -61,9 +61,7 @@ func TestFehlgeschlageneKontakteZaehlenHoch(t *testing.T) {
 	repo, id := newReachDB(t)
 
 	// Erster Fehlschlag: nicht erreichbar, aber noch NICHT offline.
-	if err := repo.UpdateFields(id, unreachableFields(&domain.Server{Name: "test"}, errors.New("timeout"))); err != nil {
-		t.Fatal(err)
-	}
+	recordUnreachable(repo, &domain.Server{ID: id, Name: "test"}, errors.New("timeout"))
 	s := loadServer(t, repo, id)
 	if s.Reachable || s.FailedChecks != 1 {
 		t.Fatalf("nach 1. Fehlschlag: reachable=%v failed=%d", s.Reachable, s.FailedChecks)
@@ -76,9 +74,7 @@ func TestFehlgeschlageneKontakteZaehlenHoch(t *testing.T) {
 	}
 
 	// Zweiter Fehlschlag in Folge: jetzt offline.
-	if err := repo.UpdateFields(id, unreachableFields(&domain.Server{Name: "test"}, errors.New("timeout"))); err != nil {
-		t.Fatal(err)
-	}
+	recordUnreachable(repo, &domain.Server{ID: id, Name: "test"}, errors.New("timeout"))
 	s = loadServer(t, repo, id)
 	if s.FailedChecks != 2 {
 		t.Fatalf("nach 2. Fehlschlag: failed=%d, erwartet 2", s.FailedChecks)
@@ -94,9 +90,7 @@ func TestFehlgeschlageneKontakteZaehlenHoch(t *testing.T) {
 func TestErfolgreicherKontaktSetztZaehlerZurueck(t *testing.T) {
 	repo, id := newReachDB(t)
 	for i := 0; i < 5; i++ {
-		if err := repo.UpdateFields(id, unreachableFields(&domain.Server{Name: "test"}, errors.New("weg"))); err != nil {
-			t.Fatal(err)
-		}
+		recordUnreachable(repo, &domain.Server{ID: id, Name: "test"}, errors.New("weg"))
 	}
 	if s := loadServer(t, repo, id); !s.IsOffline() {
 		t.Fatalf("Vorbedingung: Server sollte offline sein (failed=%d)", s.FailedChecks)

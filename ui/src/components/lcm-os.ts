@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing, svg } from 'lit';
-import { osLogos } from './os-logos.js';
+import { osLogoFor } from './os-logos.js';
 import { baseStyles } from './shared.js';
 
 /** Kachel, Logo und Name; geteilt von <lcm-os> und <lcm-server-os>. Kachelfarben: Tokens `--os-tile-*`. */
@@ -33,10 +33,15 @@ export const osTileStyles = css`
   }
 `;
 
-/** <lcm-os os="debian" label="Debian 12" size="l"> – Distributionslogo (Kachel) mit optionalem Namen; `size="l"` für Seitenköpfe. */
+/**
+ * <lcm-os os="debian" label="Debian 12" size="l"> – Logo (Kachel) mit optionalem Namen; `size="l"` für Seitenköpfe.
+ * `product` (Proxmox-Typ) und `model` (Hardware-Modell) wählen das Produktlogo wie in der Serverliste (`osLogoFor`).
+ */
 export class LcmOs extends LitElement {
   static override properties = {
     os: { type: String, reflect: true },
+    product: { type: String },
+    model: { type: String },
     label: { type: String },
     size: { type: String, reflect: true },
   };
@@ -57,18 +62,22 @@ export class LcmOs extends LitElement {
   ];
 
   declare os: string;
+  declare product: string;
+  declare model: string;
   declare label: string;
   declare size: 'm' | 'l';
 
   constructor() {
     super();
     this.os = 'linux';
+    this.product = '';
+    this.model = '';
     this.label = '';
     this.size = 'm';
   }
 
   override render() {
-    const logo = osLogos[this.os] ?? osLogos.linux!;
+    const logo = osLogoFor({ os_id: this.os, proxmox_type: this.product, hardware_model: this.model });
     const named = this.label !== '';
     return html`<span class="tile" role=${named ? 'presentation' : 'img'} aria-label=${named ? nothing : logo.title}>
         <svg viewBox="0 0 24 24" aria-hidden="true">${svg`<path d=${logo.path} fill=${`#${logo.hex}`}></path>`}</svg>

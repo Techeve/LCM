@@ -19,6 +19,10 @@ const (
 	StorageKindBtrfs   = "btrfs"    // Btrfs-Dateisystem
 	StorageKindMDRaid  = "mdraid"   // Linux-Software-RAID (/proc/mdstat)
 	StorageKindLVMThin = "lvm_thin" // LVM-Thin-Pool
+	// Synology DSM, gelesen über die Web-API (SYNO.Storage.CGI.Storage).
+	StorageKindDSMPool   = "dsm_pool"   // Speicherpool (RAID-Verbund)
+	StorageKindDSMVolume = "dsm_volume" // Volume auf einem Pool
+	StorageKindDSMDisk   = "dsm_disk"   // einzelne Platte
 )
 
 // Zustände eines Speicher-Verbunds, über alle Arten hinweg vereinheitlicht.
@@ -63,6 +67,10 @@ type StorageHealth struct {
 
 	// Message fasst zusammen, was nicht stimmt (leer, wenn alles in Ordnung).
 	Message string `gorm:"serializer:aesgcm" json:"message"`
+	// Cause ist der übersetzbare Befund-Schlüssel, wenn die Quelle ihn
+	// genauer benennt als „Verbund gestört" (DSM: Platte ausgefallen, SMART,
+	// Reparatur läuft …). Leer = allgemeiner Befund storageDefect.
+	Cause string `json:"cause,omitempty"`
 
 	// UsagePercent ist der Füllstand des Verbunds - bei ZFS die
 	// Pool-Kapazität, bei LVM-Thin der Datenanteil. 0 = nicht ermittelt.

@@ -10,6 +10,7 @@ import '../../components/lcm-toaster.js';
 import type { ToastOptions } from '../../components/lcm-toaster.js';
 import { baseStyles } from '../../components/shared.js';
 import { catalogStyles } from '../catalog-styles.js';
+import { followChange } from '../follow-change.js';
 
 function toast(detail: ToastOptions): void {
   window.dispatchEvent(new CustomEvent('lcm-toast', { detail }));
@@ -71,9 +72,9 @@ export class CatOverlays extends LitElement {
         <div class="form">
           <lcm-input label="Name" value="web03"></lcm-input>
           <lcm-input label="Hostname oder IP" mono value="web03.prod.techeve.de"></lcm-input>
-          <lcm-select label="Gruppe" value="prod" .options=${[{ value: 'prod', label: 'Produktion' }, { value: 'db', label: 'Datenbanken' }]}></lcm-select>
-          <lcm-switch label="Neustart bei Bedarf erlauben" description="Nur im Wartungsfenster." checked></lcm-switch>
-          <lcm-switch label="In Berichten ausblenden"></lcm-switch>
+          <lcm-select label="Gruppe" value="prod" .options=${[{ value: 'prod', label: 'Produktion' }, { value: 'db', label: 'Datenbanken' }]} @lcm-change=${followChange}></lcm-select>
+          <lcm-switch label="Neustart bei Bedarf erlauben" description="Nur im Wartungsfenster." checked @lcm-change=${followChange}></lcm-switch>
+          <lcm-switch label="In Berichten ausblenden" @lcm-change=${followChange}></lcm-switch>
         </div>
         <lcm-button slot="footer" variant="ghost" @click=${() => (this.modal = false)}>Abbrechen</lcm-button>
         <lcm-button slot="footer" variant="primary" @click=${() => ((this.modal = false), toast({ tone: 'ok', title: 'Gespeichert' }))}>Speichern</lcm-button>

@@ -1,7 +1,7 @@
 // Servergruppen: Übersicht, Verwalter, Zeitpläne und Regeln.
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { bestaetige, bricheAb, fenster, waehleEintrag } from './helpers';
+import { bestaetige, bricheAb, fenster, setzeSchalter, waehleEintrag } from './helpers';
 
 /** Legt in „Produktion“ einen Wegwerf-Zeitplan an (die Demo-Gruppe bringt keinen mit). */
 async function legeZeitplanAn(page: Page, name: string, ausdruck?: string) {
@@ -170,6 +170,21 @@ test.describe('Servergruppen: Zeitpläne', () => {
 });
 
 test.describe('Servergruppen: Regeln', () => {
+  test('eine abgebrochene Rückfrage lässt die Grundsatz-Regel aus', async ({ page }) => {
+    await page.goto('/groups/2/rules');
+    const schalter = page.getByRole('listitem').filter({ hasText: 'Firewall Webserver' }).getByRole('switch', { name: 'Aktiv' });
+    await setzeSchalter(schalter, false);
+    const rueckfrage = 'Regel „Firewall Webserver“ aktivieren?';
+    await schalter.click();
+    await fenster(page, rueckfrage).getByRole('button', { name: 'Abbrechen' }).click();
+    await expect(fenster(page, rueckfrage)).toHaveCount(0);
+    await expect(schalter).not.toBeChecked();
+
+    await schalter.click();
+    await bestaetige(page, rueckfrage, 'Aktivieren');
+    await expect(schalter).toBeChecked();
+  });
+
   test('das Regel-Fenster schränkt die Typen je Auslöser ein', async ({ page }) => {
     await legeZeitplanAn(page, 'e2e-Typen');
     // Am Zeitplan stehen die Paket-Typen zur Verfügung, dazu Rechte-Soll und Skript.

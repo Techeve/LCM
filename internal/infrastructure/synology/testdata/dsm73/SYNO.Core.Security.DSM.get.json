@@ -1,0 +1,4 @@
+{
+ "success": true,
+ "data": {"allow_2fa_device_lost_option":true,"allow_stay_signed_in_option":true,"allow_trust_device_2fa_option":true,"csp_header_option":true,"enable_csrf_protection":true,"restart_clean_session":true,"skip_ip_checking":false,"timeout":15}
+}

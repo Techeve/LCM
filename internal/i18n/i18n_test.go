@@ -97,3 +97,12 @@ func TestASCIIDropsUnknownRunes(t *testing.T) {
 		t.Errorf("ASCII() veränderte reines ASCII: %q", got)
 	}
 }
+
+// TestASCIIErsetztGedankenstriche: Halbgeviert- und Geviertstrich werden zum
+// Bindestrich. Vorher fielen sie weg, und aus „A – B" wurde „A  B".
+func TestASCIIErsetztGedankenstriche(t *testing.T) {
+	got := ASCII("Paket \u2013 Version \u2014 Stand")
+	if want := "Paket - Version - Stand"; got != want {
+		t.Errorf("ASCII() = %q, erwartet %q", got, want)
+	}
+}

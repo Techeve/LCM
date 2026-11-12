@@ -77,6 +77,14 @@ func TestVersionsvergleich(t *testing.T) {
 		{"1.0", "", domain.CompareSemver, false},
 		// Was sich nicht in Zahlen zerlegen lässt, wird nicht geraten.
 		{"stable", "aktuell", domain.CompareSemver, false},
+		// Die Ziffer im Programmnamen ist keine Version.
+		{"python3 3.11.2", "python3 3.12.0", domain.CompareSemver, true},
+		{"python3 3.12.0", "python3 3.11.2", domain.CompareSemver, false},
+		{"oauth2-proxy v7.6.0", "oauth2-proxy v7.7.1", domain.CompareSemver, true},
+		{"oauth2-proxy v7.7.1", "v7.6.0", domain.CompareSemver, false},
+		{"OpenSSH_9.6p1", "OpenSSH_9.8p1", domain.CompareSemver, true},
+		// Ohne Zahl an einer Wortgrenze gibt es nichts zu vergleichen.
+		{"go1.21.0", "go1.22.0", domain.CompareSemver, false},
 	}
 	for _, f := range cases {
 		if got := domain.AppUpdateAvailable(f.installiert, f.neueste, f.art); got != f.expected {

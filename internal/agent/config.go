@@ -36,6 +36,16 @@ type Config struct {
 	// CertFingerprint pinnt das Server-Zertifikat (SHA-256, hex; leer =
 	// nur Systemroot-Prüfung, z.B. --dev oder CA-signiertes Zertifikat).
 	CertFingerprint string `json:"cert_fingerprint,omitempty"`
+	// KeyPin pinnt den öffentlichen Schlüssel des Server-Zertifikats
+	// (SHA-256 über die SubjectPublicKeyInfo, hex). Der Agent übernimmt ihn
+	// selbst, sobald ein Zertifikat zum CertFingerprint passt, und nimmt
+	// danach auch das erneuerte Zertifikat mit demselben Schlüssel an.
+	KeyPin string `json:"key_pin,omitempty"`
+	// CAFingerprint pinnt die CA von LCM (SHA-256 über das CA-Zertifikat,
+	// hex). Er kommt aus dem Enrollment-Token oder wird von einer bereits
+	// vertrauten Verbindung gelernt (Kette des Servers). Mit ihm nimmt der
+	// Agent jedes Server-Zertifikat dieser CA an, auch mit neuem Schlüssel.
+	CAFingerprint string `json:"ca_fingerprint,omitempty"`
 }
 
 // LoadConfig liest die Enrollment-Konfiguration.

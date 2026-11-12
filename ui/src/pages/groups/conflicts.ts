@@ -1,8 +1,11 @@
-// Konflikte zwischen Grundsatz-Regeln. Ein Server darf in vielen Gruppen sein. Tragen zwei davon
-// eine Grundsatz-Regel desselben Typs mit Soll-Zustand (Firewall, APT-Cache), gilt nur die Regel
-// der Gruppe mit dem kleineren Vorrang (bei Gleichstand die kleinere Gruppen-ID). So rechnet auch
-// das Backend (`internal/core/services/enforce_priority.go`); hier wird es nur sichtbar gemacht.
-// Die System-Gruppe gilt für alle Server.
+// Konflikte zwischen Regeln mehrerer Gruppen. Ein Server darf in vielen Gruppen sein. Regeln
+// zwei davon denselben Typ mit Soll-Zustand (Firewall, APT-Cache), führt auf dem Server die Gruppe
+// mit dem kleineren Vorrang (bei Gleichstand die kleinere Gruppen-ID) - gleich, ob ihre Regel am
+// Zeitplan oder als Grundsatz läuft. Die Regeln der anderen Gruppen werden dort übersprungen.
+// Innerhalb einer Gruppe weichen geplante Regeln einander nicht; von mehreren Grundsatz-Regeln
+// greift nur die erste. So rechnet auch das Backend (`internal/core/services/enforce_priority.go`);
+// hier wird es nur sichtbar gemacht. Die System-Gruppe gilt für alle Server. Eine Regel an einem
+// abgeschalteten Zeitplan läuft nie und zählt nicht mit.
 
 import type { Group, Rule } from '../../api/groups';
 import { CONFLICT_TYPE_IDS } from './rule-model';
@@ -48,6 +51,21 @@ function conflictFor(map: Map<number, RuleConflict>, ruleId: number): RuleConfli
   return conflict;
 }
 
+/** Läuft die Regel überhaupt? Aktiv und entweder Grundsatz oder an einem laufenden Zeitplan. */
+function runs(rule: Rule): boolean {
+  return rule.enabled && (rule.enforce || (rule.schedule_id !== null && rule.schedule_enabled));
+}
+
+/**
+ * Wem weicht die Regel auf diesem Server? Der führenden Gruppe, wenn sie zu einer anderen gehört;
+ * innerhalb der Gruppe nur eine Grundsatz-Regel der ersten Grundsatz-Regel. Sonst niemandem.
+ */
+function leaderOf(entry: Applicable, winner: Applicable, firstEnforce: Applicable | undefined): Applicable | null {
+  if (entry.rule.group_id !== winner.rule.group_id) return winner;
+  if (entry.rule.enforce && firstEnforce && firstEnforce !== entry) return firstEnforce;
+  return null;
+}
+
 function byPrecedence(a: Applicable, b: Applicable): number {
   return a.priority - b.priority || a.rule.group_id - b.rule.group_id || a.rule.id - b.rule.id;
 }
@@ -61,7 +79,7 @@ export function findConflicts(groupId: number, groups: Group[], rules: Rule[]): 
   const group = groups.find((entry) => entry.id === groupId);
   if (!group) return result;
   const names = new Map(groups.map((entry) => [entry.id, entry]));
-  const active = rules.filter((rule) => rule.enforce && rule.enabled && CONFLICT_TYPE_IDS.includes(rule.type));
+  const active = rules.filter((rule) => runs(rule) && CONFLICT_TYPE_IDS.includes(rule.type));
 
   for (const server of group.servers) {
     const candidates: Applicable[] = [];
@@ -74,20 +92,25 @@ export function findConflicts(groupId: number, groups: Group[], rules: Rule[]): 
       const ordered = candidates.filter((entry) => entry.rule.type === type).sort(byPrecedence);
       const winner = ordered[0];
       if (!winner || ordered.length < 2) continue;
+      const firstEnforce = ordered.find((entry) => entry.rule.enforce);
       for (const entry of ordered) {
         if (entry.rule.group_id !== groupId) continue;
-        const conflict = conflictFor(result, entry.rule.id);
-        if (entry === winner) {
-          conflict.winsOn.push(server.id);
-          for (const other of ordered.slice(1)) {
-            const info = names.get(other.rule.group_id);
-            addOther(conflict.winsOver, { groupId: other.rule.group_id, groupName: other.groupName, priority: info?.priority ?? other.priority });
-            if (other.priority === entry.priority) conflict.tie = true;
-          }
-        } else {
+        const leader = leaderOf(entry, winner, firstEnforce);
+        if (leader) {
+          const conflict = conflictFor(result, entry.rule.id);
           conflict.overriddenOn.push(server.id);
-          addOther(conflict.overriddenBy, { groupId: winner.rule.group_id, groupName: winner.groupName, priority: winner.priority });
-          if (winner.priority === entry.priority) conflict.tie = true;
+          addOther(conflict.overriddenBy, { groupId: leader.rule.group_id, groupName: leader.groupName, priority: leader.priority });
+          if (leader.priority === entry.priority) conflict.tie = true;
+          continue;
+        }
+        const others = ordered.filter((other) => other.rule.group_id !== groupId);
+        if (others.length === 0) continue;
+        const conflict = conflictFor(result, entry.rule.id);
+        conflict.winsOn.push(server.id);
+        for (const other of others) {
+          const info = names.get(other.rule.group_id);
+          addOther(conflict.winsOver, { groupId: other.rule.group_id, groupName: other.groupName, priority: info?.priority ?? other.priority });
+          if (other.priority === entry.priority) conflict.tie = true;
         }
       }
     }

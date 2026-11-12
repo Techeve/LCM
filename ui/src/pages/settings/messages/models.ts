@@ -160,6 +160,7 @@ export const ALERT_TYPES: Record<string, AlertType> = {
   deep_scan: { label: 'settings.alerts.types.deepScan', hint: 'settings.alerts.hints.deepScan', threshold: 'none' },
   cve_db_stale: { label: 'settings.alerts.types.cveDbStale', hint: 'settings.alerts.hints.cveDbStale', threshold: 'none', self: true },
   backup_stale: { label: 'settings.alerts.types.backupStale', hint: 'settings.alerts.hints.backupStale', threshold: 'none', self: true },
+  tls_cert_expiring: { label: 'settings.alerts.types.tlsCertExpiring', hint: 'settings.alerts.hints.tlsCertExpiring', threshold: 'none', self: true },
   advisory: { label: 'settings.alerts.types.advisory', hint: 'settings.alerts.hints.advisory', threshold: 'severity' },
 };
 

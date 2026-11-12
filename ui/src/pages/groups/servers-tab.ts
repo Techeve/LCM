@@ -176,7 +176,7 @@ export class LcmGroupsServers extends LitElement {
   #row(server: GroupServer) {
     const level = statusLevel(this._statuses.get(server.id));
     return html`<tr>
-      <td><lcm-os os=${server.os_id} label=${server.os_name}></lcm-os></td>
+      <td><lcm-os os=${server.os_id} product=${server.proxmox_type} model=${server.hardware_model} label=${server.os_name}></lcm-os></td>
       <td><a href=${`/servers/${server.id}`}>${server.name}</a></td>
       <td class="mono">${server.host}</td>
       <td>${auth.can('servers:read') ? html`<lcm-status level=${level} label=${t(STATUS_LABEL_KEYS[level])}></lcm-status>` : nothing}</td>

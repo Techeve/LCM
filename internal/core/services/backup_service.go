@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"filippo.io/age"
-	"gorm.io/gorm"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/dbmetrics"
@@ -57,7 +57,7 @@ var ErrBackupNotFound = errors.New("backup nicht gefunden")
 // DB-Felder brauchen den Master-Key) - und ein geleaktes Archiv bleibt ohne
 // die Passphrase wertlos.
 type BackupService struct {
-	db         *gorm.DB
+	database   *repositories.DatabaseRepository
 	settings   *repositories.SettingsRepository
 	dataDir    string
 	dbPath     string
@@ -75,10 +75,23 @@ type BackupService struct {
 	// wird die gepackt; kommt er aus einem systemd-Credential, gibt es diese
 	// Datei nicht, und der Schlüssel muss aus dem Speicher ins Archiv.
 	masterKey []byte
+
+	// mu reiht die Sicherungsläufe hintereinander. Ein geplanter Lauf und ein
+	// Klick auf „Jetzt sichern" dürfen sich nicht überholen: Beide griffen
+	// sonst nach demselben Archivnamen, und der spätere überschriebe den
+	// früheren, dessen Metadaten aber blieben.
+	mu sync.Mutex
 }
 
-func NewBackupService(db *gorm.DB, settings *repositories.SettingsRepository, dataDir, dbPath, configPath string) *BackupService {
-	return &BackupService{db: db, settings: settings, dataDir: dataDir, dbPath: dbPath, configPath: configPath}
+// Prüfpunkte für Tests: die Uhr für den Archivnamen und der Moment, in dem
+// die Momentaufnahme fertig auf der Platte liegt.
+var (
+	backupNow          = time.Now
+	backupSnapshotDone = func(path string) {}
+)
+
+func NewBackupService(database *repositories.DatabaseRepository, settings *repositories.SettingsRepository, dataDir, dbPath, configPath string) *BackupService {
+	return &BackupService{database: database, settings: settings, dataDir: dataDir, dbPath: dbPath, configPath: configPath}
 }
 
 // WithConfigDir hinterlegt das per config.json vorgegebene Backup-Verzeichnis.
@@ -188,15 +201,17 @@ func (s *BackupService) Create(trigger, passphrase string) (*domain.Backup, erro
 		return nil, err
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	// 1. Konsistente DB-Momentaufnahme via VACUUM INTO in eine Temp-Datei.
-	tmpDB := filepath.Join(dir, fmt.Sprintf(".snap-%s.db", time.Now().Format("20060102-150405.000")))
-	done := dbmetrics.Track("vacuum_into", "")
-	err = s.db.Exec("VACUUM INTO ?", tmpDB).Error
-	done(err)
-	if err != nil {
-		return nil, fmt.Errorf("datenbank-momentaufnahme: %w", err)
+	tmpDB, err := s.snapshot(dir)
+	if tmpDB != "" {
+		defer os.Remove(tmpDB)
 	}
-	defer os.Remove(tmpDB)
+	if err != nil {
+		return nil, err
+	}
 
 	// 2. Alle für einen portablen Restore nötigen Dateien einsammeln. Die
 	//    Quellen werden beim Packen streamend gelesen - die Momentaufnahme
@@ -207,6 +222,10 @@ func (s *BackupService) Create(trigger, passphrase string) (*domain.Backup, erro
 		"config.json":      s.configPath,
 		tlsx.CertFileName:  filepath.Join(s.dataDir, tlsx.CertFileName),
 		tlsx.KeyFileName:   filepath.Join(s.dataDir, tlsx.KeyFileName),
+		// Die eigene CA: Ohne sie vertrauten die Agenten einem
+		// zurückgespielten LCM nicht mehr, sobald es sein Zertifikat erneuert.
+		tlsx.CAFileName:    filepath.Join(s.dataDir, tlsx.CAFileName),
+		tlsx.CAKeyFileName: filepath.Join(s.dataDir, tlsx.CAKeyFileName),
 	}
 	for archiveName, path := range optional {
 		if path == "" {
@@ -227,7 +246,7 @@ func (s *BackupService) Create(trigger, passphrase string) (*domain.Backup, erro
 	// 3. Bündeln + verschlüsseln, direkt in die Zieldatei. Zuerst unter einem
 	//    Temp-Namen: Bricht der Lauf ab, bleibt kein halbes Archiv liegen, das
 	//    wie ein gültiges Backup aussieht.
-	name := fmt.Sprintf("lcm-backup-%s%s", time.Now().Format("20060102-150405"), BackupExt)
+	name := uniqueBackupName(dir, backupNow())
 	target := filepath.Join(dir, name)
 	tmpTarget := target + ".part"
 	size, err := s.writeArchiveFile(tmpTarget, sources, pass, recipients)
@@ -247,6 +266,58 @@ func (s *BackupService) Create(trigger, passphrase string) (*domain.Backup, erro
 	slog.Info("system backup created", "file", name, "size", size,
 		"files", len(sources), "triggered_by", trigger, "encryption", mode)
 	return backup, nil
+}
+
+// snapshot schreibt die Momentaufnahme der Datenbank und liefert ihren Pfad.
+//
+// Die Datei entsteht leer und gleich mit 0600 (os.CreateTemp), VACUUM INTO
+// füllt sie dann nur noch. Ließe man SQLite sie anlegen, hätte sie die
+// üblichen 0644, und bis zu einem nachgezogenen chmod läge eine
+// unverschlüsselte Kopie der Datenbank lesbar für alle im Verzeichnis. Der
+// zufällige Namensteil hält zudem zwei Läufe auseinander. Ein Pfad kommt
+// auch im Fehlerfall zurück, damit der Aufrufer die Datei wegräumt.
+func (s *BackupService) snapshot(dir string) (string, error) {
+	f, err := os.CreateTemp(dir, ".snap-*.db")
+	if err != nil {
+		return "", fmt.Errorf("datenbank-momentaufnahme anlegen: %w", err)
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		return path, fmt.Errorf("datenbank-momentaufnahme anlegen: %w", err)
+	}
+	done := dbmetrics.Track("vacuum_into", "")
+	err = s.database.SnapshotInto(path)
+	done(err)
+	if err != nil {
+		return path, fmt.Errorf("datenbank-momentaufnahme: %w", err)
+	}
+	backupSnapshotDone(path)
+	return path, nil
+}
+
+// uniqueBackupName liefert einen Archivnamen, den es im Verzeichnis noch
+// nicht gibt. Der Name trägt die Sekunde; fallen zwei Läufe in dieselbe,
+// bekommt der zweite ein -2 (dann -3 …) angehängt, statt den ersten zu
+// überschreiben. Der Aufrufer hält s.mu, zwischen Prüfung und Umbenennen
+// kommt also kein anderer Lauf dazwischen.
+func uniqueBackupName(dir string, now time.Time) string {
+	base := "lcm-backup-" + now.Format("20060102-150405")
+	name := base + BackupExt
+	for i := 2; backupNameTaken(dir, name); i++ {
+		name = fmt.Sprintf("%s-%d%s", base, i, BackupExt)
+	}
+	return name
+}
+
+// backupNameTaken meldet, ob das Archiv oder sein halbfertiger Vorläufer
+// schon da ist.
+func backupNameTaken(dir, name string) bool {
+	for _, p := range []string{name, name + ".part"} {
+		if _, err := os.Lstat(filepath.Join(dir, p)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // recipients liefert die hinterlegten Empfänger-Schlüssel. Eine unlesbare

@@ -67,6 +67,7 @@ func TestRotationCompressesOldFile(t *testing.T) {
 	if _, err := r.Write([]byte("nach rotation\n")); err != nil {
 		t.Fatal(err)
 	}
+	r.bg.Wait()
 
 	active, err := os.ReadFile(filepath.Join(dir, "lcm.log"))
 	if err != nil {
@@ -87,6 +88,50 @@ func TestRotationCompressesOldFile(t *testing.T) {
 	}
 	if got := readGzip(t, archive); got != "erster stand xxxx\n" {
 		t.Errorf("altstand = %q", got)
+	}
+}
+
+// TestRotationDoesNotBlockWriter: Während der Altstand komprimiert wird,
+// schreibt der Logger weiter - früher hielt das Komprimieren jede Logzeile
+// des Prozesses auf.
+func TestRotationDoesNotBlockWriter(t *testing.T) {
+	r, dir := newTestFile(t, 20, 5, 7)
+	release := make(chan struct{})
+	r.compress = func(path string) {
+		<-release
+		compress(path)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		for _, line := range []string{"erster stand xxxx\n", "loest rotation aus\n", "waehrenddessen\n"} {
+			if _, err := r.Write([]byte(line)); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("schreiben wartet auf das komprimieren")
+	}
+
+	close(release)
+	r.bg.Wait()
+	gz := 0
+	for _, n := range names(t, dir) {
+		if strings.HasSuffix(n, ".gz") {
+			gz++
+		}
+	}
+	if gz != 2 {
+		t.Errorf("altstände nach dem komprimieren: %v", names(t, dir))
 	}
 }
 
@@ -115,6 +160,7 @@ func TestPruneKeepsOnlyMaxBackups(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	r.bg.Wait()
 	archives := 0
 	for _, n := range names(t, dir) {
 		if strings.HasSuffix(n, ".gz") {
@@ -141,6 +187,7 @@ func TestPruneDropsExpiredBackups(t *testing.T) {
 	if _, err := r.Write([]byte("loest rotation aus\n")); err != nil {
 		t.Fatal(err)
 	}
+	r.bg.Wait()
 
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Errorf("abgelaufener altstand wurde nicht entfernt: %v", err)

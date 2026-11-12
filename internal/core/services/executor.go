@@ -12,9 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gorm.io/gorm"
-
 	"LCM/internal/core/domain"
+	"LCM/internal/cron"
 	"LCM/internal/dbmetrics"
 	"LCM/internal/infrastructure/registry"
 	"LCM/internal/infrastructure/sshx"
@@ -91,6 +90,9 @@ type Executor struct {
 	// einzelnen Regel-Lauf, weil genau das der Punkt ist: Sie muss über
 	// mehrere gleichzeitig gestartete Zeitpläne hinweg gelten.
 	slots chan struct{}
+	// permDrifts merkt sich die zuletzt gemeldete Rechte-Abweichung je Server
+	// und Regel (siehe enforcePermSync).
+	permDrifts driftMemory
 }
 
 // WithIPAllowlists verdrahtet die Auflösung benannter IP-Allowlists für die
@@ -251,12 +253,36 @@ func (e *Executor) runSpreadServers(rules []domain.Rule, window time.Duration, t
 			defer wg.Done()
 			defer safego.Recover("spread-server:"+server.Name, nil)
 			time.Sleep(delay)
+			current, ok := e.spreadTarget(server.ID)
+			if !ok {
+				return
+			}
 			for j := range rules {
-				e.runOnServer(server, &rules[j], triggeredBy, plans[j], sem)
+				e.runOnServer(current, &rules[j], triggeredBy, plans[j], sem)
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+// spreadTarget liest einen Server nach seinem Versatz im Fenster neu. Die
+// Liste stammt vom Fensterbeginn, und bis zum letzten Server können Stunden
+// vergehen: Wer inzwischen gelöscht oder in Wartung genommen wurde, bleibt
+// unangetastet - wie bei serversForRule, nur zum Zeitpunkt des Laufs.
+func (e *Executor) spreadTarget(id uint) (*domain.Server, bool) {
+	server, err := e.servers.FindByIDUnscoped(id)
+	switch {
+	case errors.Is(err, repositories.ErrNotFound):
+		slog.Info("spread run: server deleted while waiting - skipped", "server_id", id)
+		return nil, false
+	case err != nil:
+		slog.Error("spread run: server not loadable - skipped", "server_id", id, "error", err)
+		return nil, false
+	case server.InMaintenance():
+		slog.Info("spread run: server in maintenance - skipped", "server", server.Name)
+		return nil, false
+	}
+	return server, true
 }
 
 // spreadOffset verteilt n Server gleichmäßig über das Fenster: Der erste
@@ -405,7 +431,7 @@ func (e *Executor) scheduleInterval(rule *domain.Rule) time.Duration {
 // bekommt je nach Wochentag eine andere Antwort - und ließe freitags ein
 // Zeitfenster zu, das ab Montag in den Folgelauf reicht.
 func cronInterval(expr string) time.Duration {
-	spec, err := cronParser.Parse(expr)
+	spec, err := cron.Parse(expr)
 	if err != nil {
 		return 0
 	}
@@ -564,7 +590,14 @@ func (e *Executor) runStarted(job *domain.Job, server *domain.Server, rule *doma
 	// (script/custom) sauber überspringen, statt mit einem
 	// kryptischen sudo-Fehler zu enden - so bleibt ein gemischter Schedule grün.
 	if server.RestrictedSudo && !restrictedAllowsRule(rule.Type) {
-		e.jobs.CompleteSkipped(job, "im eingeschränkten Modus übersprungen - der Management-Benutzer dieses Servers hat keine Rechte für den Aktionstyp „"+rule.Type+"“")
+		e.jobs.CompleteSkipped(job, restrictedSkipNote(rule.Type))
+		return
+	}
+
+	// Firewall und APT-Cache regelt je Server nur die führende Gruppe; die
+	// Regel einer anderen Gruppe wird benannt übersprungen (enforce_priority.go).
+	if note, yields := e.yieldToStrongerGroup(server, rule); yields {
+		e.jobs.CompleteSkipped(job, note)
 		return
 	}
 
@@ -687,6 +720,12 @@ func (e *Executor) runStarted(job *domain.Job, server *domain.Server, rule *doma
 	})
 	defer conn.Close()
 
+	// Ein Skript läuft als root, wie die Oberfläche es zusagt - bis dahin
+	// lief es als Service-User und scheiterte an allem, was Rechte braucht.
+	// Der Health-Ping bleibt unprivilegiert: Er beweist nur die Verbindung.
+	if rule.Type == domain.RuleTypeScript {
+		cmd = privRun(server, cmd)
+	}
 	output, code, runErr := conn.Run(cmd)
 	if runErr == nil && code != 0 {
 		runErr = fmt.Errorf("kommando endete mit exit-code %d", code)
@@ -819,6 +858,7 @@ func (e *Executor) enforceOnConn(conn sshx.Conn, server *domain.Server) (string,
 	// es greift die Gruppe mit dem stärksten Vorrang, die übrigen werden
 	// benannt statt ausgeführt.
 	active, superseded := resolveEnforceRules(rules)
+	active, superseded = e.yieldEnforceToScheduled(server, active, superseded)
 	lines := make([]string, 0, len(rules)+1)
 	lines = append(lines, "Grundsatz-Regeln:")
 	var firstErr error
@@ -1344,12 +1384,11 @@ func (e *Executor) finishWithHealthCode(job *domain.Job, server *domain.Server, 
 // zaehlt den Fehlschlag mit. Erst mehrere in Folge machen aus „gerade nicht
 // erreicht" ein „offline" (siehe domain.OfflineAfterFailedChecks).
 func (e *Executor) markUnreachable(server *domain.Server, cause error) {
-	_ = e.servers.UpdateFields(server.ID, unreachableFields(server, cause))
+	recordUnreachable(e.servers, server, cause)
 }
 
-// unreachableFields sind die Felder eines fehlgeschlagenen Kontakts. Der
-// Zaehler wird per SQL-Ausdruck erhoeht, damit parallele Laeufe sich nicht
-// gegenseitig ueberschreiben (Read-Modify-Write waere hier eine Wettlaufstelle).
+// recordUnreachable hält einen fehlgeschlagenen Kontakt fest
+// (ServerRepository.MarkUnreachable zählt den Fehlschlag in der Datenbank).
 //
 // Jeder Fehlschlag landet auch im LOG - hier, damit ALLE Pfade (Health-Check,
 // Refresh, Docker, Reboot) dieselbe Zeile schreiben: zu tagelang scheiternden
@@ -1357,18 +1396,14 @@ func (e *Executor) markUnreachable(server *domain.Server, cause error) {
 // Mismatch (moegliche MitM-Attacke) ist ein sicherheitsrelevantes Ereignis,
 // das eine Log-Auswertung/SIEM sehen muss, nicht nur die Job-Historie
 // (R2-018).
-func unreachableFields(server *domain.Server, cause error) map[string]any {
+func recordUnreachable(servers *repositories.ServerRepository, server *domain.Server, cause error) {
 	if errors.Is(cause, sshx.ErrHostKeyMismatch) {
 		slog.Warn("host key mismatch - possible mitm attack",
 			"server", server.Name, "host", server.Host, "error", cause)
 	} else {
 		slog.Warn("server unreachable", "server", server.Name, "host", server.Host, "error", cause)
 	}
-	return map[string]any{
-		"reachable":     false,
-		"last_error":    cause.Error(),
-		"failed_checks": gorm.Expr("failed_checks + 1"),
-	}
+	_ = servers.MarkUnreachable(server.ID, cause.Error())
 }
 
 // reachableFields sind die Felder eines erfolgreichen Kontakts - inklusive

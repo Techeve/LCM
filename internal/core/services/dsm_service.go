@@ -19,7 +19,9 @@ import (
 // und Benutzer/Dienste verwaltet DSM selbst. Statt einen Service-User mit
 // sudo neben DSMs eigene Konfigurationsverwaltung zu setzen, spricht LCM die
 // dokumentierte Web-API und überwacht: DSM-Version und verfügbare Updates,
-// installierte Pakete, Volumes/Belegung, Zeit/NTP und den Security Advisor.
+// installierte Pakete, Pools/Volumes/Platten, Zeit/NTP, den Security Advisor
+// sowie Firewall und Sicherheitseinstellungen. Diese setzt LCM nur auf
+// ausdrücklichen Klick auf das Soll (dsm_apply.go).
 
 // ErrDSMUnsupported: die Aktion setzt eine POSIX-Shell oder Paketverwaltung
 // voraus, die es auf DSM nicht gibt.
@@ -125,9 +127,10 @@ func (s *ServerService) CreateDSMServer(req DSMRequest) (*domain.Server, error) 
 	}
 	s.assignToSystemGroup(server)
 	s.replaceDSMPackages(server.ID, info)
+	s.storeDSMStorage(server.ID, info)
 	s.recordDSMJoin(server, req.Actor,
-		fmt.Sprintf("DSM erkannt: %s auf %s (Seriennummer %s), %d Paket(e).",
-			info.Version, info.Model, info.Serial, len(info.Packages)))
+		fmt.Sprintf("DSM erkannt: %s auf %s (Seriennummer %s), %d Paket(e).\n\n%s",
+			info.Version, info.Model, info.Serial, len(info.Packages), dsmRefreshLog(info, server.DSMChecks)))
 	return server, nil
 }
 
@@ -141,7 +144,10 @@ func applyDSMInfo(server *domain.Server, info *synology.Info) {
 	server.DSMUpdateAvailable = info.UpdateAvailable
 	server.DSMSecurityRisks = info.SecurityRisks
 	server.DSMSecuritySummary = info.SecuritySummary
+	server.CPUModel = info.CPUModel
 	server.CPUCores = info.CPUCores
+	server.DSMChecks = dsmChecks(info.Settings)
+	server.DSMFirewall = info.Settings.FirewallProfile
 	server.MemTotalMB = int64(info.RAMSizeMB)
 	server.DiskTotalMB = int64(info.VolumeTotalMB)
 	server.DiskUsedMB = int64(info.VolumeUsedMB)
@@ -165,7 +171,8 @@ func dsmFields(server *domain.Server) map[string]any {
 		"os_version": server.OSVersion, "dsm_model": server.DSMModel,
 		"dsm_latest_version": server.DSMLatestVersion, "dsm_update_available": server.DSMUpdateAvailable,
 		"dsm_security_risks": server.DSMSecurityRisks, "dsm_security_summary": server.DSMSecuritySummary,
-		"cpu_cores": server.CPUCores, "mem_total_mb": server.MemTotalMB,
+		"cpu_model": server.CPUModel, "cpu_cores": server.CPUCores, "mem_total_mb": server.MemTotalMB,
+		"dsm_checks": server.DSMChecks, "dsm_firewall": server.DSMFirewall,
 		"disk_total_mb": server.DiskTotalMB, "disk_used_mb": server.DiskUsedMB,
 		"timezone": server.Timezone, "ntp_service": server.NTPService,
 		"ntp_synchronized": server.NTPSynchronized, "ntp_servers": server.NTPServers,
@@ -201,19 +208,35 @@ func (s *ServerService) refreshDSM(server *domain.Server) (string, error) {
 		return "", err
 	}
 	defer client.Logout()
-	info, err := client.Collect()
+	info, checks, err := s.collectDSM(server, client)
 	if err != nil {
 		return "", err
+	}
+	return dsmRefreshLog(info, checks), nil
+}
+
+// collectDSM erhebt den Zustand über eine bestehende Sitzung und schreibt ihn
+// zurück. Liefert den erhobenen Zustand und die neuen Prüfungen.
+func (s *ServerService) collectDSM(server *domain.Server, client *synology.Client) (*synology.Info, domain.DSMChecks, error) {
+	info, err := client.Collect()
+	if err != nil {
+		return nil, nil, err
 	}
 	fresh := *server
 	applyDSMInfo(&fresh, info)
 	if err := s.servers.UpdateFields(server.ID, dsmFields(&fresh)); err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	s.replaceDSMPackages(server.ID, info)
+	s.storeDSMStorage(server.ID, info)
+	return info, fresh.DSMChecks, nil
+}
 
+// dsmRefreshLog ist die Zusammenfassung einer Erfassung fürs Job-Protokoll.
+func dsmRefreshLog(info *synology.Info, checks domain.DSMChecks) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "DSM %s auf %s\n", info.Version, info.Model)
+	fmt.Fprintf(&b, "CPU: %s\n", dsmCPUText(info))
 	if info.UpdateAvailable {
 		fmt.Fprintf(&b, "Update verfügbar: %s\n", firstNonEmpty(info.LatestVersion, "neuere Fassung"))
 	} else {
@@ -224,12 +247,26 @@ func (s *ServerService) refreshDSM(server *domain.Server) (string, error) {
 		fmt.Fprintf(&b, "Speicher: %d von %d MB belegt (Zustand: %s)\n",
 			info.VolumeUsedMB, info.VolumeTotalMB, firstNonEmpty(info.VolumeStatus, "unbekannt"))
 	}
+	b.WriteString(dsmStorageLog(info.Storage))
 	if info.SecurityRisks > 0 {
 		fmt.Fprintf(&b, "Security Advisor: %d Befund(e) - %s\n", info.SecurityRisks, info.SecuritySummary)
 	} else {
 		b.WriteString("Security Advisor: keine Befunde.\n")
 	}
-	return b.String(), nil
+	b.WriteString(dsmSettingsLog(info.Settings, checks))
+	return b.String()
+}
+
+// dsmCPUText nennt die CPU fürs Protokoll; VirtualDSM hat nur vCPUs.
+func dsmCPUText(info *synology.Info) string {
+	model := firstNonEmpty(info.CPUModel, "unbekannt")
+	if info.Virtual && info.CPUModel == "" {
+		model = "virtuell"
+	}
+	if info.CPUCores > 0 {
+		return fmt.Sprintf("%s (%d Kerne)", model, info.CPUCores)
+	}
+	return model
 }
 
 // replaceDSMPackages spiegelt die DSM-Pakete in den Paketbestand. Sie tragen

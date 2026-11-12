@@ -43,7 +43,8 @@ func WSHandler(hub *Hub, trust netfilter.ProxyTrust) fiber.Handler {
 		// pro Minute wieder herein, der Rest liefe in die Sperre. Deshalb
 		// dieselbe Adressermittlung wie auf dem UI-Port (trusted_proxies).
 		ip := c.IP()
-		if addr, ok := netfilter.ClientIP(c.IP(), c.Get("X-Forwarded-For"), trust); ok {
+		xff := netfilter.JoinForwardedFor(c.Request().Header.PeekAll(fiber.HeaderXForwardedFor))
+		if addr, ok := netfilter.ClientIP(c.IP(), xff, trust); ok {
 			ip = addr.String()
 		}
 		if !limiter.allow(ip) {

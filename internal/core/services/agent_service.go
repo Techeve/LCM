@@ -74,20 +74,55 @@ func (s *ServerService) WithCertFingerprint(fn func() (string, error)) *ServerSe
 	return s
 }
 
+// WithCAFingerprint verdrahtet den Fingerprint der LCM-CA (SHA-256 über das
+// CA-Zertifikat, hex) fürs Enrollment-Token: Mit ihm nimmt der Agent auch
+// die monatlich erneuerten Server-Zertifikate mit neuem Schlüssel an.
+// Optional; leer, solange LCM kein von der CA ausgestelltes Zertifikat
+// ausliefert.
+func (s *ServerService) WithCAFingerprint(fn func() (string, error)) *ServerService {
+	s.agentCAFP = fn
+	return s
+}
+
+// WithAgentDownloadPin verdrahtet den Schlüssel-Pin des HTTPS-Zertifikats
+// (Base64, Format von curl --pinnedpubkey). Mit ihm lädt der Join-Befehl das
+// Agent-Binary nur von diesem LCM, obwohl er das selbstsignierte Zertifikat
+// mit -k annimmt. Optional; ohne ihn prüft curl ganz normal.
+func (s *ServerService) WithAgentDownloadPin(fn func() (string, error)) *ServerService {
+	s.agentDownloadPin = fn
+	return s
+}
+
+// AgentDownloadPin liefert den Pin für den Download-Befehl, leer, wenn er
+// nicht zu ermitteln ist. Leer heißt für den Befehl: ohne -k, mit normaler
+// Prüfung gegen die Systemzertifikate.
+func (s *ServerService) AgentDownloadPin() string {
+	if s.agentDownloadPin == nil {
+		return ""
+	}
+	pin, err := s.agentDownloadPin()
+	if err != nil {
+		return ""
+	}
+	return pin
+}
+
 // ---- Token ------------------------------------------------------------------
 //
 // Tokenformat, Encode/Parse und die Hash-Definition liegen im geteilten
 // Paket internal/remote/wire - Server (Enrollment + Broker-Auth) und
 // lcm-agent nutzen dieselbe Implementierung.
 
-// EncodeAgentToken baut das Klartext-Token für die einmalige Anzeige.
-func EncodeAgentToken(agentID, secret, certFP string) string {
-	return wire.EncodeToken(agentID, secret, certFP)
+// ParseAgentToken zerlegt ein Klartext-Token (Gegenstück zu agentToken).
+func ParseAgentToken(token string) (wire.Token, error) {
+	return wire.ParseToken(token)
 }
 
-// ParseAgentToken zerlegt ein Klartext-Token (Gegenstück zu EncodeAgentToken).
-func ParseAgentToken(token string) (agentID, secret, certFP string, err error) {
-	return wire.ParseToken(token)
+// agentToken baut das Klartext-Token für die einmalige Anzeige: Zugang
+// und die Pins, mit denen der Agent LCM beim ersten Kontakt erkennt.
+func (s *ServerService) agentToken(agentID, secret string) string {
+	return wire.EncodeToken(wire.Token{AgentID: agentID, Secret: secret,
+		CertFingerprint: s.certFingerprint(), CAFingerprint: bestEffort(s.agentCAFP)})
 }
 
 // HashAgentSecret bildet den At-Rest-Hash des Token-Secrets - dieselbe
@@ -102,16 +137,21 @@ func HashAgentSecret(secret string) string {
 // certFingerprint liefert den Zertifikats-Fingerprint fürs Token
 // (leer, wenn nicht verdrahtet - z.B. --dev ohne TLS).
 func (s *ServerService) certFingerprint() string {
-	if s.agentCertFP == nil {
+	return bestEffort(s.agentCertFP)
+}
+
+// bestEffort liefert den Pin aus fn, leer, wenn er fehlt: Ohne Pin fällt der
+// Agent auf die Systemroot-Prüfung zurück - besser als das Enrollment ganz zu
+// blockieren.
+func bestEffort(fn func() (string, error)) string {
+	if fn == nil {
 		return ""
 	}
-	fp, err := s.agentCertFP()
+	pin, err := fn()
 	if err != nil {
-		// Best effort: ohne Pin fällt der Agent auf Systemroot-Prüfung
-		// zurück - besser als das Enrollment ganz zu blockieren.
 		return ""
 	}
-	return fp
+	return pin
 }
 
 // CreateAgentServer legt einen Agent-Server an (Transport=agent, offline)
@@ -161,7 +201,7 @@ func (s *ServerService) CreateAgentServer(name, actor string) (*domain.Server, s
 	_ = s.jobs.jobs.Create(job)
 	s.audit.Log(actor, "server.agent_create", "server", server.ID, "Agent-ID "+server.AgentID)
 
-	return server, EncodeAgentToken(server.AgentID, secret, s.certFingerprint()), nil
+	return server, s.agentToken(server.AgentID, secret), nil
 }
 
 // RegenerateAgentToken ersetzt das Token eines Agent-Servers (z.B. bei
@@ -187,5 +227,5 @@ func (s *ServerService) RegenerateAgentToken(scope repositories.AccessScope, id 
 		s.agents.Disconnect(server.AgentID)
 	}
 	s.audit.Log(actor, "server.agent_token_regenerate", "server", server.ID, "Agent-ID "+server.AgentID)
-	return EncodeAgentToken(server.AgentID, secret, s.certFingerprint()), nil
+	return s.agentToken(server.AgentID, secret), nil
 }

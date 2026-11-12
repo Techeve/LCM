@@ -25,7 +25,7 @@ func usersScanScript() string {
 	return `UM=$(awk '$1=="UID_MIN"{print $2; exit}' /etc/login.defs 2>/dev/null)
 case "$UM" in ''|*[!0-9]*) UM=1000 ;; esac
 TODAY=$(( $(date +%s) / 86400 ))
-{ getent passwd 2>/dev/null || cat /etc/passwd; } | while IFS=: read -r name _ uid gid gecos home shell; do
+{ getent passwd 2>/dev/null || cat /etc/passwd; } | while IFS=: read -r name _ uid _ _ home shell; do
   case "$uid" in ''|*[!0-9]*) continue ;; esac
   [ "$uid" -eq 0 ] || [ "$uid" -ge "$UM" ] || continue
   [ "$uid" -ge 65534 ] && continue
@@ -37,7 +37,7 @@ TODAY=$(( $(date +%s) / 86400 ))
       ''|'!'|'!!'|'*') pst=none ;;
       '!'*) pst=locked ;;
       \**) pst=none ;;
-      *) pst=set ;;
+      *) pst='set' ;;
     esac
   else
     pst=unknown; exp=""
@@ -49,7 +49,7 @@ TODAY=$(( $(date +%s) / 86400 ))
   esac
   keys=0
   ak="$home/.ssh/authorized_keys"
-  [ -s "$ak" ] && keys=$(grep -c -E '^[[:space:]]*(ssh-|ecdsa-|sk-)' "$ak" 2>/dev/null)
+  [ -s "$ak" ] && keys=$(` + sshKeyCountCmd + `)
   tfa=no
   [ -f "$home/.google_authenticator" ] && tfa=yes
   ll=""
@@ -81,6 +81,13 @@ if command -v last >/dev/null 2>&1; then
   done
 fi`
 }
+
+// sshKeyCountCmd zählt die Keys in "$ak". Ein Key darf Optionen vor sich
+// haben (from="10.0.0.0/8",command="..." no-pty ssh-ed25519 ...) - gezählt
+// wurden nur Zeilen, die mit dem Key-Typ beginnen. Jetzt zählt der Key-Typ
+// als eigenes Feld, gefolgt vom Base64-Teil, der bei jedem OpenSSH-Key mit
+// AAAA beginnt; ein "ssh-..." in einem command="..." zählt so nicht mit.
+const sshKeyCountCmd = `grep -v -E '^[[:space:]]*#' "$ak" 2>/dev/null | grep -c -E '(^|[[:space:]])(ssh-|ecdsa-|sk-)[^[:space:]]+[[:space:]]+AAAA'`
 
 // lastLoginLayouts sind die Datumsformate von lastlog (shadow-utils) und
 // lastlog2 (util-linux), jeweils LANG=C: Wochentag, Monat, Tag, Zeit,

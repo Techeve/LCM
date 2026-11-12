@@ -76,6 +76,9 @@ func TestRootGleichwertigeKommandosBrauchenBestaetigung(t *testing.T) {
 		"/bin/bash", "/usr/bin/vi /etc/hosts", "/usr/bin/less /var/log/syslog",
 		"/usr/bin/python3 /opt/tool.py", "/bin/dd if=/dev/zero of=/tmp/x",
 		"/usr/bin/tee /etc/motd", "/usr/bin/chmod 777 /srv",
+		// Nebennamen derselben Programme
+		"/usr/bin/python3.11 /opt/tool.py", "/usr/bin/perl5.36.0 /opt/x.pl",
+		"/usr/bin/vim.basic /etc/hosts", "/usr/bin/lua5.4 /opt/x.lua", "/bin/rbash",
 	}
 	for _, cmd := range cases {
 		var rootEquivalent *ErrRootEquivalent
@@ -164,6 +167,63 @@ func TestPfadregelPruefungen(t *testing.T) {
 	}
 }
 
+// TestRootGleichwertigePfade: Was unter diesen Pfaden liegt, führt das System
+// als root aus - ein Schreibrecht dort ist eine Root-Shell auf Umwegen. Das
+// gilt auch für eine Schreibweise mit "//" oder "/" am Ende und für eine
+// rekursive Freigabe darüber. Ein Name, der nur gleich beginnt, ist frei.
+func TestRootGleichwertigePfade(t *testing.T) {
+	for _, p := range []string{
+		"/etc/crontab", "/etc/cron.d", "/etc/cron.daily/logrotate", "/etc/anacrontab",
+		"/var/spool/cron", "/var/spool/cron/crontabs/root",
+		"/etc/systemd", "/etc/systemd/system/x.service", "/etc//systemd/", "/run/systemd/system",
+		"/etc/pam.d/sshd", "/etc/ld.so.preload", "/etc/ld.so.conf.d/x.conf",
+		"/etc/profile", "/etc/profile.d/x.sh", "/etc/environment", "/etc/bash.bashrc",
+		"/etc/sudo.conf", "/etc/sudoers.lcm", "/etc/logrotate.d/nginx", "/etc/init.d/nginx",
+		"/etc/apt/apt.conf.d/99hook", "/home/" + DefaultServiceUser, "/home/" + DefaultServiceUser + "/.ssh",
+		// Eine eigene Paketquelle installiert beim nächsten Update als root,
+		// core_pattern in sysctl startet ein Programm als root, ebenso
+		// Netzwerk-Hooks und Paketskripte.
+		"/etc/apt/sources.list.d", "/etc/sysctl.d/99-x.conf", "/etc/rc2.d", "/etc/network/if-up.d",
+		"/var/lib/dpkg/info", "/var/lib/docker",
+	} {
+		for _, mode := range []string{PathModeRead, PathModeReadWrite, PathModeDeny} {
+			if err := ValidatePathRule(p, mode); !errors.Is(err, ErrPathRootEquivalent) {
+				t.Errorf("%s (%s) muss gesperrt sein, bekam %v", p, mode, err)
+			}
+		}
+		if err := ValidateEditPath(p); !errors.Is(err, ErrPathRootEquivalent) {
+			t.Errorf("sudoedit %s muss gesperrt sein, bekam %v", p, err)
+		}
+	}
+	// Darüber: setfacl -R gäbe den gesperrten Bereich mit frei. Eine
+	// Verweigerung gibt nichts frei.
+	for _, p := range []string{"/var", "/var/spool", "/var/lib", "/home", "/run"} {
+		if err := ValidatePathRule(p, PathModeRead); err == nil {
+			t.Errorf("read %s gibt einen gesperrten Bereich mit frei", p)
+		}
+		if err := ValidatePathRule(p, PathModeDeny); err != nil {
+			t.Errorf("deny %s sollte erlaubt sein, bekam %v", p, err)
+		}
+	}
+	for _, p := range []string{"/etc/systemdx", "/etc/nginx", "/var/www", "/var/spool/mail", "/home/anna", "/etc/resolv.conf"} {
+		if err := ValidatePathRule(p, PathModeReadWrite); err != nil {
+			t.Errorf("%s sollte erlaubt sein, bekam %v", p, err)
+		}
+	}
+}
+
+// TestPfadOhneElternverweis: Ein Pfad steht so da, wie er wirkt.
+func TestPfadOhneElternverweis(t *testing.T) {
+	for _, p := range []string{"/srv/../etc/nginx", "/srv/www/..", "/srv/a/../b"} {
+		if err := ValidatePathRule(p, PathModeRead); !errors.Is(err, ErrPathParentRef) {
+			t.Errorf("%s: erwartet ErrPathParentRef, bekam %v", p, err)
+		}
+		if err := ValidateEditPath(p); !errors.Is(err, ErrPathParentRef) {
+			t.Errorf("sudoedit %s: erwartet ErrPathParentRef, bekam %v", p, err)
+		}
+	}
+}
+
 // TestProfilSlug: Aus dem Slug entsteht der Gruppenname auf dem Zielsystem.
 func TestProfilSlug(t *testing.T) {
 	gueltig := []string{"web", "webserver-betrieb", "db2", "a"}
@@ -178,5 +238,33 @@ func TestProfilSlug(t *testing.T) {
 		if ValidProfileSlug(s) {
 			t.Errorf("%q sollte ungültig sein", s)
 		}
+	}
+}
+
+// TestNebennamenTreffenNurListenProgramme: Die Suche nach Nebennamen kappt
+// Versionsnummer und Variante, macht aber aus einem harmlosen Programm kein
+// gelistetes.
+func TestNebennamenTreffenNurListenProgramme(t *testing.T) {
+	for _, name := range []string{"id", "systemctl", "sha256sum", "x86_64-linux-gnu-gcc-13", "journalctl"} {
+		if listed, _, blocked := rootEquivalentBinary(name); blocked {
+			t.Errorf("%s als %s gemeldet", name, listed)
+		}
+	}
+}
+
+// TestNurZeichenDesHelpers: Pfade und Kommandos mit Leerzeichen oder Umlauten
+// nähme der Helper im eingeschränkten Modus nicht an - sie scheitern schon
+// beim Speichern, nicht erst bei jedem Abgleich.
+func TestNurZeichenDesHelpers(t *testing.T) {
+	for _, p := range []string{"/srv/my dir", "/srv/größe", "/srv/tab\there"} {
+		if err := ValidatePathRule(p, PathModeRead); !errors.Is(err, ErrPathMeta) {
+			t.Errorf("%q: erwartet ErrPathMeta, bekam %v", p, err)
+		}
+	}
+	if err := ValidateSudoCommand("/usr/bin/systemctl --no-pager restart dienst-ä", false); !errors.Is(err, ErrSudoCommandMeta) {
+		t.Errorf("Umlaut im Kommando durchgelassen: %v", err)
+	}
+	if err := ValidatePathRule("/srv/app_1.2-x@y", PathModeRead); err != nil {
+		t.Errorf("erlaubte Zeichen abgelehnt: %v", err)
 	}
 }

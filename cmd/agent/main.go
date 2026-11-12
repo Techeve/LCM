@@ -46,7 +46,7 @@ func run() error {
 			return fmt.Errorf("keine gültige konfiguration - zuerst `lcm-agent enroll <url> <token>` ausführen (%w)", err)
 		}
 		log.Info("lcm-agent starting", "version", version.String(), "server", cfg.URL)
-		return agent.NewClient(cfg, log, version.String()).Run()
+		return agent.NewClient(cfg, log, version.String()).WithConfigPath(agent.ConfigPath).Run()
 	case "uninstall":
 		return agent.Uninstall()
 	case "version", "-v", "--version":

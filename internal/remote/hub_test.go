@@ -196,6 +196,49 @@ func TestConnCloseUnblocks(t *testing.T) {
 	}
 }
 
+// TestIdleTimeoutSendsCancel: Gibt LCM ein Kommando wegen Stille auf, bekommt
+// der Agent den Abbruch für genau diese Befehls-ID - sonst liefe es dort
+// weiter, während der Job längst als gescheitert gilt.
+func TestIdleTimeoutSendsCancel(t *testing.T) {
+	hub, server, _ := newTestHub(t)
+	hub.WithIdleTimeout(func() time.Duration { return 100 * time.Millisecond })
+	cl := hub.broker.NewClient(nil, "test", server.AgentID, false)
+	hub.agentConnected(cl)
+
+	sent := make(chan wire.Command, 4)
+	_ = hub.broker.Subscribe(wire.TopicCmd(server.AgentID), 99, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		var cmd wire.Command
+		if json.Unmarshal(pk.Payload, &cmd) == nil {
+			sent <- cmd
+		}
+		// Kein Result und kein Lebenszeichen: Das Kommando hängt.
+	})
+
+	conn, err := hub.Conn(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, _, err := conn.Run("hängt"); err == nil {
+		t.Fatal("Run muss nach der Stille-Frist mit Fehler enden")
+	}
+	first, second := nextCommand(t, sent), nextCommand(t, sent)
+	if first.Cancel || !second.Cancel || second.ID != first.ID {
+		t.Fatalf("erwartet Kommando und Abbruch mit gleicher ID, got %+v und %+v", first, second)
+	}
+}
+
+func nextCommand(t *testing.T, ch chan wire.Command) wire.Command {
+	t.Helper()
+	select {
+	case cmd := <-ch:
+		return cmd
+	case <-time.After(3 * time.Second):
+		t.Fatal("keine Nachricht an den Agenten")
+		return wire.Command{}
+	}
+}
+
 // TestDisconnectFailsPending: trennt sich der Agent während eines laufenden
 // Kommandos, scheitern wartende Aufrufe sofort.
 func TestDisconnectFailsPending(t *testing.T) {

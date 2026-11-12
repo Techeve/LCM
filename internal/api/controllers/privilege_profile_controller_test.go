@@ -2,8 +2,33 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
+
+	"LCM/internal/api/apierr"
+	"LCM/internal/core/domain"
+	"LCM/internal/core/services"
 )
+
+// TestProfileInUseIsConflict: Ein noch zugewiesenes Profil zu löschen ist ein
+// Konflikt (409) mit eigenem Code - kein interner Fehler. Ebenso bekommen die
+// neuen Pfad-Sperren ihre eigenen Codes.
+func TestProfileInUseIsConflict(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{services.ErrProfileInUse, 409, "profile.in_use"},
+		{domain.ErrPathRootEquivalent, 422, "path.root_equivalent"},
+		{domain.ErrPathParentRef, 422, "path.parent_reference"},
+	} {
+		var mapped *apierr.Error
+		if !errors.As(mapProfileError(tc.err), &mapped) || mapped.Status != tc.status || mapped.Code != tc.code {
+			t.Errorf("%v: erwartet %d %s, bekam %v", tc.err, tc.status, tc.code, mapped)
+		}
+	}
+}
 
 // TestProfileRequestKeepsBlockUses: Die eingesetzten Regelbausteine müssen im
 // Service ankommen. Fehlten sie in der Eingabe, verlöre jedes Speichern eines

@@ -37,7 +37,7 @@ func TestNormalizeFingerprint(t *testing.T) {
 // Zeichenketten, CPU-Kerne als Zeichenkette, Security-Advisor je Kategorie).
 func TestCollectLiestDenZustand(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		api := r.URL.Query().Get("api")
+		api := r.FormValue("api")
 		w.Header().Set("Content-Type", "application/json")
 		switch api {
 		case "SYNO.API.Auth":

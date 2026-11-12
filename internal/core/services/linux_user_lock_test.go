@@ -78,6 +78,42 @@ func TestDeaktivierterBenutzerWirdGesperrt(t *testing.T) {
 	}
 }
 
+// TestDeaktivierterBenutzerLaeuftAbUndVerliertProfilgruppen: Die Sperre
+// allein traf nur das Passwort und den LCM-Schlüsselblock. Ein Schlüssel
+// außerhalb des Blocks kam weiter durch, und über die Profilgruppen blieben
+// sudo-Regeln und Verzeichnisrechte am Konto. Jetzt läuft das Konto ab und
+// verlässt die Gruppen; beim Wiederaktivieren hebt LCM genau sein
+// Ablaufdatum wieder auf.
+func TestDeaktivierterBenutzerLaeuftAbUndVerliertProfilgruppen(t *testing.T) {
+	env, serverID, u := lockTestSetup(t)
+	server, _ := env.Servers.Get(repositories.ScopeAll(), serverID)
+
+	if _, err := env.LinuxUsers.Update(u.ID, services.LinuxUserUpdateInput{Active: bp(false)}, "admin"); err != nil {
+		t.Fatalf("deaktivieren: %v", err)
+	}
+	env.Dialer.Commands = nil
+	if _, err := env.Prov.SyncUsers(server, "admin"); err != nil {
+		t.Fatalf("sync (deaktiviert): %v", err)
+	}
+	locked := strings.Join(env.Dialer.Commands, "\n")
+	for _, must := range []string{"usermod -e 1 " + u.Username, "gpasswd -d " + u.Username} {
+		if !strings.Contains(locked, must) {
+			t.Errorf("Sperr-Kommando ohne %q:\n%s", must, locked)
+		}
+	}
+
+	if _, err := env.LinuxUsers.Update(u.ID, services.LinuxUserUpdateInput{Active: bp(true)}, "admin"); err != nil {
+		t.Fatalf("aktivieren: %v", err)
+	}
+	env.Dialer.Commands = nil
+	if _, err := env.Prov.SyncUsers(server, "admin"); err != nil {
+		t.Fatalf("sync (aktiv): %v", err)
+	}
+	if active := strings.Join(env.Dialer.Commands, "\n"); !strings.Contains(active, "chage -E -1 "+u.Username) {
+		t.Errorf("das Ablaufdatum wird beim Wiederaktivieren nicht aufgehoben:\n%s", active)
+	}
+}
+
 // TestDeprovisionEhrlichBeiFehlschlag (R2-040): Schlägt das Entfernen auf
 // dem Zielsystem fehl (BusyBox ohne userdel, Konto besteht weiter), muss
 // die Antwort ok:false sein und die Zuordnung BESTEHEN bleiben - kein

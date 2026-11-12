@@ -82,7 +82,7 @@ const aptCacherInstallScript = "set -e; " +
 // hostScript liefert das Skript einer Host-Aktion für den Rechte-Modus des
 // Servers: im Voll-Modus das Skript selbst (läuft als root), im
 // eingeschränkten Modus den Aufruf des passenden Helper-Unterkommandos - der
-// Helper trägt dasselbe Skript (siehe lcm_helper.go) und läuft als root über
+// Helper trägt dasselbe Skript (siehe lcm-helper.sh) und läuft als root über
 // die sudoers-Whitelist. So braucht auch der LCM-Host kein NOPASSWD:ALL.
 func hostScript(server *domain.Server, full, sub string, args ...string) string {
 	return rootStep(server.RestrictedSudo, full, sub, args...)
@@ -596,8 +596,12 @@ func (s *ServerService) RunLcmHostJob(jobType, name, script, actor string, after
 	if host == nil {
 		return nil, ErrNotLcmHost
 	}
-	job, err := s.startPackageJob(repositories.ScopeAll(), host.ID, jobType,
-		name, func(string) string { return script }, actor)
+	// basePackagePlan: Diese Skripte koppeln sich, wo nötig, selbst ab (das
+	// Selbst-Update per systemd-run) - ein zweites Abkoppeln verschachtelte
+	// die Units.
+	job, err := s.runPlanned(repositories.ScopeAll(), host.ID, actor, func(server *domain.Server) (packagePlan, error) {
+		return s.basePackagePlan(server, jobType, name, func(string) string { return script })
+	})
 	if err != nil {
 		return nil, err
 	}

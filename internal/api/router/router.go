@@ -101,6 +101,11 @@ type Deps struct {
 	ReleaseNotes *services.ReleaseNotesService
 	// DBMetrics liefert GET /api/v1/system/db und GET /metrics; nil => die Routen fehlen.
 	DBMetrics *dbmetrics.Reporter
+	// TLSCACert liefert den öffentlichen Teil der TLS-CA für
+	// GET /api/v1/system/tls/ca.pem; nil => die Route fehlt.
+	TLSCACert func() ([]byte, error)
+	// PortScans liefert den Portscan von LCM aus; nil in Tests => die Routen fehlen.
+	PortScans *services.PortScanService
 }
 
 // New erstellt die Fiber-App mit allen Routen und Middlewares.
@@ -303,6 +308,11 @@ func New(deps Deps) *fiber.App {
 	api.Post("/system/self-update", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.StartSelfUpdate)
 	api.Delete("/system/self-update", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.CancelSelfUpdate)
 	api.Get("/system/maintenance", middlewares.RequireAuth(), opsCtrl.Maintenance)
+	// Die CA von LCM zum Import in Browser oder Reverse-Proxy. Nur der
+	// öffentliche Teil, trotzdem Admin-Sache wie die übrigen TLS-Einstellungen.
+	if deps.TLSCACert != nil {
+		api.Get("/system/tls/ca.pem", middlewares.RequirePermission(domain.PermSettingsManage), controllers.TLSCACert(deps.TLSCACert))
+	}
 	// Messung der Datenbank für lcm-probe und Prometheus. settings:manage,
 	// weil die Anweisungstexte und Tabellen den Aufbau der Datenbank zeigen.
 	if deps.DBMetrics != nil {
@@ -466,12 +476,20 @@ func New(deps Deps) *fiber.App {
 	servers.Post("/:id/apps/:slug/:action", middlewares.RequirePermission(domain.PermServersWrite), appCtrl.RunAppAction)
 	servers.Post("/:id/repositories/add", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.AddRepository)
 	servers.Post("/:id/harden-ssh", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.HardenSSH)
+	// Synology DSM: Sicherheitseinstellungen auf Klick auf den Sollwert setzen.
+	servers.Post("/:id/dsm/apply", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.ApplyDSMTargets)
 	servers.Post("/:id/unharden-ssh", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.UnhardenSSH)
 	servers.Post("/:id/restrict-sudo", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RestrictSudo)
 	servers.Post("/:id/ssh-root-login", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.SetSSHRootLogin)
 	servers.Post("/:id/ssh-port", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.ChangeSSHPort)
 	servers.Post("/:id/firewall", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.ConfigureFirewall)
 	servers.Post("/:id/listening-ports/scan", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.ScanListeningPorts)
+	// Portscan von LCM aus: Ziel ist immer die gespeicherte Adresse des Servers.
+	if deps.PortScans != nil {
+		portScanCtrl := controllers.NewPortScanController(deps.PortScans)
+		servers.Get("/:id/port-scan", middlewares.RequirePermission(domain.PermServersRead), portScanCtrl.Get)
+		servers.Post("/:id/port-scan", middlewares.RequirePermission(domain.PermServersWrite), portScanCtrl.Start)
+	}
 	servers.Post("/:id/apt-proxy", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.ConfigureAptProxy)
 	servers.Post("/:id/dns", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.ConfigureDNS)
 	servers.Post("/:id/dns-test", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.DNSTest)
@@ -879,11 +897,21 @@ func jsonErrorHandler(c fiber.Ctx, err error) error {
 			apiErr = errDuplicate.With("field", column)
 		}
 	}
+	if apiErr.Status == fiber.StatusInternalServerError {
+		logInternalError(c, err)
+	}
 	body := fiber.Map{"error": apiErr.Message, "code": apiErr.Code}
 	if len(apiErr.Params) > 0 {
 		body["params"] = apiErr.Params
 	}
 	return c.Status(apiErr.Status).JSON(body)
+}
+
+// logInternalError hält die Ursache eines Fehlers 500 im Log fest. Der Client
+// bekommt nur „internal server error" - ohne diese Zeile wäre die Ursache
+// nirgends mehr zu finden.
+func logInternalError(c fiber.Ctx, err error) {
+	slog.Error("request failed", "method", c.Method(), "path", c.Path(), "error", err)
 }
 
 // errDuplicate: ein Wert, der eindeutig sein muss, gibt es schon.

@@ -1,0 +1,10 @@
+{
+ "success": true,
+ "data": {
+  "enable_skip_ip_check": "yes",
+  "enable_csrf_protection": "yes",
+  "csp_header": "no",
+  "logout_timer": 15,
+  "sid_token": "geheim"
+ }
+}

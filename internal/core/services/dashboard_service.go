@@ -8,6 +8,7 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/core/events"
+	"LCM/internal/cron"
 	"LCM/internal/storage/repositories"
 )
 
@@ -320,7 +321,7 @@ func nextRun(sc *domain.Schedule, now time.Time) (DashboardRun, bool) {
 	if sc.IsSystem || !sc.Enabled {
 		return DashboardRun{}, false
 	}
-	spec, err := cronParser.Parse(sc.CronExpr)
+	spec, err := cron.Parse(sc.CronExpr)
 	if err != nil {
 		return DashboardRun{}, false
 	}

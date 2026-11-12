@@ -1,173 +1,145 @@
 # Changelog
 
-## v2.0.0-beta.17 - 2026-11-09
-
-### 🐛 Bugfixes
-
-- **probe**: Der Bericht von lcm-probe nennt auch einen Umzug des Containers auf einen anderen Host, der nur Sekunden dauert (0abacb84)
-- **probe**: Die CPU-Anteile im Container stimmen in lcm-probe, zusammen nie mehr über 100 % (60e3536b)
-- **probe**: Die Diagramme im HTML-Bericht von lcm-probe zeigen den ganzen Zeitraum, kurze Läufe wie die Alarm-Auswertung stehen nur noch als Zahl darin (d4bed69d)
-
-### ⚡ Performance
-
-- **probe**: Ein Tag braucht in lcm-probe gepackt rund 3 statt 9 MB (579b3867)
-
-### 🔧 Sonstiges
-
-- **plan**: erster Tageslauf auf lcm-prod und CT 120 (ea024edb)
-- **renovate**: CI-Images, indirekte Go-Abhängigkeiten und Go-Toolchain erfassen (4d618c79)
-
-## v2.0.0-beta.16 - 2026-11-08
+## v2.1.0-beta.1 - 2026-11-12
 
 ### 🚀 Features
 
-- **monitoring**: LCM misst, wie lange Schreibvorgänge auf die Datenbank warten und wie lange Anweisungen brauchen, und stellt die Zahlen unter /api/v1/system/db und für Prometheus unter /metrics bereit (ed2746ef)
-- **probe**: Das neue Paket lcm-probe zeichnet den LCM-Host alle 2 Sekunden und die Datenbank jede Minute dauerhaft auf, erkennt Stillstände und wertet alles selbst aus, auch als HTML mit Diagrammen (7e4e80d1)
+- **agent**: Agent merkt sich den Schlüssel des LCM-Zertifikats und meldet ihn (a8abdc1f)
+- **api**: DSM-Sollwerte über POST /servers/:id/dsm/apply setzen (b6c32795)
+- **cron**: eigener parser für cron-ausdrücke mit golden-test gegen robfig/cron (a4f85af2)
+- **cron**: kleiner scheduler als ersatz für cron.Cron (c110205c)
+- **dsm**: Firewall nur mit „alles verweigern“ als Schutz werten (a60aaa91)
+- **dsm**: Firewall-Regeln des aktiven Profils am Server speichern (6e7142fb)
+- **dsm**: Sicherheitseinstellungen auf Sollwert setzen (Client) (c338aeac)
+- **dsm**: Sollwerte als Job setzen und das Gerät neu erfassen (16eb5317)
+- **dsm**: TLS-Stufen 2 und 3 zuordnen (53a4e009)
+- **dsm**: eingeschaltete Firewall ohne Regeln als Abweichung melden (f4d970a7)
+- **security**: Portscan von LCM aus zeigt offene Ports und gleicht sie mit der Firewall ab (5b1436a8)
+- **synology**: Speicher, Firewall und Sicherheitseinstellungen von DSM lesen, Logo und CPU richtig (d8818c13)
+- **tls**: Eigene CA stellt das Server-Zertifikat aus, Agenten pinnen die CA (205ea3e2)
+- **tls**: Eigenes Zertifikat vor Ablauf mit demselben Schlüssel erneuern, Alarm bei Ablauf (49550456)
+- **ui**: DSM-Abweichungen auf Klick auf den Sollwert setzen (51e3d020)
+- **ui**: Firewall-Regeln des DSM-Profils im Reiter Sicherheit zeigen (f81ed2be)
+- **ui**: Root-Profil nennt den eingeschränkten Modus (72d26c49)
+- **ui**: Sicherheits-Reiter für DSM und RouterOS (9fcc5bce)
+
+### 🐛 Bugfixes
+
+- **agent**: Abbruch erreicht auch wartende Kommandos, doppelte Befehls-IDs laufen nicht zweimal (e247a06a)
+- **agent**: Ergebnis nach der serialisierten Größe kürzen, Anfang und Ende bleiben (e12c1125)
+- **agent-paket**: Agent stoppt nur beim Entfernen und wechselt nach dem Upgrade selbst aufs neue Binary (49dd4bf9)
+- **api**: Fehler 500 mit Ursache im Log, ErrNotFound bei Deep-Scan-Lauf und Sperrliste (406c3432)
+- **apps**: Versionsnummer im Katalog beginnt an einer Wortgrenze (c22fadd2)
+- **backup**: Fremder Datenbankpfad schon beim Hochladen abgelehnt (b4f8aa1b)
+- **backup**: Läufe nacheinander, eindeutiger Archivname, Momentaufnahme gleich mit 0600 (d2a21b17)
+- **capability**: Alles aktualisieren heilt eine gescheiterte Paketliste (251be374)
+- **classify**: Farbcodes vor der Fehler-Einordnung ganz entfernen (59a2a0bc)
+- **cve**: Alpine bekommt apk-purls mit Zweig und ein eigenes Ökosystem in der Frühwarnung (e6c2862f)
+- **cve**: Unbekannte Schwere fällt auf unknown zurück statt auf critical (83243343)
+- **dns**: Gesetzte DNS-Server gelten auch in Proxmox-Containern und nach einem Neustart (7584567b)
+- **docker**: Veröffentlichte Ports an IPv6-Adressen in Klammern erkennen (efe98be5)
+- **dsm**: DoS-Schutz über configs mit den Netzwerkschnittstellen lesen (07e0019b)
+- **dsm**: Feldnamen von DSM 7.3, CSRF statt XSS, TLS-Stufe als Nummer (4b19c82e)
+- **dsm**: Firewall-Regeln in ihrer Reihenfolge werten, „1 Regel“ (19ad0392)
+- **dsm**: TLS-Stufe 1 ist moderne Kompatibilität (e2daa109)
+- **firewall**: IPv6-Freigaben mit Quelle stehen im ufw-Status ohne (v6) (74073b8e)
+- **firewall**: nftables-Include nur auf echten Zeilen erkennen (91267fd4)
+- **firewall**: ufw ohne IPv6 lässt reine IPv6-Freigaben mit Hinweis aus (8faa7f06)
+- **firewall**: ufw-Abgleich vergleicht Quellen und erkennt Regeln ohne Port (9435de3b)
+- **groups**: Verwalter löschbar, Gruppe mit Alarmregel auflösbar (502298a1)
+- **harden**: Rücknahme nach gescheiterter Dienstprobe stellt Gruppe und Modus her (53ccc74f)
+- **helper**: SFTP-Konten im eingeschränkten Modus ohne Shell und mit ForceCommand (829f7ead)
+- **helper**: profile-acl meldet ein gescheitertes erstes setfacl (da3b34a9)
+- **helper**: profile-apply lehnt ALL in jeder Form und Root-Kommandos ab, repo-add lehnt trusted ab (d3f99cbb)
+- **i18n**: Gedankenstriche werden zum Bindestrich statt zu verschwinden (b9e9a9e3)
+- **jobs**: Warteschlange prüft die Belegung im Speicher und gibt nach einem Abbruch nur einmal frei (23b64876)
+- **kernel**: Abgleich mit dem laufenden Kernel an Trennzeichen, Arch, Alpine und SUSE angeglichen (5292be86)
+- **konsole**: Mitschnitt behält Anfang und Ende der Sitzung (989dcb60)
+- **lcm-host**: Paketläufe auf dem LCM-Host als eigene Unit, Ergebnis nach dem Neustart, dpkg --audit vor dem Erfolg (3b5bd1f1)
+- **linuxuser**: deaktivierte Benutzer laufen ab und verlassen die Profilgruppen (3a88fb9a)
+- **logging**: Rotation komprimiert den Altstand im Hintergrund (9a8cde32)
+- **packaging**: gültige Beta-Versionen für die Agent-Pakete in apk und Arch (1ceb8a69)
+- **perm-sync**: Nur gemeldete Abweichung steht nur bei Änderung im Audit (9c14aa2b)
+- **pins**: Abgleich gibt nur Holds frei, die LCM selbst gesetzt hat (e431014a)
+- **profile**: Nur Zeichen, die auch der Helper annimmt, und kleinere Korrekturen (0b5c387b)
+- **profile**: Pfade, die Root bedeuten, für Datei- und Verzeichnisregeln sperren (67ac13cc)
+- **profile**: Profil-ACLs vor groupdel mit dem Gruppennamen zurücknehmen (f0b7f5c9)
+- **profile**: Root-Programme auch unter Nebennamen, weitere Root-Pfade gesperrt (cb18fa58)
+- **profile**: sudo-Regeln nach Zielbenutzer und Kommando entdoppeln (26255b84)
+- **profile**: zugewiesenes Berechtigungsprofil lässt sich nicht löschen (8bbb19ab)
+- **rechte-soll**: Härtung vollständig prüfen, Symlinks nie folgen, ACL samt Rechten (da684d8a)
+- **regeln**: Vorrang der Gruppen gilt auch für geplante Firewall- und APT-Cache-Regeln (c013e3a3)
+- **remote**: Agent-Download mit Schlüssel-Pin statt blindem -k (985f70ea)
+- **repos**: HTTP-Rückweg der Paketquellen stellt URLs nur als Ganzes zurück (0116ad14)
+- **rotation**: Backup-Passphrase, Abo-Schlüssel und Frühwarn-Befunde umschlüsseln (52e61d7f)
+- **rules**: Regeltyp Skript läuft als root, im eingeschränkten Modus mit Grund übersprungen (e3f37507)
+- **sandbox**: Trivy behält Proxy und eigene Zertifikate (8d344bcb)
+- **sandbox**: Trivy ohne LCMs Umgebung, mit absolutem Pfad und Trenner (d963a4ba)
+- **scheduler**: Feste Uhrzeiten statt @every für Alarm-Auswertung, Frühwarnung und Update-Prüfung (f10ef7ae)
+- **scheduler**: Update-Prüfung je Host zu eigener Minute (41c67883)
+- **security**: Anmeldesperre räumt abgelaufene Einträge auf, Erfolg leert den Adress-Zähler nicht (91a2cb06)
+- **security**: Anwendungen je Server mit Sichtbereich, globale Pins nur mit Sicht auf alle Server (c43bf61d)
+- **security**: Backup-Verzeichnis auch im Backup-Formular geprüft, Restore nur mit DB-Pfad im Datenverzeichnis (0d605cf4)
+- **security**: Client-Adresse vom rechten Ende der Proxy-Kette, leere trusted_proxies vertraut niemandem (3c18af77)
+- **security**: Demo-Sperre vergleicht den Pfad so, wie Fiber routet (aef6de67)
+- **security**: Eingabeprüfung liest den Medientyp wie Fiber (187a63ec)
+- **security**: Eingabeprüfung über jedes Vorkommen eines Parameters und Formular-Rümpfe (98b5d21b)
+- **security**: Zählertabelle des API-Key-Limits hart begrenzt (96a5902a)
+- **server**: Löschen räumt jede Tabelle mit server_id oder server_ref (269a263b)
+- **speicher**: Prognose rechnet mit dem Tag statt mit der Stelle im Verlauf (422e5e35)
+- **spread**: Verteilte Läufe lesen den Server nach dem Warten neu (7c8ec0e1)
+- **ssh**: Ausgabe-Wrapper weicht bei vollem /tmp auf /dev/shm und /run aus, sonst direkt (397e101a)
+- **ssh**: Läufe mit Hintergrundprozessen warten unter BusyBox und dash nicht mehr auf deren Ende (d657aa33)
+- **ssh**: Schreibprobe des Wrappers mit echo statt printf (782ebcbd)
+- **ssh-2fa**: Arch legt den Passwort-Stack still, RHEL 9 scheitert nicht mehr an 50-redhat.conf (97cf422e)
+- **synology**: Fehlender DoS-Schutz ist ein Hinweis, kein Befund (ff6317db)
+- **synology**: Pin nur am Server-Zertifikat, Anmeldung per POST (2ad91dff)
+- **time**: chrony auf Alpine erkannt, conf.d und sources.d gelesen und beim Setzen bereinigt (87d90a1c)
+- **tls**: Healthcheck und lcm-probe vergleichen das Zertifikat Byte für Byte (41a6c6d7)
+- **ui**: APT-Cache wartet nur auf die eigenen Jobs (1a482a4a)
+- **ui**: Auswahlfeld und Schalter übernehmen den Wert vom Aufrufer (be29771d)
+- **ui**: Gruppenliste lädt nach einem Job nicht alle Gruppendetails neu (a6ae6175)
+- **ui**: Paketliste sortiert alle Pakete, bevor sie abschneidet (1a893a63)
+- **ui**: Profil-Dialog übernimmt keine aufsteigenden Ereignisse der Schalter (cdbd74ca)
+- **ui**: Service Worker behält den Cache des vorigen Builds bis zum Neuladen (8ae873c5)
+- **ui**: watchJob fragt nach jedem Resync den Stand des Jobs ab (3b5c2f26)
+- **users**: SSH-Keys mit Optionen davor zählen mit (dc294b6c)
 
 ### ♻️ Refactoring
 
-- **tlsx**: Zertifikats-Pinnung des Healthchecks für lcm-probe freigeben (17ee7b04)
+- **helper**: vorlage des lcm-helper als eigene shell-datei (49989a2c)
+- **scheduler**: eigenes cron-paket statt robfig/cron (420b9bf0)
+- **storage**: backup-momentaufnahme über DatabaseRepository.SnapshotInto (5961b0eb)
+- **storage**: fehlschlag-zähler über ServerRepository.MarkUnreachable (b13f249d)
 
 ### 🔧 Sonstiges
 
-- **plan**: Monitoring-Plan übernommen, Quellen in CT 120 und VM 150 geprüft (ef2b30e5)
-- **plan**: Stand des Baus und Abweichungen vom Plan (fa9a7ddb)
-- **probe**: Paket lcm-probe mit eigenem Dienst in Makefile und Pipeline (8d4981f9)
-- **reference**: Monitoring von Host und Datenbank, uPlot im Bestand (e7e9b155)
-- **release**: Hinweise zu LCM 2.0 nennen das Monitoring mit lcm-probe (91438807)
+- **appdocs**: Paket-Pins lösen nur LCMs eigene Holds (c4a74abe)
+- **changelog**: drei Einträge ohne interne Namen (04c892bb)
+- **ci**: feste Versionen für Werkzeuge und Images, von Renovate gepflegt (c0b20a2d)
+- **dsm**: Firewall-Soll und Regelliste beschreiben (0137d32e)
+- **dsm**: Reihenfolge der Firewall-Abschnitte und Regeln ohne enable (4501029f)
+- **dsm**: Sollwerte auf Klick setzen beschrieben (00dcf69c)
+- **helper**: gerenderten lcm-helper mit shellcheck prüfen, befunde behoben (04f89f12)
+- **reference**: robfig/cron durch internal/cron abgelöst (52fa0bde)
+- **release**: Hinweise zu LCM 2.0 nennen Zertifizierungsstelle, DSM, Portprüfung, R5 und R6 (918de997)
+- **release**: Hinweise zu LCM 2.0 nennen die Korrekturen am Agenten (2ab027d2)
+- **release**: Hinweise zu LCM 2.0 nennen die Korrekturen aus R2 (8e70f975)
+- **release**: Hinweise zu LCM 2.0 nennen die Korrekturen aus R3 (5540b4a5)
+- **release**: Hinweise zu LCM 2.0 nennen die Sicherheitskorrekturen (2af3df2c)
+- **release**: keine internen Namen in Changelog, Release-Hinweisen und Commit-Betreffen (94b90e8b)
+- **release-info**: DNS-Fix in den Hinweisen zu 2.1 (35699f46)
+- **renovate**: indirekte Go-Abhängigkeiten mitpflegen (0ec817ae)
+- **renovate**: testdata nicht als Abhängigkeit pflegen (fcc39997)
+- **scheduler**: Auslöse-Test wartet auf das Ende des Aufräum-Jobs (a7f98c92)
+- **security**: Helper-Prüfungen, gesperrte Pfade, SFTP und Trivy-Umgebung (955a7a77)
+- **security**: X-Forwarded-For von rechts, leere Proxy-Liste vertraut niemandem (77299cd7)
+- **self-update**: Auf den Start des Update-Jobs warten statt auf die Phase (5cc77017)
+- job helper-shellcheck für lcm-helper und paket-skripte (2c421a7d)
+- quelle des lcm-helper und job helper-shellcheck beschrieben (fdc98ff2)
+- shell-skripte immer mit lf auschecken (86bf922e)
 
-## v2.0.0-beta.15 - 2026-11-08
-
-### 🔧 Sonstiges
-
-- **release**: Text für LCM 2.0 nennt die Neuerungen und Korrekturen aus den Betas (03980db0)
-
-## v2.0.0-beta.14 - 2026-11-08
-
-### 🚀 Features
-
-- **trivy**: Eine neuere Trivy-Version wird angezeigt und lässt sich mit einem Klick einspielen (1bd219bf)
-- **update**: Während des LCM-Updates sind alle Aktionen gesperrt, das Update-Fenster bleibt mit dem Fortschritt offen (0a6f8d82)
-
-### 🐛 Bugfixes
-
-- **servers**: Docker-Ports an der Firewall vorbei stehen als Zahl, die Liste klappt man bei Bedarf auf (67d7ab7e)
-
-## v2.0.0-beta.13 - 2026-11-08
-
-### 🚀 Features
-
-- **repos**: Vor der HTTPS-Umstellung prüft LCM die Spiegel und stellt nur die ausgewählten Quellen um (a4c73859)
-
-## v2.0.0-beta.12 - 2026-11-08
-
-### 🐛 Bugfixes
-
-- **db**: Gleichzeitige Schreibvorgänge warten aufeinander statt mit „database is locked“ abzubrechen (09bb2a3c)
-- **subscription**: Kein Wechsel auf einen Paketkanal, der eine Feature-Version zurückliegt (45109883)
-
-## v2.0.0-beta.11 - 2026-11-07
-
-### 🐛 Bugfixes
-
-- **cve**: Die Trivy-Datenbank kommt kurz nach dem Bau an und stört keinen Scan mehr (73f549dd)
-
-## v2.0.0-beta.10 - 2026-11-07
-
-### 🐛 Bugfixes
-
-- **repos**: Die HTTPS-Umstellung erkennt scheiternde Paketquellen und rollt zurück (49c80d05)
-
-## v2.0.0-beta.9 - 2026-11-07
-
-### 🚀 Features
-
-- **ui**: Der Zwei-Faktor-Code steht bei der Anmeldung mittig (f0fa73d5)
-
-### 🐛 Bugfixes
-
-- **advisory**: Die Frühwarnung scheitert nicht mehr an „database is locked“ (1567d69a)
-- **docker**: Ein geladenes Image gilt erst als aktuell, wenn der Container es nutzt (7ff047f2)
-- **packages**: Entfernte Pakete zählen nicht mehr als installiert (3d864c67)
-
-## v2.0.0-beta.8 - 2026-11-07
-
-### 🐛 Bugfixes
-
-- **capability**: Erledigte Warnungen verschwinden von selbst (5d76c7d7)
-- **ssh**: Ein hängender Server hält Seiten und Jobs nicht mehr auf (4648839b)
-
-## v2.0.0-beta.7 - 2026-11-07
-
-### 🚀 Features
-
-- **ui**: Betriebsfähigkeit und Sicherheit bleiben eingeklappt, bis etwas zu tun ist (81741c12)
-
-### 🐛 Bugfixes
-
-- **users**: Hinweis „Abgleich steht aus“ verschwindet nach dem Abgleich von Hand (6f38681f)
-
-## v2.0.0-beta.6 - 2026-11-06
-
-### 🚀 Features
-
-- **jobs**: Job ansehen öffnet das Fenster auf der aktuellen Seite (2b6bcaa7)
-
-### 🐛 Bugfixes
-
-- **ssh**: Härtung setzt sich gegen fremde Einstellungen wie cloud-init durch (4c90b6ae)
-
-## v2.0.0-beta.5 - 2026-11-06
-
-### 🚀 Features
-
-- **jobs**: SSH-Sitzung zeigt Kommandos und Ausgabe schon während des Laufs (ce8366d4)
-
-### 🐛 Bugfixes
-
-- **crowdsec**: Allowlist trennt Adressen und Netze, CrowdSec startet wieder (f1cefdd9)
-- **ui**: Bestätigungsfenster bleibt auch bei langer Vorschau bedienbar (a5e1f7f7)
-
-## v2.0.0-beta.4 - 2026-11-06
-
-### 🚀 Features
-
-- **restricted**: Neustart läuft auch im eingeschränkten Modus (4924eae3)
-
-## v2.0.0-beta.3 - 2026-11-06
-
-### 🚀 Features
-
-- **ui**: Info-Fenster kompakter, „Jetzt prüfen“ antwortet neben dem Knopf (bf7794bd)
-- **update**: Fenster nach dem Update beginnt mit einem handgeschriebenen Text (50fe048e)
-
-### 🐛 Bugfixes
-
-- **restricted**: Fehlermeldung landet nicht mehr als LAPI-URL, Einrichtung prüft vorher den Helper (8d71f8a6)
-- **restricted**: Helper prüft Werte als Ganzes und den Regelsatz vollständig (22f41117)
-- **restricted**: Helper und Whitelist des LCM-Hosts werden beim Paket-Update erneuert (3d2f1fdd)
-- **restricted**: Paketkanal, Sicherheits-Tools, Firewall, Pins und alte Kernel laufen im eingeschränkten Modus (4352d1cb)
-
-### 🔧 Sonstiges
-
-- **release**: Text für LCM 2.0 im Update-Fenster (251b29a7)
-- **restricted**: Dokumentation zum eingeschränkten Modus nachgezogen (cd8e0012)
-
-## v2.0.0-beta.2 - 2026-11-06
-
-### 🐛 Bugfixes
-
-- **api**: abgebrochene Verbindungen stehen nicht mehr als 502 im Protokoll (d4aa19c8)
-- **remote**: Dienst-Stopp wartet nicht mehr auf offene Agent-Verbindungen (ed5a9e69)
-- **ui**: Einstellungen zeigen beim Wechsel keinen alten Abschnitt mehr (54f3d932)
-- **ui**: Klick im Feld „+2 weitere“ führt auch in Safari zum Server (fe3423c3)
-- **ui**: Rücksprung bleibt beim Wechsel der Anmeldung im Browser erhalten (0d641297)
-
-### 🔧 Sonstiges
-
-- **e2e**: Suite läuft auch in Firefox und WebKit (07e367c4)
-
-## v2.0.0-beta.1 - 2026-11-05
+## v2.0.0 - 2026-11-09
 
 ### 💥 Breaking Changes
 
@@ -189,16 +161,26 @@
 - **auth**: Cookie-Sitzung mit CSRF-Schutz und Sprache am Konto (5443c04e)
 - **dns**: bis zu vier Nameserver je Server (41c18a7f)
 - **events**: Ereigniskanal per WebSocket und Dashboard-Aufruf (b327a011)
+- **jobs**: Job ansehen öffnet das Fenster auf der aktuellen Seite (2b6bcaa7)
+- **jobs**: SSH-Sitzung zeigt Kommandos und Ausgabe schon während des Laufs (ce8366d4)
 - **mail**: Verschlüsselung als Auswahl (TLS, STARTTLS, Keine) und Absender mit Anzeigenamen (e549ebbf)
+- **monitoring**: LCM misst, wie lange Schreibvorgänge auf die Datenbank warten und wie lange Anweisungen brauchen, und stellt die Zahlen unter /api/v1/system/db und für Prometheus unter /metrics bereit (ed2746ef)
 - **platform**: Ubuntu 26.04 LTS im Lebenszyklus (097827ac)
+- **probe**: Das neue Paket lcm-probe zeichnet den LCM-Host alle 2 Sekunden und die Datenbank jede Minute dauerhaft auf, erkennt Stillstände und wertet alles selbst aus, auch als HTML mit Diagrammen (7e4e80d1)
+- **repos**: Vor der HTTPS-Umstellung prüft LCM die Spiegel und stellt nur die ausgewählten Quellen um (a4c73859)
+- **restricted**: Neustart läuft auch im eingeschränkten Modus (4924eae3)
+- **status**: fehlgeschlagene Aktionen wirken auf den Serverstatus (c5b92409)
+- **trivy**: Eine neuere Trivy-Version wird angezeigt und lässt sich mit einem Klick einspielen (1bd219bf)
 - **ui**: Anmeldung im Browser im Arbeitsspeicher oder per Cookie, Karte und einmalige Frage (4a79a0bb)
 - **ui**: Apps im Serverdetail sichern und aktualisieren (e2ca1478)
 - **ui**: Assistent „Server hinzufügen“ für SSH, Agent, RouterOS und DSM, dazu Neu verbinden (ab543fe2)
 - **ui**: Befehlsvorschau aus dem Backend für Konfigurations-Aktionen (40935525)
 - **ui**: Befehlsvorschau für SSH-Härtung, 2FA-Entfernen und Deep-Scan-Werkzeuge; APT-Proxy weist API-Geräte ab (7a9ab2a4)
+- **ui**: Betriebsfähigkeit und Sicherheit bleiben eingeklappt, bis etwas zu tun ist (81741c12)
 - **ui**: Container-, Benutzer-, Deep-Scan- und Speicheraktionen im Serverdetail (2e2654cd)
 - **ui**: Dashboard und Jobs-Seite (91cac1b0)
 - **ui**: Dateien vorkomprimiert ausliefern, Grenzwert für das Start-JavaScript in der CI (dd884c68)
+- **ui**: Der Zwei-Faktor-Code steht bei der Anmeldung mittig (f0fa73d5)
 - **ui**: Doku mit Seitenliste, Abschnittsankern und sicherer Darstellung (908dc3b6)
 - **ui**: Eingabefelder mit Zeichengrenze und Nur-Ziffern-Modus (497fd908)
 - **ui**: Eingabeprüfung im Server-Assistenten, bei Sicherheitswerkzeugen und Pins, Namenskonflikt am Feld, Tests (a2cfd7dc)
@@ -219,6 +201,7 @@
 - **ui**: Gestaltung nach ZPO-Linie, Serverdetail in der bisherigen Gliederung (7bc58f6e)
 - **ui**: Grundbausteine für Router, i18n, API, Ereigniskanal und Service Worker (575bbeb1)
 - **ui**: Gruppenseite mit Liste, Detail, Zeitplänen und Regeln (759c1bcb)
+- **ui**: Info-Fenster kompakter, „Jetzt prüfen“ antwortet neben dem Knopf (bf7794bd)
 - **ui**: Karte Betriebsfähigkeit zeigt je Bereich eine Zeile, Paketstand, Quellenwarnung und Job-Ausgabe (b8a52b0a)
 - **ui**: Komponenten und Katalog mit drei Designrichtungen (b7d54e15)
 - **ui**: Konto, Anmeldung und Assistenten mit lcm-notice und Speicherleiste (4d29e68d)
@@ -256,31 +239,59 @@
 - **ui**: schmale Serverliste mit Ampel und OS-Logo ohne Überschrift, Logo vor dem Namen (915fa924)
 - **ui**: öffentliche Aktivierung für LCM-Konto und Linux-Benutzer, Passwort zurücksetzen (bb53188f)
 - **ui**: „+2 weitere“ auf der Containerseite klappt alle Server auf (0f556601)
+- **update**: Fenster nach dem Update beginnt mit einem handgeschriebenen Text (50fe048e)
 - **update**: Hinweise zur neuen Version als Fenster nach dem Update (4bf693f6)
+- **update**: Während des LCM-Updates sind alle Aktionen gesperrt, das Update-Fenster bleibt mit dem Fortschritt offen (0a6f8d82)
 - Binary liefert die neue Oberfläche unter strenger CSP aus (acdcdaa8)
 
 ### 🐛 Bugfixes
 
+- **advisory**: Die Frühwarnung scheitert nicht mehr an „database is locked“ (1567d69a)
 - **anmeldung**: Prüfung nachgezogen, API-Referenz ohne Bearer-Login, Hinweis zur Sitzungsdauer korrigiert (8f9a2330)
 - **api**: Jobverlauf filtert nach allen Arten, die die Oberfläche anbietet (SSH härten, Onboarding, ACL, Rechte-Abgleich) (9c3cd9b5)
 - **api**: Längen-, Zeichen- und Bereichsprüfung für Einstellungen, Bausteine, Alarmregeln, Anmeldung und E-Mail-Kanal (d1328390)
 - **api**: Zugriffsprotokoll zeigt den Status von API-Fehlern richtig an (34934ab6)
+- **api**: abgebrochene Verbindungen stehen nicht mehr als 502 im Protokoll (d4aa19c8)
 - **api**: doppelte Namen von Gruppen, Eigenen Aktionen und Kanälen als 409 statt 500, Auffangnetz für Eindeutigkeitsfehler (c0b0838f)
+- **capability**: Erledigte Warnungen verschwinden von selbst (5d76c7d7)
+- **ci**: Merge von community nach enterprise rollt das Paket aus, ohne Tag (42e317b3)
+- **crowdsec**: Allowlist trennt Adressen und Netze, CrowdSec startet wieder (f1cefdd9)
+- **cve**: Die Trivy-Datenbank kommt kurz nach dem Bau an und stört keinen Scan mehr (73f549dd)
+- **db**: Gleichzeitige Schreibvorgänge warten aufeinander statt mit „database is locked“ abzubrechen (09bb2a3c)
+- **docker**: Ein geladenes Image gilt erst als aktuell, wenn der Container es nutzt (7ff047f2)
 - **firewall**: Bemerkung, Quellen und Regelzahl begrenzen statt still zu kürzen (74d3ab41)
 - **helper**: Portwechsel im eingeschränkten Modus behält im Übergang Port 22 (bd93b623)
 - **i18n**: Übersetzungen für auth.csrf_invalid und auth.language_invalid (c7dc520f)
 - **lcm-host**: Trivy-Einrichtung lässt sich wiederholen (d8944bbb)
+- **packages**: Entfernte Pakete zählen nicht mehr als installiert (3d864c67)
 - **pakete**: Paketnamen behalten ihre Schreibweise, Trivy-Datenbank gleich nach der Einrichtung laden (137576d4)
+- **probe**: Der Bericht von lcm-probe nennt auch einen Umzug des Containers auf einen anderen Host, der nur Sekunden dauert (0abacb84)
+- **probe**: Die CPU-Anteile im Container stimmen in lcm-probe, zusammen nie mehr über 100 % (60e3536b)
+- **probe**: Die Diagramme im HTML-Bericht von lcm-probe zeigen den ganzen Zeitraum, kurze Läufe wie die Alarm-Auswertung stehen nur noch als Zahl darin (d4bed69d)
 - **profiles**: Regelbausteine gehen beim Speichern eines Profils nicht mehr verloren (d62a4eb7)
+- **remote**: Dienst-Stopp wartet nicht mehr auf offene Agent-Verbindungen (ed5a9e69)
+- **repos**: Die HTTPS-Umstellung erkennt scheiternde Paketquellen und rollt zurück (49c80d05)
+- **restricted**: Fehlermeldung landet nicht mehr als LAPI-URL, Einrichtung prüft vorher den Helper (8d71f8a6)
+- **restricted**: Helper prüft Werte als Ganzes und den Regelsatz vollständig (22f41117)
+- **restricted**: Helper und Whitelist des LCM-Hosts werden beim Paket-Update erneuert (3d2f1fdd)
+- **restricted**: Paketkanal, Sicherheits-Tools, Firewall, Pins und alte Kernel laufen im eingeschränkten Modus (4352d1cb)
 - **server**: Update-Prüfung meldet Fehler, Ziel-Bereinigung auch eingeschränkt, EPEL für fail2ban, Adressen ohne Container-Netze (80850db7)
+- **servers**: Docker-Ports an der Firewall vorbei stehen als Zahl, die Liste klappt man bei Bedarf auf (67d7ab7e)
 - **settings**: ungültiger CVE-Zeitplan ist ein Eingabefehler, kein 500 (dd3106cb)
 - **sicherheit**: fail2ban-Einrichtung meldet keinen Erfolg, wenn das Paket fehlt (2ad25168)
+- **ssh**: Ein hängender Server hält Seiten und Jobs nicht mehr auf (4648839b)
+- **ssh**: Härtung setzt sich gegen fremde Einstellungen wie cloud-init durch (4c90b6ae)
 - **ssh**: Rechte einschränken auch auf sudo-rs (Ubuntu 26.04), Rücknahme räumt die Temp-Datei weg (3b87060d)
 - **ssh**: Root-Login und Portwechsel reißen socket-aktivierten sshd nicht mehr ab (195428a6)
+- **status**: Regel-Fehler heilt nur der Health-Ping derselben Quelle (654b9a04)
+- **status**: zypper wie apt auswerten, Netzwerk-Hinweis ohne APT-Bezug (5e0a89a9)
+- **subscription**: Kein Wechsel auf einen Paketkanal, der eine Feature-Version zurückliegt (45109883)
 - **ui**: Barrierefreiheit ohne Ausnahmen: Name enthält sichtbaren Text, Überschriften ohne Sprung, Kontrast im dunklen Thema (b3d18fb6)
+- **ui**: Bestätigungsfenster bleibt auch bei langer Vorschau bedienbar (a5e1f7f7)
 - **ui**: Dashboard verlinkt Jobs nur mit jobs:read (4a86554d)
 - **ui**: Doku leitet beim Wechsel ins Hauptmenü nicht mehr zurück (b6a5de2a)
 - **ui**: Eingeklappte Erklärspalte steht sofort eingeklappt da (8af24478)
+- **ui**: Einstellungen zeigen beim Wechsel keinen alten Abschnitt mehr (54f3d932)
 - **ui**: Erklärspalten unter der Reiterleiste, Kopf und Reiter springen nicht mehr (e4501c58)
 - **ui**: Erklärung im Aktionen-Menü ohne style-Attribut, das die CSP verwirft (34f97085)
 - **ui**: Escape in der Auswahlliste schließt nicht mehr das ganze Fenster (7c20baf3)
@@ -291,6 +302,7 @@
 - **ui**: Jobende wird auch gemeldet, wenn der Job vor dem Abonnement fertig war (2f2f2603)
 - **ui**: Karte Betriebsfähigkeit nennt Prozess und PID der Sperre und verlinkt den Job nur mit jobs:read (f0867c38)
 - **ui**: Karte Betriebsfähigkeit ohne Trennlinien zwischen den Zeilen (2365465c)
+- **ui**: Klick im Feld „+2 weitere“ führt auch in Safari zum Server (fe3423c3)
 - **ui**: Liste der Auswahl mit Tippfilter bleibt beim Scrollen offen und folgt dem Feld (af4a476e)
 - **ui**: Löschen von Allowlists und CrowdSec-LAPIs und Testversand an Kanäle fanden ihren Eintrag nicht (Zahl gegen Text verglichen) (2de554f7)
 - **ui**: Meldungs-Demo hebt bei zwei Ereignissen die richtige Regel hervor (1b30af4b)
@@ -298,6 +310,7 @@
 - **ui**: Pos1 und Ende springen im Hauptmenü zum ersten und letzten Eintrag (f1e54a2d)
 - **ui**: Regeln je Zeitplan mit Blase, Apps-Schalter in der Namensspalte, Pfeiltasten auch in eingebetteten Shadow DOMs (a4bdc112)
 - **ui**: Reiter Jobs und „Job ansehen“ in Meldungen nur mit jobs:read (7ecbffd5)
+- **ui**: Rücksprung bleibt beim Wechsel der Anmeldung im Browser erhalten (0d641297)
 - **ui**: Server und Art in der Jobtabelle anzeigen (9595183e)
 - **ui**: Serverkopf und Aktionen nach Rückmeldung (2b9c857d)
 - **ui**: Serverliste und Pakete-Reiter ändern die Adresse außerhalb des Renderns (7340666b)
@@ -317,10 +330,16 @@
 - **ui**: lange CVE- und Meldungstitel kürzen statt in die Nachbarspalte zu laufen (cb75e80b)
 - **ui**: tolerierter Ausfall in der Serverliste auch im Dunkeln erkennbar (c6ebe69e)
 - **ui**: „Rechte einschränken“ sagt wieder, was danach gilt, wogegen es nicht schützt und dass es nicht per Klick rückgängig geht (9349642b)
+- **users**: Hinweis „Abgleich steht aus“ verschwindet nach dem Abgleich von Hand (6f38681f)
 - Befunde aus der Abschlussprüfung (d2e345b6)
+
+### ⚡ Performance
+
+- **probe**: Ein Tag braucht in lcm-probe gepackt rund 3 statt 9 MB (579b3867)
 
 ### ♻️ Refactoring
 
+- **tlsx**: Zertifikats-Pinnung des Healthchecks für lcm-probe freigeben (17ee7b04)
 - **ui**: CSS aufgeräumt, Dialoge und Hilfsklassen an einer Stelle (bb2a19d5)
 - **ui**: Hinweisblöcke der übrigen Seiten auf lcm-notice (b9279b83)
 - **ui**: Rückfrage beim Seitenwechsel läuft über das Register unsaved, nur bei Benutzeraktionen (6a4cfcdb)
@@ -340,16 +359,28 @@
 - **e2e**: Pakete, Pins, Kernel, Sicherheit, Firewall und Bestätigungen am Server (767bb21a)
 - **e2e**: Playwright-Suite für die neue Oberfläche: Grundlage, Anmeldung, Dashboard, Serverdetail, Sicherheit, Alarme (e68d1b9a)
 - **e2e**: Regelbausteine und Berechtigungsprofile (323955ae)
+- **e2e**: Suite läuft auch in Firefox und WebKit (07e367c4)
 - **e2e**: Tastatur, Barrierefreiheit, Rückfrage bei ungespeicherten Änderungen, CSP und Feldfehler der API (fdf9d9f6)
 - **e2e**: Wartebedingungen in Gruppen- und Paletten-Test, damit sie unter Last nicht wackeln (6297637f)
 - **intern**: Abschnitt E2E-Übertragung: Befunde, offene Punkte und gestrichene Tests (a21076ea)
 - **intern**: Commit-Verweise auf den bereinigten Stand (8b54f425)
 - **intern**: E2E-Übertragung: erledigte Lücken aus „nicht entschieden“ nach „Behoben“ (36814aa4)
-- **intern**: Ergebnis des Funktionstests auf lcm-test festhalten (ee4cbe80)
+- **intern**: Ergebnis des Funktionstests festhalten (ee4cbe80)
 - **intern**: Nachträge zum Funktionstest und Entscheidungen festhalten (055044e5)
 - **intern**: Plan, Fahrplan und Backend-Probleme auf die zwei Anmeldewege gebracht (b6e447a9)
 - **plan**: Designentscheidung für Release B festgehalten (6f5da6a3)
 - **plan**: Fahrplan mit Releases A, B, C (b381faf3)
+- **plan**: Monitoring-Plan übernommen, Messquellen in Container und VM geprüft (ef2b30e5)
+- **plan**: Stand des Baus und Abweichungen vom Plan (fa9a7ddb)
+- **plan**: Ergebnisse des ersten Tageslaufs von lcm-probe (ea024edb)
+- **probe**: Paket lcm-probe mit eigenem Dienst in Makefile und Pipeline (8d4981f9)
+- **reference**: Monitoring von Host und Datenbank, uPlot im Bestand (e7e9b155)
+- **release**: Hinweise zu LCM 2.0 fassen alle Betas für die finale Version zusammen (31d8ec0e)
+- **release**: Hinweise zu LCM 2.0 nennen das Monitoring mit lcm-probe (91438807)
+- **release**: Text für LCM 2.0 im Update-Fenster (251b29a7)
+- **release**: Text für LCM 2.0 nennt die Neuerungen und Korrekturen aus den Betas (03980db0)
+- **renovate**: CI-Images, indirekte Go-Abhängigkeiten und Go-Toolchain erfassen (4d618c79)
+- **restricted**: Dokumentation zum eingeschränkten Modus nachgezogen (cd8e0012)
 - **ui**: Doku-Test rechnet mit der Weiterleitung auf die erste Seite (3d5e4477)
 - **ui**: E2E-Suite auf der Cookie-Variante, neue Spec für beide Wege der Anmeldung (f95c96f9)
 - **ui**: Katalog und Konzept auf die umgesetzten Meldungen (776fbfce)
@@ -379,23 +410,6 @@
 - Status je Lücke im Paritätsabgleich der übrigen Seiten (75f499c9)
 - englische API-Referenz wird wirklich veröffentlicht (79d86486)
 - gofmt (9e5ccbda)
-
-## v1.49.1-beta.1 - 2026-11-01
-
-### 🐛 Bugfixes
-
-- **ci**: Merge von community nach enterprise rollt das Paket aus, ohne Tag (42e317b3)
-
-## v1.49.0-beta.1 - 2026-11-01
-
-### 🚀 Features
-
-- **status**: fehlgeschlagene Aktionen wirken auf den Serverstatus (c5b92409)
-
-### 🐛 Bugfixes
-
-- **status**: Regel-Fehler heilt nur der Health-Ping derselben Quelle (654b9a04)
-- **status**: zypper wie apt auswerten, Netzwerk-Hinweis ohne APT-Bezug (5e0a89a9)
 
 ## v1.48.1 - 2026-10-31
 

@@ -26,7 +26,7 @@ var lcmDateiName = regexp.MustCompile(`[0-9A-Za-z_-]*lcm[0-9A-Za-z._-]*\.(?:conf
 // Umbenannte oder neue Dateien fallen damit beim Bauen auf, nicht beim
 // Aufräumen eines fremden Servers.
 func TestJedeVomHelperGeschriebeneDateiStehtInDerDoku(t *testing.T) {
-	helfer, err := os.ReadFile("lcm_helper.go")
+	helfer, err := os.ReadFile("lcm-helper.sh")
 	if err != nil {
 		t.Fatal(err)
 	}

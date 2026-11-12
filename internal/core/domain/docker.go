@@ -154,8 +154,10 @@ func (p PublishedPort) ExternallyReachable() bool {
 // rePublishedPort liest die Einträge der Ports-Spalte von `docker ps`.
 // Format je Eintrag: "<hostip>:<hostport>-><containerport>/<proto>";
 // Einträge ohne "->" sind nur exponiert (EXPOSE), aber nicht veröffentlicht
-// und damit von außen nicht erreichbar.
-var rePublishedPort = regexp.MustCompile(`(?:^|,\s*)([0-9.]+|\[?::\]?|[0-9a-fA-F:]+):(\d+)->\d+/(\w+)`)
+// und damit von außen nicht erreichbar. IPv6-Adressen stehen bei neueren
+// Docker-Versionen in eckigen Klammern ("[::1]:8080->80/tcp",
+// "[2001:db8::5]:443->443/tcp") - ohne die Klammer-Form fielen sie heraus.
+var rePublishedPort = regexp.MustCompile(`(?:^|,\s*)(\[[0-9a-fA-F:.%\w]+\]|[0-9.]+|[0-9a-fA-F:]+):(\d+)->\d+/(\w+)`)
 
 // PublishedPorts zerlegt die Ports-Spalte in die veröffentlichten Bindungen.
 //

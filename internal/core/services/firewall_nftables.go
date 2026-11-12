@@ -114,11 +114,25 @@ func nftablesApplyBody() string {
 		"nft -c -f " + nftConfigPath + ".tmp",
 		"mv " + nftConfigPath + ".tmp " + nftConfigPath,
 		"nft -f " + nftConfigPath,
-		`for cfg in /etc/nftables.conf /etc/nftables.nft; do [ -f "$cfg" ] || continue; grep -q 'include "/etc/nftables.d/' "$cfg" || printf '\ninclude "/etc/nftables.d/*.nft"\n' >> "$cfg"; done`,
+		nftEnsureIncludeScript("/etc/nftables.conf", "/etc/nftables.nft"),
 		`if [ ! -f /etc/nftables.conf ] && [ ! -f /etc/nftables.nft ]; then printf '#!/usr/sbin/nft -f\ninclude "/etc/nftables.d/*.nft"\n' > /etc/nftables.conf; fi`,
 		"systemctl enable nftables >/dev/null 2>&1 || rc-update add nftables default >/dev/null 2>&1 || true",
 		"nft list table inet lcm",
 	}, "\n")
+}
+
+// nftIncludeLine erkennt eine wirksame Include-Zeile, die lcm.nft einliest:
+// am Zeilenanfang, nicht auskommentiert, als Glob oder mit dem Dateinamen.
+// Ein `# include "/etc/nftables.d/*.nft"` oder ein Include nur von
+// /etc/nftables.d/docker.nft galt früher als vorhanden - dann lud nach einem
+// Neustart niemand die Regeln von LCM.
+const nftIncludeLine = `^[[:space:]]*include[[:space:]]+"/etc/nftables\.d/(\*|\*\.nft|lcm\.nft)"`
+
+// nftEnsureIncludeScript hängt das Include an jede vorhandene
+// Distributions-Konfiguration an, der es fehlt.
+func nftEnsureIncludeScript(cfgs ...string) string {
+	return `for cfg in ` + strings.Join(cfgs, " ") + `; do [ -f "$cfg" ] || continue; ` +
+		`grep -qE '` + nftIncludeLine + `' "$cfg" || printf '\ninclude "/etc/nftables.d/*.nft"\n' >> "$cfg"; done`
 }
 
 // nftablesDisableScript entfernt die LCM-Tabelle und die Regelsatz-Datei.

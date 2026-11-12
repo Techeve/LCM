@@ -14,7 +14,6 @@ require (
 	github.com/klauspost/compress v1.20.3
 	github.com/landlock-lsm/go-landlock v0.10.1
 	github.com/mochi-mqtt/server/v2 v2.7.9
-	github.com/robfig/cron/v3 v3.0.1
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
 	gorm.io/gorm v1.31.2

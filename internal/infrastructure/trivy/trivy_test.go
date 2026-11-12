@@ -77,6 +77,21 @@ func TestPurlRPMAndVersionNormalization(t *testing.T) {
 	}
 }
 
+// TestPurlAlpine: Alpine bekam einen deb-purl und den Zweig "alpine-3" -
+// Trivy und OSV führen Alpine aber als apk je Zweig (v3.22).
+func TestPurlAlpine(t *testing.T) {
+	target := Target{OSID: "alpine", OSVersionID: "3.22.1", PackageManager: "apk"}
+	if got := PurlFor(target, "musl", "1.2.5-r10"); got != "pkg:apk/alpine/musl@1.2.5-r10?distro=alpine-3.22" {
+		t.Errorf("alpine-purl falsch: %q", got)
+	}
+	if v := osVersion("alpine", "3.22.1"); v != "3.22" {
+		t.Errorf("alpine 3.22.1 → 3.22, bekam %q", v)
+	}
+	if v := osVersion("alpine", "3.21"); v != "3.21" {
+		t.Errorf("alpine 3.21 → 3.21, bekam %q", v)
+	}
+}
+
 func TestParseReport(t *testing.T) {
 	out := `{
 	  "Results": [

@@ -1,0 +1,12 @@
+{
+ "success": true,
+ "data": {
+  "skip_ip_check": false,
+  "enable_csp_header": true,
+  "enable_csrf_protection": true,
+  "enable_x_frame": true,
+  "restart_clear_session": true,
+  "logout_timer": 15,
+  "allow_http_header_sid": false
+ }
+}

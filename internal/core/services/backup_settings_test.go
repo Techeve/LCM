@@ -57,6 +57,37 @@ func TestBackupDirDefaultPrefill(t *testing.T) {
 	}
 }
 
+// TestBackupDirGeprueftImBackupFormular: Das Backup-Formular prüft das
+// Verzeichnis wie die globalen Einstellungen - relativ oder mit
+// Sonderzeichen wird es abgelehnt und nicht gespeichert.
+func TestBackupDirGeprueftImBackupFormular(t *testing.T) {
+	svc, repo := newSettingsService(t)
+	svc.WithDefaultBackupDir("/srv/lcm/backups")
+	for _, dir := range []string{"backups", "../backups", "/srv/lcm;rm -rf /", "/srv/$HOME"} {
+		_, err := svc.UpdateBackupSettings(services.BackupSettingsInput{
+			Enabled: true, IntervalHours: 24, Retention: 14, Dir: dir,
+			Passphrase: "test-backup-passphrase",
+		}, "admin")
+		if !errors.Is(err, services.ErrBackupDirInvalid) {
+			t.Errorf("Dir %q: erwartet ErrBackupDirInvalid, bekam %v", dir, err)
+		}
+	}
+	got, _ := repo.Get()
+	if got.BackupDir != "/srv/lcm/backups" {
+		t.Errorf("backup_dir = %q, ein abgelehnter Pfad darf nicht gespeichert werden", got.BackupDir)
+	}
+	// Ein gültiger Pfad wird bereinigt gespeichert.
+	if _, err := svc.UpdateBackupSettings(services.BackupSettingsInput{
+		Enabled: true, IntervalHours: 24, Retention: 14, Dir: "/mnt//extern/",
+		Passphrase: "test-backup-passphrase",
+	}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.Get(); got.BackupDir != "/mnt/extern" {
+		t.Errorf("backup_dir = %q, erwartet /mnt/extern", got.BackupDir)
+	}
+}
+
 // TestBackupPassphraseHinterlegbar (R2-027): Die Passphrase ist über die
 // Einstellungen setzbar (verschlüsselt), das GEPLANTE Backup (leerer
 // Parameter, keine Umgebungsvariable) benutzt sie - und Aktivieren ohne

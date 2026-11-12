@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { normalizeGroup, normalizeGroups, normalizeUserOptions, userLabel } from './groups';
+import { describe, expect, it, vi } from 'vitest';
+import { store } from '../lib/store';
+import { GROUPS_URL, groupUrl, normalizeGroup, normalizeGroups, normalizeUserOptions, refreshAfterJob, scheduleUrl, userLabel } from './groups';
 
 describe('normalizeGroups', () => {
   const raw = { id: 2, name: 'Produktion', priority: 50, acl_servers: 2, acl_capable: 1, servers: [{ id: 1, name: 'web01', host: '10.0.0.1' }] };
@@ -35,5 +36,23 @@ describe('users', () => {
     ]);
     expect(users.map((u) => u.id)).toEqual([2]);
     expect(userLabel(users[0]!)).toBe('ann (Ann Lee)');
+  });
+});
+
+describe('refreshAfterJob', () => {
+  it('lädt nach einem Job die Liste und die offene Gruppe, nicht die Details aller Gruppen', () => {
+    const urls = [GROUPS_URL, groupUrl(1), scheduleUrl(1), groupUrl(2), scheduleUrl(2), groupUrl(3)];
+    const stops = urls.map((url) => store.subscribe(url, () => {}));
+    const refresh = vi.spyOn(store, 'refresh').mockResolvedValue(undefined);
+    try {
+      refreshAfterJob(2);
+      expect(refresh.mock.calls.map(([url]) => url).sort()).toEqual([GROUPS_URL, groupUrl(2), scheduleUrl(2)].sort());
+      refresh.mockClear();
+      refreshAfterJob(null);
+      expect(refresh.mock.calls.map(([url]) => url)).toEqual([GROUPS_URL]);
+    } finally {
+      refresh.mockRestore();
+      stops.forEach((stop) => stop());
+    }
   });
 });

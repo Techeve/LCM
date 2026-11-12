@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -144,12 +146,14 @@ var (
 	ErrSudoCommandEmpty    = errors.New("die regel braucht ein kommando")
 	ErrSudoCommandRelative = errors.New("das kommando muss mit einem absoluten pfad beginnen - sonst entscheidet der Suchpfad des Benutzers, welches Programm als root läuft")
 	ErrSudoCommandWildcard = errors.New("platzhalter sind nicht erlaubt: sudo vergleicht die ganze Kommandozeile, und ein Stern öffnet sie für alles, was darauf passt (z.B. erlaubt „apt-get install *\" die Installation eines beliebigen Pakets - und Paketskripte laufen als root)")
-	ErrSudoCommandMeta     = errors.New("shell-sonderzeichen sind im kommando nicht erlaubt")
+	ErrSudoCommandMeta     = errors.New("im kommando sind nur buchstaben ohne umlaute, ziffern, leerzeichen und ._+@%:=~^/- erlaubt")
 	ErrSudoCommandNoArgs   = errors.New("dieses kommando braucht feste argumente - ohne sie erlaubt es jede Unteraktion auf jedem Ziel und ist damit gleichbedeutend mit vollen Root-Rechten")
 	ErrPathRelative        = errors.New("der pfad muss absolut sein")
-	ErrPathMeta            = errors.New("shell-sonderzeichen und platzhalter sind im pfad nicht erlaubt")
+	ErrPathMeta            = errors.New("im pfad sind nur buchstaben ohne umlaute, ziffern und ._+@%:=~^/- erlaubt")
 	ErrPathProtected       = errors.New("dieser pfad ist gesperrt: an ihm hängt der Betrieb des Systems oder der Zugang von LCM selbst")
 	ErrPathModeInvalid     = errors.New("ungültiger modus - erlaubt: read, readwrite, deny")
+	ErrPathParentRef       = errors.New("der pfad darf kein „..\" enthalten")
+	ErrPathRootEquivalent  = errors.New("dieser pfad bedeutet root-rechte: was dort liegt, führt das System als root aus (cron, systemd, PAM, Linker, Login-Skripte, sudo), oder es ist der Zugang von LCM selbst")
 )
 
 // ErrRootEquivalent meldet ein Kommando, das faktisch Root-Rechte gewährt.
@@ -173,22 +177,28 @@ func (e *ErrRootEquivalent) Error() string {
 var rootEquivalentBinaries = map[string]string{
 	"sh": "Shell", "bash": "Shell", "dash": "Shell", "zsh": "Shell",
 	"ksh": "Shell", "csh": "Shell", "tcsh": "Shell", "fish": "Shell",
-	"busybox": "enthält eine Shell",
+	"mksh": "Shell", "ash": "Shell", "rbash": "Shell", "busybox": "enthält eine Shell",
 
 	"perl": "Interpreter", "python": "Interpreter", "python2": "Interpreter",
 	"python3": "Interpreter", "ruby": "Interpreter", "php": "Interpreter",
-	"node": "Interpreter", "lua": "Interpreter", "tclsh": "Interpreter",
+	"node": "Interpreter", "nodejs": "Interpreter", "lua": "Interpreter", "tclsh": "Interpreter",
 	"expect": "Interpreter", "awk": "Interpreter", "gawk": "Interpreter",
-	"mawk": "Interpreter",
+	"mawk": "Interpreter", "nawk": "Interpreter",
 
 	"vi": "Editor mit Shell-Ausbruch", "vim": "Editor mit Shell-Ausbruch",
 	"nvim": "Editor mit Shell-Ausbruch", "view": "Editor mit Shell-Ausbruch",
+	"rvim": "Editor mit Shell-Ausbruch", "rview": "Editor mit Shell-Ausbruch",
+	"vimdiff": "Editor mit Shell-Ausbruch", "ex": "Editor mit Shell-Ausbruch",
+	"editor": "ruft einen Editor auf", "sensible-editor": "ruft einen Editor auf",
+	"pager": "ruft einen Pager auf", "sensible-pager": "ruft einen Pager auf",
 	"nano": "Editor", "emacs": "Editor mit Shell-Ausbruch",
 	"ed": "Editor", "pico": "Editor",
 	"less": "Pager mit Shell-Ausbruch", "more": "Pager mit Shell-Ausbruch",
 	"man": "ruft einen Pager auf",
 
 	"su": "Benutzerwechsel", "sudo": "Rechteerhöhung", "doas": "Rechteerhöhung",
+	"sudoedit": "Rechteerhöhung", "pkexec": "Rechteerhöhung", "run0": "Rechteerhöhung",
+	"setpriv": "startet Programme mit anderen Rechten", "capsh": "startet eine Shell",
 	"env": "startet beliebige Programme", "nsenter": "betritt fremde Namespaces",
 	"unshare": "startet Programme in neuen Namespaces", "chroot": "startet Programme in fremder Wurzel",
 	"script": "startet eine Shell", "socat": "startet Programme",
@@ -217,6 +227,45 @@ var escapeArguments = map[string]string{
 	"-exec": "führt ein beliebiges Kommando aus", "-execdir": "führt ein beliebiges Kommando aus",
 	"-ok": "führt ein beliebiges Kommando aus", "--to-command": "übergibt Daten an ein Kommando",
 	"--privileged": "hebt die Container-Isolierung auf", "-c": "führt übergebenen Code aus",
+}
+
+// rootEquivalentBinary sucht ein Programm in rootEquivalentBinaries, auch
+// unter seinen Nebennamen: mit Versionsnummer (python3.11, perl5.36.0,
+// lua5.4) und mit Variante hinter einem Punkt (vim.basic, vim.tiny). Der
+// Helper rechnet in profile_rule_ok genauso.
+func rootEquivalentBinary(name string) (string, string, bool) {
+	unversioned := strings.TrimRight(name, "0123456789.")
+	for _, candidate := range []string{name, unversioned, beforeDot(name), beforeDot(unversioned)} {
+		if reason, blocked := rootEquivalentBinaries[candidate]; blocked {
+			return candidate, reason, true
+		}
+	}
+	return "", "", false
+}
+
+// beforeDot liefert den Namen bis zum ersten Punkt (vim.basic: vim).
+func beforeDot(name string) string {
+	stem, _, _ := strings.Cut(name, ".")
+	return stem
+}
+
+// RootEquivalentBinaries liefert die Programme aus rootEquivalentBinaries
+// sortiert. Der LCM-Helper wiederholt damit im eingeschränkten Modus dieselbe
+// Prüfung auf dem Zielsystem - eine zweite, von Hand gepflegte Liste liefe
+// auseinander.
+func RootEquivalentBinaries() []string { return sortedKeys(rootEquivalentBinaries) }
+
+// EscapeArguments liefert die Argumente aus escapeArguments sortiert (für den
+// Helper wie RootEquivalentBinaries).
+func EscapeArguments() []string { return sortedKeys(escapeArguments) }
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // pagerCommands brauchen `--no-pager`: Ohne das schicken sie ihre Ausgabe
@@ -263,6 +312,20 @@ func ValidProfileSlug(slug string) bool {
 // schmuggelte ein zweites in dieselbe Regel.
 func hasShellMeta(s string) bool {
 	return strings.ContainsAny(s, ";|&$`\n\r\\<>()!{}'\"#,")
+}
+
+// helperSafe meldet, ob s nur aus den Zeichen besteht, die auch der Helper im
+// eingeschränkten Modus annimmt (clean_abs_path, profile_rule_ok). Was hier
+// durchginge und dort nicht, ließe auf solchen Servern jeden Abgleich
+// scheitern; im Voll-Modus brächen Leerzeichen das Skript.
+func helperSafe(s string) bool {
+	for _, r := range s {
+		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._+@%:=~^/-", r)
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // hasWildcard meldet Platzhalter, die sudo als solche auswertet.
@@ -317,6 +380,11 @@ func ValidateSudoCommand(cmd string, allowRootEquivalent bool) error {
 	if hasShellMeta(cmd) {
 		return ErrSudoCommandMeta
 	}
+	for _, field := range fields {
+		if !helperSafe(field) {
+			return ErrSudoCommandMeta
+		}
+	}
 	binary := path.Base(fields[0])
 	// `--no-pager` zählt hier NICHT als Argument: Es wird von LCM selbst
 	// ergänzt (NormalizeSudoCommand) und machte die Prüfung sonst wirkungslos -
@@ -328,8 +396,8 @@ func ValidateSudoCommand(cmd string, allowRootEquivalent bool) error {
 	if allowRootEquivalent {
 		return nil
 	}
-	if reason, blocked := rootEquivalentBinaries[binary]; blocked {
-		return &ErrRootEquivalent{Binary: binary, Reason: reason}
+	if listed, reason, blocked := rootEquivalentBinary(binary); blocked {
+		return &ErrRootEquivalent{Binary: listed, Reason: reason}
 	}
 	for _, arg := range fields[1:] {
 		if reason, blocked := escapeArguments[arg]; blocked {
@@ -372,7 +440,7 @@ func validRulePath(p string) error {
 	if !strings.HasPrefix(p, "/") {
 		return ErrPathRelative
 	}
-	if hasShellMeta(p) || hasWildcard(p) {
+	if hasShellMeta(p) || hasWildcard(p) || !helperSafe(p) {
 		return ErrPathMeta
 	}
 	if isProtectedPath(p) {
@@ -381,17 +449,107 @@ func validRulePath(p string) error {
 	return nil
 }
 
-// ValidateEditPath prüft die Datei einer sudoedit-Regel.
-func ValidateEditPath(p string) error { return validRulePath(p) }
+// rootEquivalentPaths sind Pfade, deren Freigabe Root bedeutet: Was dort liegt,
+// führt das System als root aus (cron, systemd, PAM, der dynamische Linker,
+// Login-Skripte, sudo selbst, Paket-Hooks und -quellen, sysctl mit
+// core_pattern, Netzwerk-Hooks, Docker), oder es ist das Home des
+// Management-Benutzers, dessen authorized_keys der Zugang von LCM sind.
+// Die Homes anderer Benutzer stehen nicht darin: Wer ein fremdes Home
+// freigibt, entscheidet das bewusst für dieses Konto.
+//
+// Ein Stern am Ende heißt „alles, was so beginnt" (/etc/cron* trifft
+// /etc/crontab und /etc/cron.d). Sonst gilt der Pfad samt allem darunter:
+// /etc/systemd trifft /etc/systemd/system, aber nicht /etc/systemdx.
+var rootEquivalentPaths = []string{
+	"/etc/cron*", "/etc/anacrontab", "/var/spool/cron",
+	"/etc/systemd", "/run/systemd",
+	"/etc/pam.d", "/etc/ld.so.*",
+	"/etc/profile*", "/etc/environment", "/etc/bash.bashrc",
+	"/etc/sudo*", "/etc/gshadow",
+	"/etc/init.d", "/etc/rc.local", "/etc/update-motd.d", "/etc/logrotate*",
+	"/etc/modprobe.d", "/etc/modules-load.d", "/etc/udev", "/etc/apt",
+	"/etc/sysctl*", "/etc/rc*", "/etc/network", "/etc/NetworkManager", "/etc/dhcp",
+	"/etc/security", "/etc/xinetd*", "/etc/polkit-1", "/etc/dbus-1", "/etc/nsswitch.conf",
+	"/etc/docker", "/var/lib/dpkg", "/var/lib/docker",
+	"/home/" + DefaultServiceUser,
+}
 
-// ValidatePathRule prüft Pfad und Modus eines Verzeichnisrechts.
+// BlockedRulePaths liefert die gesperrten Pfade für den LCM-Helper, der
+// dieselbe Prüfung auf dem Zielsystem wiederholt: "=" vorne heißt nur genau
+// dieser Pfad, "*" hinten alles, was so beginnt, sonst der Pfad samt allem
+// darunter - dieselbe Bedeutung wie in isProtectedPath und rootEquivalentPaths.
+func BlockedRulePaths() []string {
+	out := []string{"=/", "=/etc"}
+	for _, p := range protectedPaths {
+		if p != "/" {
+			out = append(out, p)
+		}
+	}
+	return append(out, rootEquivalentPaths...)
+}
+
+// pathHits meldet, ob eine Regel auf p den gesperrten Eintrag blocked trifft:
+// p liegt darin oder - mit recursive - darüber. Eine rekursive Freigabe von
+// /var gäbe mit setfacl -R auch /var/spool/cron frei.
+func pathHits(p, blocked string, recursive bool) bool {
+	prefix, glob := strings.CutSuffix(blocked, "*")
+	if glob && strings.HasPrefix(p, prefix) {
+		return true
+	}
+	if !glob && (p == blocked || strings.HasPrefix(p, blocked+"/")) {
+		return true
+	}
+	return recursive && strings.HasPrefix(prefix, p+"/")
+}
+
+// GrantReaches meldet, ob eine Pfadregel mit diesem Modus den Pfad target
+// erfasst - der Weg, das Home eines abweichend benannten Service-Users je
+// Server auszuschließen.
+func GrantReaches(p, mode, target string) bool {
+	return pathHits(path.Clean(p), target, mode != PathModeDeny)
+}
+
+// hasParentRef meldet ein „..": Ein Pfad soll so dastehen, wie er wirkt.
+func hasParentRef(p string) bool {
+	return slices.Contains(strings.Split(p, "/"), "..")
+}
+
+// validGrantPath prüft einen Pfad, auf dem eine Regel Rechte vergibt
+// (Verzeichnisrecht, sudoedit). Zusätzlich zu validRulePath: kein „..", kein
+// Pfad, der Root bedeutet, und mit recursive auch keiner darüber.
+func validGrantPath(p string, recursive bool) error {
+	if err := validRulePath(p); err != nil {
+		return err
+	}
+	if hasParentRef(p) {
+		return ErrPathParentRef
+	}
+	clean := path.Clean(p)
+	for _, blocked := range rootEquivalentPaths {
+		if pathHits(clean, blocked, recursive) {
+			return ErrPathRootEquivalent
+		}
+	}
+	for _, protected := range protectedPaths {
+		if recursive && protected != "/" && pathHits(clean, protected, true) {
+			return ErrPathProtected
+		}
+	}
+	return nil
+}
+
+// ValidateEditPath prüft die Datei einer sudoedit-Regel.
+func ValidateEditPath(p string) error { return validGrantPath(p, false) }
+
+// ValidatePathRule prüft Pfad und Modus eines Verzeichnisrechts. Lesen und
+// Schreiben wirken rekursiv (setfacl -R), eine Verweigerung gibt nichts frei.
 func ValidatePathRule(p, mode string) error {
 	switch mode {
 	case PathModeRead, PathModeReadWrite, PathModeDeny:
 	default:
 		return ErrPathModeInvalid
 	}
-	return validRulePath(p)
+	return validGrantPath(p, mode != PathModeDeny)
 }
 
 // ---- Zuweisung ---------------------------------------------------------------
@@ -442,10 +600,17 @@ func ProfileSudoersPath(slug string) string { return "/etc/sudoers.d/" + Profile
 // werden: ACL-Einträge tragen weder Kommentar noch Namenskonvention. Sie
 // lassen sich nicht daran erkennen, dass LCM sie gesetzt hat - ohne diese
 // Aufzeichnung bliebe ein aus dem Profil entfernter Pfad für immer freigegeben.
+//
+// Slug hält fest, für welche Gruppe der Eintrag gesetzt wurde. Ohne ihn ließ
+// sich ein Eintrag nach dem Löschen oder Abziehen des Profils nicht mehr
+// zurücknehmen: setfacl kennt die Gruppe nur beim Namen, und eine später
+// angelegte Gruppe mit derselben GID erbte die Rechte. Leer bei Einträgen aus
+// der Zeit davor - dann hilft nur noch das Profil selbst, solange es besteht.
 type AppliedProfilePath struct {
 	ID        uint   `gorm:"primarykey" json:"id"`
 	ServerID  uint   `gorm:"not null;index" json:"server_id"`
 	ProfileID uint   `gorm:"not null;index" json:"profile_id"`
+	Slug      string `gorm:"not null;default:''" json:"slug"`
 	Path      string `gorm:"not null" json:"path"`
 	Mode      string `gorm:"not null" json:"mode"`
 }

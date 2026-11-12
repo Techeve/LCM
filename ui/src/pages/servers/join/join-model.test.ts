@@ -122,4 +122,15 @@ describe('helpers', () => {
     expect(commands.manual.endsWith(commands.enroll)).toBe(true);
     expect(agentCommands(where, 0, 'tok').enroll).toBe('sudo lcm-agent enroll https://lcm.example.com tok');
   });
+
+  it('accepts the self-signed certificate only together with the key pin of this LCM', () => {
+    const where = { origin: 'https://lcm.example.com', protocol: 'https:', hostname: 'lcm.example.com' };
+    const target = '-o /usr/local/bin/lcm-agent https://lcm.example.com/api/v1/agent/download/amd64';
+    const pinned = agentCommands(where, 0, 'tok', 'cGluCg==').manual;
+    expect(pinned.startsWith(`sudo curl -fLk --pinnedpubkey sha256//cGluCg== ${target} || sudo curl -fL ${target} && `)).toBe(true);
+    // Ohne Pin kein -k: dann prüft curl gegen die Systemzertifikate, statt jedes anzunehmen.
+    const plain = agentCommands(where, 0, 'tok').manual;
+    expect(plain.startsWith(`sudo curl -fL ${target} && `)).toBe(true);
+    expect(plain).not.toMatch(/ -\w*k/);
+  });
 });

@@ -126,11 +126,15 @@ func (ctrl *AppController) DeleteApp(c fiber.Ctx) error {
 
 // ServerApps - GET /api/v1/servers/:id/apps (servers:read)
 // Die auf diesem Server gefundenen Anwendungen samt der Dienste, die zu
-// keinem Paket gehören.
+// keinem Paket gehören. Nur für Server im Sichtbereich, wie jede andere
+// Server-Ansicht.
 func (ctrl *AppController) ServerApps(c fiber.Ctx) error {
 	id, err := paramID(c)
 	if err != nil {
 		return err
+	}
+	if _, err := ctrl.servers.Get(scopeFor(c), id); err != nil {
+		return mapServerError(err)
 	}
 	apps, err := ctrl.apps.ForServer(id)
 	if err != nil {

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -325,23 +326,15 @@ type recordingTerminal struct {
 	started time.Time
 
 	mu     sync.Mutex
-	buf    strings.Builder
+	out    sessionTranscript
 	closed bool
 }
-
-// transcriptCap begrenzt, wie viel einer Sitzung im Speicher gehalten wird.
-// Das Doppelte der gespeicherten Menge - so bleiben Anfang und Ende erhalten,
-// wenn truncateOutput am Ende mittig kürzt, ohne dass eine stundenlange
-// Sitzung den Arbeitsspeicher füllt.
-const transcriptCap = 2 * maxOutputBytes
 
 func (t *recordingTerminal) Read(p []byte) (int, error) {
 	n, err := t.Terminal.Read(p)
 	if n > 0 {
 		t.mu.Lock()
-		if t.buf.Len() < transcriptCap {
-			t.buf.Write(p[:n])
-		}
+		t.out.write(p[:n])
 		t.mu.Unlock()
 	}
 	return n, err
@@ -356,7 +349,7 @@ func (t *recordingTerminal) Close() error {
 		return nil
 	}
 	t.closed = true
-	transcript := t.buf.String()
+	transcript := t.out.String()
 	t.mu.Unlock()
 
 	err := t.Terminal.Close()
@@ -372,4 +365,51 @@ func (t *recordingTerminal) Close() error {
 		slog.Error("terminal transcript could not be stored", "session", t.sess.ID, "error", logErr)
 	}
 	return err
+}
+
+// Der Mitschnitt behält Anfang und Ende einer Sitzung, auch wenn sie
+// stundenlang läuft: den Anfang bis transcriptHeadBytes, danach gleitend die
+// letzten transcriptTailBytes. Gerade das Ende gehört ins Audit - dort steht,
+// was zuletzt geschah. Was dazwischen lag, ersetzt ein Vermerk mit der Zahl
+// der ausgelassenen Bytes. Zusammen bleibt alles unter maxOutputBytes, die
+// Kürzung in truncateOutput schneidet also nicht noch einmal hinein.
+const (
+	transcriptHeadBytes = keepHeadBytes
+	transcriptTailBytes = keepTailBytes
+	transcriptGapNotice = "\n\n… [Mitschnitt gekürzt: %d Bytes ausgelassen] …\n\n"
+)
+
+// sessionTranscript sammelt den Ausgabestrom einer Konsolensitzung mit fester
+// Obergrenze im Speicher.
+type sessionTranscript struct {
+	head  []byte
+	tail  []byte // gleitendes Ende, wächst höchstens aufs Doppelte
+	total int64  // alle gelesenen Bytes
+}
+
+func (s *sessionTranscript) write(p []byte) {
+	s.total += int64(len(p))
+	if room := transcriptHeadBytes - len(s.head); room > 0 {
+		n := min(room, len(p))
+		s.head = append(s.head, p[:n]...)
+		p = p[n:]
+	}
+	s.tail = append(s.tail, p...)
+	// Nicht bei jedem Lesen umkopieren, erst wenn das Doppelte erreicht ist.
+	if len(s.tail) > 2*transcriptTailBytes {
+		s.tail = append(s.tail[:0], s.tail[len(s.tail)-transcriptTailBytes:]...)
+	}
+}
+
+// String setzt Anfang, Vermerk und Ende zusammen.
+func (s *sessionTranscript) String() string {
+	tail := s.tail
+	if len(tail) > transcriptTailBytes {
+		tail = tail[len(tail)-transcriptTailBytes:]
+	}
+	dropped := s.total - int64(len(s.head)+len(tail))
+	if dropped == 0 {
+		return string(s.head) + string(tail)
+	}
+	return string(s.head) + fmt.Sprintf(transcriptGapNotice, dropped) + string(tail)
 }

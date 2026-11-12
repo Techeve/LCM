@@ -1,7 +1,6 @@
 import { LitElement, html, nothing, svg } from 'lit';
-import { siMikrotik, siProxmox, siRaspberrypi, siSynology } from 'simple-icons';
 import { osTileStyles } from '../../components/lcm-os';
-import { osLogos, type OsLogo } from '../../components/os-logos';
+import { osLogoFor, type OsLogo } from '../../components/os-logos';
 import { baseStyles } from '../../components/shared';
 import type { ServerItem } from '../../api/servers';
 
@@ -14,9 +13,6 @@ export const PROXMOX_PRODUCTS: Record<string, string> = {
   pdm: 'Proxmox Datacenter Manager',
 };
 
-// Das Synology-Grau verschwindet auf der hellen Kachel; dunkler gesetzt bleibt es lesbar.
-const SYNOLOGY: OsLogo = { ...siSynology, hex: '3B3B3C' };
-
 export interface OsDisplay {
   logo: OsLogo;
   label: string;
@@ -25,15 +21,15 @@ export interface OsDisplay {
 type OsFields = Pick<ServerItem, 'os_id' | 'os_name' | 'os_version' | 'proxmox_type' | 'proxmox_version' | 'hardware_model'>;
 
 export function osDisplay(server: OsFields): OsDisplay {
+  const logo = osLogoFor(server);
   const plain = [server.os_name, server.os_version].filter(Boolean).join(' ');
   if (server.proxmox_type) {
     const product = PROXMOX_PRODUCTS[server.proxmox_type] ?? 'Proxmox';
-    return { logo: siProxmox, label: [product, server.proxmox_version].filter(Boolean).join(' ') };
+    return { logo, label: [product, server.proxmox_version].filter(Boolean).join(' ') };
   }
-  if (server.os_id === 'routeros') return { logo: siMikrotik, label: plain || 'RouterOS' };
-  if (server.os_id === 'dsm') return { logo: SYNOLOGY, label: plain || 'Synology DSM' };
-  if (/raspberry pi/i.test(server.hardware_model)) return { logo: siRaspberrypi, label: plain };
-  return { logo: osLogos[server.os_id] ?? osLogos.linux!, label: plain };
+  if (server.os_id === 'routeros') return { logo, label: plain || 'RouterOS' };
+  if (server.os_id === 'dsm') return { logo, label: plain || 'Synology DSM' };
+  return { logo, label: plain };
 }
 
 /** <lcm-server-os .server=${…} ?compact> – Logo (Kachel wie `lcm-os`) und Name von Betriebssystem oder Produkt. */

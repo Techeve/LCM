@@ -247,3 +247,22 @@ func TestProxyTrustFromConfig(t *testing.T) {
 		t.Error("ohne trust_proxy_header wird niemandem vertraut")
 	}
 }
+
+// TestTLSCAFromConfig: tls_ca_cert und tls_ca_key nur zusammen und absolut.
+func TestTLSCAFromConfig(t *testing.T) {
+	cases := map[string]bool{
+		`{"tls_ca_cert":"/etc/lcm/ca.pem","tls_ca_key":"/etc/lcm/ca-key.pem"}`: true,
+		`{"tls_ca_cert":"/etc/lcm/ca.pem"}`:                                    false,
+		`{"tls_ca_cert":"ca.pem","tls_ca_key":"ca-key.pem"}`:                   false,
+	}
+	for body, ok := range cases {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := config.LoadFrom(path)
+		if (err == nil) != ok {
+			t.Errorf("%s: err=%v, erwartet ok=%v", body, err, ok)
+		}
+	}
+}

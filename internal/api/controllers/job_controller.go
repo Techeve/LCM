@@ -164,4 +164,5 @@ var jobTypes = []string{
 	domain.JobTypeJoin, domain.JobTypeReconnect, domain.JobTypeHardenSSH,
 	services.JobTypeHardwareRefresh, services.JobTypeFullRefresh,
 	services.JobTypeRepairDpkg, services.JobTypeRepairDeps,
+	services.JobTypePortScan, services.JobTypeDSMApply,
 }

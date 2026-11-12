@@ -1,0 +1,52 @@
+{
+ "success": true,
+ "data": {
+  "disks": [
+   {
+    "id": "sata1",
+    "name": "Drive 1",
+    "longName": "Drive 1",
+    "device": "/dev/sata1",
+    "model": "Virtual Disk",
+    "vendor": "Synology",
+    "diskType": "SATA",
+    "status": "normal",
+    "used_by": "reuse_1",
+    "size_total": "137438953472"
+   }
+  ],
+  "storagePools": [
+   {
+    "id": "reuse_1",
+    "pool_path": "reuse_1",
+    "device_type": "basic",
+    "raidType": "single",
+    "status": "normal",
+    "disks": [
+     "sata1"
+    ],
+    "size": {
+     "total": "134217728000",
+     "used": "130023424000"
+    },
+    "progress": {
+     "percent": "-1",
+     "step": "none"
+    }
+   }
+  ],
+  "volumes": [
+   {
+    "id": "volume_1",
+    "vol_path": "/volume1",
+    "fs_type": "btrfs",
+    "status": "normal",
+    "pool_path": "reuse_1",
+    "size": {
+     "total": "129876824064",
+     "used": "76095488"
+    }
+   }
+  ]
+ }
+}

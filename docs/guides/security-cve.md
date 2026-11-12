@@ -73,6 +73,13 @@ bringen Landlock zwar mit, führen es aber nicht in der aktiven LSM-Liste
 (`/sys/kernel/security/lsm`); der Proxmox-Kernel etwa tut das ohne
 `lsm=`-Bootparameter nicht.
 
+Beide Wege geben dem Prozess eine eigene, knappe Umgebung: `PATH`, ein leeres
+`HOME` und, falls gesetzt, Proxy-Angaben und eigene Zertifikate
+(`HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE` …). Alles andere aus der Umgebung
+von LCM bleibt draußen, auch ein dort gesetzter `LCM_ENCRYPTION_KEY`.
+Bubblewrap braucht dafür mindestens Version 0.5, ein älteres fällt auf
+Landlock zurück.
+
 Fehlt beides, läuft der Scan wie früher ungesperrt - dann aber mit einem
 **sichtbaren Hinweis** an der Scanner-Anzeige. Ein stiller Rückfall wäre die
 schlechteste Variante: Man hielte sich für geschützt, ohne es zu sein.
@@ -356,9 +363,8 @@ hinter einem Reverse-Proxy (z.&nbsp;B. für TLS), ist die direkte Gegenstelle
 der Proxy - dann `"trust_proxy_header": true` setzen, damit LCM die Client-IP
 aus `X-Forwarded-For` nimmt, **und** in `trusted_proxies` die Adresse(n) des
 Proxys eintragen. Nur von dort wird die Kopfzeile geglaubt; jeder andere Peer
-gilt mit seiner eigenen Adresse. Ohne die Liste zählt die Kopfzeile von jedem -
-ein Client, der den Port am Proxy vorbei erreicht, käme mit einem gefälschten
-Header in die Allowlist. Details und Proxy-Beispiele:
+gilt mit seiner eigenen Adresse. Ohne die Liste zählt die Kopfzeile seit 2.0
+von niemandem, und die Allowlist sieht nur die Adresse des Proxys. Details und Proxy-Beispiele:
 [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/).
 :::
 

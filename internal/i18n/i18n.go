@@ -74,8 +74,11 @@ var replacer = strings.NewReplacer(
 	"ä", "ae", "ö", "oe", "ü", "ue",
 	"Ä", "Ae", "Ö", "Oe", "Ü", "Ue",
 	"ß", "ss",
-	// Typografie, die in der Codebasis vorkommt.
-	"-", "-", "-", "-", "…", "...",
+	// Typografie, die in der Codebasis vorkommt. Halbgeviert- und
+	// Geviertstrich stehen als Escape: Ein Werkzeug, das Gedankenstriche im
+	// Quelltext glättet, hatte sie schon einmal zu "-" gemacht - aus der
+	// Ersetzung wurde "-" → "-", und die Striche fielen ersatzlos weg.
+	"\u2013", "-", "\u2014", "-", "…", "...",
 	"„", "\"", "“", "\"", "”", "\"",
 	"‚", "'", "‘", "'", "’", "'",
 	"×", "x", "→", "->", "·", "-",

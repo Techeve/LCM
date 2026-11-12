@@ -500,6 +500,9 @@ func ecosystemFor(distro string) string {
 		return "openSUSE:Leap " + versionID
 	case "sles":
 		return "SUSE:SLES " + versionID
+	case "alpine":
+		// OSV führt Alpine je Zweig: "alpine-3.22" → "Alpine:v3.22".
+		return "Alpine:v" + versionID
 	default:
 		// Unbekannte Distribution: kein Ökosystem, also keine Aussage. Das
 		// ist ehrlicher, als sie einem falschen Bestand zuzuordnen.

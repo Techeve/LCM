@@ -131,7 +131,7 @@ export class LcmJoinAgent extends LitElement {
   }
 
   #ready(result: AgentResult) {
-    const commands = agentCommands(location, this._port, result.token);
+    const commands = agentCommands(location, this._port, result.token, result.download_pin);
     return html`<div class="stack">
       <h2>${t('joinWizard.agent.readyTitle', { name: result.server.name })}</h2>
       <lcm-notice tone="warn">${t('joinWizard.agent.once')}</lcm-notice>

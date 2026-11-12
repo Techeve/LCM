@@ -113,13 +113,8 @@ func landlockCommand(ctx context.Context, spec Spec, name string, args ...string
 	}
 	full := append([]string{ExecArg, encoded, "--", name}, args...)
 	cmd := exec.CommandContext(ctx, self, full...)
-	// Die Umgebung wird bewusst nicht vererbt: der Kindprozess braucht nur
-	// einen PATH und eine HOME-Angabe. Alles Weitere aus LCMs Umgebung geht
-	// ihn nichts an.
-	cmd.Env = []string{
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"HOME=/nonexistent",
-	}
+	// Die Umgebung wird bewusst nicht vererbt (siehe childEnv).
+	cmd.Env = childEnv()
 	return cmd
 }
 

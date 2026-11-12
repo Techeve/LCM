@@ -2,9 +2,88 @@ package services
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+// runPAMScript führt ein PAM-Skript gegen eine Kopie der Fixture aus und
+// liefert den Inhalt danach. `sed -i.x` verstehen GNU- und BSD-sed gleich.
+func runPAMScript(t *testing.T, script, pamFile string) string {
+	t.Helper()
+	script = strings.ReplaceAll(script, "sed -i ", "sed -i.sedbak ")
+	script = strings.ReplaceAll(script, pamSSHDPath, pamFile)
+	if out, err := exec.Command("sh", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("pam-skript scheitert: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(pamFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(got)
+}
+
+// TestSSH2FAPAMLegtPasswortStackStill läuft gegen die echten
+// /etc/pam.d/sshd der vier Familien (aus den Paketen von Arch, Debian 12,
+// Rocky 9 und openSUSE Leap 15.6). Bleibt die Zeile mit dem Passwort-Stack
+// aktiv, fragt PAM nach dem Code auch das Passwort ab - ein Konto ohne
+// Passwort (nur Key) wäre ausgesperrt. Auf Arch war genau das der Fall:
+// system-remote-login fehlte im Muster.
+func TestSSH2FAPAMLegtPasswortStackStill(t *testing.T) {
+	stacks := map[string]string{
+		"arch":   "auth      include   system-remote-login",
+		"debian": "@include common-auth",
+		"rhel":   "auth       substack     password-auth",
+		"suse":   "auth        include     common-auth",
+	}
+	for distro, stack := range stacks {
+		t.Run(distro, func(t *testing.T) {
+			orig, err := os.ReadFile(filepath.Join("testdata", "pam", distro+".sshd"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			pamFile := filepath.Join(t.TempDir(), "sshd")
+			if err := os.WriteFile(pamFile, orig, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got := runPAMScript(t, ssh2faPAMScript(), pamFile)
+			assertPAM2FA(t, string(orig), got, stack)
+
+			// Ein zweiter Lauf ändert nichts mehr.
+			if again := runPAMScript(t, ssh2faPAMScript(), pamFile); again != got {
+				t.Errorf("zweiter lauf ändert die datei:\n%s", again)
+			}
+			// Der Rückweg stellt die Datei Zeichen für Zeichen wieder her.
+			if restored := runPAMScript(t, ssh2faPAMRestoreScript(), pamFile); restored != string(orig) {
+				t.Errorf("rückweg stellt das original nicht her:\n%s", restored)
+			}
+		})
+	}
+}
+
+// assertPAM2FA prüft das Ergebnis: TOTP-Block oben, der Passwort-Stack nur
+// noch auskommentiert, account/password/session unangetastet.
+func assertPAM2FA(t *testing.T, orig, got, stack string) {
+	t.Helper()
+	if !strings.HasPrefix(got, "# >>> LCM 2FA >>>\nauth required pam_google_authenticator.so nullok\nauth required pam_permit.so\n") {
+		t.Errorf("totp-block steht nicht oben:\n%s", got)
+	}
+	lines := strings.Split(got, "\n")
+	if !slices.Contains(lines, "#LCM-2FA# "+stack) {
+		t.Errorf("passwort-stack %q nicht auskommentiert:\n%s", stack, got)
+	}
+	if slices.Contains(lines, stack) {
+		t.Errorf("passwort-stack %q ist weiter aktiv:\n%s", stack, got)
+	}
+	for _, line := range strings.Split(orig, "\n") {
+		if line != stack && !slices.Contains(lines, line) {
+			t.Errorf("zeile %q ging verloren oder wurde verändert", line)
+		}
+	}
+}
 
 // TestSSH2FAPackageNames: je Paketverwaltung der richtige Paketname; Alpine
 // (apk) ist ehrlich unsupported statt still zu scheitern.
@@ -63,6 +142,17 @@ func TestSSH2FADropinScript(t *testing.T) {
 func TestSSH2FADropinSortiertVorHardening(t *testing.T) {
 	if ssh2faDropinPath >= "/etc/ssh/sshd_config.d/60-lcm-hardening.conf" {
 		t.Fatalf("2FA-drop-in %q sortiert nicht vor dem hardening-drop-in", ssh2faDropinPath)
+	}
+	// RHEL 9 und Klone: 50-redhat.conf setzt ChallengeResponseAuthentication no.
+	if ssh2faDropinPath >= "/etc/ssh/sshd_config.d/50-redhat.conf" {
+		t.Fatalf("2FA-drop-in %q sortiert nicht vor 50-redhat.conf", ssh2faDropinPath)
+	}
+	// Ein altes 55-Drop-in räumt das Einrichten ab, der Rückbau ebenso.
+	if !strings.Contains(ssh2faDropinScript("lcm-svc"), "rm -f "+ssh2faLegacyDropinPath) {
+		t.Error("einrichten räumt das alte drop-in nicht ab")
+	}
+	if !strings.Contains(ssh2faRollbackScript(), ssh2faLegacyDropinPath) {
+		t.Error("rückbau räumt das alte drop-in nicht ab")
 	}
 }
 

@@ -84,6 +84,25 @@ func TestQueryPurlUebersetztDebian(t *testing.T) {
 	}
 }
 
+// TestQueryForAlpineNenntDasOekosystem: Für einen apk-purl liefert
+// api.osv.dev nichts, mit oder ohne Qualifier. Alpine fragt deshalb über
+// Name, Ökosystem und Version; alle anderen bleiben beim purl.
+func TestQueryForAlpineNenntDasOekosystem(t *testing.T) {
+	got := queryFor("pkg:apk/alpine/openssl@3.1.4-r0?distro=alpine-3.19")
+	want := osvQuery{Package: osvPackage{Name: "openssl", Ecosystem: "Alpine:v3.19"}, Version: "3.1.4-r0"}
+	if got != want {
+		t.Errorf("alpine-abfrage = %+v, erwartet %+v", got, want)
+	}
+	deb := queryFor("pkg:deb/debian/bash@5.2-15?distro=debian-12")
+	if deb.Package.Purl != "pkg:deb/debian/bash@5.2-15?distro=bookworm" || deb.Version != "" {
+		t.Errorf("debian-abfrage verändert: %+v", deb)
+	}
+	body, _ := json.Marshal(got)
+	if strings.Contains(string(body), `"purl"`) {
+		t.Errorf("leerer purl darf nicht mitgehen: %s", body)
+	}
+}
+
 // TestOSVQueryMeldetVersetzteAntwort: Kommen weniger Ergebnisse zurück als
 // angefragt, wäre jede Zuordnung ab der Lücke falsch - und zwar unbemerkt.
 // Deshalb ist das ein Fehler und keine Kürzung.

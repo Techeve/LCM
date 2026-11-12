@@ -2795,7 +2795,9 @@ paths:
       - apiKeyAuth: []
       description: >-
         Globale Regel-Sicht über alle sichtbaren Gruppen (Manager sehen nur
-        die Regeln ihrer Gruppen).
+        die Regeln ihrer Gruppen). Jede Regel trägt `group_name`; eine
+        geplante Regel zusätzlich `schedule_enabled`, ob ihr Zeitplan läuft.
+        Nur laufende Regeln zählen beim Vorrang mehrerer Gruppen mit.
 
 
         Benötigte Berechtigung: `rules:manage`.
@@ -5029,6 +5031,149 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/port-scan:
+    get:
+      tags:
+      - Server
+      summary: Letzter Portscan von LCM aus samt Bewertung.
+      operationId: portScanCtrl_Get
+      description: 'Welche gaengigen TCP-Ports der Server von LCMs Standort aus
+        tatsaechlich anbietet, je Adresse (IPv4/IPv6). Die Bewertung entsteht
+        beim Lesen gegen den aktuellen LCM-Regelsatz der Firewall: `warning` =
+        offen, aber nicht freigegeben; `critical` = riskanter Dienst
+        (Telnet, Docker ohne TLS, Datenbanken, rpcbind). Bei DSM und RouterOS
+        gibt es keinen Abgleich (`firewall_compared` false). Noch nie
+        gescannt: `scanned_at` ist null.
+
+
+        Benötigte Berechtigung: `servers:read`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Letzter Lauf.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scanned_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  job_id:
+                    type: string
+                  targets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        address:
+                          type: string
+                        family:
+                          type: string
+                          enum: [v4, v6]
+                        open:
+                          type: array
+                          items:
+                            type: integer
+                        closed:
+                          type: integer
+                        filtered:
+                          type: integer
+                  open_ports:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        port:
+                          type: integer
+                        service:
+                          type: string
+                        families:
+                          type: array
+                          items:
+                            type: string
+                        in_firewall:
+                          type: boolean
+                          nullable: true
+                        risky:
+                          type: boolean
+                        severity:
+                          type: string
+                          enum: [critical, warning, ok]
+                        reasons:
+                          type: array
+                          items:
+                            type: string
+                            enum: [risky_service, not_in_firewall]
+                  firewall_compared:
+                    type: boolean
+                  firewall_active:
+                    type: boolean
+                  critical:
+                    type: integer
+                  warnings:
+                    type: integer
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden.
+    post:
+      tags:
+      - Server
+      summary: Portscan von LCM aus starten.
+      operationId: portScanCtrl_Start
+      description: 'Startet den Portscan als Job: TCP-Verbindungsaufbau auf eine
+        feste Liste gaengiger Ports (plus SSH- und DSM-Port des Servers), an
+        den Adressen des gespeicherten Servers - nie an einer Adresse aus der
+        Anfrage, ein Rumpf wird nicht gelesen. Hoechstens vier Verbindungen
+        zugleich, zwei Sekunden je Port. In der oeffentlichen Demo gesperrt,
+        Demo-Server werden nicht kontaktiert.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job gestartet.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  job_id:
+                    type: string
+                  job_name:
+                    type: string
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung oder öffentliche Demo.
+        '404':
+          description: Server nicht gefunden.
+        '409':
+          description: Auf dem Server läuft bereits ein Job, oder er hat keine
+            scanbare Adresse (`server.portscan_no_target`).
   /api/v1/servers/{id}/repositories/revert-https:
     post:
       tags:
@@ -5533,6 +5678,76 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/servers/{id}/dsm/apply:
+    post:
+      tags:
+      - Server
+      summary: DSM-Sicherheitseinstellungen auf den Sollwert setzen.
+      operationId: serverCtrl_ApplyDSMTargets
+      description: 'Nur Synology DSM. Setzt die genannten Einstellungen als ein
+        Job auf ihren Sollwert: lesen, nur die Zielfelder aendern, alles
+        Gelesene mit method=set zurueckschicken. Der Aufruf geht auch dann
+        raus, wenn der Wert schon stimmt. Scheitert ein Schluessel, laeuft der
+        naechste weiter, der Job gilt dann als fehlgeschlagen. Danach erfasst
+        der Job das Geraet neu.
+
+
+        Setzbar: skipIpCheck, csrf, csp, iframe, sessionClear, autoBlock, dos,
+        tlsProfile, spectre. Die Firewall nicht: Mit unpassenden Regeln
+        eingeschaltet sperrt sie LCM und den Admin aus.
+
+
+        Benötigte Berechtigung: `servers:write`.'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keys]
+              properties:
+                keys:
+                  type: array
+                  items:
+                    type: string
+                    enum: [skipIpCheck, csrf, csp, iframe, sessionClear, autoBlock, dos, tlsProfile, spectre]
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job gestartet.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  job_id:
+                    type: string
+                  job_name:
+                    type: string
+        '400':
+          description: Keine Schluessel (`request.missing_fields`).
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Server nicht gefunden.
+        '409':
+          description: Kein DSM-Geraet (`server.not_dsm`) oder es laeuft bereits
+            ein Job.
+        '422':
+          description: Unbekannter Schluessel (`dsm.not_settable`) oder die
+            Firewall (`dsm.firewall_not_settable`).
   /api/v1/servers/{id}/dns:
     post:
       tags:
@@ -9400,6 +9615,29 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/system/tls/ca.pem:
+    get:
+      tags:
+      - System
+      summary: Zertifikat der TLS-CA von LCM.
+      operationId: TLSCACert
+      description: >-
+        Öffentlicher Teil der CA, die das Server-Zertifikat von LCM ausstellt
+        (PEM, bei einer CA des Betreibers samt Kette dahinter). Zum Import in
+        Browser oder einen Reverse-Proxy, der TLS vor dem Agent-Port selbst
+        beendet. Ohne TLS (`--dev`) gibt es keine CA.
+
+
+        Benötigte Berechtigung: `settings:manage`.
+      responses:
+        '200':
+          description: Erfolgreich (application/x-pem-file).
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Keine CA eingerichtet.
   /metrics:
     get:
       tags:

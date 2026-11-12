@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/robfig/cron/v3"
-
 	"LCM/internal/core/domain"
+	"LCM/internal/cron"
 	"LCM/internal/storage/repositories"
 )
 
@@ -42,9 +41,6 @@ var (
 	ErrCustomActionNotSelected = errors.New("für eine custom-rule muss eine gültige custom-aktion gewählt werden")
 	ErrRuleNeedsTarget         = errors.New("eine rule braucht entweder einen schedule oder das grundsatz-flag (enforce) - genau eines von beiden")
 )
-
-// cronParser validiert Cron-Ausdrücke (gleiche Semantik wie der Scheduler).
-var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 // GroupService verwaltet Servergruppen und deren Rules. Nach jeder
 // Änderung an Rules/Schedules wird der Scheduler neu geladen.
@@ -348,7 +344,7 @@ func (s *GroupService) UpdateSchedule(scope repositories.AccessScope, id uint, n
 // validateSchedule prüft Cron-Ausdruck und Zeitfenster gemeinsam: Das
 // Fenster muss enden, bevor der nächste Lauf beginnt.
 func validateSchedule(cronExpr string, spreadMinutes int) error {
-	if _, err := cronParser.Parse(cronExpr); err != nil {
+	if _, err := cron.Parse(cronExpr); err != nil {
 		return ErrInvalidCron
 	}
 	if spreadMinutes < 0 || time.Duration(spreadMinutes)*time.Minute >= cronInterval(cronExpr) {
@@ -615,6 +611,11 @@ func (s *GroupService) FindRule(scope repositories.AccessScope, id uint) (*domai
 // Regel-Sicht (R2-085). Manager sehen nur die Regeln ihrer Gruppen.
 func (s *GroupService) ListAllRules(scope repositories.AccessScope) ([]domain.Rule, error) {
 	return s.groups.FindAllRules(scope)
+}
+
+// ScheduleStates meldet je Zeitplan, ob er aktiv ist (siehe ListAllRules).
+func (s *GroupService) ScheduleStates() (map[uint]bool, error) {
+	return s.groups.ScheduleStates()
 }
 
 // ruleTypeUsesCommand: nur diese Typen werten das Command-Feld aus

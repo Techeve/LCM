@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { osDisplay } from '../pages/servers/server-os';
 import { consolesByServer, hostLabel, isOffline, isToleratedOutage, normaliseServerList } from './servers-list';
+import { dsmUrl } from './servers';
 
 describe('server list extras', () => {
   it('reads the OS choices next to the page', () => {
@@ -49,5 +50,16 @@ describe('osDisplay', () => {
     expect(osDisplay({ ...base, hardware_model: 'Raspberry Pi 4 Model B' }).logo.title).toBe('Raspberry Pi');
     expect(osDisplay(base)).toMatchObject({ label: 'Debian GNU/Linux 12' });
     expect(osDisplay({ ...base, os_id: 'unknown' }).logo.title).toBe('Linux');
+  });
+});
+
+describe('dsmUrl', () => {
+  it('öffnet HTTPS auf dem DSM-Port, ohne Port auf 5001', () => {
+    expect(dsmUrl({ host: '192.168.6.133', dsm_port: 0 })).toBe('https://192.168.6.133:5001/');
+    expect(dsmUrl({ host: 'nas.example.org', dsm_port: 5443 })).toBe('https://nas.example.org:5443/');
+  });
+  it('setzt IPv6-Adressen in eckige Klammern', () => {
+    expect(dsmUrl({ host: 'fd00::5', dsm_port: 0 })).toBe('https://[fd00::5]:5001/');
+    expect(dsmUrl({ host: '[fd00::5]', dsm_port: 0 })).toBe('https://[fd00::5]:5001/');
   });
 });

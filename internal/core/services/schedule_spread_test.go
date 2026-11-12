@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
@@ -79,4 +80,58 @@ func TestSpreadRunsAllRulesPerServer(t *testing.T) {
 	if first < 0 || second < first {
 		t.Fatalf("regeln nicht in reihenfolge ausgeführt:\n%s", all)
 	}
+}
+
+// TestSpreadLiestServerNachDemWartenNeu: Die Serverliste eines verteilten Laufs
+// stammt vom Fensterbeginn. Wer während seines Versatzes gelöscht oder in
+// Wartung genommen wird, darf danach nicht mehr bearbeitet werden - bisher lief
+// der Lauf mit dem alten Stand trotzdem los.
+func TestSpreadLiestServerNachDemWartenNeu(t *testing.T) {
+	env := newTestEnv(t)
+	scope := repositories.ScopeAll()
+	group, _ := env.Groups.Create("Web", "", nil, "admin")
+	ids := make([]uint, 3)
+	for i, name := range []string{"web01", "web02", "web03"} {
+		ids[i] = joinTestServer(t, env, name)
+		if err := env.Groups.AssignServer(scope, group.ID, ids[i], "admin"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sched, err := env.Groups.DefineSchedule(scope, group.ID, "Nacht", "0 3 * * *", 60, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := env.Groups.DefineRule(scope, group.ID, "Echo", domain.RuleTypeScript, "echo verteilt", &sched.ID, false, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fenster 3 s: web01 sofort, web02 nach 1 s, web03 nach 2 s.
+	done := make(chan struct{})
+	go func() {
+		env.Executor.RunSpreadForTest([]domain.Rule{*rule}, 3*time.Second)
+		close(done)
+	}()
+	// Erst ändern, wenn das Fenster läuft: web01 hat dann seinen Job.
+	waitFor(t, func() bool { return regelJobs(env, ids[0], rule.ID) == 1 })
+	if err := env.DB().Model(&domain.Server{}).Where("id = ?", ids[1]).Update("maintenance", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repositories.NewServerRepository(env.DB()).Delete(ids[2]); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+
+	for i, want := range []int64{1, 0, 0} {
+		if n := regelJobs(env, ids[i], rule.ID); n != want {
+			t.Errorf("server %d: %d Jobs, erwartet %d", i+1, n, want)
+		}
+	}
+}
+
+// regelJobs zählt die Jobs einer Regel auf einem Server.
+func regelJobs(env *testEnv, serverID, ruleID uint) int64 {
+	var n int64
+	env.DB().Model(&domain.Job{}).Where("server_id = ? AND rule_id = ?", serverID, ruleID).Count(&n)
+	return n
 }

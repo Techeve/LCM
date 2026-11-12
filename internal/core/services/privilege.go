@@ -318,6 +318,19 @@ func privRun(server *domain.Server, cmd string) string {
 	return wrapSudo(server.ServiceUser, server.RestrictedSudo, cmd)
 }
 
+// restrictedSkipNote begründet im Job, warum ein Regeltyp im eingeschränkten
+// Modus nicht lief. Beim Skript steht der Grund ausdrücklich da: Es läuft als
+// root, und eine Root-Shell gibt der eingeschränkte Modus nicht her.
+func restrictedSkipNote(ruleType string) string {
+	const prefix = "im eingeschränkten Modus übersprungen - "
+	if ruleType == domain.RuleTypeScript {
+		return prefix + "ein Skript läuft als root und braucht dafür eine Root-Shell, " +
+			"die der Management-Benutzer dieses Servers nicht hat. " +
+			"Skripte laufen nur auf Servern mit vollem sudo."
+	}
+	return prefix + "der Management-Benutzer dieses Servers hat keine Rechte für den Aktionstyp „" + ruleType + "“"
+}
+
 // restrictedAllowsRule meldet, ob ein Rule-Typ mit dem eingeschränkten
 // Service-User ausführbar ist: Paketverwaltung, Docker-Prune, Firewall (ufw
 // direkt, firewalld und nftables über den Helper),

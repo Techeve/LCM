@@ -122,9 +122,16 @@ func tailLines(output string) []string {
 	return lines
 }
 
-// cleanLine entfernt Steuerzeichen (Farbcodes, Wagenrücklauf der
-// Fortschrittsanzeigen): Der Text landet in der Oberfläche.
+// reANSI trifft Escape-Folgen: CSI wie Farbcodes (ESC [ 31 m), OSC wie
+// Fenstertitel (ESC ] ... BEL oder ESC \) und die kurzen ESC-Zeichenpaare.
+var reANSI = regexp.MustCompile(`\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])`)
+
+// cleanLine entfernt Escape-Folgen und Steuerzeichen (Farbcodes, Wagenrücklauf
+// der Fortschrittsanzeigen): Der Text landet in der Oberfläche. Die Folgen
+// fallen als Ganzes weg - nur das ESC zu streichen ließ „[31m" vor „E: "
+// stehen, und die Zeile passte auf keinen Marker mit Zeilenanfang mehr.
 func cleanLine(l string) string {
+	l = reANSI.ReplaceAllString(l, "")
 	return strings.TrimRightFunc(strings.Map(func(r rune) rune {
 		if r == '\t' {
 			return ' '

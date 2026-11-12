@@ -572,8 +572,8 @@ func revertHTTPSScript(uris []string) string {
 		`  for u in $URLS; do grep -qF "$u" "$f" && hit=1; done`,
 		`  [ "$hit" -eq 1 ] || continue`,
 		`  cp "$f" "$f.lcm-bak"`,
-		`  for u in $URLS; do sed -i "s|$u|http://${u#https://}|g" "$f"; done`,
-		"  changed=1",
+		`  for u in $URLS; do ` + httpURLSed + `; done`,
+		`  if cmp -s "$f" "$f.lcm-bak"; then rm -f "$f.lcm-bak"; else changed=1; fi`,
 		"done",
 		`if [ "$changed" -eq 0 ]; then echo 'LCM: keine der genannten quellen gefunden - nichts zu tun'; exit 0; fi`,
 		aptUpdateProbe,
@@ -587,6 +587,13 @@ func revertHTTPSScript(uris []string) string {
 		"fi",
 	}, "\n")
 }
+
+// httpURLSed stellt die URL $u in der Datei $f auf http zurück - nur als
+// Ganzes, gefolgt von Leerraum, einem Schrägstrich oder dem Zeilenende. Ohne
+// diese Grenze drehte .../debian auch .../debian-security mit zurück, und
+// https://deb.example.org auch https://deb.example.org.evil. Das Gegenstück
+// zu httpsURLSed; derselbe Befehl steht im LCM-Helper (repos_http).
+const httpURLSed = `b="${u%/}"; h="http://${b#https://}"; sed -i -e "s|$b\(/\{0,1\}[[:space:]]\)|$h\1|g" -e "s|$b\(/\{0,1\}\)\$|$h\1|" "$f"`
 
 // updateHTTPSRevertURLs schreibt fort, welche Quellen des Servers sich auf
 // http zurückstellen ließen. Aufgerufen dort, wo sich der Bestand ändern kann:

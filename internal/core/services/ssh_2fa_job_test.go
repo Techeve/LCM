@@ -57,3 +57,33 @@ func TestSSH2FAAktivierenMitAussperrProbe(t *testing.T) {
 		t.Fatal("ssh_2fa_enabled nach dem Entfernen noch gesetzt")
 	}
 }
+
+// TestSSH2FAAbbruchRolltZurueck: Scheitert das Einrichten mittendrin (auf
+// RHEL 9 an `sshd -t`), war der Passwort-Stack schon stillgelegt und das
+// Drop-in lag da. Ohne Rückweg nahm der laufende sshd danach jedes Passwort,
+// und beim nächsten Start wäre er wegen des Drop-ins ausgeblieben.
+func TestSSH2FAAbbruchRolltZurueck(t *testing.T) {
+	env := newTestEnv(t)
+	env.Dialer.Responses["getent passwd"] = sshx.FakeResponse{Output: scanResponse}
+	env.Dialer.Responses["AuthenticationMethods publickey,keyboard-interactive:pam"] = sshx.FakeResponse{
+		Output: "AuthenticationMethods cannot be satisfied by enabled authentication methods", ExitCode: 255,
+	}
+	server := joinPlainServer(t, env, "tfa-rhel")
+	env.Dialer.Reset()
+
+	if _, err := env.Servers.ConfigureSSH2FA(repositories.ScopeAll(), server.ID, true, "admin"); err != nil {
+		t.Fatalf("ssh-2fa starten: %v", err)
+	}
+	done := waitServerJob(t, env, server.ID, domain.RuleTypeScript)
+	if done.Status == domain.JobStatusSuccess || !strings.Contains(done.Output, "ROLLBACK") {
+		t.Fatalf("abbruch ohne rückweg: %s\n%s", done.Status, done.Output)
+	}
+	commands, _ := env.Dialer.Recorded()
+	rolledBack := false
+	for _, cmd := range commands {
+		rolledBack = rolledBack || strings.Contains(cmd, "rm -f /etc/ssh/sshd_config.d/40-lcm-2fa.conf /etc/ssh/sshd_config.d/55-lcm-2fa.conf")
+	}
+	if !rolledBack {
+		t.Error("drop-in und pam wurden nicht zurückgerollt")
+	}
+}

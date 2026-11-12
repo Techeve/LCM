@@ -36,7 +36,7 @@ export function scheduleName(entry: ScheduleEntry): string {
   return isGroupSchedule(entry) || !kind ? entry.name : t(kind.label);
 }
 
-/** Wann der Zeitplan läuft. Eingebaute Zeitpläne nutzen „@every 30m“, das der Cron-Baukasten nicht kennt. */
+/** Wann der Zeitplan läuft. Ein Backup mit krummem Intervall nutzt „@every 36h“, das der Cron-Baukasten nicht kennt. */
 export function whenText(expression: string): string {
   const every = /^@every (\d+)([mh])$/.exec(expression.trim());
   if (!every) return cronText(expression);

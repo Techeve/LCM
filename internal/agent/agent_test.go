@@ -128,19 +128,41 @@ func TestRunnerCancel(t *testing.T) {
 	}
 }
 
-func TestLimitedBufferTruncation(t *testing.T) {
+// TestLimitedBufferBehaeltAnfangUndEnde: Über dem Limit bleiben die erste und
+// die letzte Hälfte stehen, die Mitte fällt weg und wird gezählt. Vorher blieb
+// nur der Anfang - die Fehler am Ende eines apt-Laufs fehlten.
+func TestLimitedBufferBehaeltAnfangUndEnde(t *testing.T) {
 	b := &limitedBuffer{max: 10}
-	if _, err := b.Write([]byte("1234567890ABC")); err != nil {
+	if _, err := b.Write([]byte("12345abcdefgh")); err != nil {
 		t.Fatal(err)
 	}
-	if !b.truncated || b.String() != "1234567890" {
-		t.Fatalf("truncation kaputt: %q truncated=%v", b.String(), b.truncated)
-	}
-	// Weitere Writes bleiben verworfen, melden aber Erfolg (Writer-Vertrag).
-	if n, _ := b.Write([]byte("xyz")); n != 3 {
+	// Weitere Writes melden Erfolg (Writer-Vertrag), auch wenn sie die Mitte
+	// verdrängen.
+	if n, _ := b.Write([]byte("XYZ")); n != 3 {
 		t.Fatal("write muss volle länge melden")
 	}
-	if !strings.HasPrefix(b.String(), "1234567890") || len(b.String()) != 10 {
-		t.Fatalf("buffer gewachsen: %q", b.String())
+	head, tail, omitted := b.parts()
+	if string(head) != "12345" || string(tail) != "ghXYZ" || omitted != 6 {
+		t.Fatalf("got head=%q tail=%q omitted=%d", head, tail, omitted)
+	}
+	if got := b.String(); !strings.HasPrefix(got, "12345\n") || !strings.HasSuffix(got, "\nghXYZ") ||
+		!strings.Contains(got, "6 Bytes") {
+		t.Fatalf("ausgabe ohne hinweis auf die lücke: %q", got)
+	}
+	if b.Written() != 16 {
+		t.Fatalf("written = %d, want 16", b.Written())
+	}
+}
+
+// TestLimitedBufferVieleKleineWrites: Das Ende bleibt auch bei vielen kleinen
+// Writes richtig (Kürzen erst beim Doppelten des Platzes).
+func TestLimitedBufferVieleKleineWrites(t *testing.T) {
+	b := &limitedBuffer{max: 8}
+	for i := 0; i < 100; i++ {
+		_, _ = b.Write([]byte{byte('a' + i%26)})
+	}
+	head, tail, omitted := b.parts()
+	if string(head) != "abcd" || string(tail) != "stuv" || omitted != 92 {
+		t.Fatalf("got head=%q tail=%q omitted=%d", head, tail, omitted)
 	}
 }

@@ -104,19 +104,29 @@ fi
 [ -n "$TZ_VAL" ] || TZ_VAL=$(date +%Z 2>/dev/null)
 echo "tz=$TZ_VAL"
 NTP_SVC=""; NTP_SYNC="no"; NTP_SRV=""
-if systemctl is-active --quiet chronyd 2>/dev/null || systemctl is-active --quiet chrony 2>/dev/null; then
+# chronyd heisst unter OpenRC (Alpine) chronyd und gehoert hierher, nicht zu ntpd.
+if systemctl is-active --quiet chronyd 2>/dev/null || systemctl is-active --quiet chrony 2>/dev/null || rc-service chronyd status >/dev/null 2>&1; then
   NTP_SVC=chrony
-  chronyc -n tracking 2>/dev/null | grep -qiE '^Leap status +: +Normal' && NTP_SYNC=yes
-  NTP_SRV=$(awk '/^(server|pool)[ \t]/ {print $2}' /etc/chrony/chrony.conf /etc/chrony.conf 2>/dev/null | tr '\n' ' ')
+  # Alpine setzt cmdport 0: Ohne root antwortet chronyc dann gar nicht. Dann
+  # zaehlt, ob der Kernel die Uhr als synchron fuehrt - das setzt chronyd.
+  if TRACK=$(chronyc -n tracking 2>/dev/null); then
+    printf '%s\n' "$TRACK" | grep -qiE '^Leap status +: +Normal' && NTP_SYNC=yes
+  else
+    adjtimex 2>/dev/null | grep -qE 'return value: [0-4] \(' && NTP_SYNC=yes
+  fi
+  # Debian 12 und Ubuntu lesen Server auch aus conf.d und sources.d. cat statt
+  # awk mit Dateiliste: mawk bricht an der ersten fehlenden Datei ab.
+  NTP_SRV=$(cat /etc/chrony/chrony.conf /etc/chrony.conf /etc/chrony/conf.d/*.conf /etc/chrony/sources.d/*.sources 2>/dev/null | awk '/^(server|pool)[ \t]/ {print $2}' | tr '\n' ' ')
 elif systemctl is-active --quiet systemd-timesyncd 2>/dev/null; then
   NTP_SVC=systemd-timesyncd
   [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "yes" ] && NTP_SYNC=yes
   NTP_SRV=$(awk -F= '/^[ \t]*(NTP|FallbackNTP)=/ {print $2}' /etc/systemd/timesyncd.conf /etc/systemd/timesyncd.conf.d/*.conf 2>/dev/null | tr '\n' ' ')
-elif systemctl is-active --quiet ntpd 2>/dev/null || rc-service ntpd status >/dev/null 2>&1 || rc-service chronyd status >/dev/null 2>&1; then
+elif systemctl is-active --quiet ntpd 2>/dev/null || { [ -f /etc/ntp.conf ] && rc-service ntpd status >/dev/null 2>&1; }; then
   NTP_SVC=ntpd
   NTP_SRV=$(awk '/^(server|pool)[ \t]/ {print $2}' /etc/ntp.conf 2>/dev/null | tr '\n' ' ')
   ntpq -pn 2>/dev/null | grep -q '^\*' && NTP_SYNC=yes
-elif rc-service busybox-ntpd status >/dev/null 2>&1 || pgrep -x ntpd >/dev/null 2>&1; then
+# Alpine: Der Dienst ntpd aus busybox-openrc ist das ntpd von BusyBox (ohne ntp.conf).
+elif rc-service busybox-ntpd status >/dev/null 2>&1 || rc-service ntpd status >/dev/null 2>&1 || pgrep -x ntpd >/dev/null 2>&1; then
   NTP_SVC=busybox-ntpd
   NTP_SRV=$(awk '/^NTPD_OPTS/ {print}' /etc/conf.d/ntpd 2>/dev/null | grep -oE '\-p [^ "]+' | cut -d' ' -f2 | tr '\n' ' ')
 fi
@@ -251,6 +261,7 @@ if command -v chronyc >/dev/null 2>&1; then
   [ -f "$CONF" ] && { [ -f "$CONF.lcm-bak" ] || cp -f "$CONF" "$CONF.lcm-bak"; }
   # Nur die von LCM verwalteten Zeitserver ersetzen, den Rest der Datei lassen.
   { grep -vE '^[ \t]*(server|pool)[ \t]' "$CONF" 2>/dev/null; printf '%[2]s'; } > "$CONF.lcm-new" && mv "$CONF.lcm-new" "$CONF"
+%[4]s
   systemctl restart chronyd 2>/dev/null || systemctl restart chrony 2>/dev/null || rc-service chronyd restart 2>/dev/null || true
   chronyc -n makestep >/dev/null 2>&1 || true
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -286,8 +297,21 @@ if [ "$SYNCED" = yes ]; then
 else
   echo "LCM: Zeitserver eingetragen, eine Synchronisierung war im Zeitfenster aber nicht nachweisbar. Die Konfiguration bleibt bestehen; Erreichbarkeit der Zeitserver pruefen." >&2
   exit 2
-fi`, list, chronyLines.String(), ntpLines.String())
+fi`, list, chronyLines.String(), ntpLines.String(), chronyDropinStrip)
 }
+
+// chronyDropinStrip nimmt die server- und pool-Zeilen aus den Drop-ins von
+// chrony (Debian 12, Ubuntu: conf.d/*.conf und sources.d/*.sources). Sonst
+// fragte chrony neben den Zeitservern von LCM weiter die Pools der
+// Distribution - Ubuntu führt seine nur noch in sources.d. Die Sicherung
+// endet auf .lcm-bak und wird damit von chrony nicht mehr gelesen. Dieselbe
+// Zeile läuft im Helper (set_ntp).
+const chronyDropinStrip = `  for f in /etc/chrony/conf.d/*.conf /etc/chrony/sources.d/*.sources; do
+    [ -f "$f" ] && grep -qE '^[ \t]*(server|pool)[ \t]' "$f" || continue
+    [ -f "$f.lcm-bak" ] || cp -f "$f" "$f.lcm-bak"
+    grep -vE '^[ \t]*(server|pool)[ \t]' "$f" > "$f.lcm-new" || true
+    cat "$f.lcm-new" > "$f"; rm -f "$f.lcm-new"
+  done`
 
 // ---- Service-Methoden -------------------------------------------------------
 

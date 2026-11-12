@@ -1,0 +1,8 @@
+{
+ "success": true,
+ "data": {
+  "enable_firewall": true,
+  "profile_name": "default",
+  "enable_portcheck": true
+ }
+}
