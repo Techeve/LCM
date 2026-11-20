@@ -193,6 +193,10 @@ type Server struct {
 	// hat (wire.Inventory.CAPin). Erst wenn jeder Agent den der aktuellen CA
 	// führt, bekommt das Server-Zertifikat einen neuen Schlüssel.
 	AgentCAPin string `json:"-"`
+	// AgentCapabilities sind die Fähigkeiten, die der Agent beim letzten
+	// Connect gemeldet hat (wire.Inventory.Capabilities, kommagetrennt; leer
+	// bei älteren Agents). Die Oberfläche bietet danach z.B. die Konsole an.
+	AgentCapabilities string `json:"agent_capabilities,omitempty"`
 	// AgentConnected ist der Laufzeitzustand aus dem AgentHub (nicht
 	// persistiert) - vom Controller vor der Auslieferung befüllt.
 	AgentConnected bool `gorm:"-" json:"agent_connected"`
@@ -581,6 +585,16 @@ const (
 
 // IsAgent meldet, ob der Server über den lcm-agent (MQTT) verwaltet wird.
 func (s *Server) IsAgent() bool { return s.Transport == TransportAgent }
+
+// AgentHas meldet, ob der Agent die Fähigkeit beim letzten Connect gemeldet hat.
+func (s *Server) AgentHas(capability string) bool {
+	for _, c := range strings.Split(s.AgentCapabilities, ",") {
+		if c == capability {
+			return true
+		}
+	}
+	return false
+}
 
 // Proxmox-Produkttypen (Server.ProxmoxType).
 const (

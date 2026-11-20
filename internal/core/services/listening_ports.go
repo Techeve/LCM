@@ -220,9 +220,6 @@ func (s *ServerService) ScanListeningPortsNow(scope repositories.AccessScope, id
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureSSHTransport(server); err != nil {
-		return nil, err
-	}
 	if server.IsDemo {
 		// Demo-Server werden nie kontaktiert - der hinterlegte Stand ist alles,
 		// was es gibt.

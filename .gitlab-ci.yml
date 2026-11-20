@@ -272,6 +272,9 @@ check:release-version:
 # Changelog, das Changelog steht öffentlich in der Doku und in den Releases,
 # release-info/*.md im Fenster nach dem Update. Die Namen stehen in
 # tools/internal-terms.txt.
+# Geprüft werden nur Commits, die noch nicht auf community liegen: Was dort
+# ist, ist veröffentlicht und lässt sich nicht mehr ändern. Sonst scheitert
+# jeder MR community -> enterprise an Betreffen, die älter sind als die Liste.
 check:internal-terms:
   stage: check
   image: alpine:3.24
@@ -279,9 +282,9 @@ check:internal-terms:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
     - apk add --no-cache git
-    - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" community
     - sh tools/check-internal-terms.sh CHANGELOG.md release-info/*.md
-    - git log --no-merges --format=%s "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME..HEAD" | sh tools/check-internal-terms.sh -
+    - git log --no-merges --format=%s "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME..HEAD" --not origin/community | sh tools/check-internal-terms.sh -
 
 # Commit-Messages müssen Conventional Commits sein - daraus entstehen
 # Versionsnummer und Changelog. Format: typ(scope)?: beschreibung

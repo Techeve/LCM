@@ -9,6 +9,7 @@ import (
 	"LCM/internal/core/domain"
 	"LCM/internal/core/events"
 	"LCM/internal/infrastructure/sshx"
+	"LCM/internal/remote/wire"
 	"LCM/internal/storage/repositories"
 )
 
@@ -37,9 +38,16 @@ import (
 var ErrTerminalDisabled = errors.New("die web-konsole ist auf dieser installation abgeschaltet")
 
 // ErrTerminalNotPossible: Auf diesem Server gibt es keine Konsole - Demo-Server
-// werden nie kontaktiert, Synology DSM hat keine Shell, und der Agent-Transport
-// kennt nur Frage und Antwort.
+// werden nie kontaktiert, Synology DSM hat keine Shell.
 var ErrTerminalNotPossible = errors.New("auf diesem server ist keine konsole möglich")
+
+// ErrTerminalAgentOutdated: Der Agent des Servers kennt die Konsole noch nicht
+// (meldet die Fähigkeit nicht) und muss erst aktualisiert werden.
+var ErrTerminalAgentOutdated = errors.New("der lcm-agent dieses servers kann noch keine konsole - bitte aktualisieren")
+
+// ErrTerminalAgentDisabled: Der Betreiber hat die Konsole auf dem Server
+// abgeschaltet (lcm-agent terminal off).
+var ErrTerminalAgentDisabled = errors.New("die konsole ist auf diesem server abgeschaltet (lcm-agent terminal on schaltet sie ein)")
 
 // TerminalIdleTimeout beendet eine Sitzung, in der nichts mehr getippt wird.
 //
@@ -178,9 +186,13 @@ func terminalPossible(server *domain.Server) error {
 		// DSM verwaltet LCM über die Web-API; eine Shell ist dort nicht
 		// vorgesehen und wäre auch nicht die Art, ein DSM zu bedienen.
 		return ErrTerminalNotPossible
-	case server.IsAgent():
-		// Der Agent-Transport führt keinen Strom (siehe sshx.TerminalConn).
-		return ErrTerminalNotPossible
+	case server.IsAgent() && server.AgentHas(wire.CapabilityTTYOff):
+		// Der Betreiber des Servers hat es dort abgeschaltet.
+		return ErrTerminalAgentDisabled
+	case server.IsAgent() && !server.AgentHas(wire.CapabilityTTY):
+		// Älterer Agent: Er bekäme Rahmen, die er nicht kennt, und LCM
+		// wartete ins Leere.
+		return ErrTerminalAgentOutdated
 	case server.InMaintenance():
 		// In Wartung heißt: bewusst außer Betrieb. Wer trotzdem heranwill,
 		// beendet erst die Wartung - sonst hebelt die Konsole eine

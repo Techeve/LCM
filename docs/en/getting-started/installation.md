@@ -29,7 +29,7 @@ route (option 2) is the right one.
 
 ## Option 1: Debian/Ubuntu package (recommended)
 
-**Easiest via the TechEve APT repository** - set it up once, then install and
+**Easiest via the Techeve APT repository** - set it up once, then install and
 keep it current with `apt upgrade`:
 
 ```sh

@@ -8,10 +8,13 @@ package remote_test
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 
 	"LCM/internal/agent"
 	"LCM/internal/core/domain"
+	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/netfilter"
 	"LCM/internal/remote"
 	"LCM/internal/remote/wire"
@@ -227,4 +231,53 @@ func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool)
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("timeout: %s", what)
+}
+
+// TestAgentTerminalEndToEnd: Web-Konsole über die ganze Strecke - LCM öffnet
+// über hub.Conn ein Terminal, der echte Agent startet eine Shell im PTY, die
+// Ausgabe kommt zurück, und Close beendet die Shell. Nur unter Linux als root
+// (PTY, Arbeitsverzeichnis /root wie im Dienst).
+func TestAgentTerminalEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integrationstest (echter broker + websocket)")
+	}
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		t.Skip("braucht linux und root")
+	}
+	hub, _, server, app := connectedAgent(t)
+	t.Cleanup(func() {
+		_ = app.Shutdown()
+		hub.Close()
+	})
+	conn, err := hub.Conn(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	term, err := conn.(sshx.TerminalConn).Terminal("xterm", 90, 20)
+	if err != nil {
+		t.Fatalf("terminal: %v", err)
+	}
+	if _, err := term.Write([]byte("stty size; echo tty-$((40+2))\n")); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	buf := make([]byte, 4096)
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(out.String(), "tty-42") && time.Now().Before(deadline) {
+		n, err := term.Read(buf)
+		out.Write(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	if !strings.Contains(out.String(), "20 90") || !strings.Contains(out.String(), "tty-42") {
+		t.Fatalf("ausgabe ohne fenstergröße oder rechnung: %q", out.String())
+	}
+	if err := term.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := term.Read(buf); err != io.EOF {
+		t.Fatalf("nach close erwartet EOF, bekam %v", err)
+	}
 }

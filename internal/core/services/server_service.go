@@ -1724,7 +1724,9 @@ func (s *ServerService) HardenSSH(scope repositories.AccessScope, id uint, actor
 		return output, runErr
 	}
 	if code != 0 {
-		return output, fmt.Errorf("ssh-härtung fehlgeschlagen (exit %d)", code)
+		// Die Ursache steht am Ende der Ausgabe (etwa: kein SSH-Schlüssel
+		// hinterlegt, sshd -t lehnt ab) - ohne sie hieße es nur „exit 1".
+		return output, fmt.Errorf("ssh-härtung fehlgeschlagen (exit %d): %s", code, lastLines(output, 1))
 	}
 	// Nachweis statt Annahme: erst die EFFEKTIVE Konfiguration entscheidet, ob
 	// die Härtung wirkt. Auf openSUSE band sshd_config das Drop-in-Verzeichnis
@@ -1836,11 +1838,9 @@ const (
 )
 
 // planHardenSSH prüft den Server und baut das Skript der SSH-Härtung - für
-// den Lauf und die Befehlsvorschau gleich.
+// den Lauf und die Befehlsvorschau gleich. Agent-Server härten genauso: Das
+// Skript läuft als root über den Agent, LCM selbst braucht dort kein sshd.
 func planHardenSSH(server *domain.Server) (string, error) {
-	if err := ensureSSHTransport(server); err != nil {
-		return "", err
-	}
 	if err := ensureNotRouterOS(server); err != nil {
 		return "", err
 	}
@@ -1851,7 +1851,11 @@ func planHardenSSH(server *domain.Server) (string, error) {
 	}
 	dropin := "PasswordAuthentication no\\nChallengeResponseAuthentication no\\n" +
 		"PubkeyAuthentication yes\\nPermitRootLogin prohibit-password\\n"
-	return strings.Join([]string{
+	steps := []string{}
+	if server.IsAgent() {
+		steps = append(steps, sshKeyPresentScript)
+	}
+	return strings.Join(append(steps,
 		sshdEnsureIncludeScript,
 		"install -d -m 755 /etc/ssh/sshd_config.d",
 		fmt.Sprintf("printf '%s' > %s", dropin, sshHardeningDropin),
@@ -1859,14 +1863,24 @@ func planHardenSSH(server *domain.Server) (string, error) {
 		// Konfiguration prüfen, bevor der Dienst neu geladen wird.
 		"sshd -t",
 		sshdReloadScript,
-	}, " && "), nil
+	), " && "), nil
 }
+
+// sshKeyPresentScript bricht ab, wenn auf dem Server niemand einen SSH-Schlüssel
+// hat. Beim SSH-Server ist das nie der Fall (LCM meldet sich selbst mit Key
+// an), beim Agent-Server schon: Wer sich bisher per Passwort anmeldete, käme
+// nach der Härtung nicht mehr herein. Gezählt werden nicht auskommentierte
+// Schlüssel in den üblichen Dateien von root und /home/*; ein
+// AuthorizedKeysCommand (Schlüssel aus LDAP o.ä.) zählt als hinterlegt. Liegen
+// Schlüssel woanders (eigenes AuthorizedKeysFile), bricht die Härtung
+// vorsichtshalber ab und sagt, wo sie gesucht hat.
+const sshKeyPresentScript = `{ grep -hsvE '^[[:space:]]*(#|$)' /root/.ssh/authorized_keys /root/.ssh/authorized_keys2 /home/*/.ssh/authorized_keys /home/*/.ssh/authorized_keys2 | ` +
+	`grep -qE '(ssh-(ed25519|rsa|dss)|ecdsa-sha2|sk-(ssh|ecdsa))' || ` +
+	`{ mkdir -p /run/sshd 2>/dev/null; sshd -T 2>/dev/null | grep -iE '^authorizedkeyscommand ' | grep -qvi ' none$'; } || ` +
+	`{ echo "Kein SSH-Schlüssel gefunden (gesucht in ~/.ssh/authorized_keys von root und /home/*). Nach der Härtung käme womöglich niemand mehr per SSH herein - erst einen Schlüssel eintragen." >&2; exit 1; }; }`
 
 // planUnhardenSSH baut das Skript, das die SSH-Härtung aufhebt.
 func planUnhardenSSH(server *domain.Server) (string, error) {
-	if err := ensureSSHTransport(server); err != nil {
-		return "", err
-	}
 	if err := ensureNotRouterOS(server); err != nil {
 		return "", err
 	}

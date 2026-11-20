@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"LCM/internal/core/domain"
 )
 
 // runPAMScript führt ein PAM-Skript gegen eine Kopie der Fixture aus und
@@ -193,5 +195,39 @@ func TestSSH2FAUninstallOhnePaketquelle(t *testing.T) {
 	}
 	if strings.Contains(script, "apk del") {
 		t.Error("uninstall versucht paketentfernung auf nicht unterstützter paketverwaltung")
+	}
+}
+
+// Agent-Server: LCM meldet sich nicht per SSH an, der ServiceUser ist root.
+// Die Match-Ausnahme befreite sonst ausgerechnet root von der 2FA.
+func TestSSH2FAAgentOhneAusnahme(t *testing.T) {
+	agent := &domain.Server{Transport: domain.TransportAgent, ServiceUser: "root"}
+	if user := ssh2faExemptUser(agent); user != "" {
+		t.Fatalf("agent-server mit ausnahme für %q", user)
+	}
+	script := ssh2faDropinScript(ssh2faExemptUser(agent))
+	if strings.Contains(script, "Match User") {
+		t.Errorf("drop-in für agent-server enthält eine match-ausnahme")
+	}
+	if !strings.Contains(script, "AuthenticationMethods publickey,keyboard-interactive:pam") {
+		t.Errorf("drop-in ohne 2fa-pflicht")
+	}
+	if user := ssh2faExemptUser(&domain.Server{ServiceUser: "lcm-svc"}); user != "lcm-svc" {
+		t.Errorf("ssh-server: ausnahme %q, erwartet lcm-svc", user)
+	}
+}
+
+// Ohne Aussperr-Probe prüft LCM beim Agent-Server die wirksame Konfiguration:
+// Verlangt sshd keinen Einmalcode, hat die 2FA nicht gegriffen.
+func TestVerify2FAEffective(t *testing.T) {
+	agent := &domain.Server{Transport: domain.TransportAgent, ServiceUser: "root"}
+	answer := "authenticationmethods publickey,keyboard-interactive:pam\n"
+	conn := &scriptedConn{handler: func(string, string) (string, int) { return answer, 0 }}
+	if err := verify2FAEffective(conn, agent); err != nil {
+		t.Errorf("wirksame 2fa abgelehnt: %v", err)
+	}
+	answer = "authenticationmethods any\n"
+	if err := verify2FAEffective(conn, agent); err == nil {
+		t.Error("unwirksame 2fa angenommen")
 	}
 }

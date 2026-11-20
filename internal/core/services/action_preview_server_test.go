@@ -198,7 +198,6 @@ func TestPreviewSSHAndFirewallRefusedLikeRun(t *testing.T) {
 	}{
 		{"RouterOS", map[string]any{"os_id": domain.OSIDRouterOS}, append([]string{services.PreviewFirewallApply, services.PreviewAptCacheOff}, ssh...), services.ErrRouterOSUnsupported},
 		{"DSM", map[string]any{"os_id": domain.OSIDSynologyDSM}, append([]string{services.PreviewFirewallDisable, services.PreviewAptCacheOff}, ssh...), services.ErrDSMUnsupported},
-		{"Agent", map[string]any{"transport": domain.TransportAgent}, ssh, services.ErrAgentTransport},
 		{"Proxmox", map[string]any{"proxmox_type": "pve"}, []string{services.PreviewFirewallApply, services.PreviewFirewallDisable}, services.ErrProxmoxRestricted},
 	}
 	for _, tc := range cases {

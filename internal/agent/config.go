@@ -9,6 +9,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -46,6 +47,40 @@ type Config struct {
 	// vertrauten Verbindung gelernt (Kette des Servers). Mit ihm nimmt der
 	// Agent jedes Server-Zertifikat dieser CA an, auch mit neuem Schlüssel.
 	CAFingerprint string `json:"ca_fingerprint,omitempty"`
+}
+
+// TerminalOffName ist die Datei im Konfigurationsverzeichnis, deren Dasein die
+// Web-Konsole über diesen Agent abschaltet (lcm-agent terminal off). Der
+// Betreiber des Servers entscheidet damit selbst, ob LCM hier eine root-Shell
+// öffnen darf; Standard ist an.
+//
+// Bewusst eine eigene Datei statt eines Felds in agent.json: Der Agent schreibt
+// agent.json selbst, wenn er neue Zertifikats-Pins lernt, und hätte dabei einen
+// zwischenzeitlich gesetzten Schalter mit seinem alten Stand überschrieben.
+// Anlegen und Löschen einer Datei geschehen außerdem in einem Schritt - es gibt
+// keinen halb geschriebenen Zustand.
+const TerminalOffName = "terminal-off"
+
+// TerminalDisabled meldet, ob die Konsole im Verzeichnis dir abgeschaltet ist.
+// Lässt sich das nicht feststellen, gilt sie als abgeschaltet: Ein Schalter,
+// der eine root-Shell sperrt, darf im Zweifel nicht aufgehen.
+func TerminalDisabled(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, TerminalOffName))
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+// SetTerminal schaltet die Web-Konsole an oder ab. Der laufende Agent prüft den
+// Schalter bei jedem Öffnen und jeder Eingabe, die Änderung gilt also sofort,
+// auch für offene Konsolen; LCM erfährt sie beim nächsten Verbindungsaufbau.
+func SetTerminal(dir string, enabled bool) error {
+	path := filepath.Join(dir, TerminalOffName)
+	if enabled {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return os.WriteFile(path, []byte("Web-Konsole über lcm-agent abgeschaltet (lcm-agent terminal on schaltet sie wieder ein)\n"), 0o600)
 }
 
 // LoadConfig liest die Enrollment-Konfiguration.

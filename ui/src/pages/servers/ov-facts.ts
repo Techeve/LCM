@@ -336,7 +336,7 @@ export class SrvFacts extends LitElement {
       device ? null : { label: t('serverDetail.facts.support.label'), value: this.#support() },
       device ? null : { label: t('serverDetail.facts.kernel'), value: this.#kernel() },
       device ? null : { label: t('serverDetail.facts.reboot'), value: this.#reboot() },
-      device || s.transport === 'agent' ? null : { label: t('serverDetail.facts.sshHardened'), value: t(s.ssh_hardened ? 'serverDetail.facts.yes' : 'serverDetail.facts.no') },
+      device ? null : { label: t('serverDetail.facts.sshHardened'), value: t(s.ssh_hardened ? 'serverDetail.facts.yes' : 'serverDetail.facts.no') },
       s.kex_algorithm
         ? { label: t('serverDetail.facts.kex'), value: html`<span class="mono">${s.kex_algorithm}</span>${isPostQuantum(s.kex_algorithm) ? pill('ok', t('serverDetail.facts.kexPq'), t('serverDetail.facts.kexPqHint')) : pill('unknown', t('serverDetail.facts.kexClassic'), t('serverDetail.facts.kexClassicHint'))}` }
         : null,

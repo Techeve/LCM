@@ -72,6 +72,10 @@ type createUserRequest struct {
 	FirstName string   `json:"first_name"`
 	LastName  string   `json:"last_name"`
 	Roles     []string `json:"roles"`
+	// Invite legt das Konto ohne Passwort an; der Benutzer setzt es selbst über
+	// einen Aktivierungslink (POST /users/activation-links/generate). Ein
+	// mitgeschicktes Passwort bleibt dann unbeachtet.
+	Invite bool `json:"invite"`
 }
 
 // Create - POST /api/v1/users (users:write)
@@ -94,11 +98,18 @@ func (ctrl *UserController) Create(c fiber.Ctx) error {
 	if err := checkRoleNames(req.Roles); err != nil {
 		return err
 	}
-	user, err := ctrl.users.CreateUser(req.Username, req.Email, req.Password, req.FirstName, req.LastName, req.Roles, actor(c))
+	user, err := ctrl.createUser(req, actor(c))
 	if err != nil {
 		return mapServiceError(err)
 	}
 	return c.Status(fiber.StatusCreated).JSON(user)
+}
+
+func (ctrl *UserController) createUser(req createUserRequest, by string) (*domain.User, error) {
+	if req.Invite {
+		return ctrl.users.CreateInvitedUser(req.Username, req.Email, req.FirstName, req.LastName, req.Roles, by)
+	}
+	return ctrl.users.CreateUser(req.Username, req.Email, req.Password, req.FirstName, req.LastName, req.Roles, by)
 }
 
 type updateRolesRequest struct {

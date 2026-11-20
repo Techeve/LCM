@@ -347,6 +347,8 @@ type GlobalSettingsInput struct {
 	PackagesStaleCriticalDays   *int
 	Require2FARoles             *string
 	PublicBaseURL               *string
+	PublicAgentURL              *string
+	PublicMCPURL                *string
 	CVEHighWeightPackages       *string
 	DNSServerPresets            *string
 	NTPServerPresets            *string
@@ -595,6 +597,22 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		}
 		settings.PublicBaseURL = publicBase
 		touch("public_base_url")
+	}
+	if in.PublicAgentURL != nil {
+		agentURL, err := normalizePublicURL(*in.PublicAgentURL, ErrPublicAgentURLInvalid)
+		if err != nil {
+			return nil, err
+		}
+		settings.PublicAgentURL = agentURL
+		touch("public_agent_url")
+	}
+	if in.PublicMCPURL != nil {
+		mcpURL, err := normalizePublicURL(*in.PublicMCPURL, ErrPublicMCPURLInvalid)
+		if err != nil {
+			return nil, err
+		}
+		settings.PublicMCPURL = mcpURL
+		touch("public_mcp_url")
 	}
 
 	// System-Mailer: Passwort ist write-only (nil/leer = unverändert).

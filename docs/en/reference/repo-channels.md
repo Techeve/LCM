@@ -241,9 +241,9 @@ with `packaging/repo-server/set-channel-metadata.sh`):
 
 | Channel | Origin | Label |
 |---|---|---|
-| Community | `TechEve` | `techeve-community` |
-| Beta | `TechEve` | `techeve-beta` |
-| Enterprise | `TechEve` | `techeve-enterprise` |
+| Community | `Techeve` | `techeve-community` |
+| Beta | `Techeve` | `techeve-beta` |
+| Enterprise | `Techeve` | `techeve-enterprise` |
 
 That allows expressing exactly what is meant - *the LCM packages* come from the
 enterprise channel, everything else may stay where it is. The switch writes

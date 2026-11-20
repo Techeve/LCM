@@ -247,9 +247,9 @@ und `Label`, einmalig gesetzt mit
 
 | Kanal | Origin | Label |
 |---|---|---|
-| Community | `TechEve` | `techeve-community` |
-| Beta | `TechEve` | `techeve-beta` |
-| Enterprise | `TechEve` | `techeve-enterprise` |
+| Community | `Techeve` | `techeve-community` |
+| Beta | `Techeve` | `techeve-beta` |
+| Enterprise | `Techeve` | `techeve-enterprise` |
 
 Damit lässt sich genau das ausdrücken, worum es geht - *die LCM-Pakete* kommen
 aus dem Enterprise-Kanal, alles andere darf bleiben, wo es ist. Die Umstellung

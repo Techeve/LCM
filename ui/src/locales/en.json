@@ -388,10 +388,14 @@
       },
       "address": {
         "title": "Public address",
-        "subtitle": "LCM builds the links in emails from it.",
-        "label": "Address of this installation",
+        "subtitle": "LCM is reachable from outside under these addresses. LCM builds the links in emails from the first one.",
+        "label": "Address of the interface",
         "hint": "Scheme, host and port only, no path.",
-        "warning": "Not set: links in emails come from the local configuration and may not be reachable from outside. LCM deliberately does not derive the address from the request, otherwise a password reset link could be steered to a foreign domain."
+        "warning": "Not set: links in emails come from the local configuration and may not be reachable from outside. LCM deliberately does not derive the address from the request, otherwise a password reset link could be steered to a foreign domain.",
+        "agentLabel": "Address for agents",
+        "agentHint": "Only needed if a reverse proxy publishes the agent port under its own name. Empty: host of the interface with the agent port.",
+        "mcpLabel": "Address of the MCP interface",
+        "mcpHint": "Only needed if a reverse proxy publishes the MCP interface under its own name. Empty: bind address and port from the MCP settings."
       },
       "jobs": {
         "title": "Monitoring",
@@ -688,7 +692,7 @@
       },
       "create": "Add account",
       "createTitle": "New account",
-      "createSubtitle": "The account can sign in with this password right away. To let it set its own password, send an activation link afterwards.",
+      "createSubtitle": "Set the password yourself or invite the account by email; it then sets its own password through an activation link.",
       "createConfirm": "Add",
       "created": "{name} added",
       "edit": "Edit",
@@ -735,7 +739,13 @@
         "passwordRules": "The password does not meet the rules yet.",
         "confirm": "Repeat password",
         "confirmMismatch": "The passwords do not match.",
-        "roles": "Roles"
+        "role": "Role",
+        "access": "Access",
+        "accessPassword": "Set password yourself",
+        "accessPasswordHint": "The account can sign in with this password right away.",
+        "accessInvite": "Activation link by email",
+        "accessInviteHint": "The account sets its own password. The link goes to the email address and works once.",
+        "emailRequired": "The account needs an email address for the invitation."
       },
       "menu": {
         "invite": "Activation link",
@@ -2064,7 +2074,9 @@
       "ticket_invalid": "The console ticket is invalid or has expired",
       "too_many_consoles": "Too many consoles are already open on this server",
       "unsupported": "A console is not possible on this server",
-      "upgrade_failed": "The WebSocket connection could not be established"
+      "upgrade_failed": "The WebSocket connection could not be established",
+      "agent_outdated": "The lcm-agent of this server cannot open a console yet – please update it",
+      "agent_disabled": "The console is switched off on this server (lcm-agent terminal on)"
     },
     "time": {
       "clock_from_host": "In a container the system clock comes from the host and cannot be set here",
@@ -4829,7 +4841,8 @@
       "manual": "Without the package source",
       "manualLabel": "Load the agent directly from LCM and connect",
       "manualHint": "Downloads the program from this LCM. curl accepts the self-signed certificate only with the key of this LCM. Behind a reverse proxy the second attempt checks normally. For ARM64 servers replace amd64 with arm64.",
-      "after": "Once connected the server goes online and the first scan starts by itself."
+      "after": "Once connected the server goes online and the first scan starts by itself.",
+      "urlHint": "The token is valid for this server only. The agent connects via {url}; the server must be able to reach this address."
     },
     "routeros": {
       "userHint": "A RouterOS user with SSH access, ideally read-only, e.g. admin.",
@@ -5729,7 +5742,8 @@
             "label": "Block root login",
             "heading": "Block root login on {name}?",
             "help": "root can no longer log in directly via SSH (PermitRootLogin no). LCM logs in with its own user and is not affected.",
-            "done": "Root login on {name} blocked"
+            "done": "Root login on {name} blocked",
+            "helpAgent": "root can no longer sign in directly via SSH (PermitRootLogin no). LCM manages the server through the agent and is not affected."
           },
           "allow": {
             "label": "Allow root login",
@@ -5747,8 +5761,11 @@
             "label": "Change port",
             "heading": "Change the SSH port on {name}?",
             "help": "sshd then listens on the new port, and LCM only connects through it. Adjust clients and scripts that use the old port.",
-            "done": "{name} now uses SSH port {port}"
-          }
+            "done": "{name} now uses SSH port {port}",
+            "helpAgent": "sshd then listens on the new port; LCM checks this on the server itself. Whether the port is reachable from outside (firewall or NAT in front), LCM cannot see through the agent. Clients and scripts using the old port need updating."
+          },
+          "unknown": "current port",
+          "agentHint": "LCM reads the current port from the server when changing it; the new one must be free there."
         }
       },
       "dns": {

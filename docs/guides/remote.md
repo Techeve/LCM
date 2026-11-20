@@ -23,7 +23,7 @@ darüber. Die Wahl hängt an der Netz-Topologie:
 | Wechselnde/dynamische IP, Roaming (Notebook) | **Agent** |
 | Du willst keinen eingehenden SSH-Port öffnen | **Agent** |
 | Klassischer Server mit erreichbarem SSH | **SSH** |
-| SSH-Härtung, Zertifikats-Rotation, Reconnect nötig | **SSH** (diese Aktionen sind agentseitig ausgeblendet) |
+| Key-Rotation, Reconnect nötig | **SSH** (diese Aktionen sind agentseitig ausgeblendet) |
 
 Ein Server ist entweder das eine **oder** das andere - der Transport steht beim
 Anlegen fest.
@@ -244,11 +244,17 @@ WebSocket-Weiterleitung: für die Web-Konsole (`/api/v1/servers/<id>/terminal`)
 und den Ereigniskanal (`/api/v1/events`), über den die Oberfläche live bleibt.
 Ohne die Weiterleitung fehlen Konsole und Live-Anzeige (die nginx-Beispiele
 stehen unter [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/#nginx)).
-Zwei weitere Dinge gehören eingestellt:
+Diese Dinge gehören eingestellt:
 
 - **`public_base_url`** unter *Einstellungen → Allgemein*. Aktivierungs- und
   Rücksetz-Links werden daraus gebaut - ohne die Angabe zeigen sie auf die
   interne Adresse, die von außen niemand erreicht.
+- **Adresse für Agenten** (`public_agent_url`), ebenfalls unter
+  *Einstellungen → Allgemein*, wenn der Proxy den Agent-Port unter eigenem
+  Namen veröffentlicht (etwa `https://agent.example.com`). Der Assistent
+  *Server hinzufügen* baut den `enroll`-Befehl dann mit dieser Adresse statt
+  mit Host und Agent-Port der Oberfläche. Für die MCP-Schnittstelle gibt es
+  dort das gleiche Feld (`public_mcp_url`).
 - **`X-Forwarded-For`** durchreichen und in LCM `trust_proxy_header` setzen
   **samt** `trusted_proxies` (die Adresse des Proxys), sonst sieht die
   IP-Allowlist und die Sperre nach Fehlversuchen nur die Adresse des Proxys.
@@ -297,9 +303,30 @@ zusteht.
 
 Ist die Konsole für einen Server abgeschaltet, verschwindet nicht nur die
 Schaltfläche: Der Server weist auch direkte Aufrufe ab. Ohne Shell geht es
-ohnehin nicht - auf Demo-Servern, Synology-DSM-Geräten, Agent-Servern (der
-Agent-Transport führt keinen Strom) und auf Servern in Wartung wird die
-Konsole gar nicht erst angeboten.
+ohnehin nicht - auf Demo-Servern, Synology-DSM-Geräten und auf Servern in
+Wartung wird die Konsole gar nicht erst angeboten.
+
+### Konsole auf Agent-Servern
+
+Auf Agent-Servern läuft die Konsole durch die Agent-Verbindung, es braucht
+also keinen eingehenden SSH-Port. Der Agent öffnet eine **Login-Shell als root**
+in einem Pseudo-Terminal; Berechtigung, Schalter, Konsolen-Limit, Audit und
+Mitschnitt gelten wie bei SSH. Voraussetzung ist ein `lcm-agent` ab dieser
+Version - ältere Agents melden die Fähigkeit nicht, die Schaltfläche ist dann
+ausgegraut mit dem Hinweis, den Agent zu aktualisieren.
+
+Der Betreiber des Servers kann die Konsole dort selbst abschalten, unabhängig
+von LCM:
+
+```sh
+sudo lcm-agent terminal off     # abschalten
+sudo lcm-agent terminal on      # wieder erlauben (Standard)
+sudo lcm-agent terminal status
+```
+
+Der Schalter ist die Datei `/etc/lcm-agent/terminal-off`. Er gilt sofort, auch
+offene Konsolen enden bei der nächsten Eingabe. LCM zeigt ihn nach dem nächsten
+Verbindungsaufbau des Agents an (sofort: `systemctl restart lcm-agent`).
 
 ### Sitzungen
 
@@ -311,7 +338,8 @@ Konsole gar nicht erst angeboten.
   apt-Läufe aufeinander, wartet LCM auf die Paketverwaltung (siehe
   [APT-Cache](/guides/apt-cache/#wenn-apt-belegt-ist)).
 - **Ende**: *Beenden*, Schließen des Fensters, `exit` in der Shell oder
-  **15 Minuten ohne Eingabe** trennen die Sitzung samt SSH-Verbindung. Danach
+  **15 Minuten ohne Eingabe** trennen die Sitzung samt SSH-Verbindung (beim
+  Agent: samt Shell; reißt die Agent-Verbindung ab, endet sie ebenfalls). Danach
   muss die Konsole neu geöffnet werden. Öffnen und Schließen stehen im
   Audit-Log, die Sitzung selbst im SSH-Protokoll.
 
@@ -381,9 +409,25 @@ werden. Der neue Klartext wird wieder nur einmal angezeigt.
 
 ## Was am Agent-Server anders ist
 
-Ein Agent-Server hat kein SSH: SSH-spezifische Aktionen (SSH-Härtung,
-Zertifikats-/Key-Rotation, Reconnect) sind dort ausgeblendet bzw. werden mit einem
-klaren Hinweis abgewiesen. Der Agent läuft als **Root-Dienst** auf dem Zielsystem
+LCM meldet sich an einem Agent-Server nicht per SSH an. Was an dieser Verbindung
+hängt - Key-Rotation, Reconnect, Aufräumen beim Löschen, Portscan von außen - ist
+dort ausgeblendet bzw. wird mit einem klaren Hinweis abgewiesen. Den sshd des
+Servers verwaltet LCM trotzdem: SSH-Härtung, Root-Login, SSH-Port und SSH-2FA
+laufen als Skript über den Agent. Die Unterschiede:
+
+- **Portwechsel:** LCM liest den aktuellen Port vom Server, verlangt einen freien
+  neuen Port und prüft danach auf dem Server selbst, ob sshd dort lauscht. Ob der
+  Port von außen erreichbar ist (Firewall oder NAT davor), sieht LCM über den
+  Agent nicht. Steht der Port in `sshd_config` selbst oder einem fremden Drop-in,
+  bricht LCM ab: Port-Zeilen addieren sich, sshd lauschte sonst weiter auch auf
+  dem alten Port.
+- **SSH-Härtung:** Sie bricht ab, wenn auf dem Server kein SSH-Schlüssel
+  hinterlegt ist (root, `/home/*`, oder ein `AuthorizedKeysCommand`) - sonst käme
+  danach niemand mehr per SSH herein.
+- **SSH-2FA** nimmt keinen Benutzer aus, auch root nicht. Statt der
+  Aussperr-Probe prüft LCM die wirksame Konfiguration (`sshd -T`).
+
+Der Agent läuft als **Root-Dienst** auf dem Zielsystem
 (kein sudo-Wrapper nötig); alle übrigen Funktionen - Scans, Paket-Updates,
 Docker-Monitoring, Firewall, DNS, Sicherheits-Tools - laufen unverändert über den
 Agent-Transport. Auch die SSH-Protokollierung (Recorder) und die Kommando-Limits

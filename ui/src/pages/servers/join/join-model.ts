@@ -212,24 +212,29 @@ export interface AgentCommands {
 }
 
 /**
- * Befehle für den Agent. Der Agent verbindet sich auf seinem eigenen Port (gleicher Host wie im Browser); ohne
+ * Befehle für den Agent. Ist unter Einstellungen → Allgemein eine Agent-Adresse eingetragen (Reverse Proxy mit eigenem
+ * Namen), gilt sie. Sonst verbindet sich der Agent auf seinem eigenen Port (gleicher Host wie im Browser); ohne
  * eigenen Port fällt die Enroll-Adresse auf die Adresse der Oberfläche zurück. Das Binary kommt über die
  * Oberfläche (`/api/v1/agent/download/amd64`).
  */
 export function agentCommands(
   location: Pick<Location, 'origin' | 'protocol' | 'hostname'>,
-  agentPort: number,
+  listener: { port: number; url: string },
   token: string,
   downloadPin = '',
 ): AgentCommands {
-  const agentBase = agentPort > 0 ? `${location.protocol}//${location.hostname}:${agentPort}` : location.origin;
-  const enroll = `sudo lcm-agent enroll ${agentBase} ${token}`;
+  const enroll = `sudo lcm-agent enroll ${agentBase(location, listener)} ${token}`;
   return {
     repo: 'curl -fsSL https://repo.techeve.de/setup.sh | sudo sh',
     install: 'sudo apt install lcm-agent',
     enroll,
     manual: `${agentDownload(location.origin, downloadPin)} && sudo chmod +x /usr/local/bin/lcm-agent && ${enroll}`,
   };
+}
+
+function agentBase(location: Pick<Location, 'origin' | 'protocol' | 'hostname'>, listener: { port: number; url: string }): string {
+  if (listener.url) return listener.url;
+  return listener.port > 0 ? `${location.protocol}//${location.hostname}:${listener.port}` : location.origin;
 }
 
 /**

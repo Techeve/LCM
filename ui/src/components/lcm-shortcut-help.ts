@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit';
 import { icon } from './icons.js';
-import { modalClosed, modalOpened } from './modal-watch.js';
+import { BackdropClick, modalClosed, modalOpened } from './modal-watch.js';
 import { baseStyles, dialogStyles, emit } from './shared.js';
 
 export interface ShortcutRow {
@@ -129,6 +129,8 @@ export class LcmShortcutHelp extends LitElement {
     this.sections = [];
   }
 
+  private readonly backdrop = new BackdropClick();
+
   private get dialog(): HTMLDialogElement | null {
     return this.renderRoot.querySelector('dialog');
   }
@@ -161,7 +163,7 @@ export class LcmShortcutHelp extends LitElement {
   }
 
   private onBackdropClick(event: MouseEvent): void {
-    if (event.target === this.dialog) this.close();
+    if (this.backdrop.hit(event)) this.close();
   }
 
   private renderSection(section: ShortcutSection) {
@@ -175,7 +177,7 @@ export class LcmShortcutHelp extends LitElement {
   }
 
   override render() {
-    return html`<dialog aria-labelledby="title" @click=${this.onBackdropClick} @cancel=${this.onNativeCancel}>
+    return html`<dialog aria-labelledby="title" @pointerdown=${this.backdrop.down} @click=${this.onBackdropClick} @cancel=${this.onNativeCancel}>
       <div class="head">
         <h2 id="title">${this.heading}</h2>
         <button class="close" type="button" aria-label=${this.closeLabel} @click=${this.close}>${icon('x')}</button>

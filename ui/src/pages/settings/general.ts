@@ -22,6 +22,8 @@ const FIELDS: FieldSpec[] = [
   text('default_ssh_user', LIMITS.loginUser),
   int('default_ssh_port', 1, 65535),
   text('public_base_url', LIMITS.path, 'url'),
+  text('public_agent_url', LIMITS.path, 'url'),
+  text('public_mcp_url', LIMITS.path, 'url'),
   choice('browser_session_mode', () => 'memory'),
   int('session_ttl_minutes', 0, 43200),
   int('job_idle_timeout_minutes', 0, 1440),
@@ -148,6 +150,8 @@ export class SettingsGeneral extends SettingsForm {
       <div class="fields">
         ${this.input('public_base_url', t('settings.general.address.label'), { placeholder: 'https://lcm.example.com', mono: true, width: 'l', hint: t('settings.general.address.hint') })}
         ${String(draft.public_base_url).trim() === '' ? html`<lcm-notice tone="warn">${t('settings.general.address.warning')}</lcm-notice>` : nothing}
+        ${this.input('public_agent_url', t('settings.general.address.agentLabel'), { placeholder: 'https://agent.example.com', mono: true, width: 'l', hint: t('settings.general.address.agentHint') })}
+        ${this.input('public_mcp_url', t('settings.general.address.mcpLabel'), { placeholder: 'https://mcp.example.com', mono: true, width: 'l', hint: t('settings.general.address.mcpHint') })}
       </div>
     </lcm-card>`;
   }

@@ -822,6 +822,8 @@ type globalSettingsRequest struct {
 	PackagesStaleCriticalDays   *int    `json:"packages_stale_critical_days"`
 	Require2FARoles             *string `json:"require_2fa_roles"`
 	PublicBaseURL               *string `json:"public_base_url"`
+	PublicAgentURL              *string `json:"public_agent_url"`
+	PublicMCPURL                *string `json:"public_mcp_url"`
 	DNSServerPresets            *string `json:"dns_server_presets"`
 	DNSTestDomains              *string `json:"dns_test_domains"`
 	NTPServerPresets            *string `json:"ntp_server_presets"`
@@ -878,6 +880,8 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		PackagesStaleCriticalDays:   req.PackagesStaleCriticalDays,
 		Require2FARoles:             req.Require2FARoles,
 		PublicBaseURL:               req.PublicBaseURL,
+		PublicAgentURL:              req.PublicAgentURL,
+		PublicMCPURL:                req.PublicMCPURL,
 		DNSServerPresets:            req.DNSServerPresets,
 		DNSTestDomains:              req.DNSTestDomains,
 		NTPServerPresets:            req.NTPServerPresets,
@@ -1152,6 +1156,8 @@ func checkGlobalSettings(req globalSettingsRequest) error {
 		lineField{"cve_scan_cron", deref(req.CVEScanCron), maxCronLen},
 		lineField{"require_2fa_roles", deref(req.Require2FARoles), maxListLen},
 		lineField{"public_base_url", deref(req.PublicBaseURL), maxPathLen},
+		lineField{"public_agent_url", deref(req.PublicAgentURL), maxPathLen},
+		lineField{"public_mcp_url", deref(req.PublicMCPURL), maxPathLen},
 		lineField{"default_timezone", deref(req.DefaultTimezone), maxNameLen},
 		lineField{"crowdsec_console_key", deref(req.CrowdSecConsoleKey), maxPasswordLen},
 		lineField{"mail_username", deref(req.MailUsername), maxLoginUserLen},

@@ -3,9 +3,12 @@ package services
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/storage/repositories"
 )
 
@@ -309,13 +312,11 @@ type rootLoginPlan struct {
 	neutralize string // nur beim Sperren und nur, wenn die Prüfung zeigt, dass die Sperre nicht greift
 }
 
-// planSSHRootLogin prüft den Server und baut die Skripte. Nur klassische
-// SSH-Server: auf RouterOS gibt es kein sshd_config-Drop-in, auf
-// Agent-Servern keinen direkten sshd-Zugriff.
+// planSSHRootLogin prüft den Server und baut die Skripte. Nicht auf RouterOS:
+// dort gibt es kein sshd_config-Drop-in. Bei Agent-Servern ohne bekannten
+// SSH-Port (0) schreibt das Drop-in keine Port-Zeile, der Port bleibt also,
+// wie er ist.
 func planSSHRootLogin(server *domain.Server, disabled bool) (rootLoginPlan, error) {
-	if err := ensureSSHTransport(server); err != nil {
-		return rootLoginPlan{}, err
-	}
 	if err := ensureNotRouterOS(server); err != nil {
 		return rootLoginPlan{}, err
 	}
@@ -445,7 +446,7 @@ func (s *ServerService) ChangeSSHPort(scope repositories.AccessScope, id uint, n
 		return "", err
 	}
 	oldPort := plan.oldPort
-	if plan.unchanged() {
+	if !server.IsAgent() && plan.unchanged() {
 		return fmt.Sprintf("SSH-Port ist bereits %d - keine Änderung nötig.", newPort), nil
 	}
 
@@ -454,6 +455,34 @@ func (s *ServerService) ChangeSSHPort(scope repositories.AccessScope, id uint, n
 		return "", fmt.Errorf("verbindung: %w", err)
 	}
 	defer conn.Close()
+
+	// Agent-Server: Der gespeicherte Port ist nur die Vorgabe der Spalte (22),
+	// LCM hat sich dort nie per SSH angemeldet. Es gilt, worauf sshd wirklich
+	// lauscht - ein angenommener Port 22 öffnete im Übergang womöglich einen
+	// Port, der vorher zu war. Und der neue Port muss frei sein: Sonst
+	// bestünde die spätere Prüfung „lauscht dort etwas?" mit einem fremden
+	// Dienst.
+	if server.IsAgent() {
+		if server.SSHPort, err = currentSSHPort(conn, server); err != nil {
+			return "", err
+		}
+		if plan, err = planSSHPort(server, newPort); err != nil {
+			return "", err
+		}
+		oldPort = plan.oldPort
+		if plan.unchanged() {
+			if err := s.servers.UpdateFields(id, map[string]any{"ssh_port": newPort}); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("SSH-Port ist bereits %d - keine Änderung nötig.", newPort), nil
+		}
+		if err := ensurePortFree(conn, server, newPort); err != nil {
+			return "", err
+		}
+		if err := ensureNoForeignPortLines(conn, server); err != nil {
+			return "", err
+		}
+	}
 
 	var log strings.Builder
 	run := func(label, cmd string) (int, error) {
@@ -474,8 +503,10 @@ func (s *ServerService) ChangeSSHPort(scope repositories.AccessScope, id uint, n
 		return log.String(), fmt.Errorf("sshd-übergangskonfiguration fehlgeschlagen (exit %d): %w", code, err)
 	}
 
-	// 3. Verifizieren: erreicht LCM den Server auf dem neuen Port?
-	if err := s.verifySSHPort(server, newPort); err != nil {
+	// 3. Verifizieren: erreicht LCM den Server auf dem neuen Port? Beim Agent
+	// gibt es keine SSH-Verbindung von LCM - dort zählt, dass sshd auf dem
+	// Server selbst auf dem neuen Port lauscht.
+	if err := s.verifySSHPortFor(conn, server, newPort); err != nil {
 		// Rollback: sshd zurück auf den alten Stand, Firewall-Öffnung zurück.
 		_, _ = run("sshd: Rollback auf alten Port", plan.rollback)
 		if plan.firewallActive {
@@ -529,11 +560,8 @@ func (p sshPortPlan) firewallNarrow(server *domain.Server, expand func([]uint) (
 }
 
 // planSSHPort prüft Server und Port und baut die Skripte des Wechsels.
-// Nur klassische SSH-Server (siehe planSSHRootLogin).
+// Nicht auf RouterOS (siehe planSSHRootLogin).
 func planSSHPort(server *domain.Server, newPort int) (sshPortPlan, error) {
-	if err := ensureSSHTransport(server); err != nil {
-		return sshPortPlan{}, err
-	}
 	if err := ensureNotRouterOS(server); err != nil {
 		return sshPortPlan{}, err
 	}
@@ -561,6 +589,127 @@ func planSSHPort(server *domain.Server, newPort int) (sshPortPlan, error) {
 		plan.firewallClose = fw.removePortCmd(newPort)
 	}
 	return plan, nil
+}
+
+func (s *ServerService) verifySSHPortFor(conn sshx.Conn, server *domain.Server, port int) error {
+	if server.IsAgent() {
+		return verifySSHPortListening(conn, server, port)
+	}
+	return s.verifySSHPort(server, port)
+}
+
+// currentSSHPort liest den Port, auf dem sshd laut wirksamer Konfiguration
+// lauscht (`sshd -T`). Mehrere Ports kann LCM nicht sicher umstellen.
+func currentSSHPort(conn sshx.Conn, server *domain.Server) (int, error) {
+	out, err := sshdPorts(conn, server)
+	if err != nil {
+		return 0, err
+	}
+	return singleSSHPort(out)
+}
+
+// sshdPorts liest die Port-Zeilen der wirksamen sshd-Konfiguration. Die
+// Fehlerausgabe von `sshd -T` bleibt drin: Ohne Port-Zeile ist sie die
+// einzige Auskunft, woran es lag.
+func sshdPorts(conn sshx.Conn, server *domain.Server) (string, error) {
+	out, _, err := conn.Run(privRun(server, "mkdir -p /run/sshd 2>/dev/null; sshd -T 2>&1"))
+	if err != nil {
+		return "", fmt.Errorf("ssh-port lesen: %w", err)
+	}
+	return out, nil
+}
+
+// parseSSHPorts holt die Ports aus der Ausgabe von `sshd -T`.
+func parseSSHPorts(out string) []int {
+	var ports []int
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || !strings.EqualFold(fields[0], "port") {
+			continue
+		}
+		if p, err := strconv.Atoi(fields[1]); err == nil {
+			ports = append(ports, p)
+		}
+	}
+	return ports
+}
+
+func singleSSHPort(out string) (int, error) {
+	ports := parseSSHPorts(out)
+	switch len(ports) {
+	case 0:
+		return 0, fmt.Errorf("ssh-port nicht ermittelbar, `sshd -T` nennt keinen Port - ist ein SSH-Dienst installiert? Ausgabe: %s", strings.TrimSpace(firstLine(out)))
+	case 1:
+		return ports[0], nil
+	default:
+		return 0, fmt.Errorf("sshd lauscht auf mehreren Ports %v - LCM stellt nur einen einzelnen Port um", ports)
+	}
+}
+
+// verifySSHPortListening prüft auf dem Server selbst, ob auf dem Port ein
+// Dienst lauscht (bis zu fünf Sekunden, der Neustart braucht einen Moment).
+// Ob der Port von außen erreichbar ist (Firewall vor dem Server, NAT), kann
+// LCM über den Agent nicht sehen.
+//
+// Dass es sshd ist, belegt zweierlei: Der Port war vor dem Wechsel frei
+// (ensurePortFree), und die wirksame sshd-Konfiguration nennt ihn.
+func verifySSHPortListening(conn sshx.Conn, server *domain.Server, port int) error {
+	script := fmt.Sprintf("for i in 1 2 3 4 5; do %s && exit 0; sleep 1; done; exit 1", listensOnScript(port))
+	if _, code, err := conn.Run(privRun(server, script)); err != nil || code != 0 {
+		return fmt.Errorf("auf dem Server lauscht nichts auf Port %d (exit %d): %w", port, code, err)
+	}
+	out, err := sshdPorts(conn, server)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(parseSSHPorts(out), port) {
+		return fmt.Errorf("sshd nennt Port %d nicht in seiner wirksamen Konfiguration", port)
+	}
+	return nil
+}
+
+// ensurePortFree weist einen Port ab, auf dem schon ein Dienst lauscht.
+func ensurePortFree(conn sshx.Conn, server *domain.Server, port int) error {
+	out, code, err := conn.Run(privRun(server, listensOnScript(port)))
+	switch {
+	case err != nil:
+		return fmt.Errorf("port %d prüfen: %w", port, err)
+	case code == 0:
+		return fmt.Errorf("auf Port %d lauscht auf dem Server bereits ein anderer Dienst - wähle einen freien Port", port)
+	case code != 1:
+		return fmt.Errorf("lauschende Ports auf dem Server nicht prüfbar: %s", strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// listensOnScript endet mit 0, wenn auf dem Server ein TCP-Socket auf dem Port
+// lauscht, mit 1, wenn nicht, und mit 2, wenn weder ss noch netstat da ist -
+// ohne Werkzeug wäre jeder Port „frei". `[:.]` vor und Leerraum nach der
+// Zahl: 22 trifft nicht 2222. Ohne `-H`: ältere ss kennen es nicht, und die
+// Kopfzeile trifft das Muster nicht.
+func listensOnScript(port int) string {
+	return fmt.Sprintf("{ if command -v ss >/dev/null 2>&1; then L=$(ss -ltn); "+
+		"elif command -v netstat >/dev/null 2>&1; then L=$(netstat -ltn); "+
+		"else echo 'weder ss noch netstat vorhanden' >&2; exit 2; fi; "+
+		"printf '%%s\\n' \"$L\" | grep -qE '[:.]%d[[:space:]]'; }", port)
+}
+
+// ensureNoForeignPortLines weist den Portwechsel ab, wenn ein Port außerhalb
+// des LCM-Drop-ins steht (Hauptdatei oder fremdes Drop-in). Port-Zeilen
+// summieren sich in sshd: Der alte Port bliebe neben dem neuen offen, und LCM
+// schlösse ihn in der Firewall, während sshd dort weiter lauscht.
+func ensureNoForeignPortLines(conn sshx.Conn, server *domain.Server) error {
+	script := fmt.Sprintf("for f in /etc/ssh/sshd_config /usr/etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do "+
+		"[ \"$f\" = %s ] && continue; [ -f \"$f\" ] && grep -HiE '^[[:space:]]*Port[[:space:]]' \"$f\"; done; true", sshOptionsDropinPath)
+	out, _, err := conn.Run(privRun(server, script))
+	if err != nil {
+		return fmt.Errorf("sshd-konfiguration lesen: %w", err)
+	}
+	if lines := strings.TrimSpace(out); lines != "" {
+		return fmt.Errorf("der SSH-Port steht auch außerhalb von LCM (%s) - sshd lauschte sonst weiter auf dem alten Port. "+
+			"Zeile dort entfernen oder auskommentieren, dann erneut umstellen", strings.ReplaceAll(lines, "\n", "; "))
+	}
+	return nil
 }
 
 // verifySSHPort baut eine kurze Test-Key-Verbindung auf dem angegebenen Port

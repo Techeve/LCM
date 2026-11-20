@@ -31,7 +31,7 @@ richtige.
 
 ## Variante 1: Debian-/Ubuntu-Paket (empfohlen)
 
-**Am einfachsten über das TechEve-APT-Repository** - einmal einrichten, danach
+**Am einfachsten über das Techeve-APT-Repository** - einmal einrichten, danach
 installieren und dauerhaft per `apt upgrade` aktuell halten:
 
 ```sh

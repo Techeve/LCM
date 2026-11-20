@@ -18,6 +18,7 @@ import { groupStyles } from '../../components/button-styles';
 import { baseStyles } from '../../components/shared';
 import {
   activeJobUrl,
+  agentConsoleBlock,
   hasConsole,
   dsmUrl,
   isApiDevice,
@@ -158,6 +159,11 @@ export class ServerDetail extends LitElement {
         font-size: var(--fs-s);
       }
       /* Kompakte Knöpfe wie die kleine Knopfleiste der bisherigen Oberfläche: alles passt auf eine Zeile. */
+      /* Hält den Hinweis eines ausgegrauten Knopfs: der Knopf selbst nimmt dann keine Maus an. */
+      .bar .blocked {
+        display: inline-flex;
+        cursor: not-allowed;
+      }
       .bar {
         --btn-h: 2rem;
         --btn-px: 0.65rem;
@@ -386,19 +392,27 @@ export class ServerDetail extends LitElement {
     return html`<lcm-badge tone="info" title=${t('serverDetail.header.consoleOpenTitle', { who })}>${t('serverDetail.header.consoleOpen')}</lcm-badge>`;
   }
 
+  /** Terminal-Knopf; bei einem Agent-Server ohne Konsole ausgegraut mit dem Grund. */
+  #terminalButton(server: ServerItem): TemplateResult | typeof nothing {
+    if (!auth.can('servers:console')) return nothing;
+    if (hasConsole(server)) return html`<lcm-button icon="terminal" @click=${() => router.setQuery({ terminal: 1 })}>${t('servers.bar.terminal.label')}</lcm-button>`;
+    const blocked = agentConsoleBlock(server);
+    if (!blocked) return nothing;
+    return html`<span class="blocked" title=${t(blocked)}><lcm-button icon="terminal" disabled>${t('servers.bar.terminal.label')}</lcm-button></span>`;
+  }
+
   /** Eine Knopfleiste: Terminal, Alles aktualisieren, SSH-Härtung, Firewall, Einstellungen und das Menü „Aktionen“. */
   #renderBar(server: ServerItem): TemplateResult {
     const write = auth.can('servers:write');
     const device = isApiDevice(server);
-    const ssh = server.transport !== 'agent' && !device;
+    // SSH-Härtung gibt es auch für Agent-Server: das Skript läuft dort als root über den Agent.
+    const ssh = !device;
     const busy = this.#active.data !== null && this.#active.data !== undefined;
     return html`<div class="bar btn-group" role="group" aria-label=${t('serverDetail.more.label')}>
       ${server.os_id === 'dsm'
         ? html`<lcm-button icon="external" href=${dsmUrl(server)} target="_blank" title=${t('serverDetail.bar.openDsmHelp')}>${t('serverDetail.bar.openDsm')}</lcm-button>`
         : nothing}
-      ${auth.can('servers:console') && hasConsole(server)
-        ? html`<lcm-button icon="terminal" @click=${() => router.setQuery({ terminal: 1 })}>${t('servers.bar.terminal.label')}</lcm-button>`
-        : nothing}
+      ${this.#terminalButton(server)}
       ${write
         ? html`<lcm-srv-action
             no-confirm

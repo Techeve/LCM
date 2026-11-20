@@ -388,10 +388,14 @@
       },
       "address": {
         "title": "Öffentliche Adresse",
-        "subtitle": "Aus ihr baut LCM die Links in E-Mails.",
-        "label": "Adresse dieser Installation",
+        "subtitle": "Unter diesen Adressen ist LCM von außen erreichbar. Aus der ersten baut LCM die Links in E-Mails.",
+        "label": "Adresse der Oberfläche",
         "hint": "Nur Schema, Host und Port, ohne Pfad.",
-        "warning": "Nicht gesetzt: Links in E-Mails entstehen aus der lokalen Konfiguration und sind von außen womöglich nicht erreichbar. LCM leitet die Adresse bewusst nicht aus der Anfrage ab, sonst ließe sich ein Passwort-Reset-Link auf eine fremde Domain lenken."
+        "warning": "Nicht gesetzt: Links in E-Mails entstehen aus der lokalen Konfiguration und sind von außen womöglich nicht erreichbar. LCM leitet die Adresse bewusst nicht aus der Anfrage ab, sonst ließe sich ein Passwort-Reset-Link auf eine fremde Domain lenken.",
+        "agentLabel": "Adresse für Agenten",
+        "agentHint": "Nur nötig, wenn ein Reverse Proxy den Agent-Port unter eigenem Namen veröffentlicht. Leer: Host der Oberfläche mit dem Agent-Port.",
+        "mcpLabel": "Adresse der MCP-Schnittstelle",
+        "mcpHint": "Nur nötig, wenn ein Reverse Proxy die MCP-Schnittstelle unter eigenem Namen veröffentlicht. Leer: Bind-Adresse und Port aus den MCP-Einstellungen."
       },
       "jobs": {
         "title": "Überwachung",
@@ -688,7 +692,7 @@
       },
       "create": "Konto anlegen",
       "createTitle": "Neues Konto",
-      "createSubtitle": "Das Konto kann sich sofort mit diesem Passwort anmelden. Soll es sein Passwort selbst setzen, schick danach einen Aktivierungslink.",
+      "createSubtitle": "Vergib das Passwort selbst oder lade das Konto per E-Mail ein; dann setzt es sein Passwort über einen Aktivierungslink.",
       "createConfirm": "Anlegen",
       "created": "{name} angelegt",
       "edit": "Bearbeiten",
@@ -735,7 +739,13 @@
         "passwordRules": "Das Passwort erfüllt die Regeln noch nicht.",
         "confirm": "Passwort wiederholen",
         "confirmMismatch": "Die Passwörter stimmen nicht überein.",
-        "roles": "Rollen"
+        "role": "Rolle",
+        "access": "Zugang",
+        "accessPassword": "Passwort selbst vergeben",
+        "accessPasswordHint": "Das Konto kann sich sofort mit diesem Passwort anmelden.",
+        "accessInvite": "Aktivierungslink per E-Mail",
+        "accessInviteHint": "Das Konto setzt sein Passwort selbst. Der Link geht an die E-Mail-Adresse und gilt einmal.",
+        "emailRequired": "Für die Einladung braucht das Konto eine E-Mail-Adresse."
       },
       "menu": {
         "invite": "Aktivierungslink",
@@ -2064,7 +2074,9 @@
       "ticket_invalid": "Das Konsolen-Ticket ist ungültig oder abgelaufen",
       "too_many_consoles": "Auf diesem Server sind schon zu viele Konsolen offen",
       "unsupported": "Auf diesem Server ist keine Konsole möglich",
-      "upgrade_failed": "Die WebSocket-Verbindung konnte nicht aufgebaut werden"
+      "upgrade_failed": "Die WebSocket-Verbindung konnte nicht aufgebaut werden",
+      "agent_outdated": "Der lcm-agent dieses Servers kann noch keine Konsole – bitte aktualisieren",
+      "agent_disabled": "Die Konsole ist auf diesem Server abgeschaltet (lcm-agent terminal on)"
     },
     "time": {
       "clock_from_host": "Die Systemuhr kommt in einem Container vom Host und ist hier nicht einstellbar",
@@ -4829,7 +4841,8 @@
       "manual": "Ohne Paketquelle",
       "manualLabel": "Agent direkt von LCM laden und verbinden",
       "manualHint": "Lädt das Programm von diesem LCM. Das selbstsignierte Zertifikat nimmt curl nur mit dem Schlüssel dieses LCM an. Hinter einem Reverse-Proxy prüft der zweite Versuch ganz normal. Für ARM64-Server amd64 durch arm64 ersetzen.",
-      "after": "Nach dem Verbinden geht der Server online und der erste Scan startet von selbst."
+      "after": "Nach dem Verbinden geht der Server online und der erste Scan startet von selbst.",
+      "urlHint": "Das Token gilt nur für diesen Server. Der Agent verbindet sich über {url}; die Adresse muss vom Server aus erreichbar sein."
     },
     "routeros": {
       "userHint": "Ein möglichst nur lesender RouterOS-Benutzer mit SSH-Zugang, etwa admin.",
@@ -5729,7 +5742,8 @@
             "label": "Root-Login sperren",
             "heading": "Root-Login auf {name} sperren?",
             "help": "root kann sich danach nicht mehr direkt per SSH anmelden (PermitRootLogin no). LCM meldet sich mit seinem eigenen Benutzer an und ist nicht betroffen.",
-            "done": "Root-Login auf {name} gesperrt"
+            "done": "Root-Login auf {name} gesperrt",
+            "helpAgent": "root kann sich danach nicht mehr direkt per SSH anmelden (PermitRootLogin no). LCM verwaltet den Server über den Agent und ist nicht betroffen."
           },
           "allow": {
             "label": "Root-Login erlauben",
@@ -5747,8 +5761,11 @@
             "label": "Port umstellen",
             "heading": "SSH-Port auf {name} umstellen?",
             "help": "sshd lauscht danach auf dem neuen Port, und LCM verbindet sich nur noch darüber. Clients und Skripte, die den alten Port nutzen, musst du anpassen.",
-            "done": "{name} nutzt jetzt SSH-Port {port}"
-          }
+            "done": "{name} nutzt jetzt SSH-Port {port}",
+            "helpAgent": "sshd lauscht danach auf dem neuen Port; LCM prüft das auf dem Server selbst. Ob der Port von außen erreichbar ist (Firewall oder NAT davor), sieht LCM über den Agent nicht. Clients und Skripte, die den alten Port nutzen, musst du anpassen."
+          },
+          "unknown": "bisheriger Port",
+          "agentHint": "LCM liest den aktuellen Port beim Umstellen vom Server; der neue muss dort frei sein."
         }
       },
       "dns": {

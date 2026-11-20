@@ -166,6 +166,9 @@ export class LcmMenu extends LitElement {
         box-shadow: var(--elev-2);
         font-size: var(--fs-s);
         line-height: 1.45;
+        /* Steht das Menü in einer Tabellenzelle, erbt es "nowrap" und die Ausrichtung der Spalte - die Erklärung bricht trotzdem um und steht linksbündig. */
+        white-space: normal;
+        text-align: start;
         pointer-events: none;
       }
       .tip.end {

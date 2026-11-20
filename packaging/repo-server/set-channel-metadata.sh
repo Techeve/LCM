@@ -27,7 +27,7 @@
 #   REPO_USER  API user (NOT a customer subscription key)
 #   REPO_PASS  API password
 # Optional:
-#   ORIGIN     Origin field for every channel (default: TechEve)
+#   ORIGIN     Origin field for every channel (default: Techeve)
 #   GPG_KEY    signing key                    (default: repo@techeve.de)
 #
 # Usage:
@@ -42,7 +42,7 @@ set -eu
 : "${REPO_URL:?REPO_URL required}"
 : "${REPO_USER:?REPO_USER required}"
 : "${REPO_PASS:?REPO_PASS required}"
-ORIGIN="${ORIGIN:-TechEve}"
+ORIGIN="${ORIGIN:-Techeve}"
 GPG_KEY="${GPG_KEY:-repo@techeve.de}"
 
 # channel definitions: <name> <publish-prefix> <suite> <label>

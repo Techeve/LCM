@@ -17,6 +17,7 @@ import (
 type SystemService struct {
 	startedAt time.Time
 	agentPort int
+	agentURL  func() string
 }
 
 func NewSystemService() *SystemService {
@@ -28,6 +29,13 @@ func NewSystemService() *SystemService {
 // 0 = kein dedizierter Agent-Listener aktiv.
 func (s *SystemService) WithAgentPort(port int) *SystemService {
 	s.agentPort = port
+	return s
+}
+
+// WithAgentURL hinterlegt, woher die öffentliche Adresse des Agent-Ports kommt
+// (Einstellung public_agent_url). Gesetzt ersetzt sie in der UI Host und Port.
+func (s *SystemService) WithAgentURL(fn func() string) *SystemService {
+	s.agentURL = fn
 	return s
 }
 
@@ -50,6 +58,9 @@ type SystemInfo struct {
 	// Die UI baut daraus die Enroll-URL (gleicher Host wie im Browser, aber
 	// dieser Port). 0 = kein dedizierter Agent-Listener aktiv.
 	AgentPort int `json:"agent_port"`
+	// AgentURL ist die öffentliche Adresse des Agent-Ports, wenn ein Reverse
+	// Proxy ihn unter eigenem Namen veröffentlicht; leer = Host und AgentPort.
+	AgentURL string `json:"agent_url"`
 }
 
 // Info sammelt Version und Laufzeitdaten der Anwendung.
@@ -64,5 +75,13 @@ func (s *SystemService) Info() SystemInfo {
 		Platform:      runtime.GOOS + "/" + runtime.GOARCH,
 		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
 		AgentPort:     s.agentPort,
+		AgentURL:      s.publicAgentURL(),
 	}
+}
+
+func (s *SystemService) publicAgentURL() string {
+	if s.agentURL == nil {
+		return ""
+	}
+	return s.agentURL()
 }

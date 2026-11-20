@@ -648,6 +648,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		WithDefaultBackupDir(defaultBackupDir).
 		WithRoles(roleRepo).
 		WithFallbackBaseURL(fallbackBaseURL(cfg, dev))
+	systemService.WithAgentURL(settingsService.PublicAgentURL)
 
 	// Wird der LCM-Host aus der Verwaltung entfernt, darf er sich nicht beim
 	// nächsten Paket-Update erneut selbst aufnehmen. Erst hier verdrahtbar:

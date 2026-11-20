@@ -9139,7 +9139,7 @@ paths:
       summary: Snapshot of the database measurement.
       operationId: dbCtrl_Snapshot
       description: |-
-        Counters and histograms since the process started: wait for the write lock (`lock_wait`, duration of `BEGIN IMMEDIATE`), duration of transactions and of statements per table and kind (`statements`, buckets in `statement_bounds_ms`), the 50 slowest statements without values, the ten longest transactions with their call site, lock errors (`errors.busy`, `errors.locked`), file and WAL size with `page_count` and `freelist_count`, rows per table (counted hourly), the latest runs such as checkpoint, VACUUM, `VACUUM INTO` and system jobs, plus heap, goroutines, open files and pool statistics. The counters live in memory and start at zero on every start (`started_at`). Source for `lcm-probe`.
+        Counters and histograms since the process started: wait for the write lock (`lock_wait`, duration of `BEGIN IMMEDIATE`), duration of transactions and of statements per table and kind (`statements`, buckets in `statement_bounds_ms`), the 50 slowest statements without values, the ten longest transactions with their call site, lock errors (`errors.busy`, `errors.locked`), file and WAL size with `page_count` and `freelist_count`, rows per table (counted hourly), the latest runs such as checkpoint, VACUUM, `VACUUM INTO` and system jobs, plus heap, goroutines, open files and pool statistics. The counters live in memory and start at zero on every start (`started_at`).
 
         Required permission: `settings:manage`, also via API key with scope `read`.
       responses:
@@ -9474,6 +9474,9 @@ paths:
                   type: array
                   items:
                     type: string
+                invite:
+                  type: boolean
+                  description: 'Create the account without a password; the user sets it via an activation link (`/api/v1/users/activation-links/generate`). `password` is ignored then.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []

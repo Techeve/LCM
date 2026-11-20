@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit';
 import { icon } from './icons.js';
-import { modalClosed, modalOpened } from './modal-watch.js';
+import { BackdropClick, modalClosed, modalOpened } from './modal-watch.js';
 import { baseStyles, dialogStyles, emit } from './shared.js';
 
 /**
@@ -130,6 +130,8 @@ export class LcmModal extends LitElement {
     this.closeLabel = '';
   }
 
+  private readonly backdrop = new BackdropClick();
+
   private get dialog(): HTMLDialogElement | null {
     return this.renderRoot.querySelector('dialog');
   }
@@ -163,7 +165,8 @@ export class LcmModal extends LitElement {
     return html`<dialog
       tabindex="-1"
       aria-labelledby="title"
-      @click=${(e: MouseEvent) => e.target === this.dialog && this.close()}
+      @pointerdown=${this.backdrop.down}
+      @click=${(e: MouseEvent) => this.backdrop.hit(e) && this.close()}
       @cancel=${(e: Event) => {
         e.preventDefault();
         this.close();

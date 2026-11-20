@@ -1,4 +1,4 @@
-import { hasConsole } from './servers';
+import { agentConsoleBlock, hasConsole } from './servers';
 import { describe, expect, it } from 'vitest';
 import { normaliseServer } from './servers';
 import {
@@ -124,16 +124,26 @@ describe('Serverdetail: App-Aktionen', () => {
 });
 
 describe('hasConsole', () => {
-  const server = { os_id: 'debian', transport: 'ssh', console_disabled: false };
+  const server = { os_id: 'debian', transport: 'ssh', console_disabled: false, agent_capabilities: [] as string[], agent_version: '2.1.0' };
 
-  it('gibt es über SSH', () => {
+  it('gibt es über SSH und über einen Agenten, der sie meldet', () => {
     expect(hasConsole(server)).toBe(true);
+    expect(hasConsole({ ...server, transport: 'agent', agent_capabilities: ['tty'] })).toBe(true);
   });
 
-  it('gibt es nicht über den Agenten, auf Geräten und wenn sie abgeschaltet ist', () => {
+  it('gibt es nicht über ältere oder abgeschaltete Agenten, auf Geräten und wenn sie abgeschaltet ist', () => {
     expect(hasConsole({ ...server, transport: 'agent' })).toBe(false);
+    expect(hasConsole({ ...server, transport: 'agent', agent_capabilities: ['tty-off'] })).toBe(false);
     expect(hasConsole({ ...server, os_id: 'routeros' })).toBe(false);
     expect(hasConsole({ ...server, console_disabled: true })).toBe(false);
+  });
+
+  it('nennt beim Agenten den Grund', () => {
+    expect(agentConsoleBlock({ ...server, transport: 'agent' })).toBe('errors.terminal.agent_outdated');
+    expect(agentConsoleBlock({ ...server, transport: 'agent', agent_capabilities: ['tty-off'] })).toBe('errors.terminal.agent_disabled');
+    expect(agentConsoleBlock({ ...server, transport: 'agent', agent_capabilities: ['tty'] })).toBe('');
+    expect(agentConsoleBlock(server)).toBe('');
+    expect(agentConsoleBlock({ ...server, transport: 'agent', agent_version: '' })).toBe('');
   });
 });
 

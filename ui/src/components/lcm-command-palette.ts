@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { icon, type IconName } from './icons.js';
-import { modalClosed, modalOpened } from './modal-watch.js';
+import { BackdropClick, modalClosed, modalOpened } from './modal-watch.js';
 import { baseStyles, dialogStyles, emit, uid } from './shared.js';
 import { LIMITS } from '../lib/validate.js';
 
@@ -184,6 +184,8 @@ export class LcmCommandPalette extends LitElement {
     this._active = 0;
   }
 
+  private readonly backdrop = new BackdropClick();
+
   private get dialog(): HTMLDialogElement | null {
     return this.renderRoot.querySelector('dialog');
   }
@@ -257,7 +259,7 @@ export class LcmCommandPalette extends LitElement {
   }
 
   private onBackdropClick(event: MouseEvent): void {
-    if (event.target === this.dialog) this.close();
+    if (this.backdrop.hit(event)) this.close();
   }
 
   private renderOption(result: PaletteResult, index: number) {
@@ -289,7 +291,7 @@ export class LcmCommandPalette extends LitElement {
 
   override render() {
     const hasResults = this.results.length > 0;
-    return html`<dialog aria-label=${this.label} @click=${this.onBackdropClick} @cancel=${this.onNativeCancel} @keydown=${this.onKeyDown}>
+    return html`<dialog aria-label=${this.label} @pointerdown=${this.backdrop.down} @click=${this.onBackdropClick} @cancel=${this.onNativeCancel} @keydown=${this.onKeyDown}>
       <div class="search">
         ${icon('search')}
         <input

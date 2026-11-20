@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rollt die gebauten LCM-.deb-Pakete (amd64 + arm64 aus bin/) auf den TechEve-
+# Rollt die gebauten LCM-.deb-Pakete (amd64 + arm64 aus bin/) auf den Techeve-
 # repository server (aptly): upload -> add to the repo -> re-publish the
 # neu publizieren und signieren. Danach ist LCM per `apt install lcm` aus dem
 # eigenen Repo installier- und aktualisierbar.
@@ -32,22 +32,34 @@ GPG_KEY="${GPG_KEY:-repo@techeve.de}"
 shopt -s nullglob
 DEBS=(bin/*.deb)
 
-# Der lcm-agent gehört NICHT in den Enterprise-Kanal. Dieser Kanal ist
-# zugangsbeschränkt und wird ausschließlich auf dem LCM-Server selbst
-# eingerichtet; die verwalteten Maschinen, auf denen der Agent läuft, kommen
-# nie an ihn heran und beziehen ihn immer aus dem Community-Kanal. Ein
-# Agent-Paket hier wäre also von vornherein unerreichbar - und würde die
-# Erwartung wecken, es gäbe einen eigenen Enterprise-Agenten.
-if [ "${PUBLISH_PREFIX}" = "enterprise" ]; then
-  FILTERED=()
-  for deb in "${DEBS[@]}"; do
-    case "$(basename "$deb")" in
-      lcm-agent_*) echo "   (übersprungen, gehört nicht in den Enterprise-Kanal: $(basename "$deb"))" ;;
-      *) FILTERED+=("$deb") ;;
-    esac
-  done
-  DEBS=("${FILTERED[@]}")
-fi
+# Nicht jedes Paket gehört in jeden Kanal:
+#
+# - lcm-agent NICHT in den Enterprise-Kanal. Dieser Kanal ist zugangsbeschränkt
+#   und wird ausschließlich auf dem LCM-Server selbst eingerichtet; die
+#   verwalteten Maschinen, auf denen der Agent läuft, kommen nie an ihn heran
+#   und beziehen ihn immer aus dem Community-Kanal. Ein Agent-Paket hier wäre
+#   also von vornherein unerreichbar - und würde die Erwartung wecken, es gäbe
+#   einen eigenen Enterprise-Agenten.
+# - lcm-probe NUR in den Beta-Kanal. Es ist Techeves eigenes Messwerkzeug für
+#   den LCM-Host, kein Produkt für Kunden.
+FILTERED=()
+for deb in "${DEBS[@]}"; do
+  name="$(basename "$deb")"
+  case "$name" in
+    lcm-agent_*)
+      if [ "${PUBLISH_PREFIX}" = "enterprise" ]; then
+        echo "   (übersprungen, gehört nicht in den Enterprise-Kanal: ${name})"
+        continue
+      fi ;;
+    lcm-probe_*)
+      if [ "${DISTRO}" != "beta" ]; then
+        echo "   (übersprungen, lcm-probe liegt nur im Beta-Kanal: ${name})"
+        continue
+      fi ;;
+  esac
+  FILTERED+=("$deb")
+done
+DEBS=("${FILTERED[@]}")
 
 [ "${#DEBS[@]}" -gt 0 ] || { echo "Keine .deb-Dateien in bin/ gefunden"; exit 1; }
 

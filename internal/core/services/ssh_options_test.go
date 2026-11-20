@@ -205,3 +205,110 @@ func TestHelperSSHOptionsKeepsPort22InTransition(t *testing.T) {
 		t.Fatal("der Helper lässt Port 22 im Übergang weg")
 	}
 }
+
+func TestSingleSSHPort(t *testing.T) {
+	if p, err := singleSSHPort("port 2222\nlistenaddress 0.0.0.0:2222\n"); err != nil || p != 2222 {
+		t.Errorf("ein port: %d, %v", p, err)
+	}
+	if _, err := singleSSHPort("Missing privilege separation directory: /run/sshd"); err == nil || !strings.Contains(err.Error(), "privilege") {
+		t.Errorf("ohne port: fehler ohne ausgabe: %v", err)
+	}
+	if _, err := singleSSHPort("port 22\nport 2222\n"); err == nil {
+		t.Error("mehrere ports: kein fehler")
+	}
+}
+
+// Agent-Server ohne bekannten Port: das Root-Login-Drop-in setzt keinen Port.
+func TestRootLoginPlanAgentOhnePort(t *testing.T) {
+	plan, err := planSSHRootLogin(&domain.Server{Transport: domain.TransportAgent}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plan.apply, "Port ") {
+		t.Errorf("drop-in setzt einen port: %s", plan.apply)
+	}
+	if !strings.Contains(plan.apply, "PermitRootLogin no") {
+		t.Errorf("drop-in ohne root-sperre: %s", plan.apply)
+	}
+}
+
+// Agent-Portwechsel: Der aktuelle Port kommt aus `sshd -T`; der neue muss
+// vorher frei sein und danach lauschen, und sshd muss ihn selbst nennen.
+func TestAgentSSHPortProbes(t *testing.T) {
+	agent := &domain.Server{Transport: domain.TransportAgent, ServiceUser: "root"}
+	sshdPorts, listening := "port 2200\n", []string{"2200"}
+	conn := &scriptedConn{handler: func(cmd, _ string) (string, int) {
+		if strings.Contains(cmd, "sshd -T") {
+			return sshdPorts, 0
+		}
+		for _, p := range listening {
+			if strings.Contains(cmd, "[:.]"+p+"[[:space:]]") {
+				return "", 0
+			}
+		}
+		return "", 1
+	}}
+	if port, err := currentSSHPort(conn, agent); err != nil || port != 2200 {
+		t.Errorf("aktueller port: %d, %v", port, err)
+	}
+	if err := ensurePortFree(conn, agent, 2200); err == nil {
+		t.Error("belegter port als frei gemeldet")
+	}
+	if err := ensurePortFree(conn, agent, 2222); err != nil {
+		t.Errorf("freier port abgelehnt: %v", err)
+	}
+	if err := verifySSHPortListening(conn, agent, 2222); err == nil {
+		t.Error("nicht lauschender port angenommen")
+	}
+	listening = append(listening, "2222")
+	if err := verifySSHPortListening(conn, agent, 2222); err == nil {
+		t.Error("port angenommen, den sshd nicht nennt")
+	}
+	sshdPorts = "port 2200\nport 2222\n"
+	if err := verifySSHPortListening(conn, agent, 2222); err != nil {
+		t.Errorf("lauschender sshd-port abgelehnt: %v", err)
+	}
+}
+
+// Agent-Server: vor der Härtung muss irgendwo ein SSH-Schlüssel liegen, sonst
+// käme nach der Härtung niemand mehr per SSH herein. Beim SSH-Server meldet
+// sich LCM selbst mit Key an, die Prüfung entfällt dort.
+func TestHardenSSHAgentPrueftSchluessel(t *testing.T) {
+	agent, err := planHardenSSH(&domain.Server{Transport: domain.TransportAgent, ServiceUser: "root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(agent, sshKeyPresentScript) {
+		t.Errorf("agent-härtung ohne schlüssel-prüfung vorweg: %s", agent)
+	}
+	ssh, err := planHardenSSH(&domain.Server{ServiceUser: "lcm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ssh, sshKeyPresentScript) {
+		t.Error("ssh-härtung mit schlüssel-prüfung")
+	}
+}
+
+// Ohne ss und netstat wäre jeder Port „frei"; eine Port-Zeile außerhalb von
+// LCM ließe den alten Port neben dem neuen offen.
+func TestAgentSSHPortGuards(t *testing.T) {
+	agent := &domain.Server{Transport: domain.TransportAgent, ServiceUser: "root"}
+	noTools := &scriptedConn{handler: func(string, string) (string, int) { return "weder ss noch netstat vorhanden", 2 }}
+	if err := ensurePortFree(noTools, agent, 2222); err == nil {
+		t.Error("ohne werkzeug als frei gemeldet")
+	}
+	foreign := &scriptedConn{handler: func(string, string) (string, int) { return "/etc/ssh/sshd_config:Port 2200\n", 0 }}
+	if err := ensureNoForeignPortLines(foreign, agent); err == nil || !strings.Contains(err.Error(), "sshd_config:Port 2200") {
+		t.Errorf("fremde port-zeile nicht gemeldet: %v", err)
+	}
+	clean := &scriptedConn{handler: func(cmd, _ string) (string, int) {
+		if !strings.Contains(cmd, sshOptionsDropinPath) {
+			t.Errorf("lcm-drop-in nicht ausgenommen: %s", cmd)
+		}
+		return "", 0
+	}}
+	if err := ensureNoForeignPortLines(clean, agent); err != nil {
+		t.Errorf("ohne fremde zeilen abgelehnt: %v", err)
+	}
+}

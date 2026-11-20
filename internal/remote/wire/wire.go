@@ -12,6 +12,10 @@
 //	                                      rein informativ - die Online-
 //	                                      Erkennung macht der Broker über
 //	                                      Session-Events)
+//	lcm/a/<agentID>/tty    Server→Agent   TTYFrame (Web-Konsole: öffnen,
+//	                                      Tastatur, Fenstergröße, schließen)
+//	lcm/a/<agentID>/ttyo   Agent→Server   TTYFrame (geöffnet, Bildschirm,
+//	                                      beendet)
 package wire
 
 import (
@@ -26,7 +30,7 @@ import (
 )
 
 // WSPath ist der WebSocket-Pfad des eingebetteten Brokers auf dem
-// bestehenden HTTPS-Port des LCM-Servers.
+// Agent-Port des LCM-Servers.
 const WSPath = "/mqtt"
 
 // Topic-Bausteine.
@@ -36,12 +40,16 @@ const (
 	TopicResSuf = "/res"
 	TopicInvSuf = "/inv"
 	TopicStaSuf = "/status"
+	TopicTTYSuf = "/tty"
+	TopicTTOSuf = "/ttyo"
 )
 
 func TopicCmd(agentID string) string    { return topicPrefix + agentID + TopicCmdSuf }
 func TopicRes(agentID string) string    { return topicPrefix + agentID + TopicResSuf }
 func TopicInv(agentID string) string    { return topicPrefix + agentID + TopicInvSuf }
 func TopicStatus(agentID string) string { return topicPrefix + agentID + TopicStaSuf }
+func TopicTTY(agentID string) string    { return topicPrefix + agentID + TopicTTYSuf }
+func TopicTTYOut(agentID string) string { return topicPrefix + agentID + TopicTTOSuf }
 
 // AgentIDFromTopic extrahiert die Agent-UUID aus einem lcm/a/<id>/…-Topic
 // (leer, wenn das Topic nicht dem Schema entspricht).
@@ -117,7 +125,20 @@ type Inventory struct {
 	// über das CA-Zertifikat, hex). Erst wenn jeder Agent ihn meldet, bekommt
 	// das Server-Zertifikat bei der Erneuerung einen neuen Schlüssel.
 	CAPin string `json:"ca_pin,omitempty"`
+	// Capabilities nennt, was der Agent über Kommandos hinaus kann (z.B.
+	// CapabilityTTY). Ältere Agents schicken das Feld nicht - LCM bietet
+	// ihnen dann nichts davon an, statt ins Leere zu senden.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
+
+// Fähigkeiten eines Agents (Inventory.Capabilities).
+const (
+	// CapabilityTTY: Der Agent öffnet Terminals (Web-Konsole).
+	CapabilityTTY = "tty"
+	// CapabilityTTYOff: Der Agent könnte es, der Betreiber hat es auf dem
+	// Server abgeschaltet (lcm-agent terminal off).
+	CapabilityTTYOff = "tty-off"
+)
 
 // ServerCertMarker steht als URI im Server-Zertifikat, das die LCM-CA
 // ausstellt. Ein Agent, der die CA pinnt, nimmt nur ein Zertifikat mit dieser

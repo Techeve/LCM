@@ -249,6 +249,15 @@ type GlobalSettings struct {
 	// Konfiguration (siehe SettingsService.LinkBaseURL).
 	PublicBaseURL string `json:"public_base_url"`
 
+	// PublicAgentURL und PublicMCPURL sind die von außen erreichbaren
+	// Adressen des Agent-Ports und der MCP-Schnittstelle, wenn ein Reverse
+	// Proxy sie unter eigenen Namen veröffentlicht (z.B.
+	// "https://agent.example.com"). Sie stehen nur in den Befehlen und
+	// Beispielen der Oberfläche; leer = Host der Oberfläche mit dem
+	// jeweiligen Port.
+	PublicAgentURL string `json:"public_agent_url"`
+	PublicMCPURL   string `json:"public_mcp_url"`
+
 	// Standard-E-Mail-Versand (System-Mailer): SMTP-Konfiguration für
 	// transaktionale Mails - Passwort-Reset, Einladungs-/Aktivierungslinks
 	// und Admin-Hinweise. Getrennt von den Benachrichtigungskanälen; kann

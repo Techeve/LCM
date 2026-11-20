@@ -23,9 +23,11 @@ import (
 // fällt es hier auf und nicht erst beim Betreiber.
 func TestValidierungsfehlerSindEineKategorie(t *testing.T) {
 	fehler := map[string]error{
-		"ErrBackupDirInvalid":     services.ErrBackupDirInvalid,
-		"ErrPublicBaseURLInvalid": services.ErrPublicBaseURLInvalid,
-		"ErrAptCacheURLInvalid":   services.ErrAptCacheURLInvalid,
+		"ErrBackupDirInvalid":      services.ErrBackupDirInvalid,
+		"ErrPublicBaseURLInvalid":  services.ErrPublicBaseURLInvalid,
+		"ErrPublicAgentURLInvalid": services.ErrPublicAgentURLInvalid,
+		"ErrPublicMCPURLInvalid":   services.ErrPublicMCPURLInvalid,
+		"ErrAptCacheURLInvalid":    services.ErrAptCacheURLInvalid,
 	}
 	for name, err := range fehler {
 		if !errors.Is(err, services.ErrSettingInvalid) {

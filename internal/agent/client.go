@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,9 @@ type Client struct {
 	// work zählt die Kommandos in Arbeit - der Wechsel aufs neue Binary
 	// nach einem Upgrade wartet, bis keins mehr läuft (switch.go).
 	work workState
+
+	// tty sind die offenen Web-Konsolen (tty.go).
+	tty *terminals
 }
 
 // NewClient baut den Agent-Client (verbindet noch nicht).
@@ -48,7 +52,34 @@ func NewClient(cfg *Config, log *slog.Logger, version string) *Client {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Client{cfg: cfg, runner: NewRunner(), log: log, version: version}
+	c := &Client{cfg: cfg, runner: NewRunner(), log: log, version: version}
+	c.tty = newTerminals(c.publishTTY, c.terminalDisabled, log)
+	return c
+}
+
+// terminalDisabled liest den Schalter des Betreibers (TerminalOffName) bei
+// jedem Gebrauch: lcm-agent terminal off wirkt so sofort, ohne Neustart.
+func (c *Client) terminalDisabled() bool {
+	dir := ConfigDir
+	if c.configPath != "" {
+		dir = filepath.Dir(c.configPath)
+	}
+	return TerminalDisabled(dir)
+}
+
+// publishTTY schickt einen Terminal-Rahmen an LCM. Die Reihenfolge stellt die
+// Nummer sicher; ein Rahmen, der bei abgerissener Verbindung verloren geht,
+// beendet ohnehin die Sitzung. Mit wait wartet es auf die Bestätigung - das
+// drosselt die Bildschirmausgabe auf das Tempo der Leitung.
+func (c *Client) publishTTY(f wire.TTYFrame, wait bool) {
+	payload, err := json.Marshal(f)
+	if err != nil || c.mqtt == nil {
+		return
+	}
+	token := c.mqtt.Publish(wire.TopicTTYOut(c.cfg.AgentID), 1, false, payload)
+	if wait {
+		token.WaitTimeout(ttyPublishWait)
+	}
 }
 
 // WithConfigPath legt fest, wohin neu gelernte Pins geschrieben werden
@@ -142,6 +173,8 @@ func (c *Client) clientOptions() (*mqtt.ClientOptions, error) {
 	})
 	opts.SetConnectionLostHandler(func(cl mqtt.Client, err error) {
 		c.log.Warn("connection lost - reconnecting", "error", err)
+		// LCM hat seine Seite der Konsolen mit der Verbindung verloren.
+		c.tty.closeAll(errors.New("verbindung zu lcm abgerissen"))
 	})
 	return opts, nil
 }
@@ -200,6 +233,13 @@ func (c *Client) onConnect(cl mqtt.Client) {
 		c.handleCommand(msg.Payload())
 	})
 	tok.Wait() // sicherstellen, dass die Subscription registriert ist
+	tty := cl.Subscribe(wire.TopicTTY(id), 1, func(_ mqtt.Client, msg mqtt.Message) {
+		var f wire.TTYFrame
+		if err := json.Unmarshal(msg.Payload(), &f); err == nil {
+			c.tty.handle(f)
+		}
+	})
+	tty.Wait()
 	cl.Publish(wire.TopicStatus(id), 1, true, []byte(wire.StatusOnline))
 	if inv, err := json.Marshal(c.inventory()); err == nil {
 		cl.Publish(wire.TopicInv(id), 1, false, inv)
@@ -275,7 +315,7 @@ func (c *Client) publishResult(res wire.Result) {
 // inventory sammelt die Basis-Infos für den LCM-Server (best effort).
 func (c *Client) inventory() wire.Inventory {
 	p := c.pins()
-	inv := wire.Inventory{AgentVersion: c.version, KeyPin: p.key, CAPin: p.ca}
+	inv := wire.Inventory{AgentVersion: c.version, KeyPin: p.key, CAPin: p.ca, Capabilities: c.tty.capabilities()}
 	if hn, err := os.Hostname(); err == nil {
 		inv.Hostname = hn
 	}
