@@ -1,4 +1,4 @@
-import { LitElement, html } from 'lit';
+import { LitElement, html, nothing } from 'lit';
 import '../../components/lcm-badge';
 import '../../components/lcm-input';
 import { formLayoutStyles } from '../../components/layout-styles';
@@ -44,6 +44,16 @@ export class SetAccess extends LitElement {
     return this.state.form.port;
   }
 
+  /** Agent-Server: LCM meldet sich dort nicht per SSH an; der gespeicherte Port ist nur eine Vorgabe, den echten liest LCM beim Umstellen. */
+  get #agent(): boolean {
+    return this.state.transport === 'agent';
+  }
+
+  /** Hilfetext, bei Agent-Servern in der eigenen Fassung (dort ist LCM nicht über SSH verbunden). */
+  #help(ssh: string, agent: string): string {
+    return t(this.#agent ? agent : ssh);
+  }
+
   #renderRootLogin() {
     const disabled = this.state.rootLoginDisabled;
     const text = ROOT_TEXT[disabled ? 'allow' : 'deny'];
@@ -55,7 +65,7 @@ export class SetAccess extends LitElement {
           server-id=${this.serverId}
           server-name=${this.serverName}
           label=${t(text.label)}
-          help=${t(text.help)}
+          help=${disabled ? t(text.help) : this.#help(ROOT_TEXT.deny.help, 'serverPackages.settings.ssh.rootLogin.deny.helpAgent')}
           heading=${t(text.heading, { name: this.serverName })}
           ?danger=${disabled}
           action=${text.action}
@@ -68,7 +78,8 @@ export class SetAccess extends LitElement {
   #renderPort() {
     const wanted = this._port === undefined ? this.#current : Number(this._port);
     const valid = isPort(wanted);
-    const changed = valid && wanted !== this.#current;
+    // Beim Agent kann der gespeicherte Port vom echten abweichen - umstellen lässt sich jede Eingabe, LCM prüft am Server.
+    const changed = valid && (this.#agent ? this._port !== undefined : wanted !== this.#current);
     return html`<h3>${t('serverPackages.settings.ssh.port.title')}</h3>
       <div class="row">
         <lcm-input
@@ -87,11 +98,11 @@ export class SetAccess extends LitElement {
           server-name=${this.serverName}
           ?disabled=${!changed}
           label=${t('serverPackages.settings.ssh.port.apply.label')}
-          help=${t('serverPackages.settings.ssh.port.apply.help')}
+          help=${this.#help('serverPackages.settings.ssh.port.apply.help', 'serverPackages.settings.ssh.port.apply.helpAgent')}
           heading=${t('serverPackages.settings.ssh.port.apply.heading', { name: this.serverName })}
           action="ssh-port"
           .params=${{ port: wanted }}
-          .impacts=${[{ label: t('serverPackages.settings.ssh.port.change'), value: `${this.#current} → ${wanted}` }]}
+          .impacts=${[{ label: t('serverPackages.settings.ssh.port.change'), value: `${this.#agent ? t('serverPackages.settings.ssh.port.unknown') : this.#current} → ${wanted}` }]}
           done=${t('serverPackages.settings.ssh.port.apply.done', { name: this.serverName, port: wanted })}
           .run=${async () => {
             const result = await settingsApi.changeSshPort(this.serverId, wanted);
@@ -99,7 +110,8 @@ export class SetAccess extends LitElement {
             return result;
           }}
         ></lcm-set-action>
-      </div>`;
+      </div>
+      ${this.#agent ? html`<p class="note">${t('serverPackages.settings.ssh.port.agentHint')}</p>` : nothing}`;
   }
 
   override render() {

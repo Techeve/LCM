@@ -163,7 +163,8 @@ export class SrvMore extends LitElement {
             run: () => this.#job(t('servers.reboot.label'), serversApi.reboot(s.id)),
           }
         : null,
-      !device && !s.restricted_sudo
+      // Agent-Server laufen als root über den Agent; einen SSH-Service-User zum Einschränken gibt es dort nicht.
+      !device && !agent && !s.restricted_sudo
         ? {
             id: 'restrict',
             label: t('serverDetail.more.restrict'),

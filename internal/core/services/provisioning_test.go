@@ -79,6 +79,33 @@ func TestActivationLinkRoundtrip(t *testing.T) {
 	}
 }
 
+// Ein eingeladenes Konto hat kein bekanntes Passwort; erst der Aktivierungslink
+// macht die Anmeldung möglich. Name und Rollen werden wie beim Anlegen geprüft.
+func TestInvitedUserActivatesViaLink(t *testing.T) {
+	env := newTestEnv(t)
+	if _, err := env.Users.CreateInvitedUser("admin", "", "", "", nil, "test-admin"); !errors.Is(err, services.ErrReservedUsername) {
+		t.Errorf("reservierter name nicht abgelehnt: %v", err)
+	}
+	user, err := env.Users.CreateInvitedUser("gast", "gast@example.org", "Ga", "St", []string{domain.RoleManager}, "test-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(user.Roles) != 1 || user.Roles[0].Name != domain.RoleManager {
+		t.Errorf("rollen nicht übernommen: %+v", user.Roles)
+	}
+
+	token, _, err := env.Activation.Generate(user.ID, 0, "test-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Activation.Consume(token, "mein-neues-sicheres-passwort"); err != nil {
+		t.Fatalf("einlösung fehlgeschlagen: %v", err)
+	}
+	if _, err := env.Auth.VerifyPassword("gast", "mein-neues-sicheres-passwort"); err != nil {
+		t.Errorf("login nach aktivierung fehlgeschlagen: %v", err)
+	}
+}
+
 func TestLinuxUserProvisionedToServer(t *testing.T) {
 	env := newTestEnv(t)
 	serverID := joinTestServer(t, env, "web01")

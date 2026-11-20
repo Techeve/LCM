@@ -8,6 +8,7 @@ import (
 
 	"github.com/alexedwards/argon2id"
 
+	"LCM/internal/config"
 	"LCM/internal/core/domain"
 	"LCM/internal/storage/repositories"
 )
@@ -76,20 +77,46 @@ func (s *UserService) logAudit(actor, action string, id uint, details string) {
 // CreateUser legt einen neuen User mit argon2id-gehashtem Passwort an
 // und weist ihm die angegebenen Rollen zu.
 func (s *UserService) CreateUser(username, email, password, firstName, lastName string, roleNames []string, actor string) (*domain.User, error) {
-	username = strings.ToLower(strings.TrimSpace(username))
-	if !validUsername(username) {
-		return nil, ErrInvalidUsername
-	}
-	// Die geschützten Basis-Konten (system, admin) dürfen nicht als neue
-	// Benutzer angelegt werden - sie werden ausschließlich beim Seeding erzeugt.
-	if username == domain.SystemUsername || username == domain.AdminUsername {
-		return nil, ErrReservedUsername
+	username, err := newUsername(username)
+	if err != nil {
+		return nil, err
 	}
 	if err := EnforcePasswordPolicy(password, PasswordIdentity{
 		Username: username, Email: email, FirstName: firstName, LastName: lastName,
 	}); err != nil {
 		return nil, err
 	}
+	return s.insertUser(username, email, password, firstName, lastName, roleNames, actor)
+}
+
+// CreateInvitedUser legt ein Konto an, dessen Passwort niemand kennt: Der Hash
+// gehört zu einem Zufallswert, der nirgends gespeichert wird. Sein Passwort
+// setzt der Benutzer selbst über einen Aktivierungslink, den der Aufrufer
+// anschließend erzeugt.
+func (s *UserService) CreateInvitedUser(username, email, firstName, lastName string, roleNames []string, actor string) (*domain.User, error) {
+	username, err := newUsername(username)
+	if err != nil {
+		return nil, err
+	}
+	return s.insertUser(username, email, config.RandomSecret(32), firstName, lastName, roleNames, actor)
+}
+
+// newUsername normalisiert den Namen eines neuen Kontos und prüft ihn. Die
+// geschützten Basis-Konten (system, admin) entstehen nur beim Seeding.
+func newUsername(username string) (string, error) {
+	username = strings.ToLower(strings.TrimSpace(username))
+	if !validUsername(username) {
+		return "", ErrInvalidUsername
+	}
+	if username == domain.SystemUsername || username == domain.AdminUsername {
+		return "", ErrReservedUsername
+	}
+	return username, nil
+}
+
+// insertUser legt ein neues Konto mit geprüftem Namen an; das Passwort hat
+// der Aufrufer bereits gegen die Policy geprüft (oder es ist ein Zufallswert).
+func (s *UserService) insertUser(username, email, password, firstName, lastName string, roleNames []string, actor string) (*domain.User, error) {
 	if _, err := s.users.FindByUsername(username); err == nil {
 		return nil, ErrUsernameTaken
 	} else if !errors.Is(err, repositories.ErrNotFound) {

@@ -177,7 +177,7 @@ export class SrvSettings extends LitElement {
   #sections(state: ServerState): TabItem[] {
     const device = isApiDevice({ os_id: state.osId });
     const sections: Section[] = ['general', 'operation'];
-    if (!device && (auth.can('servers:console') || state.transport !== 'agent')) sections.push('access');
+    if (!device) sections.push('access');
     if (!device) sections.push('dns', 'time');
     return sections.map((id) => ({ id, label: t(SECTION_LABEL[id]) }));
   }
@@ -293,10 +293,9 @@ export class SrvSettings extends LitElement {
   }
 
   #renderAccess(form: SettingsForm, state: ServerState): TemplateResult {
-    const ssh = state.transport !== 'agent';
     return html`<div class="form-stack">
       ${auth.can('servers:console') ? html`<h3>${t('serverPackages.settings.console')}</h3>${this.#flag('console_disabled', form)}` : nothing}
-      ${ssh ? html`<lcm-set-access server-id=${this.serverId} server-name=${form.name} .state=${state}></lcm-set-access>` : nothing}
+      <lcm-set-access server-id=${this.serverId} server-name=${form.name} .state=${state}></lcm-set-access>
     </div>`;
   }
 

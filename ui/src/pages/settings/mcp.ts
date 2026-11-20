@@ -41,7 +41,7 @@ export class SettingsMcp extends SettingsForm {
   }
 
   #example(settings: GlobalSettings): TemplateResult {
-    const url = mcpUrl(String(settings.mcp_bind_host ?? ''), String(settings.mcp_port ?? ''));
+    const url = mcpUrl(String(settings.mcp_bind_host ?? ''), String(settings.mcp_port ?? ''), String(settings.public_mcp_url ?? ''));
     const placeholder = t('settings.mcp.example.keyPlaceholder');
     return html`<lcm-card level="2" heading=${t('settings.mcp.example.title')} subtitle=${t('settings.mcp.example.subtitle')}>
       <div class="fields">

@@ -27,6 +27,10 @@ var (
 	ErrSettingInvalid = errors.New("ungültiger einstellungswert")
 	// ErrPublicBaseURLInvalid: die öffentliche Basis-Adresse ist unbrauchbar.
 	ErrPublicBaseURLInvalid = fmt.Errorf("%w: ungültige öffentliche basis-adresse", ErrSettingInvalid)
+	// ErrPublicAgentURLInvalid / ErrPublicMCPURLInvalid: die öffentliche
+	// Adresse des Agent-Ports bzw. der MCP-Schnittstelle ist unbrauchbar.
+	ErrPublicAgentURLInvalid = fmt.Errorf("%w: ungültige öffentliche agent-adresse", ErrSettingInvalid)
+	ErrPublicMCPURLInvalid   = fmt.Errorf("%w: ungültige öffentliche mcp-adresse", ErrSettingInvalid)
 	// ErrBackupDirInvalid: das Backup-Verzeichnis ist unbrauchbar.
 	ErrBackupDirInvalid = fmt.Errorf("%w: ungültiges backup-verzeichnis", ErrSettingInvalid)
 )
@@ -53,28 +57,34 @@ func validateRange(v, min, max int, field string) error {
 // "https://opfer.de@angreifer.tld" würde sonst beim Klick auf angreifer.tld
 // landen). Leer = nicht gesetzt (zulässig, siehe LinkBaseURL).
 func normalizePublicBaseURL(raw string) (string, error) {
+	return normalizePublicURL(raw, ErrPublicBaseURLInvalid)
+}
+
+// normalizePublicURL prüft eine öffentliche Adresse wie normalizePublicBaseURL;
+// invalid ist der Fehler, den der Aufrufer für sein Feld meldet.
+func normalizePublicURL(raw string, invalid error) (string, error) {
 	raw = strings.TrimSpace(strings.TrimRight(strings.TrimSpace(raw), "/"))
 	if raw == "" {
 		return "", nil
 	}
 	if len(raw) > 255 {
-		return "", fmt.Errorf("%w: höchstens 255 Zeichen", ErrPublicBaseURLInvalid)
+		return "", fmt.Errorf("%w: höchstens 255 Zeichen", invalid)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrPublicBaseURLInvalid, err)
+		return "", fmt.Errorf("%w: %v", invalid, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("%w: erwartet wird http:// oder https://", ErrPublicBaseURLInvalid)
+		return "", fmt.Errorf("%w: erwartet wird http:// oder https://", invalid)
 	}
 	if u.Host == "" {
-		return "", fmt.Errorf("%w: es fehlt der Hostname", ErrPublicBaseURLInvalid)
+		return "", fmt.Errorf("%w: es fehlt der Hostname", invalid)
 	}
 	if u.User != nil {
-		return "", fmt.Errorf("%w: Zugangsdaten in der Adresse sind nicht erlaubt", ErrPublicBaseURLInvalid)
+		return "", fmt.Errorf("%w: Zugangsdaten in der Adresse sind nicht erlaubt", invalid)
 	}
 	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("%w: nur Schema, Host und Port - ohne Pfad, Query oder Anker", ErrPublicBaseURLInvalid)
+		return "", fmt.Errorf("%w: nur Schema, Host und Port - ohne Pfad, Query oder Anker", invalid)
 	}
 	return u.Scheme + "://" + u.Host, nil
 }
@@ -174,6 +184,15 @@ func (s *SettingsService) LinkBaseURL() string {
 		return cfg.PublicBaseURL
 	}
 	return s.fallbackBaseURL
+}
+
+// PublicAgentURL liefert die eingestellte öffentliche Adresse des Agent-Ports
+// (leer = nicht gesetzt oder Einstellungen nicht lesbar).
+func (s *SettingsService) PublicAgentURL() string {
+	if cfg, err := s.settings.Get(); err == nil {
+		return cfg.PublicAgentURL
+	}
+	return ""
 }
 
 // WithFallbackBaseURL hinterlegt die aus der lokalen Konfiguration

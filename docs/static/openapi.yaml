@@ -9957,6 +9957,9 @@ paths:
                   type: array
                   items:
                     type: string
+                invite:
+                  type: boolean
+                  description: 'Konto ohne Passwort anlegen; der Benutzer setzt es selbst über einen Aktivierungslink (`/api/v1/users/activation-links/generate`). `password` bleibt dann unbeachtet.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []

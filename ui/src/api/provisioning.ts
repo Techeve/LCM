@@ -155,12 +155,17 @@ export async function onboardingPublicKey(): Promise<string> {
   }
 }
 
-/** Eigener Port des Agent-Listeners (0 = keiner). */
-export async function agentListenerPort(): Promise<number> {
+/** Wo der Agent-Listener erreichbar ist: eigener Port (0 = keiner) und, falls eingestellt, seine öffentliche Adresse. */
+export interface AgentListener {
+  port: number;
+  url: string;
+}
+
+export async function agentListener(): Promise<AgentListener> {
   try {
-    const info = await api.get<{ agent_port?: number }>('/api/v1/system/info');
-    return info.agent_port ?? 0;
+    const info = await api.get<{ agent_port?: number; agent_url?: string }>('/api/v1/system/info');
+    return { port: info.agent_port ?? 0, url: info.agent_url ?? '' };
   } catch {
-    return 0;
+    return { port: 0, url: '' };
   }
 }

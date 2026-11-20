@@ -116,20 +116,27 @@ describe('helpers', () => {
 
   it('points the agent at its own port and downloads the binary from the UI', () => {
     const where = { origin: 'https://lcm.example.com', protocol: 'https:', hostname: 'lcm.example.com' };
-    const commands = agentCommands(where, 9333, 'tok');
+    const commands = agentCommands(where, { port: 9333, url: '' }, 'tok');
     expect(commands.enroll).toBe('sudo lcm-agent enroll https://lcm.example.com:9333 tok');
     expect(commands.manual).toContain('https://lcm.example.com/api/v1/agent/download/amd64');
     expect(commands.manual.endsWith(commands.enroll)).toBe(true);
-    expect(agentCommands(where, 0, 'tok').enroll).toBe('sudo lcm-agent enroll https://lcm.example.com tok');
+    expect(agentCommands(where, { port: 0, url: '' }, 'tok').enroll).toBe('sudo lcm-agent enroll https://lcm.example.com tok');
+  });
+
+  it('prefers the agent address from the settings (reverse proxy with its own name)', () => {
+    const where = { origin: 'https://lcm.example.com', protocol: 'https:', hostname: 'lcm.example.com' };
+    const commands = agentCommands(where, { port: 9333, url: 'https://agent.example.com' }, 'tok');
+    expect(commands.enroll).toBe('sudo lcm-agent enroll https://agent.example.com tok');
+    expect(commands.manual).toContain('https://lcm.example.com/api/v1/agent/download/amd64');
   });
 
   it('accepts the self-signed certificate only together with the key pin of this LCM', () => {
     const where = { origin: 'https://lcm.example.com', protocol: 'https:', hostname: 'lcm.example.com' };
     const target = '-o /usr/local/bin/lcm-agent https://lcm.example.com/api/v1/agent/download/amd64';
-    const pinned = agentCommands(where, 0, 'tok', 'cGluCg==').manual;
+    const pinned = agentCommands(where, { port: 0, url: '' }, 'tok', 'cGluCg==').manual;
     expect(pinned.startsWith(`sudo curl -fLk --pinnedpubkey sha256//cGluCg== ${target} || sudo curl -fL ${target} && `)).toBe(true);
     // Ohne Pin kein -k: dann prüft curl gegen die Systemzertifikate, statt jedes anzunehmen.
-    const plain = agentCommands(where, 0, 'tok').manual;
+    const plain = agentCommands(where, { port: 0, url: '' }, 'tok').manual;
     expect(plain.startsWith(`sudo curl -fL ${target} && `)).toBe(true);
     expect(plain).not.toMatch(/ -\w*k/);
   });

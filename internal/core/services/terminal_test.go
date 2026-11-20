@@ -166,3 +166,40 @@ func TestFahrkarteGiltNurVonIhrerAdresse(t *testing.T) {
 		t.Error("von der eigenen Adresse muss sie gelten")
 	}
 }
+
+// TestKonsoleAgentNachFaehigkeit: Ein Agent-Server bekommt die Konsole nur,
+// wenn sein Agent sie meldet. Ein älterer Agent bekäme Rahmen, die er nicht
+// kennt; hat der Betreiber sie auf dem Server abgeschaltet, sagt LCM genau das.
+func TestKonsoleAgentNachFaehigkeit(t *testing.T) {
+	env := newTestEnv(t)
+	schalteKonsole(t, env, true)
+	server, _, err := env.Servers.CreateAgentServer("agent01", "tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	faelle := []struct {
+		faehigkeiten string
+		want         error
+	}{
+		{"", services.ErrTerminalAgentOutdated},
+		{"tty-off", services.ErrTerminalAgentDisabled},
+	}
+	for _, f := range faelle {
+		if err := env.DB().Model(&domain.Server{}).Where("id = ?", server.ID).
+			Update("agent_capabilities", f.faehigkeiten).Error; err != nil {
+			t.Fatal(err)
+		}
+		if _, err := env.Servers.OpenTerminal(repositories.ScopeAll(), server.ID, "admin", "", 80, 24); !errors.Is(err, f.want) {
+			t.Errorf("fähigkeiten %q: erwartet %v, bekam %v", f.faehigkeiten, f.want, err)
+		}
+	}
+	// Mit der Fähigkeit scheitert es erst am (hier fehlenden) Agent, nicht an der Prüfung.
+	if err := env.DB().Model(&domain.Server{}).Where("id = ?", server.ID).
+		Update("agent_capabilities", "tty").Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = env.Servers.OpenTerminal(repositories.ScopeAll(), server.ID, "admin", "", 80, 24)
+	if errors.Is(err, services.ErrTerminalAgentOutdated) || errors.Is(err, services.ErrTerminalAgentDisabled) || errors.Is(err, services.ErrTerminalNotPossible) {
+		t.Errorf("mit fähigkeit trotzdem abgewiesen: %v", err)
+	}
+}

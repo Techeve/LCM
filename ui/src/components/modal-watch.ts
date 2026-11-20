@@ -25,3 +25,24 @@ export function modalClosed(element: Element): void {
 export function anyModalOpen(): boolean {
   return open.size > 0;
 }
+
+/**
+ * Erkennt Klicks auf den Hintergrund eines `<dialog>`. Ein Klick zählt nur, wenn er dort auch begonnen hat:
+ * Wer in einem Eingabefeld Text markiert und die Maus erst außerhalb des Fensters loslässt, erzeugt einen
+ * `click` auf dem `<dialog>` selbst — das darf das Fenster nicht schließen.
+ */
+export class BackdropClick {
+  private pressedOnBackdrop = false;
+
+  /** An `@pointerdown` des `<dialog>` hängen. */
+  readonly down = (event: PointerEvent): void => {
+    this.pressedOnBackdrop = event.target === event.currentTarget;
+  };
+
+  /** Im `@click` des `<dialog>` fragen: lagen Drücken und Loslassen beide auf dem Hintergrund? */
+  hit(event: MouseEvent): boolean {
+    const hit = this.pressedOnBackdrop && event.target === event.currentTarget;
+    this.pressedOnBackdrop = false;
+    return hit;
+  }
+}

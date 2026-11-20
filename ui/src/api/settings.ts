@@ -258,6 +258,8 @@ export interface NewUserBody {
   last_name: string;
   password: string;
   roles: string[];
+  /** Konto ohne Passwort anlegen; der Benutzer setzt es über einen Aktivierungslink. */
+  invite: boolean;
 }
 
 export interface ProfileBody {
@@ -419,9 +421,10 @@ export const settingsApi = {
     return { jobId: isRecord(raw) ? text(raw.job_id) : '' };
   },
 
-  async createUser(body: NewUserBody): Promise<void> {
-    await api.post(USERS_URL, body);
+  async createUser(body: NewUserBody): Promise<LoginUser> {
+    const raw = await api.post<unknown>(USERS_URL, body);
     store.invalidate(USERS_URL);
+    return readUsers([raw])[0]!;
   },
 
   async updateProfile(id: number, body: ProfileBody): Promise<void> {

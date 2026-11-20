@@ -9474,6 +9474,9 @@ paths:
                   type: array
                   items:
                     type: string
+                invite:
+                  type: boolean
+                  description: 'Create the account without a password; the user sets it via an activation link (`/api/v1/users/activation-links/generate`). `password` is ignored then.'
       security:
       - sessionAuth: []
       - apiKeyAuth: []

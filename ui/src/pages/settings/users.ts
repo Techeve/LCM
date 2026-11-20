@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
 import '../../components/lcm-badge';
 import '../../components/lcm-button';
 import '../../components/lcm-card';
+import '../../components/lcm-choice';
 import '../../components/lcm-data-table';
 import '../../components/lcm-dialog';
 import '../../components/lcm-empty-state';
@@ -9,6 +10,7 @@ import '../../components/lcm-input';
 import '../../components/lcm-menu';
 import '../../components/lcm-notice';
 import '../../components/lcm-skeleton';
+import type { ChoiceOption } from '../../components/lcm-choice';
 import type { Column, Row } from '../../components/lcm-data-table';
 import type { MenuItem } from '../../components/lcm-menu';
 import { toast } from '../../components/lcm-toaster';
@@ -24,10 +26,12 @@ import { LIMITS } from '../../lib/validate';
 import { LiveData } from '../../lib/live-data';
 import type { PasswordIdentity } from '../account/password-policy';
 import './access/form-modal';
+import './system/copy-field';
 import { blockDialog, deleteDialog, passwordDialog } from './user-dialogs';
 import {
   activationUrl,
   assignableRoles,
+  chosenRole,
   emptyUserForm,
   fullName,
   identityOfForm,
@@ -37,12 +41,12 @@ import {
   profileChanged,
   rolesChanged,
   sameUserForm,
-  toggleRole,
   userActions,
   userFieldForError,
   userFormOf,
   validateNewPassword,
   validateUserForm,
+  type UserAccess,
   type UserForm,
   type UserFormErrors,
 } from './access/users-model';
@@ -78,35 +82,6 @@ export class SettingsUsers extends LitElement {
     baseStyles,
     settingsStyles,
     css`
-      fieldset {
-        margin: 0;
-        padding: 0;
-        border: 0;
-      }
-      legend {
-        margin-block-end: var(--space-2);
-        color: var(--text-1);
-        font-size: var(--fs-s);
-        font-weight: var(--fw-medium);
-      }
-      .role {
-        display: flex;
-        align-items: flex-start;
-        gap: var(--space-2);
-        padding-block: var(--space-1);
-        font-size: var(--fs-s);
-      }
-      .role input {
-        margin-block-start: 3px;
-        accent-color: var(--accent);
-      }
-      .role span {
-        display: flex;
-        flex-direction: column;
-      }
-      .role small {
-        color: var(--text-2);
-      }
       .field-error {
         margin: calc(var(--space-2) * -1) 0 0;
         color: var(--crit-text);
@@ -198,9 +173,9 @@ export class SettingsUsers extends LitElement {
     this._busy = true;
     this._error = '';
     try {
-      if (modal.mode === 'create') await this.#create();
-      else await this.#saveEdit(modal.user);
+      const invited = modal.mode === 'create' ? await this.#create() : await this.#saveEdit(modal.user);
       this._modal = undefined;
+      if (invited) await this.#invite(invited);
     } catch (error) {
       this.#showFormError(error);
     } finally {
@@ -208,9 +183,11 @@ export class SettingsUsers extends LitElement {
     }
   }
 
-  async #create(): Promise<void> {
-    await settingsApi.createUser(newUserBody(this._form));
-    toast({ tone: 'ok', title: t('settings.users.created', { name: this._form.username.trim() }) });
+  /** Liefert das neue Konto, wenn es noch einen Aktivierungslink bekommen soll. */
+  async #create(): Promise<LoginUser | undefined> {
+    const user = await settingsApi.createUser(newUserBody(this._form));
+    toast({ tone: 'ok', title: t('settings.users.created', { name: user.username }) });
+    return this._form.access === 'invite' ? user : undefined;
   }
 
   async #saveEdit(user: LoginUser): Promise<void> {
@@ -237,15 +214,29 @@ export class SettingsUsers extends LitElement {
     const canAssign = modal?.mode === 'create' ? this.#can('roles:read') : modal ? userActions(modal.user, this.#selfId, this.#can).roles : false;
     const roles = assignableRoles(this.#roles.data ?? []);
     if (!canAssign || roles.length === 0) return nothing;
-    return html`<fieldset>
-      <legend>${t('settings.users.form.roles')}</legend>
-      ${roles.map(
-        (role) => html`<label class="role">
-          <input type="checkbox" .checked=${this._form.roles.includes(role.name)} @change=${() => this.#setForm({ roles: toggleRole(this._form.roles, role.name) })} />
-          <span>${role.name}${role.description ? html`<small>${role.description}</small>` : nothing}</span>
-        </label>`,
-      )}
-    </fieldset>`;
+    const options: ChoiceOption[] = roles.map((role) => ({ id: role.name, label: role.name, description: role.description || undefined }));
+    return html`<lcm-choice
+      stacked
+      label=${t('settings.users.form.role')}
+      .options=${options}
+      .value=${chosenRole(this._form.roles, roles)}
+      @lcm-change=${(e: CustomEvent<{ value: string }>) => this.#setForm({ roles: [e.detail.value] })}
+    ></lcm-choice>`;
+  }
+
+  /** Beim Anlegen: Passwort hier vergeben oder das Konto über einen Aktivierungslink per E-Mail einladen. */
+  #accessChoice(): TemplateResult {
+    const options: ChoiceOption[] = [
+      { id: 'password', icon: 'lock', label: t('settings.users.form.accessPassword'), description: t('settings.users.form.accessPasswordHint') },
+      { id: 'invite', icon: 'key', label: t('settings.users.form.accessInvite'), description: t('settings.users.form.accessInviteHint') },
+    ];
+    return html`<lcm-choice
+      stacked
+      label=${t('settings.users.form.access')}
+      .options=${options}
+      .value=${this._form.access}
+      @lcm-change=${(e: CustomEvent<{ value: string }>) => this.#setForm({ access: e.detail.value as UserAccess, password: '', confirm: '' })}
+    ></lcm-choice>`;
   }
 
   #modalView(): TemplateResult {
@@ -270,7 +261,9 @@ export class SettingsUsers extends LitElement {
     const form = this._form;
     const errors = this._errors;
     return html`${editing ? nothing : this.#usernameField(errors)} ${this.#emailField(errors)} ${this.#currentPasswordField(editing, errors)} ${this.#nameRow(errors)}
-      ${editing ? nothing : this.#newPasswordFields(form.password, form.confirm, errors, identityOfForm(form), (patch) => this.#setForm(patch))} ${this.#roleChoices()}`;
+      ${editing ? nothing : this.#accessChoice()}
+      ${editing || form.access === 'invite' ? nothing : this.#newPasswordFields(form.password, form.confirm, errors, identityOfForm(form), (patch) => this.#setForm(patch))}
+      ${this.#roleChoices()}`;
   }
 
   #usernameField(errors: UserFormErrors): TemplateResult {
@@ -475,9 +468,9 @@ export class SettingsUsers extends LitElement {
   #menuItems(user: LoginUser): MenuItem[] {
     const can = userActions(user, this.#selfId, this.#can);
     const items: MenuItem[] = [];
-    if (can.invite) items.push({ id: 'invite', icon: 'key', label: t('settings.users.menu.invite'), hint: t('settings.users.menu.inviteHint') });
-    if (can.password) items.push({ id: 'password', icon: 'lock', label: t('settings.users.menu.password'), hint: t('settings.users.menu.passwordHint') });
-    if (can.block && user.active) items.push({ id: 'block', icon: 'power', label: t('settings.users.menu.block'), hint: t('settings.users.menu.blockHint'), separatorBefore: items.length > 0 });
+    if (can.invite) items.push({ id: 'invite', icon: 'key', label: t('settings.users.menu.invite'), tip: t('settings.users.menu.inviteHint') });
+    if (can.password) items.push({ id: 'password', icon: 'lock', label: t('settings.users.menu.password'), tip: t('settings.users.menu.passwordHint') });
+    if (can.block && user.active) items.push({ id: 'block', icon: 'power', label: t('settings.users.menu.block'), tip: t('settings.users.menu.blockHint'), separatorBefore: items.length > 0 });
     if (can.block && !user.active) items.push({ id: 'unblock', icon: 'undo', label: t('settings.users.menu.unblock'), separatorBefore: items.length > 0 });
     if (can.remove) items.push({ id: 'delete', icon: 'trash', label: t('settings.users.menu.delete'), danger: true });
     return items;

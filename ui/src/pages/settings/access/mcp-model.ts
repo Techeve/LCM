@@ -9,8 +9,12 @@ export function isLoopbackHost(host: string): boolean {
   return parts.length === 4 && parts[0] === '127' && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
-/** Adresse des MCP-Endpunkts, wie ein Client auf dem LCM-Host sie aufruft. IPv6 steht in eckigen Klammern. */
-export function mcpUrl(host: string, port: string): string {
+/**
+ * Adresse des MCP-Endpunkts. Ist eine öffentliche MCP-Adresse eingestellt (Reverse Proxy), gilt sie; sonst so, wie ein
+ * Client auf dem LCM-Host den Endpunkt aufruft. IPv6 steht in eckigen Klammern.
+ */
+export function mcpUrl(host: string, port: string, publicUrl = ''): string {
+  if (publicUrl.trim()) return `${publicUrl.trim().replace(/\/+$/, '')}/mcp`;
   const bare = host.trim().replace(/^\[|\]$/g, '') || '127.0.0.1';
   const shown = bare.includes(':') ? `[${bare}]` : bare;
   return `http://${shown}:${port.trim() || '9330'}/mcp`;

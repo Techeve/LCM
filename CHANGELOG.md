@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.2.0-beta.1 - 2026-11-20
+
+### 🚀 Features
+
+- **agent**: SSH-Härtung, Root-Login, SSH-Port, offene Ports und SSH-2FA auch für Agent-Server (795d7f48)
+- **agent**: Web-Konsole über den lcm-agent (2737b7dc)
+- **settings**: eigene öffentliche Adressen für Agent-Port und MCP-Schnittstelle (24ae1ef0)
+- **users**: Konto beim Anlegen per Aktivierungslink einladen, eine Rolle je Konto (69a0b76a)
+
+### 🐛 Bugfixes
+
+- **ui**: Fenster nur schließen, wenn der Klick auf dem Hintergrund beginnt (81e76f6d)
+
+### 🔧 Sonstiges
+
+- **plan**: Agent-Server bekommen SSH-Funktionen und ein Terminal (133102e6)
+- **release**: Hinweise für die Reihe 2.2 (072f0994)
+- **release**: Prüfung auf interne Namen übergeht Commits, die schon auf community liegen (64aa0ded)
+
 ## v2.1.0 - 2026-11-20
 
 ### 🚀 Features

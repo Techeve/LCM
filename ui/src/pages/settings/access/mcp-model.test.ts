@@ -12,6 +12,7 @@ describe('Anbindungsbeispiel', () => {
   it('baut die Adresse mit eckigen Klammern für IPv6 und Vorgaben für leere Felder', () => {
     expect(mcpUrl('127.0.0.1', '9330')).toBe('http://127.0.0.1:9330/mcp');
     expect(mcpUrl('::1', '9400')).toBe('http://[::1]:9400/mcp');
+    expect(mcpUrl('127.0.0.1', '9330', 'https://mcp.example.com/')).toBe('https://mcp.example.com/mcp');
     expect(mcpUrl('[::1]', '9400')).toBe('http://[::1]:9400/mcp');
     expect(mcpUrl('', '')).toBe('http://127.0.0.1:9330/mcp');
   });

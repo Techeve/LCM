@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 import './lcm-button.js';
 import './lcm-notice.js';
-import { modalClosed, modalOpened } from './modal-watch.js';
+import { BackdropClick, modalClosed, modalOpened } from './modal-watch.js';
 import { baseStyles, dialogStyles, emit, uid } from './shared.js';
 
 export interface Impact {
@@ -162,6 +162,8 @@ export class LcmDialog extends LitElement {
     this._typed = '';
   }
 
+  private readonly backdrop = new BackdropClick();
+
   private get dialog(): HTMLDialogElement | null {
     return this.renderRoot.querySelector('dialog');
   }
@@ -201,7 +203,7 @@ export class LcmDialog extends LitElement {
   }
 
   private onBackdropClick(event: MouseEvent): void {
-    if (event.target === this.dialog) this.cancel();
+    if (this.backdrop.hit(event)) this.cancel();
   }
 
   private onNativeCancel(event: Event): void {
@@ -214,7 +216,7 @@ export class LcmDialog extends LitElement {
   }
 
   override render() {
-    return html`<dialog aria-labelledby="title" @click=${this.onBackdropClick} @cancel=${this.onNativeCancel}>
+    return html`<dialog aria-labelledby="title" @pointerdown=${this.backdrop.down} @click=${this.onBackdropClick} @cancel=${this.onNativeCancel}>
       <div class="body">
         <h2 id="title">${this.heading}</h2>
         ${this.message ? html`<p>${this.message}</p>` : nothing}

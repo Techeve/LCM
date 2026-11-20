@@ -5,7 +5,7 @@ import '../../../components/lcm-command';
 import '../../../components/lcm-input';
 import '../../../components/lcm-notice';
 import { baseStyles, emit } from '../../../components/shared';
-import { agentListenerPort, createAgentServer, type AgentResult } from '../../../api/provisioning';
+import { agentListener, createAgentServer, type AgentListener, type AgentResult } from '../../../api/provisioning';
 import { I18nController } from '../../../lib/controllers';
 import { errorText, t } from '../../../lib/i18n';
 import { LIMITS } from '../../../lib/validate';
@@ -27,7 +27,7 @@ export class LcmJoinAgent extends LitElement {
     _busy: { state: true },
     _error: { state: true },
     _result: { state: true },
-    _port: { state: true },
+    _listener: { state: true },
   };
   static override styles = [
     baseStyles,
@@ -55,7 +55,7 @@ export class LcmJoinAgent extends LitElement {
   declare _busy: boolean;
   declare _error: string;
   declare _result: AgentResult | null;
-  declare _port: number;
+  declare _listener: AgentListener;
 
   constructor() {
     super();
@@ -64,13 +64,13 @@ export class LcmJoinAgent extends LitElement {
     this._busy = false;
     this._error = '';
     this._result = null;
-    this._port = 0;
+    this._listener = { port: 0, url: '' };
     new I18nController(this);
   }
 
   override connectedCallback(): void {
     super.connectedCallback();
-    void agentListenerPort().then((port) => (this._port = port));
+    void agentListener().then((listener) => (this._listener = listener));
   }
 
   override disconnectedCallback(): void {
@@ -130,8 +130,14 @@ export class LcmJoinAgent extends LitElement {
     </div>`;
   }
 
+  #enrollHint(): string {
+    const { port, url } = this._listener;
+    if (url) return t('joinWizard.agent.urlHint', { url });
+    return port > 0 ? t('joinWizard.agent.portHint', { port }) : t('joinWizard.agent.enrollHint');
+  }
+
   #ready(result: AgentResult) {
-    const commands = agentCommands(location, this._port, result.token, result.download_pin);
+    const commands = agentCommands(location, this._listener, result.token, result.download_pin);
     return html`<div class="stack">
       <h2>${t('joinWizard.agent.readyTitle', { name: result.server.name })}</h2>
       <lcm-notice tone="warn">${t('joinWizard.agent.once')}</lcm-notice>
@@ -141,7 +147,7 @@ export class LcmJoinAgent extends LitElement {
         ${this.#command(
           t('joinWizard.agent.enroll'),
           commands.enroll,
-          this._port > 0 ? t('joinWizard.agent.portHint', { port: this._port }) : t('joinWizard.agent.enrollHint'),
+          this.#enrollHint(),
         )}
       </div>
       <div class="alt">

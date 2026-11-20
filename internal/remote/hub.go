@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,6 +76,8 @@ type Hub struct {
 	conns map[string]map[*agentConn]struct{}
 	// sockets hält die Verbindungen in HandleConn, auch solche ohne CONNECT.
 	sockets map[net.Conn]struct{}
+	// ttys hält die offenen Web-Konsolen je Sitzungsname (tty.go).
+	ttys map[string]*agentTerminal
 }
 
 // pendingReq ist ein wartender Kommando-Aufruf (Korrelation über die
@@ -101,6 +104,7 @@ func New(servers *repositories.ServerRepository, log *slog.Logger) *Hub {
 		pending: map[string]*pendingReq{},
 		conns:   map[string]map[*agentConn]struct{}{},
 		sockets: map[net.Conn]struct{}{},
+		ttys:    map[string]*agentTerminal{},
 	}
 }
 
@@ -139,6 +143,9 @@ func (h *Hub) Start() error {
 		return err
 	}
 	if err := h.broker.Subscribe("lcm/a/+"+wire.TopicInvSuf, 2, h.handleInventory); err != nil {
+		return err
+	}
+	if err := h.broker.Subscribe("lcm/a/+"+wire.TopicTTOSuf, 3, h.handleTTY); err != nil {
 		return err
 	}
 	return nil
@@ -304,8 +311,9 @@ func (h *Hub) handleInventory(cl *mqtt.Client, sub packets.Subscription, pk pack
 		// Auch leer übernehmen: Ein auf eine ältere Fassung zurückgesetzter
 		// Agent führt die Pins nicht mehr und hielte die Umstellung sonst
 		// nicht auf.
-		"agent_key_pin": inv.KeyPin,
-		"agent_ca_pin":  inv.CAPin,
+		"agent_key_pin":      inv.KeyPin,
+		"agent_ca_pin":       inv.CAPin,
+		"agent_capabilities": strings.Join(inv.Capabilities, ","),
 	})
 	// Erst-Scan hier (nicht schon bei OnSessionEstablished) auslösen: das
 	// Inventar sendet der Agent NACH dem Abonnieren des Kommando-Topics,
@@ -324,7 +332,16 @@ func (h *Hub) agentConnected(cl *mqtt.Client) {
 	agentID := cl.ID
 	h.mu.Lock()
 	h.online[agentID] = cl
+	// Konsolen einer früheren Verbindung desselben Agents sind tot: Der Agent
+	// beendet seine Shells, wenn ihm die Verbindung wegbricht, und ein neu
+	// gestarteter Agent kennt sie gar nicht. Bei einer Übernahme meldet der
+	// alte Client kein Trennen (siehe agentDisconnected) - ohne dies blieben
+	// sie bis zur Leerlauf-Frist hängen.
+	stale := h.terminalsOf(agentID)
 	h.mu.Unlock()
+	for _, t := range stale {
+		t.end(ErrAgentOffline)
+	}
 
 	server, err := h.servers.FindByAgentID(agentID)
 	if err != nil {
@@ -369,7 +386,11 @@ func (h *Hub) agentDisconnected(cl *mqtt.Client) {
 		deadConns = append(deadConns, c)
 	}
 	delete(h.conns, agentID)
+	deadTTYs := h.terminalsOf(agentID)
 	h.mu.Unlock()
+	for _, t := range deadTTYs {
+		t.end(ErrAgentOffline)
+	}
 	for _, req := range waiters {
 		req.ch <- wire.Result{ExitCode: -1, Error: "agent während der ausführung getrennt"}
 	}
@@ -591,8 +612,8 @@ func (a *agentHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) (o
 	return subtle.ConstantTimeCompare([]byte(presented), []byte(server.AgentTokenHash)) == 1
 }
 
-// OnACLCheck sperrt Agents auf ihr eigenes Subtree: subscribe nur das
-// cmd-Topic, publish nur res/inv/status. Der Inline-Client (Serverseite)
+// OnACLCheck sperrt Agents auf ihr eigenes Subtree: subscribe nur die
+// Topics cmd und tty, publish nur res/inv/status/ttyo. Der Inline-Client (Serverseite)
 // durchläuft diesen Hook nicht.
 func (a *agentHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) (ok bool) {
 	// Fail-closed wie bei der Authentifizierung: Panic => Zugriff verweigert.
@@ -602,9 +623,9 @@ func (a *agentHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) (ok bo
 	}
 	id := cl.ID
 	if write {
-		return topic == wire.TopicRes(id) || topic == wire.TopicInv(id) || topic == wire.TopicStatus(id)
+		return topic == wire.TopicRes(id) || topic == wire.TopicInv(id) || topic == wire.TopicStatus(id) || topic == wire.TopicTTYOut(id)
 	}
-	return topic == wire.TopicCmd(id)
+	return topic == wire.TopicCmd(id) || topic == wire.TopicTTY(id)
 }
 
 func (a *agentHook) OnSessionEstablished(cl *mqtt.Client, pk packets.Packet) {

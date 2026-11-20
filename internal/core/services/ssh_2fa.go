@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
@@ -108,8 +109,32 @@ func ssh2faPAMRestoreScript() string {
 	}, " && ")
 }
 
+// ssh2faExemptUser ist der Benutzer, der ohne Einmalcode bleibt: der
+// SSH-Service-User von LCM. Agent-Server haben keinen - LCM meldet sich dort
+// nicht per SSH an, und ihr ServiceUser ist root, den die Ausnahme sonst
+// ausgerechnet von der 2FA befreite.
+func ssh2faExemptUser(server *domain.Server) string {
+	if server.IsAgent() {
+		return ""
+	}
+	return server.ServiceUser
+}
+
+// verify2FAEffective liest die sshd-Konfiguration (`sshd -T`, nach dem Reload) und verlangt, dass
+// die Anmeldung den Einmalcode (keyboard-interactive) einschließt.
+func verify2FAEffective(conn sshx.Conn, server *domain.Server) error {
+	out, _, err := conn.Run(privRun(server, "mkdir -p /run/sshd 2>/dev/null; sshd -T 2>&1 | grep -i '^authenticationmethods'"))
+	if err != nil {
+		return fmt.Errorf("wirkung der ssh-2fa nicht prüfbar: %w", err)
+	}
+	if !strings.Contains(strings.ToLower(out), "keyboard-interactive") {
+		return fmt.Errorf("die SSH-2FA wurde geschrieben, wirkt aber nicht: sshd meldet %q", strings.TrimSpace(firstLine(out)))
+	}
+	return nil
+}
+
 // ssh2faDropinScript schreibt das sshd-Drop-in: Key + TOTP als Pflicht,
-// der LCM-Service-User bleibt bei reiner Key-Auth.
+// der LCM-Service-User bleibt bei reiner Key-Auth (leer: keine Ausnahme).
 //
 // Bewusst die alte Schreibweise ChallengeResponseAuthentication (nicht das
 // Alias KbdInteractiveAuthentication, das erst OpenSSH 8.7 kennt - ältere
@@ -117,17 +142,21 @@ func ssh2faPAMRestoreScript() string {
 // ist Pflicht: ohne die Zeile fielen alle später eingelesenen Drop-ins und
 // die Hauptdatei in den Match-User-Block.
 func ssh2faDropinScript(serviceUser string) string {
-	content := strings.Join([]string{
+	lines := []string{
 		"# von LCM verwaltet: SSH-2FA (TOTP) - Anmeldung mit Key + Einmalcode",
 		"UsePAM yes",
 		"ChallengeResponseAuthentication yes",
 		"AuthenticationMethods publickey,keyboard-interactive:pam",
-		"# LCM-Service-User ausgenommen (maschineller Zugang, reine Key-Auth)",
-		"Match User " + serviceUser,
-		"    AuthenticationMethods publickey",
-		"Match all",
-		"",
-	}, "\n")
+	}
+	if serviceUser != "" {
+		lines = append(lines,
+			"# LCM-Service-User ausgenommen (maschineller Zugang, reine Key-Auth)",
+			"Match User "+serviceUser,
+			"    AuthenticationMethods publickey",
+			"Match all",
+		)
+	}
+	content := strings.Join(append(lines, ""), "\n")
 	return strings.Join([]string{
 		sshdEnsureIncludeScript,
 		"install -d -m 755 /etc/ssh/sshd_config.d",
@@ -223,7 +252,7 @@ func planSSH2FA(server *domain.Server, enable bool) (ssh2faPlan, error) {
 	if !enable {
 		return ssh2faPlan{script: ssh2faUninstallScript(server.PackageManager)}, nil
 	}
-	script, err := ssh2faInstallScript(server.PackageManager, server.ServiceUser)
+	script, err := ssh2faInstallScript(server.PackageManager, ssh2faExemptUser(server))
 	if err != nil {
 		return ssh2faPlan{}, err
 	}
@@ -261,7 +290,23 @@ func (s *ServerService) runSSH2FAJob(job *domain.Job, server *domain.Server, ena
 		return
 	}
 
-	if enable {
+	// Beim Agent-Server meldet sich LCM nicht per SSH an - eine Probe über den
+	// Agent gelänge immer und bewiese nichts. Dort zählt die geschriebene und
+	// neu geladene Konfiguration: Verlangt sie den Einmalcode nicht, hat das
+	// Drop-in nicht gegriffen, und „2FA aktiv" wäre eine unbelegte Meldung.
+	if enable && server.IsAgent() {
+		if err := verify2FAEffective(conn, server); err != nil {
+			rbOut, rbCode, rbErr := conn.Run(privRun(server, plan.rollback))
+			if rbErr != nil || rbCode != 0 {
+				err = fmt.Errorf("%w - und das Zurückrollen schlug fehl (exit %d, %v), bitte auf dem Server prüfen", err, rbCode, rbErr)
+			} else {
+				err = fmt.Errorf("%w - SSH-2FA wurde zurückgerollt", err)
+			}
+			s.jobs.Complete(job, output+"\n\nROLLBACK:\n"+rbOut, ptrInt(1), err)
+			return
+		}
+	}
+	if enable && !server.IsAgent() {
 		// Aussperr-Probe: eine FRISCHE Verbindung muss gelingen, solange die
 		// bestehende noch offen ist. Scheitert sie, hat die Match-Ausnahme
 		// nicht gegriffen - dann wird sofort zurückgerollt statt LCM (und

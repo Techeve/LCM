@@ -145,11 +145,23 @@ func TestAgentTransportGating(t *testing.T) {
 	}
 	scope := repositories.ScopeAll()
 
-	if _, err := env.Servers.HardenSSH(scope, server.ID, "tester"); !errors.Is(err, services.ErrAgentTransport) {
-		t.Fatalf("HardenSSH: erwartete ErrAgentTransport, got %v", err)
+	// SSH-Härtung, Root-Login, SSH-Port und offene Ports laufen als
+	// root-Skript über den Agent und sind NICHT transport-gesperrt; ohne
+	// verbundenen Hub scheitern sie erst am Verbindungsaufbau.
+	if _, err := env.Servers.HardenSSH(scope, server.ID, "tester"); errors.Is(err, services.ErrAgentTransport) {
+		t.Fatal("HardenSSH: darf für Agent-Server nicht transport-gesperrt sein")
 	}
-	if _, err := env.Servers.UnhardenSSH(scope, server.ID, "tester"); !errors.Is(err, services.ErrAgentTransport) {
-		t.Fatalf("UnhardenSSH: erwartete ErrAgentTransport, got %v", err)
+	if _, err := env.Servers.UnhardenSSH(scope, server.ID, "tester"); errors.Is(err, services.ErrAgentTransport) {
+		t.Fatal("UnhardenSSH: darf für Agent-Server nicht transport-gesperrt sein")
+	}
+	if _, err := env.Servers.SetSSHRootLogin(scope, server.ID, true, "tester"); errors.Is(err, services.ErrAgentTransport) {
+		t.Fatal("SetSSHRootLogin: darf für Agent-Server nicht transport-gesperrt sein")
+	}
+	if _, err := env.Servers.ChangeSSHPort(scope, server.ID, 2222, "tester"); errors.Is(err, services.ErrAgentTransport) {
+		t.Fatal("ChangeSSHPort: darf für Agent-Server nicht transport-gesperrt sein")
+	}
+	if _, err := env.Servers.ScanListeningPortsNow(scope, server.ID, "tester"); errors.Is(err, services.ErrAgentTransport) {
+		t.Fatal("ScanListeningPortsNow: darf für Agent-Server nicht transport-gesperrt sein")
 	}
 	if _, err := env.Servers.Reconnect(scope, services.ReconnectRequest{ID: server.ID, Actor: "tester"}); !errors.Is(err, services.ErrAgentTransport) {
 		t.Fatalf("Reconnect: erwartete ErrAgentTransport, got %v", err)

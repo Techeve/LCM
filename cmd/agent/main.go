@@ -47,6 +47,8 @@ func run() error {
 		}
 		log.Info("lcm-agent starting", "version", version.String(), "server", cfg.URL)
 		return agent.NewClient(cfg, log, version.String()).WithConfigPath(agent.ConfigPath).Run()
+	case "terminal":
+		return terminalCommand(os.Args[2:])
 	case "uninstall":
 		return agent.Uninstall()
 	case "version", "-v", "--version":
@@ -67,6 +69,7 @@ func usage() {
 Usage:
   lcm-agent enroll <lcm-server-url> <token>   Set up the agent and start it as a service
   lcm-agent run                               Service loop (used by systemd)
+  lcm-agent terminal on|off|status            Allow or forbid the web console via this agent
   lcm-agent uninstall                         Remove the agent from this system
   lcm-agent version                           Show version`,
 		`lcm-agent - LCM Remote Agent
@@ -74,6 +77,33 @@ Usage:
 Verwendung:
   lcm-agent enroll <lcm-server-url> <token>   Agent einrichten und als Dienst starten
   lcm-agent run                               Dienst-Schleife (nutzt systemd)
+  lcm-agent terminal on|off|status            Web-Konsole über diesen Agent erlauben oder verbieten
   lcm-agent uninstall                         Agent von diesem System entfernen
   lcm-agent version                           Version anzeigen`))
+}
+
+// terminalCommand schaltet die Web-Konsole über diesen Agent an oder ab:
+// lcm-agent terminal on|off|status.
+func terminalCommand(args []string) error {
+	usageErr := errors.New(i18n.T("usage: lcm-agent terminal on|off|status", "verwendung: lcm-agent terminal on|off|status"))
+	if len(args) != 1 {
+		return usageErr
+	}
+	switch args[0] {
+	case "status":
+		if agent.TerminalDisabled(agent.ConfigDir) {
+			fmt.Println(i18n.T("Web console: off", "Web-Konsole: aus"))
+		} else {
+			fmt.Println(i18n.T("Web console: on", "Web-Konsole: an"))
+		}
+		return nil
+	case "on", "off":
+		if err := agent.SetTerminal(agent.ConfigDir, args[0] == "on"); err != nil {
+			return err
+		}
+		fmt.Println(i18n.T("Saved. Applies right away, open consoles end with the next input; LCM shows it after the next reconnect (now: systemctl restart lcm-agent).",
+			"Gespeichert. Gilt sofort, offene Konsolen enden bei der nächsten Eingabe; LCM zeigt es nach dem nächsten Verbindungsaufbau an (sofort: systemctl restart lcm-agent)."))
+		return nil
+	}
+	return usageErr
 }

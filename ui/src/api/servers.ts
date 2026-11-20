@@ -152,6 +152,8 @@ export interface ServerItem {
   is_lcm_host: boolean;
   failed_checks: number;
   agent_version: string;
+  /** Was der Agent beim letzten Verbindungsaufbau als Fähigkeiten gemeldet hat (z.B. tty für die Konsole). */
+  agent_capabilities: string[];
   console_disabled: boolean;
   user_sync_disabled: boolean;
   // Hardware und Netz
@@ -294,6 +296,7 @@ export function normaliseServer(raw: unknown): ServerItem {
     is_lcm_host: r.is_lcm_host === true,
     failed_checks: numberOr(r.failed_checks, 0),
     agent_version: text(r.agent_version),
+    agent_capabilities: text(r.agent_capabilities).split(',').filter(Boolean),
     console_disabled: r.console_disabled === true,
     user_sync_disabled: r.user_sync_disabled === true,
     virtualization: text(r.virtualization),
@@ -676,9 +679,21 @@ export function isApiDevice(server: Pick<ServerItem, 'os_id'>): boolean {
   return server.os_id === 'routeros' || server.os_id === 'dsm';
 }
 
-/** Eine Konsole gibt es nur über SSH und nur, solange sie am Server nicht abgeschaltet ist. */
-export function hasConsole(server: Pick<ServerItem, 'os_id' | 'transport' | 'console_disabled'>): boolean {
-  return !isApiDevice(server) && server.transport !== 'agent' && !server.console_disabled;
+type ConsoleFields = Pick<ServerItem, 'os_id' | 'transport' | 'console_disabled' | 'agent_capabilities' | 'agent_version'>;
+
+/** Eine Konsole gibt es über SSH und über einen Agent, der sie meldet - solange sie am Server nicht abgeschaltet ist. */
+export function hasConsole(server: ConsoleFields): boolean {
+  if (isApiDevice(server) || server.console_disabled) return false;
+  return server.transport !== 'agent' || server.agent_capabilities.includes('tty');
+}
+
+/**
+ * Warum ein Agent-Server keine Konsole anbietet (Übersetzungsschlüssel), sonst leer: abgeschaltet am Server oder Agent zu
+ * alt. Ein Agent, der sich noch nie gemeldet hat (keine Version), hat noch nichts gesagt - dann gibt es keinen Grund zu nennen.
+ */
+export function agentConsoleBlock(server: ConsoleFields): string {
+  if (server.transport !== 'agent' || !server.agent_version || isApiDevice(server) || server.console_disabled || hasConsole(server)) return '';
+  return server.agent_capabilities.includes('tty-off') ? 'errors.terminal.agent_disabled' : 'errors.terminal.agent_outdated';
 }
 
 /** Die Reiter, die zu diesem Server und zu den Rechten des Benutzers passen (wie in der alten Oberfläche). */

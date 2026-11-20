@@ -23,7 +23,7 @@ The choice depends on the network topology:
 | Changing/dynamic IP, roaming (laptop) | **Agent** |
 | You don't want to open an inbound SSH port | **Agent** |
 | Classic server with reachable SSH | **SSH** |
-| SSH hardening, certificate rotation, reconnect needed | **SSH** (these actions are hidden on the agent) |
+| Key rotation, reconnect needed | **SSH** (these actions are hidden on the agent) |
 
 A server is either one **or** the other - the transport is fixed at creation time.
 
@@ -235,12 +235,17 @@ The UI port is an ordinary HTTPS service, but it needs WebSocket forwarding on
 two paths: for the web console (`/api/v1/servers/<id>/terminal`) and for the
 event channel (`/api/v1/events`) that keeps the interface live. Without the
 forwarding the console and the live display are missing (the nginx examples are
-in [Reverse proxy & external hardening](/en/guides/reverse-proxy/#nginx)). Two
-more things have to be set:
+in [Reverse proxy & external hardening](/en/guides/reverse-proxy/#nginx)). These
+things have to be set:
 
 - **`public_base_url`** under *Settings → General*. Activation and reset links
   are built from it - without it they point at the internal address nobody can
   reach from outside.
+- **Address for agents** (`public_agent_url`), also under *Settings → General*,
+  if the proxy publishes the agent port under its own name (for example
+  `https://agent.example.com`). The *Add server* wizard then builds the
+  `enroll` command with this address instead of the interface host and the
+  agent port. The MCP interface has the same field there (`public_mcp_url`).
 - Pass **`X-Forwarded-For`** through and set `trust_proxy_header` in LCM
   **together with** `trusted_proxies` (the proxy's address), otherwise the IP
   allowlist and the failed-login lockout only ever see the proxy's address.
@@ -287,8 +292,29 @@ entitled to.
 
 If the console is disabled for a server, more than the button disappears: the
 server rejects direct calls as well. Where there is no shell it is not offered
-at all - demo servers, Synology DSM devices, agent servers (the agent
-transport carries no stream) and servers in maintenance.
+at all - demo servers, Synology DSM devices and servers in maintenance.
+
+### Console on agent servers
+
+On agent servers the console runs through the agent connection, so no
+inbound SSH port is needed. The agent opens a **login shell as root** in a
+pseudo terminal; permission, switches, console limit, audit and recording
+apply as with SSH. It needs an `lcm-agent` from this version on - older agents
+do not report the capability, and the button is then greyed out with a hint
+to update the agent.
+
+The operator of the server can switch the console off there, independent of
+LCM:
+
+```sh
+sudo lcm-agent terminal off     # switch off
+sudo lcm-agent terminal on      # allow again (default)
+sudo lcm-agent terminal status
+```
+
+The switch is the file `/etc/lcm-agent/terminal-off`. It applies right away;
+open consoles end with the next input as well. LCM shows it after the agent's
+next reconnect (now: `systemctl restart lcm-agent`).
 
 ### Sessions
 
@@ -300,7 +326,8 @@ transport carries no stream) and servers in maintenance.
   collide, LCM waits for the package manager (see
   [APT cache](/en/guides/apt-cache/#when-apt-is-busy)).
 - **End**: *End*, closing the window, `exit` in the shell or **15 minutes
-  without input** end the session including the SSH connection. The console
+  without input** end the session including the SSH connection (with an agent:
+  including the shell; if the agent connection drops, it ends as well). The console
   then has to be reopened. Opening and closing are in the audit log, the
   session itself in the SSH log.
 
@@ -368,8 +395,25 @@ again shown only once.
 
 ## What differs on an agent server
 
-An agent server has no SSH: SSH-specific actions (SSH hardening, certificate/key
-rotation, reconnect) are hidden there or rejected with a clear message. The agent
+LCM does not sign in to an agent server via SSH. What depends on that
+connection - key rotation, reconnect, cleanup on delete, the external port scan -
+is hidden there or rejected with a clear message. LCM still manages the server's
+sshd: SSH hardening, root login, SSH port and SSH 2FA run as scripts over the
+agent. The differences:
+
+- **Port change:** LCM reads the current port from the server, requires a free
+  new port and afterwards checks on the server itself that sshd listens there.
+  Whether the port is reachable from outside (firewall or NAT in front), LCM
+  cannot see through the agent. If the port is set in `sshd_config` itself or in
+  a foreign drop-in, LCM aborts: port lines add up, and sshd would keep listening
+  on the old port as well.
+- **SSH hardening** aborts if no SSH key is present on the server (root,
+  `/home/*`, or an `AuthorizedKeysCommand`) - otherwise nobody could sign in via
+  SSH afterwards.
+- **SSH 2FA** exempts no user, not even root. Instead of the lockout probe, LCM
+  checks the effective configuration (`sshd -T`).
+
+The agent
 runs as a **root service** on the target system (no sudo wrapper needed); all
 other functions - scans, package updates, Docker monitoring, firewall, DNS,
 security tools - run over the agent transport unchanged. The SSH logging

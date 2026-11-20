@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readUsers } from '../../../api/settings';
+import { readUsers, type Role } from '../../../api/settings';
 import {
   activationUrl,
   assignableRoles,
+  chosenRole,
   emptyUserForm,
   fullName,
   needsCurrentPassword,
@@ -11,7 +12,6 @@ import {
   profileChanged,
   rolesChanged,
   sameUserForm,
-  toggleRole,
   userActions,
   userFieldForError,
   userFormOf,
@@ -47,7 +47,14 @@ describe('Benutzerformular', () => {
   });
 
   it('baut den Körper getrimmt', () => {
-    expect(newUserBody({ ...valid, username: ' lena ', email: ' l@x.de ' })).toMatchObject({ username: 'lena', email: 'l@x.de', roles: ['manager'] });
+    expect(newUserBody({ ...valid, username: ' lena ', email: ' l@x.de ' })).toMatchObject({ username: 'lena', email: 'l@x.de', roles: ['manager'], invite: false });
+  });
+
+  it('lädt ohne Passwort ein, braucht dafür aber eine E-Mail-Adresse', () => {
+    const invite = { ...valid, access: 'invite' as const, password: '', confirm: '' };
+    expect(validateUserForm({ ...invite, email: 'l@x.de' }, 'create')).toEqual({});
+    expect(validateUserForm(invite, 'create').email).toBe('settings.users.form.emailRequired');
+    expect(newUserBody({ ...invite, email: 'l@x.de', password: 'liegengeblieben' })).toMatchObject({ password: '', invite: true });
   });
 });
 
@@ -57,9 +64,11 @@ describe('Rollen', () => {
     expect(rolesChanged(user!, ['admin'])).toBe(true);
   });
 
-  it('schaltet Rollen um', () => {
-    expect(toggleRole(['a'], 'b')).toEqual(['a', 'b']);
-    expect(toggleRole(['a', 'b'], 'a')).toEqual(['b']);
+  it('zeigt genau eine vergebbare Rolle', () => {
+    const roles = [{ name: 'admin' }, { name: 'manager' }] as Role[];
+    expect(chosenRole(['manager'], roles)).toBe('manager');
+    expect(chosenRole(['manager', 'admin'], roles)).toBe('admin');
+    expect(chosenRole(['system'], roles)).toBe('');
   });
 });
 

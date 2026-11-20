@@ -15,14 +15,18 @@ export interface UserForm {
   /** Aktuelles Passwort; nur nötig, wenn jemand seine eigene E-Mail-Adresse ändert. */
   current: string;
   roles: string[];
+  /** Nur beim Anlegen: Passwort hier vergeben oder Aktivierungslink an die E-Mail-Adresse schicken. */
+  access: UserAccess;
 }
 
+export type UserAccess = 'password' | 'invite';
+
 export function emptyUserForm(defaultRoles: string[] = []): UserForm {
-  return { username: '', email: '', firstName: '', lastName: '', password: '', confirm: '', current: '', roles: defaultRoles };
+  return { username: '', email: '', firstName: '', lastName: '', password: '', confirm: '', current: '', roles: defaultRoles, access: 'password' };
 }
 
 export function userFormOf(user: LoginUser): UserForm {
-  return { username: user.username, email: user.email, firstName: user.firstName, lastName: user.lastName, password: '', confirm: '', current: '', roles: [...user.roles] };
+  return { username: user.username, email: user.email, firstName: user.firstName, lastName: user.lastName, password: '', confirm: '', current: '', roles: [...user.roles], access: 'password' };
 }
 
 export interface UserFormErrors {
@@ -38,18 +42,21 @@ export interface UserFormErrors {
 const USERNAME = /^[a-z0-9_-]{3,32}$/;
 
 /**
- * Fehler sind Übersetzungsschlüssel. `create` verlangt Benutzername und Passwort, `edit` nur eine gültige
- * E-Mail-Adresse und, wenn jemand die eigene Adresse ändert (`needsCurrent`), das aktuelle Passwort.
+ * Fehler sind Übersetzungsschlüssel. `create` verlangt einen Benutzernamen und je nach Zugang ein Passwort oder
+ * eine E-Mail-Adresse für den Aktivierungslink; `edit` nur eine gültige E-Mail-Adresse und, wenn jemand die eigene
+ * Adresse ändert (`needsCurrent`), das aktuelle Passwort.
  */
 export function validateUserForm(form: UserForm, mode: 'create' | 'edit', needsCurrent = false): UserFormErrors {
   const errors: UserFormErrors = {};
+  const invite = mode === 'create' && form.access === 'invite';
   if (mode === 'create') {
     if (!USERNAME.test(form.username.trim())) errors.username = 'settings.users.form.usernameInvalid';
-    errors.password = passwordError(form.password, identityOfForm(form));
-    if (!errors.password && form.confirm !== form.password) errors.confirm = 'settings.users.form.confirmMismatch';
+    if (!invite) errors.password = passwordError(form.password, identityOfForm(form));
+    if (!invite && !errors.password && form.confirm !== form.password) errors.confirm = 'settings.users.form.confirmMismatch';
   }
   const email = form.email.trim();
   if (email !== '' && !isEmail(email)) errors.email = 'settings.users.form.emailInvalid';
+  else if (email === '' && invite) errors.email = 'settings.users.form.emailRequired';
   for (const key of ['firstName', 'lastName'] as const) {
     if (charCount(form[key].trim()) > LIMITS.personName) errors[key] = 'check.tooLong';
     else if (hasControlChars(form[key])) errors[key] = 'check.oneLine';
@@ -79,13 +86,15 @@ export function validateNewPassword(password: string, confirm: string, identity:
 }
 
 export function newUserBody(form: UserForm): NewUserBody {
+  const invite = form.access === 'invite';
   return {
     username: form.username.trim(),
     email: form.email.trim(),
     first_name: form.firstName.trim(),
     last_name: form.lastName.trim(),
-    password: form.password,
+    password: invite ? '' : form.password,
     roles: form.roles,
+    invite,
   };
 }
 
@@ -105,8 +114,12 @@ export function rolesChanged(user: LoginUser, roles: string[]): boolean {
   return [...user.roles].sort().join('\n') !== [...roles].sort().join('\n');
 }
 
-export function toggleRole(roles: string[], name: string): string[] {
-  return roles.includes(name) ? roles.filter((role) => role !== name) : [...roles, name];
+/**
+ * Ein Konto hat genau eine Rolle. Ältere Konten mit mehreren zeigen die erste vergebbare; wer speichert,
+ * behält nur die gewählte.
+ */
+export function chosenRole(roles: string[], assignable: Role[]): string {
+  return assignable.find((role) => roles.includes(role.name))?.name ?? '';
 }
 
 const FIELD_OF_CODE: Record<string, keyof UserFormErrors> = {
