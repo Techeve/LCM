@@ -1,6 +1,9 @@
 package services
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +93,33 @@ func TestUsersScanScriptImHelper(t *testing.T) {
 		if !strings.Contains(lcmHelperScript, sub) {
 			t.Fatalf("helper kennt %s nicht", sub)
 		}
+	}
+}
+
+// TestKeyZaehlungMitOptionen läuft gegen eine echte authorized_keys: Keys
+// mit Optionen davor zählten nicht mit, ein Konto mit
+// from="10.0.0.0/8" ssh-ed25519 ... stand mit 0 Keys da.
+func TestKeyZaehlungMitOptionen(t *testing.T) {
+	ak := filepath.Join(t.TempDir(), "authorized_keys")
+	content := strings.Join([]string{
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA1 tony@laptop",
+		`from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA2 backup`,
+		`command="/usr/bin/rrsync -ro /srv",restrict ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ3 rsync`,
+		`no-pty,no-port-forwarding ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY4 monitor`,
+		`  sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t5 yubikey`,
+		"# ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA6 auskommentiert",
+		`command="ssh-agent-wrapper start" no-pty`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(ak, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("sh", "-c", "ak=\"$1\"; "+sshKeyCountCmd, "sh", ak).Output()
+	if err != nil {
+		t.Fatalf("zählung scheitert: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "5" {
+		t.Errorf("5 keys erwartet, gezählt %s", got)
 	}
 }
 

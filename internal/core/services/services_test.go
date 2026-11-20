@@ -123,7 +123,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	prov := services.NewProvisioningService(linuxRepo, serverRepo, cipher, servers.Connect).
 		WithAudit(audit).WithRecorder(recorder).WithPendingUserSyncs(pendingRepo).
 		WithSSHLog(sshLogRepo).WithProfiles(profileRepo)
-	backups := services.NewBackupService(db, settingsRepo, t.TempDir(), ":memory:", "").WithCipher(cipher)
+	backups := services.NewBackupService(repositories.NewDatabaseRepository(db), settingsRepo, t.TempDir(), ":memory:", "").WithCipher(cipher)
 	customActionRepo := repositories.NewCustomActionRepository(db)
 	reg := &registry.Fake{Results: map[string]registry.Result{}}
 	advSource := &advisories.Fake{IsAvailable: true}

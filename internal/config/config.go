@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -126,24 +127,35 @@ type Config struct {
 	// TrustProxyHeader.
 	AllowedIPs []string `json:"allowed_ips"`
 
-	// TrustProxyHeader steuert, woher der IP-Filter (AllowedIPs) die Client-IP
-	// nimmt: false (Default) = die direkte TCP-Verbindung (fälschungssicher);
-	// true = die erste Adresse aus dem X-Forwarded-For-Header. NUR aktivieren,
-	// wenn LCM hinter einem vertrauenswürdigen Reverse-Proxy läuft, der diesen
-	// Header selbst setzt bzw. überschreibt - sonst ließe sich der Filter durch
-	// einen gefälschten Header umgehen.
+	// TrustProxyHeader steuert, woher IP-Filter (AllowedIPs), Anmeldesperre
+	// und Protokolle die Client-IP nehmen: false (Default) = die direkte
+	// TCP-Verbindung (fälschungssicher); true = aus dem X-Forwarded-For-Header,
+	// aber nur von den Gegenstellen in TrustedProxies. NUR aktivieren, wenn LCM
+	// hinter einem Reverse-Proxy läuft, der diesen Header selbst setzt bzw.
+	// ergänzt.
 	TrustProxyHeader bool `json:"trust_proxy_header"`
 
-	// TrustedProxies grenzt TrustProxyHeader auf die Gegenstellen ein, die
-	// wirklich der Reverse-Proxy sind (IP-Adressen, CIDR-Bereiche oder die
-	// Schlüsselwörter "localhost"/"private"). Nur wenn die direkte
-	// TCP-Verbindung von einer dieser Adressen kommt, gilt X-Forwarded-For.
-	// Leer = jeder Peer wird geglaubt (bisheriges Verhalten; LCM warnt beim
-	// Start) - sicher ist das nur, wenn der LCM-Port ausschließlich vom Proxy
-	// erreichbar ist. Sonst gibt sich ein Client, der den Port direkt
-	// erreicht, mit einer gefälschten Kopfzeile jede beliebige Adresse: in
-	// die IP-Allowlist hinein und aus der Anmeldesperre heraus.
+	// TrustedProxies nennt die Gegenstellen, die wirklich der Reverse-Proxy
+	// sind (IP-Adressen, CIDR-Bereiche oder die Schlüsselwörter
+	// "localhost"/"private"). Nur wenn die direkte TCP-Verbindung von einer
+	// dieser Adressen kommt, gilt X-Forwarded-For (und X-Forwarded-Proto);
+	// maßgeblich ist der rechteste Eintrag, der selbst kein vertrauter Proxy
+	// ist. Leer = niemandem vertrauen: Der Header wird ignoriert, auch wenn
+	// TrustProxyHeader an ist (LCM warnt beim Start). Früher hieß leer „jeder
+	// Peer" - ein Client, der den Port direkt erreichte, gab sich mit einer
+	// gefälschten Kopfzeile jede beliebige Adresse: in die IP-Allowlist hinein
+	// und aus der Anmeldesperre heraus.
 	TrustedProxies []string `json:"trusted_proxies"`
+
+	// TLSCACert/TLSCAKey nennen eine CA des Betreibers (PEM-Dateien,
+	// absolute Pfade), etwa eine Zwischen-CA der eigenen PKI. Mit ihr stellt
+	// LCM sein Server-Zertifikat aus und legt keine eigene CA an. In der
+	// Zertifikatsdatei darf hinter der CA ihre Kette folgen; LCM liefert sie
+	// mit aus. Beide leer (Default) = die eigene CA im Datenverzeichnis.
+	// Die Dateien liegen außerhalb des Datenverzeichnisses und gehören nicht
+	// zum System-Backup.
+	TLSCACert string `json:"tls_ca_cert"`
+	TLSCAKey  string `json:"tls_ca_key"`
 }
 
 // AccessTokenTTL liefert die Leerlauf-Frist einer Browser-Sitzung als time.Duration.
@@ -258,6 +270,20 @@ func (c *Config) validate() error {
 	}
 	if _, err := netfilter.Parse(c.TrustedProxies); err != nil {
 		return fmt.Errorf("trusted_proxies: %w", err)
+	}
+	return c.validateTLSCA()
+}
+
+// validateTLSCA: tls_ca_cert und tls_ca_key nur zusammen und als absolute
+// Pfade - ein relativer hinge vom Arbeitsverzeichnis des Dienstes ab.
+func (c *Config) validateTLSCA() error {
+	if (c.TLSCACert == "") != (c.TLSCAKey == "") {
+		return fmt.Errorf("tls_ca_cert und tls_ca_key gehören zusammen")
+	}
+	for _, p := range []string{c.TLSCACert, c.TLSCAKey} {
+		if p != "" && !filepath.IsAbs(p) {
+			return fmt.Errorf("tls_ca_cert/tls_ca_key: %q ist kein absoluter Pfad", p)
+		}
 	}
 	return nil
 }

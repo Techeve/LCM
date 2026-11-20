@@ -28,8 +28,14 @@ func DemoGuard() fiber.Handler {
 	}
 }
 
+// demoBlocked vergleicht mit dem Pfad, wie Fiber ihn routet: ohne Rücksicht
+// auf Groß- und Kleinschreibung und ohne abschließende Schrägstriche (beides
+// Fiber-Vorgaben, CaseSensitive und StrictRouting sind aus). c.Path() behält
+// beides, sonst kämen /API/v1/... und /api/v1/.../ an der Sperre vorbei.
+// Doppelte Schrägstriche und Punkt-Segmente hat Fiber in c.Path() bereits
+// bereinigt.
 func demoBlocked(method, path string) bool {
-	rest, ok := strings.CutPrefix(path, "/api/v1")
+	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimRight(path, "/")), "/api/v1")
 	if !ok {
 		return false
 	}
@@ -57,6 +63,10 @@ func demoBlocked(method, path string) bool {
 	case rest == "/servers/probe" || rest == "/servers/join" || rest == "/servers/dsm/probe":
 		return true
 	case strings.HasPrefix(rest, "/servers/") && (strings.HasSuffix(rest, "/reconnect") || strings.HasSuffix(rest, "/dns-test")):
+		return true
+	// Portscan von LCM aus: zielt zwar nur auf gespeicherte Server, aber die
+	// öffentliche Demo baut grundsätzlich keine Verbindungen auf.
+	case mutating && strings.HasPrefix(rest, "/servers/") && strings.HasSuffix(rest, "/port-scan"):
 		return true
 	case mutating && strings.HasPrefix(rest, "/notification-channels"):
 		return true

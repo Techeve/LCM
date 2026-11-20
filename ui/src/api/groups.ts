@@ -27,6 +27,8 @@ export interface GroupServer {
   host: string;
   os_id: string;
   os_name: string;
+  proxmox_type: string;
+  hardware_model: string;
 }
 
 export interface GroupManager {
@@ -42,6 +44,8 @@ export interface Rule {
   group_id: number;
   group_name: string;
   schedule_id: number | null;
+  /** Läuft der Zeitplan einer geplanten Regel? Nur `/api/v1/rules` liefert es; ohne Angabe gilt: ja. */
+  schedule_enabled: boolean;
   enforce: boolean;
   position: number;
   name: string;
@@ -138,6 +142,7 @@ export function normalizeRule(raw: unknown): Rule {
     group_id: count(r.group_id),
     group_name: text(r.group_name),
     schedule_id: typeof r.schedule_id === 'number' ? r.schedule_id : null,
+    schedule_enabled: r.schedule_enabled !== false,
     enforce: r.enforce === true,
     position: count(r.position),
     name: text(r.name),
@@ -171,7 +176,15 @@ export function normalizeSchedules(raw: unknown): Schedule[] {
 }
 
 function normalizeServer(raw: Raw): GroupServer {
-  return { id: count(raw.id), name: text(raw.name), host: text(raw.host), os_id: text(raw.os_id), os_name: text(raw.os_name) };
+  return {
+    id: count(raw.id),
+    name: text(raw.name),
+    host: text(raw.host),
+    os_id: text(raw.os_id),
+    os_name: text(raw.os_name),
+    proxmox_type: text(raw.proxmox_type),
+    hardware_model: text(raw.hardware_model),
+  };
 }
 
 function normalizeManager(raw: Raw): GroupManager {
@@ -282,6 +295,15 @@ export interface RuleBody {
 function changed(): void {
   store.invalidate(GROUPS_URL);
   store.invalidate(ALL_RULES_URL);
+}
+
+/**
+ * Nach einem Job: die Liste und die offene Gruppe neu laden. Die Details der übrigen Gruppen, aus denen die Liste ihre
+ * Zahlen holt, ändert ein Job nicht; sie mitzuladen hieße zwei Abrufe je Gruppe bei jedem Job im Cluster.
+ */
+export function refreshAfterJob(openGroupId: number | null): void {
+  store.invalidate(GROUPS_URL, { withChildren: false });
+  if (openGroupId !== null) store.invalidate(groupUrl(openGroupId));
 }
 
 async function after<T>(request: Promise<T>): Promise<T> {

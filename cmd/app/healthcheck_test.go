@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"LCM/internal/infrastructure/tlsx"
+	"LCM/internal/infrastructure/tlsx/tlsxtest"
 )
 
 // Die Pruefung ersetzt eine Zeile, die nie funktioniert hat: Beide Dockerfiles
@@ -27,9 +28,7 @@ import (
 func testUmgebung(t *testing.T) (dataDir string, port int) {
 	t.Helper()
 	dataDir = t.TempDir()
-	if _, _, err := tlsx.EnsureSelfSigned(dataDir, time.Now().Add(-time.Hour)); err != nil {
-		t.Fatalf("zertifikat erzeugen: %v", err)
-	}
+	tlsxtest.ServerCert(t, dataDir, time.Now().Add(-time.Hour))
 	// Freien Port ermitteln und sofort wieder freigeben - der Test-Dienst
 	// belegt ihn gleich selbst.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -139,9 +138,7 @@ func TestHealthcheckOhneDienst(t *testing.T) {
 func TestHealthcheckPinntAufDasEigeneZertifikat(t *testing.T) {
 	dataDir, port := testUmgebung(t)
 	fremd := t.TempDir()
-	if _, _, err := tlsx.EnsureSelfSigned(fremd, time.Now().Add(-time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	tlsxtest.ServerCert(t, fremd, time.Now().Add(-time.Hour))
 	startService(t, port, fremd, http.StatusOK)
 
 	if err := runHealthcheck("", dataDir); err == nil {
@@ -156,9 +153,7 @@ func TestHealthcheckPinntAufDasEigeneZertifikat(t *testing.T) {
 func TestHealthcheckOhneZertifikatBleibtBenutzbar(t *testing.T) {
 	dataDir, port := testUmgebung(t)
 	certDir := t.TempDir()
-	if _, _, err := tlsx.EnsureSelfSigned(certDir, time.Now().Add(-time.Hour)); err != nil {
-		t.Fatal(err)
-	}
+	tlsxtest.ServerCert(t, certDir, time.Now().Add(-time.Hour))
 	startService(t, port, certDir, http.StatusOK)
 	if err := os.Remove(filepath.Join(dataDir, tlsx.CertFileName)); err != nil {
 		t.Fatal(err)

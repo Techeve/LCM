@@ -285,10 +285,13 @@ Was LCM dabei einrichtet:
   auth-Bereich wird stillgelegt - sonst käme nach dem Code auch noch eine
   Passwortabfrage. Alle Änderungen sind marker-basiert und beim Entfernen
   vollständig umkehrbar (Sicherung: `/etc/pam.d/sshd.lcm-backup`).
-- Ein sshd-Drop-in (`55-lcm-2fa.conf`) setzt
+- Ein sshd-Drop-in (`40-lcm-2fa.conf`, früher `55-lcm-2fa.conf`) setzt
   `AuthenticationMethods publickey,keyboard-interactive:pam` - bewusst
-  alphabetisch **vor** dem Härtungs-Drop-in (OpenSSH nimmt je Option den
-  zuerst gefundenen Wert). Reine Passwort-Logins per SSH sind damit vorbei.
+  alphabetisch **vor** dem Härtungs-Drop-in und vor `50-redhat.conf` von
+  RHEL 9 und seinen Klonen (OpenSSH nimmt je Option den zuerst gefundenen
+  Wert). Reine Passwort-Logins per SSH sind damit vorbei.
+- Bricht das Einrichten mittendrin ab, nimmt LCM den PAM-Umbau und das
+  Drop-in sofort zurück.
 
 **Sanfter Rollout (`nullok`):** Benutzer **ohne** eingerichtetes TOTP kommen
 weiterhin mit ihrem Key herein - niemand wird beim Aktivieren ausgesperrt.

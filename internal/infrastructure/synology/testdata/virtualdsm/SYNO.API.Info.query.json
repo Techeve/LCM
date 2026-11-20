@@ -1,0 +1,71 @@
+{
+ "success": true,
+ "data": {
+  "SYNO.API.Auth": {
+   "maxVersion": 7,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.System": {
+   "maxVersion": 3,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.Upgrade.Server": {
+   "maxVersion": 4,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.Package": {
+   "maxVersion": 2,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Storage.CGI.Storage": {
+   "maxVersion": 1,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.SecurityScan.Status": {
+   "maxVersion": 1,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.Security.Firewall": {
+   "maxVersion": 1,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.Security.DSM": {
+   "maxVersion": 4,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.Security.AutoBlock": {
+   "maxVersion": 1,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.Security.DoS": {
+   "maxVersion": 1,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  },
+  "SYNO.Core.Web.Security.TLSProfile": {
+   "maxVersion": 1,
+   "minVersion": 1,
+   "path": "entry.cgi",
+   "requestFormat": "JSON"
+  }
+ }
+}

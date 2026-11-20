@@ -39,6 +39,15 @@ restore_sshd_config() {
 	fi
 }
 
+# Den PAM-Umbau der SSH-2FA zuruecknehmen (wie ssh2faPAMRestoreScript). Ohne
+# das 2FA-Drop-in bliebe sonst ein auth-Stack ohne Passwortpruefung zurueck.
+restore_pam_sshd() {
+	pam=/etc/pam.d/sshd
+	[ -f "$pam" ] || return 0
+	sed -i '/^# >>> LCM 2FA >>>/,/^# <<< LCM 2FA <<</d' "$pam"
+	sed -i 's/^#LCM-2FA# //' "$pam"
+}
+
 # Einstellungen, die LCM auf diesem Rechner gesetzt hat. Jede Datei traegt den
 # Namen von LCM; Installationen fremder Pakete (Trivy, bubblewrap, apt-cacher-ng)
 # bleiben installiert.
@@ -46,9 +55,11 @@ remove_host_settings() {
 	rm -f /usr/local/sbin/lcm-helper
 	rm -f /etc/apt/apt.conf.d/02lcm-apt-cache
 	rm -f /etc/ssh/sshd_config.d/10-lcm-ssh.conf \
+		/etc/ssh/sshd_config.d/40-lcm-2fa.conf \
 		/etc/ssh/sshd_config.d/55-lcm-2fa.conf \
 		/etc/ssh/sshd_config.d/00-lcm-hardening.conf \
 		/etc/ssh/sshd_config.d/60-lcm-hardening.conf
+	restore_pam_sshd
 	restore_sshd_config
 	if command -v nft >/dev/null 2>&1; then
 		nft delete table inet lcm >/dev/null 2>&1 || true

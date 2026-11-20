@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normaliseApps, normaliseDocker, normaliseSnaps } from './server-data';
-import { capabilityLevel, normaliseCapabilities, normaliseServers, pendingOf, visibleTabs, type Capability } from './servers';
+import { capabilityLevel, isVirtualDsm, normaliseCapabilities, normaliseServers, pendingOf, visibleTabs, type Capability } from './servers';
 
 describe('Serverliste normalisieren', () => {
   it('liest die Antwort mit items und total und fängt Fehlendes ab', () => {
@@ -37,9 +37,23 @@ describe('Reiter je Servertyp', () => {
     const tabs = visibleTabs({ os_id: 'routeros', has_snap: false, has_docker: false });
     expect(tabs).not.toEqual(expect.arrayContaining(['repositories']));
     expect(tabs).not.toContain('users');
-    expect(tabs).not.toContain('security');
+    // Sicherheit gibt es als eigenen Reiter für Geräte (Portprüfung, bei DSM die Einstellungen).
+    expect(tabs).toContain('security');
     expect(tabs).not.toContain('deep-scan');
     expect(tabs).toEqual(expect.arrayContaining(['overview', 'jobs', 'storage']));
+  });
+
+  it('blendet bei Synology DSM den Reiter Apps aus, die Pakete bleiben', () => {
+    const tabs = visibleTabs({ os_id: 'dsm', has_snap: false, has_docker: false });
+    expect(tabs).not.toContain('apps');
+    expect(tabs).toEqual(expect.arrayContaining(['packages', 'storage']));
+    expect(visibleTabs({ os_id: 'debian', has_snap: false, has_docker: false })).toContain('apps');
+  });
+
+  it('erkennt VirtualDSM am Modell', () => {
+    expect(isVirtualDsm({ os_id: 'dsm', dsm_model: 'VirtualDSM' })).toBe(true);
+    expect(isVirtualDsm({ os_id: 'dsm', dsm_model: 'DS923+' })).toBe(false);
+    expect(isVirtualDsm({ os_id: 'debian', dsm_model: 'VirtualDSM' })).toBe(false);
   });
 });
 

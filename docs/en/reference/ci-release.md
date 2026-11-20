@@ -142,11 +142,13 @@ Defined in `.gitlab-ci.yml`, running on the runner tagged `docker` (Docker execu
 |---|---|---|
 | check | `check:mr-source` | permitted MR sources per channel branch (fails otherwise) |
 | check | `check:commits` | enforces Conventional Commits in MR pipelines |
+| check | `check:internal-terms` | no internal names (servers, containers, networks, people from `tools/internal-terms.txt`) in commit subjects, `CHANGELOG.md` and `release-info/*.md`; `prepare-release.sh` checks the same before the release commit |
 | check | `check:release-version` | release train (`develop→beta`, `beta→community`): fails if the `VERSION` is already tagged - the merge would otherwise produce no release |
 | check | `version` | on the channel branches only: reads the prepared `VERSION` and checks whether a tag for it already exists |
 | test | `frontend` | `npm ci` + **`npm audit`** (gate) + Vite build; `dist/` as an artifact |
 | test | `backend` | `go vet` + `go test ./...` (in-memory SQLite) |
 | test | `govulncheck` | Go vulnerability scan (gate) |
+| test | `helper-shellcheck` | shellcheck for the rendered `lcm-helper` and the package scripts (`packaging/pkg-version.sh`, `packaging/scripts`) |
 | test | `e2e` | Playwright against the real binary (on develop and the channel branches as well as in MRs) |
 | test | `upgrade-test` | upgrade from 1.11.0 to the candidate with demo data - **not** in every pipeline: mandatory before `enterprise`, otherwise manual |
 | build | `binaries` | cross-compile: Linux amd64/arm64, Windows amd64, macOS arm64/amd64 |
@@ -305,7 +307,7 @@ Required CI variables (store them as **masked**):
 | `REPO_USER` | `gitlab-ci` | basic auth user |
 | `REPO_PASS` | *(secret)* | basic auth password |
 
-Optional: `REPO_NAME` (default `techeve`), `DISTRO` (default `stable`), `GPG_KEY` (default `repo@techeve.de`). Procedure and script: `packaging/publish-deb.sh`. If the mandatory variables are missing, the job aborts with a clear message. SemVer prereleases (`-beta.1`) are rewritten to `~beta.1` for the Debian package, so that apt sorts the beta correctly **before** the later final.
+Optional: `REPO_NAME` (default `techeve`), `DISTRO` (default `stable`), `GPG_KEY` (default `repo@techeve.de`). Procedure and script: `packaging/publish-deb.sh`. If the mandatory variables are missing, the job aborts with a clear message. For the Debian package nfpm itself writes SemVer prereleases (`-beta.1`) as `~beta.1`, so that apt sorts the beta correctly **before** the later final. For the agent packages in apk and Arch, `packaging/pkg-version.sh` converts the version (`2.0.0_beta1` and `2.0.0beta.1`), because nfpm does not produce a valid beta version there.
 
 ### Container images (deploy)
 
@@ -355,11 +357,13 @@ Configuration: `renovate.json` in the repository root.
 **Behaviour (from `renovate.json`):**
 
 - The **target branch** is `develop` (`baseBranches`), never a channel branch.
+- **Go in full:** the indirect dependencies in `go.mod` are raised too, in the same group; not across a major version, which the including module decides. The `go` line in `go.mod`, the CI's `GO_IMAGE` and the Dockerfile rise together in the "Go-Toolchain" MR, without waiting time. For major updates Renovate rewrites the import paths (`gomodUpdateImportPaths`).
 - **Grouping:** all Go minor/patch updates in one MR, all npm minor/patch updates in one MR; **major updates** come individually (better review control).
 - **Automerge:** **patch updates** are merged automatically once the pipeline is green (`platformAutomerge` = "merge when pipeline succeeds"); **minor/major** stay open as MRs for manual review.
 - **Conventional Commits:** Renovate commits as `chore(deps): …` - which fits the `check:commits` job and, as `chore`, triggers **no** release (the new version only arises when the bumps later flow through the regular release train).
 - `go mod tidy` and `npm dedupe` respectively run after every update (`postUpdateOptions`), so that `go.sum`/lockfile stay consistent.
 - Security-relevant updates (known CVEs in dependencies) are recognised through OSV, labelled `security` and **not** merged automatically.
+- **Fixed versions for tools and images:** `govulncheck` and `nfpm` are set as `GOVULNCHECK_VERSION` and `NFPM_VERSION` in `.gitlab-ci.yml`, the Makefile and `docker/Dockerfile`, each with a line `# renovate: datasource=go depName=…` above it. Every image carries a fixed version. Renovate maintains both: the `gitlabci` manager the `image:` lines, `custom.regex` the `*_IMAGE` and `*_VERSION` variables. Renovate itself is raised once a month, Docker-in-Docker stays below 29.7 (reason at the `images` job).
 - A **dependency dashboard** issue gives an overview of pending/ignored updates at any time.
 
 **One-time setup:**
@@ -409,7 +413,7 @@ missing, the job aborts with a clear message.
 ### Runner requirements
 
 - A runner with a **Docker executor** and the tag `docker` (the jobs set `tags: [docker]`).
-- Internet access for the images (`golang:1-alpine`, `node:lts`, `alpine:3`, `docker:29.6-cli`/`-dind`, `aquasec/trivy`, `registry.gitlab.com/gitlab-org/release-cli`, `renovate/renovate`) as well as Go modules/npm packages/Playwright browsers.
+- Internet access for the images (`golang:1.27-alpine`, `node:24`, `alpine:3.24`, `debian:12-slim`, `docker:29.6-cli`/`-dind`, `aquasec/trivy`, `registry.gitlab.com/gitlab-org/release-cli`, `renovate/renovate`) as well as Go modules/npm packages/Playwright browsers.
 - For the `images` job: **privileged Docker-in-Docker** (`[runners.docker] privileged = true`, `volumes = ["/certs/client", "/cache"]`) - the same prerequisite as for the docs builder image.
 - The release job works with the automatic `CI_JOB_TOKEN` alone - a write token is **not** needed, because version and changelog are committed on develop beforehand. The **apt deploy** needs `REPO_URL`/`REPO_USER`/`REPO_PASS` (see above) and the **dependency bot** needs `RENOVATE_TOKEN` (see above). All other jobs need no secrets.
 

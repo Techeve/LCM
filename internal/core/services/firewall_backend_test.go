@@ -488,9 +488,9 @@ func TestUfwInSync(t *testing.T) {
 	if ufwInSync(strings.ReplaceAll(ok, "Status: active", "Status: inactive"), sshRuleFor(22), rules) {
 		t.Error("inaktive firewall muss drift sein")
 	}
-	// Regel mit Quell-Einschränkung in der Status-Zeile wird erkannt
-	// (Set-Vergleich über die Ports).
+	// Regel mit Quell-Einschränkung in der Status-Zeile wird erkannt.
 	rules2, _ := normalizeFirewallRules([]domain.FirewallRule{{Port: 443, Proto: "tcp", SourceIPs: []string{"10.0.0.5"}}})
+	setSources(rules2, 443, "10.0.0.5")
 	hash2 := firewallRulesHash(sshRuleFor(22), rules2)
 	st := "Status: active\n" +
 		"22/tcp                     ALLOW IN    Anywhere                   # lcm:" + hash2 + "\n" +

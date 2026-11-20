@@ -61,3 +61,70 @@ func TestLoginGuardIndependentKeys(t *testing.T) {
 		t.Error("Sperre eines Kontos darf andere Konten nicht sperren")
 	}
 }
+
+// TestLoginGuardSweepsStaleEntries: Einträge, deren Sperre abgelaufen und
+// deren letzter Fehlversuch älter als das Zerfallsfenster ist, verschwinden
+// beim nächsten Fehlversuch - auch weit unter jedem Füllstand. Ein frischer
+// Zähler bleibt stehen.
+func TestLoginGuardSweepsStaleEntries(t *testing.T) {
+	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	g := newLoginGuard()
+	g.now = func() time.Time { return now }
+
+	for i := 0; i < maxLoginFails; i++ {
+		g.fail("gesperrt")
+	}
+	g.fail("einmal")
+	now = now.Add(loginDecayWindow + time.Second)
+	g.fail("frisch")
+	now = now.Add(loginSweepInterval)
+	g.fail("neu")
+
+	for _, gone := range []string{"gesperrt", "einmal"} {
+		if _, ok := g.state[gone]; ok {
+			t.Errorf("abgelaufener Eintrag %q liegt noch in der Map", gone)
+		}
+	}
+	if st := g.state["frisch"]; st == nil || st.fails != 1 {
+		t.Errorf("frischer Zähler wurde weggeräumt: %+v", st)
+	}
+	if len(g.state) != 2 {
+		t.Errorf("%d Einträge, erwartet 2 (frisch, neu)", len(g.state))
+	}
+}
+
+// TestLoginGuardUncountKeepsEarlierFails: Eine erfolgreiche Anmeldung nimmt
+// nur ihren eigenen, vorab gezählten Versuch zurück. Die Fehlversuche davor
+// bleiben, der nächste verhängt die Sperre.
+func TestLoginGuardUncountKeepsEarlierFails(t *testing.T) {
+	g := newLoginGuard()
+	for i := 0; i < maxLoginFails-1; i++ {
+		g.fail("ip:203.0.113.9")
+	}
+	// Der erfolgreiche Versuch erreicht die Schwelle - und nimmt sich zurück.
+	if locked, _ := g.beginAttempt("ip:203.0.113.9", maxLoginFails); locked {
+		t.Fatal("vor dem fünften Versuch schon gesperrt")
+	}
+	g.uncount("ip:203.0.113.9", maxLoginFails)
+	if locked, _ := g.blocked("ip:203.0.113.9"); locked {
+		t.Fatal("die eigene Anmeldung darf nicht sperren")
+	}
+	if st := g.state["ip:203.0.113.9"]; st == nil || st.fails != maxLoginFails-1 {
+		t.Fatalf("Fehlversuche vor der Anmeldung verloren: %+v", st)
+	}
+	g.fail("ip:203.0.113.9")
+	if locked, _ := g.blocked("ip:203.0.113.9"); !locked {
+		t.Error("der nächste Fehlversuch muss sperren")
+	}
+}
+
+// TestLoginGuardUncountWithoutFails: Ohne frühere Fehlversuche bleibt nach
+// einer Anmeldung kein Eintrag zurück.
+func TestLoginGuardUncountWithoutFails(t *testing.T) {
+	g := newLoginGuard()
+	g.beginAttempt("ip:203.0.113.9", maxLoginFails)
+	g.uncount("ip:203.0.113.9", maxLoginFails)
+	if len(g.state) != 0 {
+		t.Errorf("%d Einträge nach einer Anmeldung ohne Fehlversuch", len(g.state))
+	}
+}

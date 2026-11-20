@@ -96,21 +96,59 @@ func KernelReleaseFromPackage(name string) string {
 // Debian steckt sie in den Namen (linux-image-6.1.0-13-amd64), die
 // RPM-Familie in die Paket-Version (kernel 5.14.0-362.el9.x86_64). Beide Wege
 // werden geprueft, damit die Markierung distributionsuebergreifend stimmt.
+//
+// Jeder Teilvergleich verlangt danach ein Trennzeichen: Ohne die Grenze
+// stellte "6.1.0-1" auch den Kernel "6.1.0-10-amd64" - und der Abgleich
+// schlug womöglich den echten Rückfall-Kernel zum Entfernen vor.
 func (p KernelPackage) matchesRunning(running string) bool {
 	running = strings.TrimSpace(running)
 	if running == "" {
 		return false
 	}
-	if p.Release != "" && p.Release == running {
+	if p.Release != "" && (p.Release == running || hasKernelPrefix(running, p.Release)) {
 		return true
 	}
-	if strings.Contains(p.Name, running) {
+	if containsKernelRelease(p.Name, running) {
 		return true
+	}
+	if p.Version == "" {
+		return false
 	}
 	// RPM: `uname -r` enthaelt die Architektur (5.14.0-362.el9.x86_64), die
 	// Paket-Version je nach Abfrage nicht - beide Richtungen zulassen.
-	if p.Version != "" && (p.Version == running || strings.HasPrefix(running, p.Version)) {
+	if p.Version == running || hasKernelPrefix(running, p.Version) {
 		return true
+	}
+	// SUSE: `uname -r` endet auf die Variante (6.4.0-150600.23.103-default),
+	// die Paket-Version traegt dafuer weitere Zaehler (6.4.0-150600.23.103.1).
+	base, ok := strings.CutSuffix(running, "-default")
+	return ok && hasKernelPrefix(p.Version, base)
+}
+
+// isKernelSep meldet die Zeichen, an denen eine Kernel-Fassung endet.
+func isKernelSep(c byte) bool {
+	return c == '-' || c == '.' || c == '_' || c == '+' || c == '~'
+}
+
+// hasKernelPrefix: s beginnt mit prefix, und danach endet s oder folgt ein
+// Trennzeichen.
+func hasKernelPrefix(s, prefix string) bool {
+	return strings.HasPrefix(s, prefix) && (len(s) == len(prefix) || isKernelSep(s[len(prefix)]))
+}
+
+// containsKernelRelease: release steht im Paketnamen als eigener Teil - am
+// Anfang oder nach einem Bindestrich, und danach endet der Name oder folgt
+// ein Trennzeichen ("linux-image-6.1.0-13-amd64-unsigned").
+func containsKernelRelease(name, release string) bool {
+	for i := strings.Index(name, release); i >= 0; {
+		if (i == 0 || name[i-1] == '-') && hasKernelPrefix(name[i:], release) {
+			return true
+		}
+		next := strings.Index(name[i+1:], release)
+		if next < 0 {
+			return false
+		}
+		i += 1 + next
 	}
 	return false
 }

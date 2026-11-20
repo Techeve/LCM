@@ -97,6 +97,13 @@ export class LcmLuProfileModal extends LitElement {
     return !this.canWrite || (this.profile?.builtin ?? false);
   }
 
+  // Die Schalter und Auswahlfelder in den Regeln melden ihr eigenes lcm-change, und es steigt (composed) bis hier auf.
+  // Am Host ist das Ziel umgeschrieben, deshalb zählt der Ursprung im Pfad: nur das Ereignis der Regel-Komponente selbst.
+  #onRulesChange(e: CustomEvent<Partial<ProfileForm>>): void {
+    if (e.composedPath()[0] !== e.currentTarget) return;
+    this.#set(e.detail);
+  }
+
   #set(patch: Partial<ProfileForm>): void {
     this._form = { ...this._form, ...patch };
   }
@@ -139,7 +146,7 @@ export class LcmLuProfileModal extends LitElement {
         .blocks=${this.blocks}
         ?attempted=${this._attempted}
         ?read-only=${this.#readOnly}
-        @lcm-change=${(e: CustomEvent<Partial<ProfileForm>>) => this.#set(e.detail)}
+        @lcm-change=${(e: CustomEvent<Partial<ProfileForm>>) => this.#onRulesChange(e)}
       ></lcm-lu-profile-rules>`;
   }
 

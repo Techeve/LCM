@@ -11,6 +11,7 @@ import { formLayoutStyles } from '../../components/layout-styles.js';
 import { baseStyles } from '../../components/shared.js';
 import { catalogStyles } from '../catalog-styles.js';
 import { servers } from '../data.js';
+import { followChange } from '../follow-change.js';
 
 const PRESETS: CronPreset[] = [
   { label: 'Täglich um 3:00', value: '0 3 * * *' },
@@ -102,6 +103,7 @@ export class CatForms extends LitElement {
                 { value: 'db', label: 'Datenbanken' },
                 { value: 'dev', label: 'Entwicklung' },
               ]}
+              @lcm-change=${followChange}
             ></lcm-select>
             <lcm-combobox
               label="Server suchen"
@@ -119,8 +121,9 @@ export class CatForms extends LitElement {
               off-text="Der Zeitplan aktualisiert alle Pakete, auch die der Kerndienste."
               on-label=${switchLabels['on-label']}
               off-label=${switchLabels['off-label']}
+              @lcm-change=${followChange}
             ></lcm-switch>
-            <lcm-switch label="Neustart bei Bedarf erlauben" description="Nur im Wartungsfenster." ></lcm-switch>
+            <lcm-switch label="Neustart bei Bedarf erlauben" description="Nur im Wartungsfenster." @lcm-change=${followChange}></lcm-switch>
           </div>
         </lcm-card>
         <div class="stack">

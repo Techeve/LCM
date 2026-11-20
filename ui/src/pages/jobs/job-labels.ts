@@ -49,6 +49,7 @@ const KIND_KEYS: Record<string, string> = {
   'reboot-if-needed': 'jobs.kind.reboot-if-needed',
   'dns-test': 'jobs.kind.dns-test',
   'deep-scan': 'jobs.kind.deep-scan',
+  'port-scan': 'jobs.kind.port-scan',
   'acl-setup': 'jobs.kind.acl-setup',
   'perm-sync': 'jobs.kind.perm-sync',
   'hardware-refresh': 'jobs.kind.hardware-refresh',
@@ -57,6 +58,7 @@ const KIND_KEYS: Record<string, string> = {
   'repair-deps': 'jobs.kind.repair-deps',
   join: 'jobs.kind.join',
   'harden-ssh': 'jobs.kind.harden-ssh',
+  'dsm-apply': 'jobs.kind.dsm-apply',
 };
 
 export function statusLabel(status: string): string {

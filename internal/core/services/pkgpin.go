@@ -34,6 +34,11 @@ const (
 	dnfPinFile = "/etc/dnf/protected.d/lcm-package-pins.conf"
 	// pacmanPinFile wird von /etc/pacman.conf per Include eingebunden.
 	pacmanPinFile = "/etc/pacman.d/99-lcm-package-pins.conf"
+	// pinHoldState fuehrt die Pakete, die LCM selbst gehalten hat (eins je
+	// Zeile). Nur diese gibt ein Abgleich wieder frei; Holds, die ein Admin
+	// gesetzt hat, stehen nicht darin und bleiben. Bewusst nicht unter
+	// /var/lib/lcm: dort liegen auf dem LCM-Host Datenbank und Master-Key.
+	pinHoldState = "/var/lib/lcm-managed/package-holds"
 )
 
 // pinNames liefert die Namen der Pins mit der gewuenschten Wirkung, sortiert
@@ -71,51 +76,109 @@ func pinShellPattern(name string) string {
 	return name
 }
 
-// pinExpandCmd baut einen Shell-Ausdruck, der die Muster gegen die tatsaechlich
-// installierten Pakete aufloest. Braucht es ueberall dort, wo die
-// Paketverwaltung nur konkrete Namen akzeptiert (apt-mark, zypper, apk).
-//
-// listCmd muss die installierten Paketnamen zeilenweise ausgeben.
-func pinExpandCmd(listCmd string, names []string) string {
-	var cases []string
-	for _, n := range names {
-		cases = append(cases, pinShellPattern(n))
-	}
-	// case-Muster mit | verknuepft: ein Durchlauf ueber den Bestand genuegt.
-	return "for p in $(" + listCmd + "); do case \"$p\" in " +
-		strings.Join(cases, "|") + ") echo \"$p\";; esac; done"
-}
-
 // pkgPinScript schreibt die Pins auf dem Ziel fest. Braucht root (privRun).
 //
 // Das Skript ist idempotent: Es ersetzt die LCM-Dateien vollstaendig und
-// setzt vorher die von LCM gesetzten Holds zurueck. Wer einen Pin in LCM
-// entfernt, bekommt so beim naechsten Anwenden auch auf dem Server wieder
-// einen ungeschuetzten Zustand - sonst blieben Leichen zurueck, die niemand
-// mehr zuordnen kann.
+// gleicht die Holds gegen die Zustandsdatei ab (pinHoldSync). Wer einen Pin
+// in LCM entfernt, bekommt so beim naechsten Anwenden auch auf dem Server
+// wieder einen ungehaltenen Zustand - Holds, die ein Admin selbst gesetzt
+// hat, bleiben dabei unberuehrt.
 //
 // restricted: Im eingeschraenkten Modus gibt es keine Root-Shell. Die Schritte,
-// die unter /etc schreiben oder apt-mark brauchen (pinRootStep), laufen dann
-// ueber das Helper-Unterkommando package-pins; alles uebrige geht ueber
-// Paketverwaltungen, die auf der sudo-Whitelist stehen.
+// die unter /etc oder /var/lib schreiben oder Holds setzen (pinRootStep),
+// laufen dann ueber das Helper-Unterkommando package-pins; alles uebrige geht
+// ueber Paketverwaltungen, die auf der sudo-Whitelist stehen. Ein veralteter
+// Helper bricht vorher ab: Seine Fassung gaebe noch alle Holds frei, auch
+// die eines Admins.
 func pkgPinScript(restricted bool, mgr string, pins []domain.PackagePin) string {
-	noRemove := pinNames(pins, false)
-	hold := pinNames(pins, true)
+	script := pkgPinSteps(restricted, mgr, pinNames(pins, false), pinNames(pins, true))
+	if !restricted {
+		return script
+	}
+	return helperCurrentStep(true) + "\n" + script
+}
 
+// pkgPinSteps waehlt die Schritte der Paketverwaltung mgr.
+func pkgPinSteps(restricted bool, mgr string, noRemove, hold []string) string {
 	switch pkgFamily(mgr) {
 	case pkgApt:
 		return pinRootStep(restricted, pkgApt, noRemove, hold)
 	case pkgDnf:
 		return dnfPinScript(restricted, mgr, noRemove, hold)
 	case pkgZypper:
-		return zypperPinScript(noRemove, hold)
+		return zypperPinScript(restricted, noRemove, hold)
 	case pkgPacman:
 		return pinRootStep(restricted, pkgPacman, noRemove, hold)
 	case pkgApk:
-		return apkPinScript(noRemove, hold)
+		return apkPinScript(restricted, noRemove, hold)
 	}
 	return "echo 'LCM: Paket-Pins werden fuer diese Paketverwaltung nicht unterstuetzt'"
 }
+
+// pinHoldSync gleicht die Holds ab, ohne fremde anzufassen. Vorher definiert
+// der Rumpf vier Funktionen der Paketverwaltung: pin_installed (installierte
+// Namen), pin_held (gehaltene Namen), pin_hold und pin_unhold (Namen als
+// Argumente). Die Zustandsdatei fuehrt, was LCM selbst gehalten hat:
+//
+//   - freigeben = (Zustandsdatei) ohne (gewuenscht), nur was noch gehalten ist
+//   - setzen    = gewuenscht und noch nicht gehalten
+//   - gewuenscht und schon gehalten, aber nicht in der Zustandsdatei: ein
+//     Admin-Hold. Er bleibt und wird NICHT als LCMs vermerkt - sonst gaebe ein
+//     spaeteres Entfernen des Pins den Hold des Admins frei.
+//
+// Uebergang: Fehlt die Zustandsdatei (erster Abgleich nach dem Update), gibt
+// LCM nichts frei und uebernimmt nur die Holds, die auf einen heutigen Pin
+// passen - die hat die alte Fassung bei jedem Abgleich selbst gesetzt.
+// Die Datei wird danach immer geschrieben, auch leer: Ihr Fehlen bedeutet
+// "noch nie abgeglichen".
+const pinHoldSync = `state=` + pinHoldState + `
+rc=0
+held=" $(pin_held 2>/dev/null | tr '\n' ' ') "
+owned=; seed=
+if [ -f "$state" ]; then owned=$(tr '\n' ' ' < "$state"); else seed=1; fi
+want=
+if [ -n "$HOLD" ]; then
+  for p in $(pin_installed 2>/dev/null | sort -u); do
+    # $pat ist bewusst ein Glob-Muster (Pins wie linux-image-*).
+    # shellcheck disable=SC2254
+    for pat in $HOLD; do case "$p" in $pat) want="$want $p"; break ;; esac; done
+  done
+  [ -n "$want" ] || echo 'LCM: keine installierten Pakete passen auf die Hold-Pins'
+fi
+mine=; add=; foreign=; release=
+for p in $want; do
+  case "$held" in
+    *" $p "*) case " $owned " in
+        *" $p "*) mine="$mine $p" ;;
+        *) if [ -n "$seed" ]; then mine="$mine $p"; else foreign="$foreign $p"; fi ;;
+      esac ;;
+    *) add="$add $p" ;;
+  esac
+done
+for p in $owned; do
+  case "$p" in [A-Za-z0-9]*) ;; *) continue ;; esac
+  case " $want " in *" $p "*) continue ;; esac
+  case "$held" in *" $p "*) release="$release $p" ;; esac
+done
+if [ -n "$release" ]; then
+  if pin_unhold $release; then echo "LCM: Holds geloest:$release"
+  else rc=1; mine="$mine $release"; echo "LCM: Holds loesen fehlgeschlagen:$release" >&2; fi
+fi
+if [ -n "$add" ]; then
+  mine="$mine $add"
+  if pin_hold $add; then echo "LCM: Holds gesetzt:$add"
+  else rc=1; echo "LCM: Holds setzen fehlgeschlagen:$add" >&2; fi
+fi
+[ -z "$foreign" ] || echo "LCM: schon von Hand gehalten, bleibt Sache des Admins:$foreign"
+others=
+for p in $held; do
+  case " $mine $release $foreign " in *" $p "*) ;; *) others="$others $p" ;; esac
+done
+[ -z "$others" ] || echo "LCM: fremde Holds bleiben unberuehrt:$others"
+install -d -m 755 "${state%/*}" &&
+  { for p in $mine; do echo "$p"; done; } > "$state.tmp" &&
+  mv -f "$state.tmp" "$state" || { rc=1; echo "LCM: $state nicht geschrieben" >&2; }
+exit "$rc"`
 
 // Root-Schritte der Pin-Skripte. Es gibt sie einmal, mit den Pin-Listen als
 // Shell-Variablen $NOREMOVE und $HOLD (Leerzeichen-getrennte Muster):
@@ -144,30 +207,73 @@ else
   set -- $NOREMOVE
   echo "LCM: $# Paket-Muster vor autoremove geschuetzt (` + aptPinFile + `)"
 fi
-apt-mark unhold $(apt-mark showhold) >/dev/null 2>&1 || true
-if [ -n "$HOLD" ]; then
-  hold=
-  for p in $(dpkg-query -W -f '${Package}\n' 2>/dev/null); do
-    for pat in $HOLD; do case "$p" in $pat) hold="$hold $p"; break ;; esac; done
-  done
-  [ -n "$hold" ] && apt-mark hold $hold || echo 'LCM: keine installierten Pakete passen auf die Hold-Pins'
-fi )`
+pin_installed() { dpkg-query -W -f '${Package}\n'; }
+pin_held() { apt-mark showhold; }
+pin_hold() { apt-mark hold "$@"; }
+pin_unhold() { apt-mark unhold "$@"; }
+` + pinHoldSync + ` )`
 
 	// /etc/dnf/protected.d: dnf lehnt das Entfernen der dort genannten Pakete
-	// ab. Muster loesen wir gegen den installierten Bestand auf.
+	// ab. Muster loesen wir gegen den installierten Bestand auf. `versionlock`
+	// friert die Version ein; `versionlock list` nennt je nach Fassung
+	// name-[epoch:]version-release.* (dnf4), epoch:name-version-release.*
+	// (yum) oder "Package name: name" (dnf5) - pin_held macht daraus Namen.
 	pinDnfBody = `( set -f
 install -d -m 755 /etc/dnf/protected.d
 if [ -z "$NOREMOVE" ]; then
   rm -f ` + dnfPinFile + `
 else
   : > ` + dnfPinFile + `
+  # $pat ist bewusst ein Glob-Muster (Pins wie kernel-*).
+  # shellcheck disable=SC2254
   for p in $(rpm -qa --qf '%{NAME}\n' 2>/dev/null | sort -u); do for pat in $NOREMOVE; do case "$p" in $pat) echo "$p" >> ` + dnfPinFile + `; break ;; esac; done; done
   echo "LCM: $(wc -l < ` + dnfPinFile + `) Pakete vor dem Entfernen geschuetzt (` + dnfPinFile + `)"
-fi )`
+fi
+bin=dnf; command -v dnf >/dev/null 2>&1 || bin=yum
+pin_installed() { rpm -qa --qf '%{NAME}\n'; }
+pin_held() {
+  LC_ALL=C "$bin" -q versionlock list | awk '/^Package name:/ {print $3; next}
+    /^[#!]/ || / / || NF == 0 {next}
+    {sub(/^[0-9]+:/, ""); sub(/\.\*$/, ""); sub(/-[^-]+-[^-]+$/, ""); print}'
+}
+pin_hold() { "$bin" versionlock add "$@"; }
+pin_unhold() { "$bin" versionlock delete "$@"; }
+` + pinHoldSync + ` )`
+
+	// zypper: Hold-Pins sind echte Schloesser (addlock). `zypper locks`
+	// liefert eine Tabelle; die Spalten Name und Type sucht pin_held ueber die
+	// Kopfzeile. Schloesser mit Muster (kernel*) passen auf kein konkretes
+	// Paket und bleiben damit fremd.
+	pinZypperBody = `( set -f
+pin_installed() { rpm -qa --qf '%{NAME}\n'; }
+pin_held() {
+  LC_ALL=C zypper --non-interactive locks | awk '
+    {n = split($0, f, "|"); for (i = 1; i <= n; i++) gsub(/^[ \t]+|[ \t]+$/, "", f[i])}
+    f[2] == "Name" {ni = 0; ti = 0; for (i = 1; i <= n; i++) {if (f[i] == "Name") ni = i; if (f[i] == "Type") ti = i}; next}
+    ni && f[1] ~ /^[0-9]+$/ && (!ti || f[ti] == "package") {print f[ni]}'
+}
+pin_hold() { zypper --non-interactive addlock "$@"; }
+pin_unhold() { zypper --non-interactive removelock "$@"; }
+` + pinHoldSync + ` )`
+
+	// apk: `apk hold` gibt es erst in neueren apk-tools, eine Liste der Holds
+	// nicht. pin_held nennt deshalb die Eintraege der Zustandsdatei - fremde
+	// Holds kann LCM hier nicht sehen und gibt sie damit auch nie frei.
+	pinApkBody = `( set -f
+if ! apk hold --help >/dev/null 2>&1; then
+  [ -z "$HOLD" ] || echo 'LCM: dieses apk kennt kein hold - die Versions-Fixierung wurde NICHT gesetzt'
+  exit 0
+fi
+pin_installed() { apk info; }
+pin_held() { cat "$state"; }
+pin_hold() { apk hold "$@"; }
+pin_unhold() { apk unhold "$@"; }
+` + pinHoldSync + ` )`
 
 	// pacman trennt beides sauber (HoldPkg = Entfernen wird verweigert,
 	// IgnorePkg = keine Upgrades). Beide stehen in einer eigenen LCM-Datei,
 	// die per Include aus pacman.conf gezogen wird (einmalig, idempotent).
+	// Fremde Holds gibt es hier nicht anzufassen: sie stehen in pacman.conf.
 	pinPacmanBody = `( set -f
 install -d -m 755 /etc/pacman.d
 if [ -z "$NOREMOVE" ] && [ -z "$HOLD" ]; then
@@ -184,7 +290,10 @@ fi )`
 )
 
 // pinRootBodies ordnet dem Wert von package-pins den Rumpf zu.
-var pinRootBodies = map[string]string{pkgApt: pinAptBody, pkgDnf: pinDnfBody, pkgPacman: pinPacmanBody}
+var pinRootBodies = map[string]string{
+	pkgApt: pinAptBody, pkgDnf: pinDnfBody, pkgZypper: pinZypperBody,
+	pkgApk: pinApkBody, pkgPacman: pinPacmanBody,
+}
 
 // pinRootStep liefert den Root-Schritt der Paketverwaltung kind: im Voll-Modus
 // den Rumpf samt Variablen, im eingeschraenkten Modus den Helper-Aufruf.
@@ -203,25 +312,20 @@ func pinCSV(names []string) string {
 	return strings.Join(names, ",")
 }
 
-// dnfPinScript: der Schutz vor dem Entfernen ist ein Root-Schritt (siehe
-// pinDnfBody), `versionlock` friert die Version ein (Plugin, wird bei Bedarf
-// nachinstalliert) und laeuft ueber dnf selbst.
+// dnfPinScript: Schutz vor dem Entfernen und Holds sind ein Root-Schritt
+// (pinDnfBody). Davor kommt bei Bedarf das versionlock-Plugin ueber dnf
+// selbst; der Root-Schritt steht zuletzt, sein Ergebnis ist das des Laufs.
 //
 // Hinweis: Wie viele Kernel dnf behaelt, steuert zusaetzlich installonly_limit
 // in dnf.conf (Standard 3) - der Pin wirkt ergaenzend.
 func dnfPinScript(restricted bool, mgr string, noRemove, hold []string) string {
 	bin := dnfBin(mgr)
-	steps := []string{pinRootStep(restricted, pkgDnf, noRemove, hold)}
+	var steps []string
 	if len(hold) > 0 {
 		steps = append(steps,
-			bin+" -y install 'dnf-command(versionlock)' >/dev/null 2>&1 || "+bin+" -y install python3-dnf-plugin-versionlock >/dev/null 2>&1 || true",
-			bin+" versionlock clear >/dev/null 2>&1 || true",
-			"lock=$("+pinExpandCmd("rpm -qa --qf '%{NAME}\\n' 2>/dev/null | sort -u", hold)+")",
-			"[ -n \"$lock\" ] && "+bin+" versionlock add $lock || echo 'LCM: keine installierten Pakete passen auf die Hold-Pins'",
-		)
-	} else {
-		steps = append(steps, bin+" versionlock clear >/dev/null 2>&1 || true")
+			bin+" -y install 'dnf-command(versionlock)' >/dev/null 2>&1 || "+bin+" -y install python3-dnf-plugin-versionlock >/dev/null 2>&1 || true")
 	}
+	steps = append(steps, pinRootStep(restricted, pkgDnf, noRemove, hold))
 	return strings.Join(steps, "\n")
 }
 
@@ -229,24 +333,19 @@ func dnfPinScript(restricted bool, mgr string, noRemove, hold []string) string {
 // verhindert Entfernen UND Aktualisieren. Fuer NoRemove-Pins waere das zu
 // scharf (keine Sicherheitsupdates mehr), deshalb:
 //
-//   - Hold-Pins  -> echtes Schloss (addlock).
+//   - Hold-Pins  -> echtes Schloss (addlock, Root-Schritt pinZypperBody).
 //   - NoRemove   -> kein Schloss; stattdessen wird der Autoremove-Lauf um
 //     diese Pakete gekuerzt (siehe pkgAutoremoveScriptWithPins).
 //
 // Das ist die ehrliche Abbildung: Wir behaupten keinen Schutz, den zypper in
 // dieser Form nicht kennt.
-func zypperPinScript(noRemove, hold []string) string {
-	steps := []string{"zypper --non-interactive removelock '*' >/dev/null 2>&1 || true"}
-	if len(hold) > 0 {
-		steps = append(steps,
-			"lock=$("+pinExpandCmd("rpm -qa --qf '%{NAME}\\n' 2>/dev/null | sort -u", hold)+")",
-			"[ -n \"$lock\" ] && zypper --non-interactive addlock $lock || echo 'LCM: keine installierten Pakete passen auf die Hold-Pins'",
-		)
-	}
+func zypperPinScript(restricted bool, noRemove, hold []string) string {
+	var steps []string
 	if len(noRemove) > 0 {
 		steps = append(steps, fmt.Sprintf(
 			"echo 'LCM: %d Schutz-Pins werden bei zypper beim Aufraeumen ausgespart (zypper kennt keine reine Entfernsperre)'", len(noRemove)))
 	}
+	steps = append(steps, pinRootStep(restricted, pkgZypper, noRemove, hold))
 	return strings.Join(steps, "\n")
 }
 
@@ -263,27 +362,14 @@ func expandStars(names []string) []string {
 // apkPinScript: apk kennt kein Autoremove (Abhaengigkeiten verschwinden nur
 // beim gezielten Deinstallieren), eine reine Entfernsperre gibt es daher nicht.
 // Fuer Hold kennt apk-tools ab 2.14 `apk hold`; aeltere Versionen nicht -
-// dann sagt LCM das offen, statt Schutz zu behaupten.
-func apkPinScript(noRemove, hold []string) string {
-	steps := []string{}
+// dann sagt der Root-Schritt das offen, statt Schutz zu behaupten.
+func apkPinScript(restricted bool, noRemove, hold []string) string {
+	var steps []string
 	if len(noRemove) > 0 {
 		steps = append(steps, fmt.Sprintf(
 			"echo 'LCM: apk kennt keinen Autoremove und damit keine Entfernsperre - die %d Schutz-Pins bleiben ohne Wirkung'", len(noRemove)))
 	}
-	if len(hold) > 0 {
-		steps = append(steps,
-			"if apk hold --help >/dev/null 2>&1; then",
-			"  apk unhold $(apk list --installed 2>/dev/null | awk '{print $1}') >/dev/null 2>&1 || true",
-			"  h=$("+pinExpandCmd("apk info 2>/dev/null", hold)+")",
-			"  [ -n \"$h\" ] && apk hold $h || echo 'LCM: keine installierten Pakete passen auf die Hold-Pins'",
-			"else",
-			"  echo 'LCM: dieses apk kennt kein hold - die Versions-Fixierung wurde NICHT gesetzt'",
-			"fi",
-		)
-	}
-	if len(steps) == 0 {
-		steps = append(steps, "echo 'LCM: keine Paket-Pins fuer apk'")
-	}
+	steps = append(steps, pinRootStep(restricted, pkgApk, noRemove, hold))
 	return strings.Join(steps, "\n")
 }
 

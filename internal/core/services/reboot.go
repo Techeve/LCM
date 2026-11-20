@@ -194,7 +194,7 @@ func (s *ServerService) runRebootJob(job *domain.Job, server *domain.Server, act
 	}
 	conn, err := s.connect(server)
 	if err != nil {
-		_ = s.servers.UpdateFields(server.ID, unreachableFields(server, err))
+		recordUnreachable(s.servers, server, err)
 		s.jobs.Complete(job, "", nil, fmt.Errorf("verbindung: %w", err))
 		return
 	}

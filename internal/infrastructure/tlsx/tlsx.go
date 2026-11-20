@@ -1,30 +1,24 @@
 // Package tlsx stellt das TLS-Setup des integrierten Webservers bereit.
 //
 // Sicherheitsvorgabe: LCM kommuniziert im produktiven Betrieb zwingend
-// über HTTPS. Beim ersten Start wird automatisch ein Self-Signed-
-// Zertifikat erzeugt (out-of-the-box HTTPS); alternativ kann ein eigenes
-// Zertifikat hinterlegt werden. Unverschlüsseltes HTTP ist nur im
-// Entwicklungsmodus (--dev) erlaubt.
+// über HTTPS. Beim ersten Start entsteht eine eigene CA (ca.go), die das
+// Server-Zertifikat ausstellt und monatlich erneuert (issue.go) -
+// out-of-the-box HTTPS. Alternativ kann ein eigenes Zertifikat hinterlegt
+// werden. Unverschlüsseltes HTTP ist nur im Entwicklungsmodus (--dev)
+// erlaubt.
 package tlsx
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
-	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"math/big"
-	"net"
 	"os"
-	"path/filepath"
-	"time"
 )
 
-// Dateinamen des Self-Signed-Zertifikats im Datenverzeichnis.
+// Dateinamen des Server-Zertifikats im Datenverzeichnis.
 const (
 	CertFileName = "lcm-cert.pem"
 	KeyFileName  = "lcm-key.pem"
@@ -35,76 +29,50 @@ const (
 // (LCM Remote): der Fingerprint wird ins Enrollment-Token eingebettet und
 // vom Agent beim TLS-Handshake gegen das präsentierte Zertifikat geprüft.
 func Fingerprint(certPath string) (string, error) {
-	pemBytes, err := os.ReadFile(certPath)
+	der, err := firstCertificate(certPath)
 	if err != nil {
 		return "", err
 	}
+	return fingerprintOf(der), nil
+}
+
+// fingerprintOf ist der SHA-256 eines Zertifikats (DER), hex.
+func fingerprintOf(der []byte) string {
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:])
+}
+
+// PublicKeyPin liefert den Pin des öffentlichen Schlüssels im Format von
+// curl --pinnedpubkey: SHA-256 über die SubjectPublicKeyInfo, Base64. Damit
+// nimmt der Join-Befehl das Zertifikat der eigenen CA nur an, wenn es den
+// Schlüssel genau dieses LCM trägt - ein -k ohne Pin nähme jedes an. Der
+// Schlüssel wechselt monatlich, der Befehl wird aber jedes Mal frisch
+// erzeugt.
+func PublicKeyPin(certPath string) (string, error) {
+	der, err := firstCertificate(certPath)
+	if err != nil {
+		return "", err
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return "", fmt.Errorf("zertifikat in %s: %w", certPath, err)
+	}
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return base64.StdEncoding.EncodeToString(sum[:]), nil
+}
+
+// firstCertificate liest das erste Zertifikat einer PEM-Datei - das des
+// Servers selbst, dahinter folgt gegebenenfalls die Kette.
+func firstCertificate(certPath string) ([]byte, error) {
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, err
+	}
 	block, _ := pem.Decode(pemBytes)
 	if block == nil || block.Type != "CERTIFICATE" {
-		return "", fmt.Errorf("keine zertifikatsdaten in %s", certPath)
+		return nil, fmt.Errorf("keine zertifikatsdaten in %s", certPath)
 	}
-	sum := sha256.Sum256(block.Bytes)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-// EnsureSelfSigned stellt sicher, dass Zertifikat und Schlüssel im
-// Datenverzeichnis existieren, und erzeugt sie beim ersten Start.
-// Liefert die Pfade zu Zertifikat und Schlüssel.
-func EnsureSelfSigned(dataDir string, notBefore time.Time) (certPath, keyPath string, err error) {
-	certPath = filepath.Join(dataDir, CertFileName)
-	keyPath = filepath.Join(dataDir, KeyFileName)
-
-	if fileExists(certPath) && fileExists(keyPath) {
-		return certPath, keyPath, nil
-	}
-
-	certPEM, keyPEM, err := generateSelfSigned(notBefore)
-	if err != nil {
-		return "", "", err
-	}
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
-		return "", "", fmt.Errorf("zertifikat speichern: %w", err)
-	}
-	// Der Private Key gehört nur dem Service-User (0600).
-	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-		return "", "", fmt.Errorf("tls-key speichern: %w", err)
-	}
-	return certPath, keyPath, nil
-}
-
-// generateSelfSigned erzeugt ein ECDSA-Zertifikat (P-256), gültig für
-// localhost und die lokalen IPs, ein Jahr lang.
-func generateSelfSigned(notBefore time.Time) (certPEM, keyPEM []byte, err error) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, err
-	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, nil, err
-	}
-	template := x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "LCM", Organization: []string{"LCM"}},
-		NotBefore:             notBefore,
-		NotAfter:              notBefore.AddDate(1, 0, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:              []string{"localhost"},
-		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
-		BasicConstraintsValid: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	if err != nil {
-		return nil, nil, err
-	}
-	keyDER, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		return nil, nil, err
-	}
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	return certPEM, keyPEM, nil
+	return block.Bytes, nil
 }
 
 func fileExists(path string) bool {

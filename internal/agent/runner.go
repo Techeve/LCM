@@ -19,6 +19,16 @@ import (
 // Normalerweise bricht der LCM-Server längst vorher per Cancel ab.
 const defaultIdleTimeout = 60 * time.Minute
 
+// commandIDWindow ist die Zahl der Befehls-IDs, die sich der Runner merkt -
+// für erkannte Doppel und für Abbrüche, die vor ihrem Kommando eintreffen.
+// LCM schickt einem Agenten ein Kommando nach dem anderen; 1024 reichen
+// weit über jede erneute Zustellung hinaus und kosten unter 100 KB.
+const commandIDWindow = 1024
+
+// errCancelledBeforeStart meldet ein Kommando, dessen Abbruch schon da war,
+// als es an die Reihe kam.
+var errCancelledBeforeStart = errors.New("kommando abgebrochen, bevor es startete")
+
 // Runner führt Kommandos des LCM-Servers aus: /bin/sh -c in einer eigenen
 // Prozessgruppe (Setsid), kombinierter Output mit Größenlimit, Abbruch per
 // Kill der ganzen Gruppe. Es läuft höchstens ein Kommando gleichzeitig -
@@ -26,12 +36,27 @@ const defaultIdleTimeout = 60 * time.Minute
 type Runner struct {
 	execMu sync.Mutex // serialisiert die Ausführung
 
-	mu      sync.Mutex
-	running map[string]*exec.Cmd // Request-ID → laufender Prozess
+	mu        sync.Mutex
+	running   map[string]*exec.Cmd // Request-ID → laufender Prozess
+	seen      *idWindow            // angenommene Befehls-IDs
+	cancelled *idWindow            // abgebrochene Befehls-IDs
 }
 
 func NewRunner() *Runner {
-	return &Runner{running: map[string]*exec.Cmd{}}
+	return &Runner{
+		running:   map[string]*exec.Cmd{},
+		seen:      newIDWindow(commandIDWindow),
+		cancelled: newIDWindow(commandIDWindow),
+	}
+}
+
+// Claim nimmt ein Kommando an und meldet false, wenn seine ID schon einmal
+// da war. MQTT mit QoS 1 stellt mindestens einmal zu - eine zweite Zustellung
+// darf das Kommando nicht ein zweites Mal ausführen.
+func (r *Runner) Claim(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.seen.add(id)
 }
 
 // Run führt das Kommando aus und liefert das Ergebnis (blockiert). progress
@@ -59,18 +84,11 @@ func (r *Runner) Run(cmd wire.Command, progress func(outputBytes int)) wire.Resu
 	// Exit des Hauptprozesses wird maximal so lange auf die Pipes gewartet.
 	proc.WaitDelay = 10 * time.Second
 
-	if err := proc.Start(); err != nil {
-		res.Error = "kommando starten: " + err.Error()
+	if err := r.start(cmd.ID, proc); err != nil {
+		res.Error = err.Error()
 		return res
 	}
-	r.mu.Lock()
-	r.running[cmd.ID] = proc
-	r.mu.Unlock()
-	defer func() {
-		r.mu.Lock()
-		delete(r.running, cmd.ID)
-		r.mu.Unlock()
-	}()
+	defer r.forget(cmd.ID)
 
 	// Notbremse gegen verwaiste, hängende Kommandos (Cancel kommt normal
 	// lange vorher vom Server) - und zugleich der Takt der Lebenszeichen.
@@ -78,8 +96,6 @@ func (r *Runner) Run(cmd wire.Command, progress func(outputBytes int)) wire.Resu
 	defer stopWatch()
 
 	err := proc.Wait()
-	res.Output = out.String()
-	res.Truncated = out.truncated
 	switch {
 	case err == nil:
 		res.ExitCode = 0
@@ -91,7 +107,35 @@ func (r *Runner) Run(cmd wire.Command, progress func(outputBytes int)) wire.Resu
 			res.Error = err.Error()
 		}
 	}
+	// Zuletzt, wenn alle übrigen Felder stehen: Gemessen wird das ganze
+	// serialisierte Ergebnis.
+	head, tail, omitted := out.parts()
+	fitOutput(&res, head, tail, omitted, wire.MaxResultBytes)
 	return res
+}
+
+// start startet den Prozess und trägt ihn ein - unter derselben Sperre, die
+// Cancel nimmt. So geht kein Abbruch verloren: Er kam entweder vorher (dann
+// startet das Kommando gar nicht, auch wenn es hinter einem anderen wartete
+// oder der Abbruch es auf dem Weg überholt hat) oder er trifft den Prozess.
+func (r *Runner) start(id string, proc *exec.Cmd) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cancelled.has(id) {
+		return errCancelledBeforeStart
+	}
+	if err := proc.Start(); err != nil {
+		return errors.New("kommando starten: " + err.Error())
+	}
+	r.running[id] = proc
+	return nil
+}
+
+// forget trägt ein beendetes Kommando aus.
+func (r *Runner) forget(id string) {
+	r.mu.Lock()
+	delete(r.running, id)
+	r.mu.Unlock()
 }
 
 // watch begleitet ein laufendes Kommando: Es meldet den Fortschritt an den
@@ -127,10 +171,11 @@ func (r *Runner) watch(cmd wire.Command, out *limitedBuffer, progress func(int))
 	return func() { close(done) }
 }
 
-// Cancel bricht ein laufendes Kommando ab (Kill der Prozessgruppe).
-// No-op, wenn nichts (mehr) läuft.
+// Cancel bricht ein Kommando ab (Kill der Prozessgruppe). Läuft es noch
+// nicht, merkt sich der Runner den Abbruch, und es startet gar nicht erst.
 func (r *Runner) Cancel(reqID string) {
 	r.mu.Lock()
+	r.cancelled.add(reqID)
 	proc := r.running[reqID]
 	r.mu.Unlock()
 	if proc == nil || proc.Process == nil {
@@ -140,46 +185,33 @@ func (r *Runner) Cancel(reqID string) {
 	_ = syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
 }
 
-// limitedBuffer sammelt Output bis max Bytes; Überschuss wird verworfen
-// und truncated gesetzt (der Server hängt dann einen Hinweis an).
-type limitedBuffer struct {
-	mu        sync.Mutex
-	buf       strings.Builder
-	max       int
-	truncated bool
-	written   int // alle geschriebenen Bytes, auch die verworfenen
+// idWindow merkt sich die zuletzt eingetragenen IDs, höchstens max Stück;
+// die älteste fällt zuerst heraus. Nicht threadsicher - der Runner hält mu.
+type idWindow struct {
+	max   int
+	order []string
+	set   map[string]struct{}
 }
 
-// Written ist die Zahl ALLER bisher geschriebenen Bytes - auch der wegen des
-// Limits verworfenen. Daran erkennt watch, ob das Kommando noch arbeitet; die
-// Länge des Puffers taugt dafür nicht, weil sie nach dem Kürzen stehen bliebe
-// und ein weiterhin arbeitendes Kommando als hängend erscheinen ließe.
-func (b *limitedBuffer) Written() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.written
+func newIDWindow(max int) *idWindow {
+	return &idWindow{max: max, set: map[string]struct{}{}}
 }
 
-func (b *limitedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.written += len(p)
-	if room := b.max - b.buf.Len(); room > 0 {
-		if len(p) > room {
-			b.buf.Write(p[:room])
-			b.truncated = true
-		} else {
-			b.buf.Write(p)
-		}
-	} else if len(p) > 0 {
-		b.truncated = true
+// add trägt id ein und meldet false, wenn sie schon drin war.
+func (w *idWindow) add(id string) bool {
+	if w.has(id) {
+		return false
 	}
-	// Immer len(p) melden - der Schreiber (das Kommando) soll weiterlaufen.
-	return len(p), nil
+	w.set[id] = struct{}{}
+	w.order = append(w.order, id)
+	if len(w.order) > w.max {
+		delete(w.set, w.order[0])
+		w.order = w.order[1:]
+	}
+	return true
 }
 
-func (b *limitedBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
+func (w *idWindow) has(id string) bool {
+	_, ok := w.set[id]
+	return ok
 }

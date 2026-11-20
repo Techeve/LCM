@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"os/exec"
+	"strings"
 )
 
 // Bubblewrap-Backend: sperrt den Kindprozess in einen eigenen Mount- (und
@@ -30,6 +31,15 @@ func bwrapArgs(spec Spec, name string, args []string) []string {
 		"--new-session",     // eigene Sitzung: keine Eingaben ins Terminal des Elternprozesses
 		"--proc", "/proc",
 		"--dev", "/dev",
+		// Ohne --clearenv reicht Bubblewrap die eigene Umgebung durch, also
+		// die von LCM - samt LCM_ENCRYPTION_KEY, falls er dort steht.
+		// Bubblewrap kennt die Option ab 0.5; ein älteres scheitert schon an
+		// der Probe in bwrapUsable, dann greift Landlock.
+		"--clearenv",
+	}
+	for _, kv := range childEnv() {
+		key, value, _ := strings.Cut(kv, "=")
+		out = append(out, "--setenv", key, value)
 	}
 	// Das eigene /tmp muss VOR alle Einhängungen: es verdeckt sonst jeden
 	// zuvor eingehängten Pfad unterhalb von /tmp. Genau daran scheiterte der
@@ -61,9 +71,13 @@ func bwrapArgs(spec Spec, name string, args []string) []string {
 	return append(append(out, "--"), append([]string{name}, args...)...)
 }
 
-// bwrapCommand baut den fertigen Aufruf.
+// bwrapCommand baut den fertigen Aufruf. Auch Bubblewrap selbst bekommt nur
+// die knappe Umgebung: Fiele --clearenv je weg, erbte der Kindprozess
+// trotzdem nichts von LCM.
 func bwrapCommand(ctx context.Context, spec Spec, name string, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, bwrapBinary, bwrapArgs(spec, name, args)...)
+	cmd := exec.CommandContext(ctx, bwrapBinary, bwrapArgs(spec, name, args)...)
+	cmd.Env = childEnv()
+	return cmd
 }
 
 // bwrapUsable prüft, ob Bubblewrap vorhanden UND tatsächlich benutzbar ist.

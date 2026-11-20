@@ -52,7 +52,15 @@ vier Nameserver eintragen (freie IP **oder** Auswahl aus den Vorgaben) und
   ```ini
   [Resolve]
   DNS=1.1.1.1 9.9.9.9
+  Domains=~.
   ```
+
+  `Domains=~.` leitet alle Anfragen an diese Server. Ohne die Zeile bevorzugt
+  systemd-resolved die DNS-Server, die ein DHCP-Server der Schnittstelle
+  mitgibt. Führt `/etc/resolv.conf` nicht zu systemd-resolved, weil dort eine
+  eigene Datei liegt, setzt LCM den Symlink auf
+  `../run/systemd/resolve/stub-resolv.conf` zurück. Sonst gälte das Drop-in
+  für keine Anwendung.
 
 - sonst → LCM schreibt `/etc/resolv.conf` (mit Sicherung `*.lcm-bak`, ein
   vorhandener Symlink wird zuvor entfernt):
@@ -64,6 +72,19 @@ vier Nameserver eintragen (freie IP **oder** Auswahl aus den Vorgaben) und
 
   glibc liest aus dieser Datei nur die ersten **drei** `nameserver`-Zeilen; ein
   vierter wirkt nur mit systemd-resolved.
+
+  Damit die Datei bleibt, hält LCM die DHCP-Clients davon ab, sie bei der
+  nächsten Lease neu zu schreiben: einen Hook für dhclient, `dns=none` für
+  NetworkManager, `RESOLV_CONF=no` für udhcpc unter Alpine. dhcpcd und andere
+  Werkzeuge kennt LCM nicht, dort gehört die Einstellung in das jeweilige
+  Werkzeug.
+
+- **Proxmox-Container:** Proxmox schreibt `/etc/resolv.conf` eines Containers
+  bei jedem Start neu. Ist im Container kein DNS eingetragen, nimmt es die
+  Server des Hosts und ersetzt dabei auch den Symlink zu systemd-resolved.
+  LCM legt deshalb in Containern `/etc/.pve-ignore.resolv.conf` an. Danach
+  lässt Proxmox die Datei in Ruhe, und der Reiter *DNS* des Containers wirkt
+  nicht mehr.
 
 - Nach dem Schreiben prüft LCM die Auflösung (gegen die erste gepflegte
   Test-Domain, ersatzweise `deb.debian.org`). **Scheitert sie, wird die Änderung
@@ -88,12 +109,11 @@ erreichbar ist):
 4. Job-Ausgang: *„DNS-Test nach dem Setzen fehlgeschlagen - zurueckgerollt"*
    (exit 1). Der Server nutzt weiterhin seine bisherigen Resolver.
 
-:::note[NetworkManager / netplan / Proxmox]
-Wird DNS von NetworkManager, netplan oder (bei Proxmox VE) der Host-Netzwerk-
-Konfiguration verwaltet, kann eine direkt geschriebene Konfiguration später
-überschrieben werden. Der Auflösungstest schützt vor einer kaputten
-Namensauflösung; die **dauerhafte** Pflege gehört dann in das jeweilige
-Netzwerk-Werkzeug.
+:::note[Was die Anzeige zeigt]
+Unter *DNS-Server* zeigt LCM die Server, die Anwendungen tatsächlich fragen.
+Maßgeblich ist `/etc/resolv.conf`: Führt sie zu systemd-resolved, zählen
+dessen Server, sonst die `nameserver`-Zeilen der Datei. Weicht die Anzeige von
+den gesetzten Servern ab, überschreibt etwas anderes die Einstellung.
 :::
 
 :::caution[Eingeschränkter Sudo-Modus]

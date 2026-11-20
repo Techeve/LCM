@@ -70,6 +70,12 @@ const (
 	// alle diese Wege zugleich: was auch immer schiefgeht, das Ergebnis ist
 	// ein fehlendes Backup, und genau das wird gemessen.
 	AlertTypeBackupStale = "backup_stale"
+	// AlertTypeTLSCertExpiring: Das TLS-Zertifikat von LCM läuft binnen 60
+	// Tagen ab, und LCM erneuert es nicht von selbst - weil es ein eigenes
+	// des Betreibers ist oder weil noch Agenten nur das alte Zertifikat
+	// kennen -, oder die CA von LCM endet binnen eines Jahres (siehe
+	// services.CertRenewal). Selbstbeobachtung, ohne Schwellenwert.
+	AlertTypeTLSCertExpiring = "tls_cert_expiring"
 	// AlertTypeAdvisory: Die Fruehwarnung (OSV) meldet offene Befunde zum
 	// installierten Paketbestand ab der konfigurierten Mindest-Schwere
 	// (MinSeverity).
@@ -120,7 +126,8 @@ const (
 func IsSelfAlert(alertType string) bool {
 	switch alertType {
 	case AlertTypeBackupStale, AlertTypeCVEDBStale,
-		AlertTypeAptCacherDown, AlertTypeCrowdSecLapiDown:
+		AlertTypeAptCacherDown, AlertTypeCrowdSecLapiDown,
+		AlertTypeTLSCertExpiring:
 		return true
 	default:
 		return false

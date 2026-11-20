@@ -152,6 +152,31 @@ func TestLoginDeckeltPasswortlaenge(t *testing.T) {
 	}
 }
 
+// TestAnmeldungLeertAdresszaehlerNicht: Wer ein gültiges Konto hat, setzt mit
+// einer Anmeldung nicht den Zähler seiner Adresse zurück - sonst könnte er
+// zwischen zwei Rateversuchen an fremden Konten beliebig oft neu anfangen.
+// Viele Anmeldungen ohne Fehlversuch sperren dagegen nie.
+func TestAnmeldungLeertAdresszaehlerNicht(t *testing.T) {
+	app := newTestApp(t)
+	for range 8 {
+		loginToken(t, app, "admin", "test-admin-passwort")
+	}
+	wrong := `{"username":"fremd","password":"falsch-geraten"}`
+	for i := range 4 {
+		if r := doRequest(t, app, "POST", "/api/v1/auth/login", "", wrong); r.StatusCode != 401 {
+			t.Fatalf("Fehlversuch %d: erwartet 401, bekam %d", i+1, r.StatusCode)
+		}
+	}
+	loginToken(t, app, "admin", "test-admin-passwort")
+	if r := doRequest(t, app, "POST", "/api/v1/auth/login", "", wrong); r.StatusCode != 401 {
+		t.Fatalf("fünfter Fehlversuch: erwartet 401, bekam %d", r.StatusCode)
+	}
+	r := doRequest(t, app, "POST", "/api/v1/auth/login", "", `{"username":"admin","password":"test-admin-passwort"}`)
+	if r.StatusCode != 429 {
+		t.Errorf("nach fünf Fehlversuchen von derselben Adresse: erwartet 429, bekam %d", r.StatusCode)
+	}
+}
+
 // TestZweitfaktorChallengeGiltEinmal: Nach dem zweiten Anmeldeschritt ist die
 // Challenge verbraucht - auch mit einem weiteren gültigen Code entsteht keine
 // zweite Sitzung.

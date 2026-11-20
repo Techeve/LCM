@@ -73,25 +73,17 @@ func TestSanitizeDNSDomains(t *testing.T) {
 }
 
 func TestDNSApplyScript(t *testing.T) {
-	script := dnsApplyScript([]string{"1.1.1.1", "8.8.8.8"}, "example.com")
-	// Beide Zweige (resolved-Drop-in und resolv.conf) samt Test + Rollback.
-	for _, want := range []string{
-		dnsResolvedDropin, dnsResolvConf, "DNS=1.1.1.1 8.8.8.8",
-		"nameserver 1.1.1.1", "resolve_ok 'example.com'", "zurueckgerollt",
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("Apply-Skript enthält %q nicht:\n%s", want, script)
-		}
-	}
-	// Vier Nameserver landen vollständig in beiden Zweigen.
+	// Server und Test-Domain gehen quotiert an die gemeinsamen Funktionen;
+	// was diese tun, prüft dns_shell_test.go am echten Ablauf.
 	four := dnsApplyScript([]string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "2606:4700:4700::1111"}, "example.com")
-	for _, want := range []string{"DNS=1.1.1.1 8.8.8.8 9.9.9.9 2606:4700:4700::1111", "nameserver 9.9.9.9\nnameserver 2606:4700:4700::1111\n"} {
-		if !strings.Contains(four, want) {
-			t.Fatalf("Apply-Skript mit vier Nameservern enthält %q nicht:\n%s", want, four)
-		}
+	if want := "lcm_dns_set '1.1.1.1 8.8.8.8 9.9.9.9 2606:4700:4700::1111' 'example.com' || exit 1"; !strings.HasSuffix(four, want) {
+		t.Fatalf("Apply-Skript endet nicht mit %q:\n%s", want, four)
+	}
+	if def := dnsApplyScript([]string{"1.1.1.1"}, ""); !strings.HasSuffix(def, "'deb.debian.org' || exit 1") {
+		t.Fatalf("ohne Test-Domain fehlt deb.debian.org: %s", def[len(def)-80:])
 	}
 	// Leere Liste => Rückbau-Skript.
-	if un := dnsApplyScript(nil, ""); !strings.Contains(un, "DNS-Verwaltung entfernt") {
+	if un := dnsApplyScript(nil, ""); !strings.HasSuffix(un, "\nlcm_dns_unset") {
 		t.Fatalf("leere Liste sollte das Rückbau-Skript liefern: %s", un)
 	}
 }

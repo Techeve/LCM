@@ -208,7 +208,9 @@ func (ctrl *AuthController) Login(c fiber.Ctx) error {
 		}
 		return err
 	}
-	ctrl.guard.reset(ipKey)
+	// Den Adress-Zähler NICHT leeren: Mit einem gültigen Konto ließe er sich
+	// sonst nach jedem Rateversuch an einem fremden Konto zurücksetzen.
+	ctrl.guard.uncount(ipKey, maxLoginFails)
 	ctrl.guard.reset(userKey)
 
 	if user.TOTPEnabled {

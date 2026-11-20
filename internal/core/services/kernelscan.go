@@ -1,6 +1,7 @@
 package services
 
 import (
+	"regexp"
 	"strings"
 
 	"LCM/internal/core/domain"
@@ -91,17 +92,64 @@ func parseKernelList(mgr, out string) []domain.KernelPackage {
 				continue
 			}
 			release = domain.KernelReleaseFromPackage(version)
-			if release == "" {
-				continue
-			}
 		}
-		if seen[name] {
+		// Die uname-Schreibweise zuerst: "6.12.arch1-1" (x.y.0) hat keine
+		// dreiteilige Version und fiele sonst als vermeintliches META-Paket
+		// heraus.
+		release = unameRelease(mgr, name, version, release)
+		if release == "" || seen[name] {
 			continue
 		}
 		seen[name] = true
 		pkgs = append(pkgs, domain.KernelPackage{Name: name, Release: release, Version: version})
 	}
 	return pkgs
+}
+
+var (
+	// rePacmanKernel zerlegt die pacman-Version eines Kernels:
+	// "7.2.14.arch1-1", "6.12.arch1-1" (x.y.0), "6.18.60-1" (linux-lts).
+	rePacmanKernel = regexp.MustCompile(`^([0-9]+\.[0-9]+)(\.[0-9]+)?(?:\.([a-z]+[0-9]*))?-([0-9]+)$`)
+	// reApkKernel zerlegt den apk-Namen: "linux-lts-6.12.115-r0".
+	reApkKernel = regexp.MustCompile(`^linux-([a-z]+)-([0-9]+\.[0-9]+\.[0-9]+)-r([0-9]+)$`)
+)
+
+// unameRelease schreibt die Fassung so, wie `uname -r` den Kernel nennt -
+// sonst fand der Abgleich auf Arch und Alpine den laufenden Kernel nie:
+//
+//	pacman linux 7.2.14.arch1-1     → 7.2.14-arch1-1
+//	pacman linux-lts 6.18.60-1      → 6.18.60-1-lts
+//	pacman linux 6.12.arch1-1       → 6.12.0-arch1-1
+//	apk    linux-lts-6.12.115-r0    → 6.12.115-0-lts
+//
+// (an archlinux und Alpine 3.22 gegen /usr/lib/modules nachgesehen). Alles
+// andere bleibt, wie es ist.
+func unameRelease(mgr, name, version, release string) string {
+	switch pkgFamily(mgr) {
+	case pkgPacman:
+		m := rePacmanKernel.FindStringSubmatch(version)
+		if m == nil {
+			return release
+		}
+		patch := m[2]
+		if patch == "" {
+			patch = ".0"
+		}
+		out := m[1] + patch
+		if m[3] != "" {
+			out += "-" + m[3]
+		}
+		out += "-" + m[4]
+		if flavor, ok := strings.CutPrefix(name, "linux-"); ok {
+			out += "-" + flavor
+		}
+		return out
+	case pkgApk:
+		if m := reApkKernel.FindStringSubmatch(name); m != nil {
+			return m[2] + "-" + m[3] + "-" + m[1]
+		}
+	}
+	return release
 }
 
 // scanKernels liest die installierten Kernel-Pakete vom Ziel.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPrecachedRequest } from './sw-rules';
+import { isBuildFile, isPrecachedRequest, outdatedCaches } from './sw-rules';
 
 const origin = 'https://lcm.example';
 const assets = new Set(['/assets/index-abc123.js', '/assets/de-def456.js']);
@@ -24,5 +24,23 @@ describe('isPrecachedRequest', () => {
 
   it('never caches non-GET requests', () => {
     expect(isPrecachedRequest(request(`${origin}/assets/index-abc123.js`, 'POST'), origin, assets)).toBe(false);
+  });
+});
+
+describe('isBuildFile', () => {
+  it('erkennt Dateien auch älterer Builds', () => {
+    expect(isBuildFile(request(`${origin}/assets/index-old000.js`), origin)).toBe(true);
+  });
+
+  it.each([`${origin}/api/v1/servers`, `${origin}/sw.js`, `${origin}/assets/x.js?v=1`, 'https://evil.example/assets/x.js'])('nicht %s', (url) => {
+    expect(isBuildFile(request(url), origin)).toBe(false);
+  });
+});
+
+describe('outdatedCaches', () => {
+  it('behält den jüngsten älteren Cache', () => {
+    expect(outdatedCaches(['lcm-a', 'lcm-b', 'lcm-c'])).toEqual(['lcm-a', 'lcm-b']);
+    expect(outdatedCaches(['lcm-a'])).toEqual([]);
+    expect(outdatedCaches([])).toEqual([]);
   });
 });

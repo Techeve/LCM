@@ -33,7 +33,7 @@ Veröffentlichungsprozess zu bekommen?
 | 4 | Organisation mit mehreren aktiven Maintainern und Release-Prozess | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `@xterm/xterm` |
 | 3 | Kleine Organisation oder renommierte Einzelperson, nachweislich aktiv | `mochi-mqtt/server`, `fasthttp/websocket`, `simple-icons`, `filippo.io/age`, `go-landlock`, `klauspost/compress`, `modernc.org/sqlite` |
 | 2 | Einzelperson, sporadische Releases, Bus-Faktor 1 | `glebarez/sqlite`, `alexedwards/argon2id`; transitiv `molecule-man/go-brrr` (über fasthttp) |
-| 1 | Einzelperson, seit Jahren inaktiv, kein Release-Prozess, ungetaggte Versionen | `robfig/cron` (letzter Tag 2020) - wird abgelöst, siehe unten |
+| 1 | Einzelperson, seit Jahren inaktiv, kein Release-Prozess, ungetaggte Versionen | - (leer, der letzte Eintrag wurde abgelöst, siehe unten) |
 
 Stufe 1 wird nicht aufgenommen, und bestehende Einträge werden abgelöst.
 
@@ -136,13 +136,17 @@ bleibt unberührt. Vor einem Wechsel Migrationen und Backup/Restore gegen eine
 bestehende Datenbank testen - die Treiber unterscheiden sich in Details der
 Typkonvertierung.
 
-**`robfig/cron` ist auf Stufe 1 gerutscht:** letzter Tag v3.0.1 von 2020,
-über 170 offene Issues. Genutzt werden nur der Ausdrucks-Parser (fünf Felder
-plus Deskriptoren) und der Scheduler in `internal/core/services/scheduler.go`
-und `group_service.go`. Die Aufgabe fällt in die Eigenbau-Kategorie: keine
+**2026-11-09: `robfig/cron` (Stufe 1, letzter Tag v3.0.1 von 2020) abgelöst.**
+An seiner Stelle steht das eigene Paket `internal/cron`: ein Parser für fünf
+Felder plus Deskriptoren (`@daily`, `@every 1h`, Präfix `CRON_TZ=`) und ein
+kleiner Scheduler. Die Aufgabe fiel in die Eigenbau-Kategorie: keine
 Kryptographie, die Ausdrücke kommen vom Administrator, ein Fehler fällt im
-Zeitplan sofort auf. Ablösung per Eigenbau mit Differenztest gegen `robfig/cron`
-(Aufwand wenige Tage); Notlösung ist der gepflegte Fork `netresearch/go-cron`.
+Zeitplan sofort auf. Gespeicherte Ausdrücke gelten unverändert weiter: Ein
+Golden-Test hält das Verhalten der alten Bibliothek für alle Ausdrucksformen
+fest, Fehlertexte und Zeitumstellungen eingeschlossen. Sein Generator liegt als
+eigenes Modul unter `internal/cron/testdata/gen` und gehört nicht zum
+Abhängigkeitsgraphen von LCM. Einzige Abweichung: Ein Zonen-Präfix ohne
+folgendes Leerzeichen (`TZ=UTC`) ist ein Fehler statt eines Panics.
 
 **`mochi-mqtt/server` beobachten:** Der Broker ist für die Agent-Anbindung
 unverzichtbar und Protokoll-Parsing, also kein Eigenbau. Letztes Release

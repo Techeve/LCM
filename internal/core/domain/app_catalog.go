@@ -304,13 +304,21 @@ func at(v []int, i int) int {
 // reVersionNumbers zieht die Zahlenfolge aus einer Versionsangabe: aus
 // "v0.107.52", "24.0.7.1" oder "nginx/1.24.0" wird dieselbe Liste. Was gar
 // keine Zahlen trägt, ist für den semver-Vergleich nicht brauchbar.
-var reVersionNumbers = regexp.MustCompile(`[0-9]+(?:\.[0-9]+)*`)
+//
+// Die Zahl muss an einer Wortgrenze beginnen, ein vorangestelltes v ist
+// erlaubt. Sonst griffe das Muster die Ziffer aus dem Programmnamen: aus
+// "python3 3.11.2" würde 3, aus "oauth2-proxy v7.6.0" würde 2. Auch ein
+// Punkt ist keine Grenze, sonst begänne in "go1.21.0" eine Version mitten in
+// der Zahlenfolge (21.0). RE2 kennt keinen Lookbehind, deshalb steht die
+// Grenze als eigene Gruppe davor.
+var reVersionNumbers = regexp.MustCompile(`(?:^|[^0-9A-Za-z.])[vV]?([0-9]+(?:\.[0-9]+)*)`)
 
 func parseVersionNumbers(v string) ([]int, bool) {
-	m := reVersionNumbers.FindString(v)
-	if m == "" {
+	match := reVersionNumbers.FindStringSubmatch(v)
+	if match == nil {
 		return nil, false
 	}
+	m := match[1]
 	parts := strings.Split(m, ".")
 	out := make([]int, 0, len(parts))
 	for _, p := range parts {

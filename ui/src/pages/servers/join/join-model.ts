@@ -216,15 +216,32 @@ export interface AgentCommands {
  * eigenen Port fällt die Enroll-Adresse auf die Adresse der Oberfläche zurück. Das Binary kommt über die
  * Oberfläche (`/api/v1/agent/download/amd64`).
  */
-export function agentCommands(location: Pick<Location, 'origin' | 'protocol' | 'hostname'>, agentPort: number, token: string): AgentCommands {
+export function agentCommands(
+  location: Pick<Location, 'origin' | 'protocol' | 'hostname'>,
+  agentPort: number,
+  token: string,
+  downloadPin = '',
+): AgentCommands {
   const agentBase = agentPort > 0 ? `${location.protocol}//${location.hostname}:${agentPort}` : location.origin;
   const enroll = `sudo lcm-agent enroll ${agentBase} ${token}`;
   return {
     repo: 'curl -fsSL https://repo.techeve.de/setup.sh | sudo sh',
     install: 'sudo apt install lcm-agent',
     enroll,
-    manual: `sudo curl -fkLo /usr/local/bin/lcm-agent ${location.origin}/api/v1/agent/download/amd64 && sudo chmod +x /usr/local/bin/lcm-agent && ${enroll}`,
+    manual: `${agentDownload(location.origin, downloadPin)} && sudo chmod +x /usr/local/bin/lcm-agent && ${enroll}`,
   };
+}
+
+/**
+ * Download des Binarys. `-k` gibt es nur zusammen mit dem Pin des Schlüssels, den LCM ausliefert: Dann nimmt curl
+ * das Zertifikat der LCM-CA an, aber nur von genau diesem LCM. Der Schlüssel wechselt monatlich; der Befehl entsteht
+ * mit jedem Token neu und trägt den aktuellen. Steht ein Reverse Proxy mit eigenem Zertifikat davor, passt der Pin
+ * nicht, und der zweite Versuch prüft ganz normal gegen die Systemzertifikate. Ohne Pin bleibt nur dieser.
+ */
+function agentDownload(origin: string, pin: string): string {
+  const target = `-o /usr/local/bin/lcm-agent ${origin}/api/v1/agent/download/amd64`;
+  const verified = `sudo curl -fL ${target}`;
+  return pin ? `sudo curl -fLk --pinnedpubkey sha256//${pin} ${target} || ${verified}` : verified;
 }
 
 /** Befehl zum Import des öffentlichen Schlüssels auf dem Router. */

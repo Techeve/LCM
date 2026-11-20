@@ -671,6 +671,7 @@ var migratedModels = []any{
 	&domain.AdvisoryDetail{},
 	&domain.AdvisoryCacheStats{},
 	&domain.ServerCapability{},
+	&domain.PortScan{},
 }
 
 func autoMigrate(db *gorm.DB) error {

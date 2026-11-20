@@ -66,6 +66,13 @@ variables:
   # auseinander, laedt Playwright die Browser doch wieder selbst nach und der
   # Vorteil ist weg. Renovate haelt beides zusammen (matchDepNames).
   PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.1-noble
+  # Go-Werkzeuge mit fester Version statt @latest: Ein neuer Stand kommt als
+  # Renovate-MR mit Wartezeit, nicht unbemerkt in den nächsten Lauf. Dieselben
+  # Versionen stehen im Makefile und in docker/Dockerfile.
+  # renovate: datasource=go depName=golang.org/x/vuln
+  GOVULNCHECK_VERSION: v1.9.0
+  # renovate: datasource=go depName=github.com/goreleaser/nfpm/v2
+  NFPM_VERSION: v2.48.0
   # Volle Historie + Tags: die Versionsermittlung braucht beides.
   GIT_DEPTH: "0"
   # Der npm-Cache im Projektverzeichnis, damit der Runner ihn über MinIO
@@ -175,7 +182,7 @@ workflow:
 #   enterprise ← fix/*- oder hotfix/*-Branches (Fixes entstehen hier zuerst)
 check:mr-source:
   stage: check
-  image: alpine:3
+  image: alpine:3.24
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "community" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "beta" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "enterprise")
   script:
@@ -219,7 +226,7 @@ check:mr-source:
 # enterprise, wo der Release-Commit hinterher direkt gepusht wird.
 check:release-version:
   stage: check
-  image: alpine:3
+  image: alpine:3.24
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "beta" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "community" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "beta"))
   script:
@@ -261,11 +268,26 @@ check:release-version:
       fi
       echo "OK: v${VERSION} ist noch nicht getaggt - der Merge nach ${TGT} erzeugt ein Release."
 
+# Texte für Anwender ohne interne Namen: Commit-Betreffe werden zum
+# Changelog, das Changelog steht öffentlich in der Doku und in den Releases,
+# release-info/*.md im Fenster nach dem Update. Die Namen stehen in
+# tools/internal-terms.txt.
+check:internal-terms:
+  stage: check
+  image: alpine:3.24
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - apk add --no-cache git
+    - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - sh tools/check-internal-terms.sh CHANGELOG.md release-info/*.md
+    - git log --no-merges --format=%s "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME..HEAD" | sh tools/check-internal-terms.sh -
+
 # Commit-Messages müssen Conventional Commits sein - daraus entstehen
 # Versionsnummer und Changelog. Format: typ(scope)?: beschreibung
 check:commits:
   stage: check
-  image: alpine:3
+  image: alpine:3.24
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
@@ -346,7 +368,20 @@ govulncheck:
   extends: .nicht-auf-release-branch
   image: $GO_IMAGE
   script:
-    - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+    - go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
+
+# shellcheck für die Skripte, die auf fremden Rechnern als root laufen: den
+# gerenderten lcm-helper (der Test setzt alle eingebetteten Skripte ein) und
+# die Paket-Skripte. Eigener Job, weil backend ohne shellcheck läuft und den
+# Test dort überspringt.
+helper-shellcheck:
+  stage: test
+  extends: .nicht-auf-release-branch
+  image: $GO_IMAGE
+  script:
+    - apk add --no-cache shellcheck
+    - shellcheck -s sh -S warning packaging/pkg-version.sh packaging/scripts/*.sh
+    - go test -run '^TestHelperSkriptBestehtShellcheck$' ./internal/core/services/
 
 # E2E (Playwright gegen das echte Binary) - nur wo es zählt: auf develop,
 # main und in MR-Pipelines. Installiert Go + Chromium im Node-Image.
@@ -398,7 +433,7 @@ e2e:
 # dotenv und den obersten CHANGELOG.md-Abschnitt als Release-Beschreibung.
 version:
   stage: check
-  image: alpine:3
+  image: alpine:3.24
   rules:
     - if: $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "enterprise"
   script:
@@ -543,31 +578,31 @@ packages:deb:
   script:
     - apk add --no-cache git
     - APP_VERSION=${NEXT_VERSION:-$(cat VERSION)}
-    # Debian-Versionsformat: SemVer-Prerelease "-beta.1" wird zu "~beta.1",
-    # damit die Beta laut apt VOR dem späteren Finale (1.0.0) sortiert.
-    - DEB_VERSION=$(echo "$APP_VERSION" | tr '-' '~')
-    - echo "Paketiere ${APP_VERSION} - Debian-Version ${DEB_VERSION}"
+    # Die SemVer-Version geht unverändert an nfpm: Für deb und rpm macht nfpm
+    # aus "-beta.1" selbst "~beta.1", damit die Beta vor dem Finale sortiert.
+    # apk und Arch brauchen eine eigene Schreibweise (packaging/pkg-version.sh).
+    - echo "Paketiere ${APP_VERSION}"
     - |
       for A in amd64 arm64; do
         cp "bin/lcm-linux-${A}" bin/lcm-pkg
-        LCM_ARCH="$A" LCM_VERSION="$DEB_VERSION" \
-          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
+        LCM_ARCH="$A" LCM_VERSION="$APP_VERSION" \
+          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION} package \
           --config packaging/nfpm.yaml --packager deb --target bin/
       done
     # LCM Remote: eigenständiges lcm-agent-Paket (apt install lcm-agent).
     - |
       for A in amd64 arm64; do
         cp "bin/lcm-agent-linux-${A}" bin/lcm-agent-pkg
-        LCM_ARCH="$A" LCM_VERSION="$DEB_VERSION" \
-          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
+        LCM_ARCH="$A" LCM_VERSION="$APP_VERSION" \
+          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION} package \
           --config packaging/nfpm-agent.yaml --packager deb --target bin/
       done
     # lcm-probe: eigenes Paket neben LCM (apt install lcm-probe).
     - |
       for A in amd64 arm64; do
         cp "bin/lcm-probe-linux-${A}" bin/lcm-probe-pkg
-        LCM_ARCH="$A" LCM_VERSION="$DEB_VERSION" \
-          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
+        LCM_ARCH="$A" LCM_VERSION="$APP_VERSION" \
+          go run github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION} package \
           --config packaging/nfpm-probe.yaml --packager deb --target bin/
       done
     # LCM Remote laeuft auf jeder Distribution - das Paket gab es aber nur als
@@ -579,8 +614,8 @@ packages:deb:
       for A in amd64 arm64; do
         cp "bin/lcm-agent-linux-${A}" bin/lcm-agent-pkg
         for P in rpm apk archlinux; do
-          LCM_ARCH="$A" LCM_VERSION="$DEB_VERSION" \
-            go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest package \
+          LCM_ARCH="$A" LCM_VERSION="$(sh packaging/pkg-version.sh "$P" "$APP_VERSION")" \
+            go run github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION} package \
             --config packaging/nfpm-agent.yaml --packager "$P" --target bin/
         done
       done
@@ -771,7 +806,7 @@ upgrade-test:
 # daher braucht dieser Job KEINEN Schreib-Token.
 release:
   stage: release
-  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0
   # e2e explizit hier: binaries hängt nicht daran - ohne diese Zeile liefe das
   # Release trotz rotem e2e. Auf community und beta ist e2e der einzige
   # verbliebene Testjob (siehe .nicht-auf-release-branch); diese Zeile ist damit
@@ -834,7 +869,7 @@ release:
 # Optional: GPG_KEY (Default repo@techeve.de). Details: packaging/publish-deb.sh.
 deploy:apt:
   stage: deploy
-  image: debian:bookworm-slim
+  image: debian:12.15-slim
   needs:
     - version
     - packages:deb
@@ -881,7 +916,7 @@ deploy:apt:
 # nicht - mit Ansage im Log statt stillem Auslassen.
 release:public:
   stage: deploy
-  image: alpine:3
+  image: alpine:3.24
   needs: [version, binaries, packages:deb, release, mirror:public]
   rules:
     - if: $RENOVATE_BOT == "true"
@@ -972,7 +1007,7 @@ release:public:
 # masked).
 mirror:public:
   stage: deploy
-  image: alpine:3
+  image: alpine:3.24
   needs:
     - frontend
     - job: backend
@@ -1128,7 +1163,7 @@ github-issue-sync:
 
 renovate:
   stage: maintenance
-  image: renovate/renovate:latest
+  image: renovate/renovate:44.206.2
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $RENOVATE_BOT == "true"
     - if: $CI_PIPELINE_SOURCE == "web" && $RENOVATE_BOT == "true"

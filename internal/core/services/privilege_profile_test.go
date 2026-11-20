@@ -7,6 +7,7 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
+	"LCM/internal/storage/repositories"
 )
 
 // findProfile sucht ein Profil über seinen Slug.
@@ -106,6 +107,31 @@ func TestEigenesProfilAnlegenUndAendern(t *testing.T) {
 	}
 }
 
+// TestSudoRegelnNachZielbenutzerUndKommandoEntdoppelt: Dasselbe Kommando als
+// root und als postgres sind zwei Erlaubnisse. Vorher fiel die zweite weg,
+// weil nur das Kommando verglichen wurde; eine echte Dopplung fällt weiter weg.
+func TestSudoRegelnNachZielbenutzerUndKommandoEntdoppelt(t *testing.T) {
+	env := newTestEnv(t)
+
+	created, err := env.Profiles.Create(services.ProfileInput{
+		Name: "Datenbank-Betrieb", Slug: "datenbank",
+		SudoRules: []domain.ProfileSudoRule{
+			{Command: "/usr/bin/psql -l"},
+			{Command: "/usr/bin/psql -l", RunAs: "postgres"},
+			{Command: "/usr/bin/psql -l", RunAs: "root"},
+		},
+	}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.SudoRules) != 2 {
+		t.Fatalf("erwartet zwei Regeln (root und postgres), bekam %+v", created.SudoRules)
+	}
+	if created.SudoRules[0].RunAs != "root" || created.SudoRules[1].RunAs != "postgres" {
+		t.Errorf("zielbenutzer falsch: %q, %q", created.SudoRules[0].RunAs, created.SudoRules[1].RunAs)
+	}
+}
+
 // TestProfilPruefungenGreifenBeimSpeichern: Die Eingabeprüfung ist die
 // eigentliche Sicherheitsgrenze dieses Features - sie muss am Service hängen
 // und nicht erst in der Oberfläche.
@@ -126,6 +152,12 @@ func TestProfilPruefungenGreifenBeimSpeichern(t *testing.T) {
 		{"gesperrter pfad", services.ProfileInput{Name: "D", Slug: "d",
 			PathRules: []domain.ProfilePathRule{{Path: "/etc/sudoers.d", Mode: domain.PathModeReadWrite}}}},
 		{"ungültiger slug", services.ProfileInput{Name: "E", Slug: "Groß_Geschrieben"}},
+		{"root-gleichwertiger pfad", services.ProfileInput{Name: "F", Slug: "f",
+			PathRules: []domain.ProfilePathRule{{Path: "/etc/systemd/system", Mode: domain.PathModeReadWrite}}}},
+		{"rekursiv über einem gesperrten pfad", services.ProfileInput{Name: "G", Slug: "g",
+			PathRules: []domain.ProfilePathRule{{Path: "/var", Mode: domain.PathModeRead}}}},
+		{"sudoedit auf cron", services.ProfileInput{Name: "H", Slug: "h",
+			EditRules: []domain.ProfileEditRule{{Path: "/etc/cron.d/job"}}}},
 	}
 	for _, f := range cases {
 		if _, err := env.Profiles.Create(f.in, "admin"); err == nil {
@@ -140,6 +172,49 @@ func TestProfilPruefungenGreifenBeimSpeichern(t *testing.T) {
 		SudoRules: []domain.ProfileSudoRule{{Command: "/bin/bash", AllowRootEquivalent: true}},
 	}, "admin"); err != nil {
 		t.Errorf("bestätigte shell-regel abgewiesen: %v", err)
+	}
+}
+
+// TestZugewiesenesProfilLaesstSichNichtLoeschen: Ein gelöschtes, aber noch
+// zugewiesenes Profil ließ den Benutzer-Sync auf jedem betroffenen Server
+// scheitern - das wirksame Profil ließ sich nicht mehr laden. Löschen geht
+// erst, wenn keine Zuweisung mehr darauf zeigt.
+func TestZugewiesenesProfilLaesstSichNichtLoeschen(t *testing.T) {
+	env := newTestEnv(t)
+	serverID := joinTestServer(t, env, "del01")
+	profile, err := env.Profiles.Create(services.ProfileInput{Name: "Web", Slug: "web"}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := env.LinuxUsers.Create(services.LinuxUserCreateInput{Username: "anna", DefaultProfileID: &profile.ID}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.Profiles.Delete(profile.ID, "admin"); !errors.Is(err, services.ErrProfileInUse) {
+		t.Fatalf("als standardprofil zugewiesen: erwartet ErrProfileInUse, bekam %v", err)
+	}
+
+	// Standardprofil weg, aber noch an einer Server-Zuweisung.
+	standard := findProfile(t, env, domain.ProfileSlugStandard)
+	linux := repositories.NewLinuxUserRepository(env.DB())
+	if err := linux.UpdateFields(user.ID, map[string]any{"default_profile_id": standard.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := linux.AssignToServer(user.ID, serverID); err != nil {
+		t.Fatal(err)
+	}
+	if err := linux.SetServerAssignmentProfile(user.ID, serverID, &profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.Profiles.Delete(profile.ID, "admin"); !errors.Is(err, services.ErrProfileInUse) {
+		t.Fatalf("an einer server-zuweisung: erwartet ErrProfileInUse, bekam %v", err)
+	}
+
+	if err := linux.SetServerAssignmentProfile(user.ID, serverID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.Profiles.Delete(profile.ID, "admin"); err != nil {
+		t.Errorf("ohne zuweisung muss das löschen gehen: %v", err)
 	}
 }
 

@@ -221,7 +221,7 @@ abgesichert:
 |---|---|
 | HTTP (UI/REST, Agent-Gateway, MCP) | Fibers `recover`-Middleware, jeweils als erste Middleware |
 | Hintergrund-Goroutinen (Job-Runner, Worker, Listener) | [`internal/safego`](https://gitlab.techeve.de/techeve/lcm/-/tree/community/internal/safego?mtm_campaign=linking&mtm_kwd=doc) - `safego.Go` / `safego.GoCleanup` |
-| Geplante Läufe (Cron) | `cron.Recover`-Kette im Scheduler |
+| Geplante Läufe (Cron) | Panic-Abfang je Lauf in `internal/cron` |
 | MQTT-Hooks + WebSocket-Verbindung der Agents | `safego.Recover` je Hook |
 
 Der MQTT-Pfad braucht die eigene Absicherung, weil er **außerhalb** jeder

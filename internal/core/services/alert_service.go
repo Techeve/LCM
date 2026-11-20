@@ -64,6 +64,9 @@ type AlertService struct {
 	// jüngsten Backups - Grundlage des backup_stale-Alarms; nil = Prüfung
 	// entfällt.
 	backupStatus func() (enabled bool, intervalHours int, newest *time.Time, err error)
+	// certWarning liefert den Hinweis zum TLS-Zertifikat (CertRenewal) -
+	// leer, solange nichts zu tun ist; nil = Prüfung entfällt.
+	certWarning func() string
 	// advisoryFindings liefert die offenen Fruehwarn-Befunde eines Servers.
 	advisoryFindings func(serverID uint) ([]domain.AdvisoryFinding, error)
 	// capabilities liefert die Betriebsfähigkeit der Server für die Erinnerung
@@ -127,6 +130,13 @@ func (s *AlertService) WithBackupStatus(fn func() (bool, int, *time.Time, error)
 	return s
 }
 
+// WithCertWarning verdrahtet den Hinweis zum TLS-Zertifikat (optional) -
+// Grundlage des tls_cert_expiring-Alarms.
+func (s *AlertService) WithCertWarning(fn func() string) *AlertService {
+	s.certWarning = fn
+	return s
+}
+
 func (s *AlertService) cveWeightList() []string {
 	if s.weightList != nil {
 		return s.weightList()
@@ -177,7 +187,8 @@ func validAlertType(t string) bool {
 		domain.AlertTypeRebootRequired, domain.AlertTypeAptCacherDown,
 		domain.AlertTypeCrowdSecLapiDown, domain.AlertTypeDeepScan,
 		domain.AlertTypeCVEDBStale, domain.AlertTypeBackupStale,
-		domain.AlertTypeAdvisory, domain.AlertTypeActionFailed:
+		domain.AlertTypeAdvisory, domain.AlertTypeActionFailed,
+		domain.AlertTypeTLSCertExpiring:
 		return true
 	default:
 		return false
@@ -214,9 +225,9 @@ func applyInput(rule *domain.AlertRule, in AlertRuleInput) error {
 	rule.Enabled = in.Enabled
 	rule.ChannelID = in.ChannelID
 	// MinSeverity ist eine CVE-Schwere (critical/high/medium/low/unknown),
-	// KEINE Alarm-Schwere. Ungültige Werte bekämen in SeverityAtLeast den
-	// Map-Nullwert Rang 0 (= critical) - die Regel würde dann still nur noch
-	// auf kritische CVEs anspringen. Leer = Default.
+	// KEINE Alarm-Schwere. Ungültige Werte fielen in SeverityAtLeast auf
+	// unknown zurück - die Regel spränge dann still auf jede CVE an.
+	// Leer = Default.
 	if in.MinSeverity != "" && domain.NormalizeSeverity(in.MinSeverity) != in.MinSeverity {
 		return fmt.Errorf("%w: min_severity %q (erlaubt: critical, high, medium, low)", ErrAlertSeverityInvalid, in.MinSeverity)
 	}
@@ -417,6 +428,8 @@ func (s *AlertService) evaluateSelf(rule *domain.AlertRule) finding {
 		return s.evalCVEDBStale()
 	case domain.AlertTypeBackupStale:
 		return s.evalBackupStale()
+	case domain.AlertTypeTLSCertExpiring:
+		return s.evalCertExpiring()
 	default:
 		return finding{}
 	}
@@ -574,6 +587,18 @@ func (s *AlertService) evalBackupStale() finding {
 		details: fmt.Sprintf("Das jüngste Backup ist %.0f Stunden alt - erlaubt sind %d Stunden (Intervall %d h, Kulanz ein Intervall). "+
 			"Job-Historie auf fehlgeschlagene System-Backups prüfen.", age.Hours(), intervalHours*2, intervalHours),
 	}
+}
+
+// evalCertExpiring feuert, solange CertRenewal einen Hinweis hat.
+func (s *AlertService) evalCertExpiring() finding {
+	if s.certWarning == nil {
+		return finding{}
+	}
+	msg := s.certWarning()
+	if msg == "" {
+		return finding{}
+	}
+	return finding{fired: true, description: "TLS-Zertifikat läuft bald ab", details: msg}
 }
 
 // evalDeepScan feuert, wenn der letzte Deep Scan Warnungen/kritische Befunde

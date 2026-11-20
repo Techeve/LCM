@@ -1,0 +1,21 @@
+{
+ "success": true,
+ "data": {
+  "model": "DS923+",
+  "firmware_ver": "DSM 7.2.2-72806 Update 3",
+  "serial": "2280SBRXXXXXX",
+  "cpu_clock_speed": 2600,
+  "cpu_cores": "2",
+  "cpu_family": "Ryzen",
+  "cpu_series": "R1600",
+  "cpu_vendor": "AMD",
+  "ram_size": 4096,
+  "up_time": "312:04:51",
+  "time_zone": "Amsterdam",
+  "enabled_ntp": true,
+  "ntp_server": "pool.ntp.org",
+  "time": "2026-11-08 09:12:44",
+  "sys_temp": 41,
+  "temperature_warning": false
+ }
+}

@@ -21,6 +21,7 @@ package sandbox
 
 import (
 	"context"
+	"os"
 	"os/exec"
 )
 
@@ -68,4 +69,32 @@ func Command(ctx context.Context, spec Spec, name string, args ...string) *exec.
 		return exec.CommandContext(ctx, name, args...)
 	}
 	return sandboxedCommand(ctx, spec, name, args...)
+}
+
+// childEnv ist die vollständige Umgebung des eingesperrten Prozesses: ein
+// PATH, eine HOME-Angabe und, falls gesetzt, Proxy und Zertifikate aus
+// passedEnv. Alles Weitere aus LCMs Umgebung geht ihn nichts an - dort kann
+// LCM_ENCRYPTION_KEY stehen, der Master-Key selbst, und mit ihm wäre die
+// Dateisperre wertlos. Beide Backends setzen genau diese Umgebung, keines
+// erbt die von LCM.
+func childEnv() []string {
+	env := []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/nonexistent",
+	}
+	for _, name := range passedEnv {
+		if value, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+value)
+		}
+	}
+	return env
+}
+
+// passedEnv sind die Variablen, die der eingesperrte Prozess von LCM
+// übernimmt: Proxy und eigene Zertifizierungsstellen, so wie Go sie liest.
+// Ohne sie lädt Trivy hinter einem Firmen-Proxy weder die Datenbank noch
+// Image-Layer. Bubblewrap reichte sie früher mit der ganzen Umgebung durch.
+var passedEnv = []string{
+	"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy",
+	"SSL_CERT_FILE", "SSL_CERT_DIR",
 }

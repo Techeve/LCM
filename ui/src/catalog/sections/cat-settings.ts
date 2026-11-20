@@ -10,6 +10,7 @@ import { baseStyles } from '../../components/shared.js';
 import { appNav } from '../app-frame.js';
 import { catalogStyles } from '../catalog-styles.js';
 import { settingsSections } from '../text.js';
+import { followChange } from '../follow-change.js';
 
 export class CatSettings extends LitElement {
   static override properties = { current: { state: true } };
@@ -84,9 +85,9 @@ export class CatSettings extends LitElement {
               </div>
               <lcm-card level="2" heading="Auslöser" subtitle="Ein Alarm entsteht, wenn der Zustand eines Servers kippt.">
                 <div class="switches">
-                  <lcm-switch label="Bei „kritisch“ alarmieren" description="Sofort, sobald ein Server auf kritisch springt." checked on-label="An:" off-label="Aus:" on-text="Du bekommst sofort eine Meldung, wenn ein Server kritisch wird." off-text="Kritische Server erscheinen nur im Dashboard."></lcm-switch>
-                  <lcm-switch label="Bei „Warnung“ alarmieren" description="Gesammelt einmal am Tag." on-label="An:" off-label="Aus:" on-text="Warnungen kommen einmal täglich um 08:00 als Zusammenfassung." off-text="Warnungen erscheinen nur im Dashboard."></lcm-switch>
-                  <lcm-switch label="Wenn LCM handlungsunfähig wird" description="Agent oder SSH nicht erreichbar." checked></lcm-switch>
+                  <lcm-switch label="Bei „kritisch“ alarmieren" description="Sofort, sobald ein Server auf kritisch springt." checked on-label="An:" off-label="Aus:" on-text="Du bekommst sofort eine Meldung, wenn ein Server kritisch wird." off-text="Kritische Server erscheinen nur im Dashboard." @lcm-change=${followChange}></lcm-switch>
+                  <lcm-switch label="Bei „Warnung“ alarmieren" description="Gesammelt einmal am Tag." on-label="An:" off-label="Aus:" on-text="Warnungen kommen einmal täglich um 08:00 als Zusammenfassung." off-text="Warnungen erscheinen nur im Dashboard." @lcm-change=${followChange}></lcm-switch>
+                  <lcm-switch label="Wenn LCM handlungsunfähig wird" description="Agent oder SSH nicht erreichbar." checked @lcm-change=${followChange}></lcm-switch>
                 </div>
               </lcm-card>
               <lcm-card level="2" heading="Empfänger">

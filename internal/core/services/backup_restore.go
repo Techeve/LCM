@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,9 +29,14 @@ const restoreMarker = ".ready"
 
 // erlaubte Dateien im Archiv → ihr Zielname im Datenverzeichnis. app.db wird
 // gesondert behandelt (Ziel ist der konfigurierte DatabasePath).
-var restoreConfigFiles = []string{crypto.KeyFileName, "config.json", tlsx.CertFileName, tlsx.KeyFileName}
+var restoreConfigFiles = []string{crypto.KeyFileName, "config.json", tlsx.CertFileName, tlsx.KeyFileName,
+	tlsx.CAFileName, tlsx.CAKeyFileName}
 
 var ErrBackupIncomplete = errors.New("backup-archiv enthält keine datenbank (app.db)")
+
+// ErrBackupDatabasePath: Die Konfiguration im Archiv legt die Datenbank
+// außerhalb des Datenverzeichnisses ab (siehe restoredDatabasePathAllowed).
+var ErrBackupDatabasePath = errors.New("backup-archiv legt die datenbank außerhalb des datenverzeichnisses ab")
 
 // StageRestore entschlüsselt ein Backup-Archiv aus dem Speicher. Bequemer
 // Einstieg für Tests und kleine Archive; der Weg über StageRestoreReader
@@ -105,6 +111,16 @@ func (s *BackupService) StageRestoreReader(archive io.Reader, secret string, max
 		_ = os.RemoveAll(staging)
 		return ErrBackupIncomplete
 	}
+	// Dieselbe Prüfung wie beim Anwenden, aber schon hier: So sieht der
+	// Admin die Ablehnung sofort, statt nach dem Neustart nur den alten Stand.
+	currentConfig := s.configPath
+	if currentConfig == "" {
+		currentConfig = filepath.Join(s.dataDir, config.DefaultFileName) // wie ApplyStagedRestore
+	}
+	if !restoredDatabasePathAllowed(s.dataDir, currentConfig, filepath.Join(staging, "config.json")) {
+		_ = os.RemoveAll(staging)
+		return ErrBackupDatabasePath
+	}
 
 	// Marker zuletzt - signalisiert Vollständigkeit.
 	if err := os.WriteFile(filepath.Join(staging, restoreMarker), []byte("ready\n"), 0o600); err != nil {
@@ -123,6 +139,23 @@ func ApplyStagedRestore(dataDir, configPath string) (bool, error) {
 	staging := filepath.Join(dataDir, restoreStagingName)
 	if _, err := os.Stat(filepath.Join(staging, restoreMarker)); err != nil {
 		return false, nil // nichts vorbereitet
+	}
+	if configPath == "" {
+		configPath = filepath.Join(dataDir, config.DefaultFileName)
+	}
+
+	// 0. Ein Datenbankpfad aus dem Backup darf nicht irgendwohin schreiben.
+	//    Abgelehnt wird VOR dem ersten Austausch - so bleibt alles beim
+	//    alten Stand, und das Staging wird verworfen, damit der nächste Start
+	//    nicht erneut daran scheitert.
+	if restored := filepath.Join(staging, "config.json"); !restoredDatabasePathAllowed(dataDir, configPath, restored) {
+		slog.Error("Restore abgelehnt: database_path in der Konfiguration des Backups liegt außerhalb des "+
+			"Datenverzeichnisses - LCM startet mit dem bisherigen Stand, das vorbereitete Backup wurde verworfen",
+			"database_path", configuredDatabasePath(dataDir, restored), "data_dir", dataDir)
+		if err := os.RemoveAll(staging); err != nil {
+			return false, fmt.Errorf("abgelehntes restore verwerfen: %w", err)
+		}
+		return false, nil
 	}
 
 	// 1. Konfig-/Key-/TLS-Dateien ersetzen.
@@ -161,9 +194,6 @@ func ApplyStagedRestore(dataDir, configPath string) (bool, error) {
 
 	// 2. DatabasePath aus der JETZT wiederhergestellten Konfiguration bestimmen.
 	dbPath := filepath.Join(dataDir, "app.db")
-	if configPath == "" {
-		configPath = filepath.Join(dataDir, config.DefaultFileName)
-	}
 	if cfg, err := config.LoadFrom(configPath); err == nil && cfg.DatabasePath != "" {
 		if filepath.IsAbs(cfg.DatabasePath) {
 			dbPath = cfg.DatabasePath
@@ -187,6 +217,49 @@ func ApplyStagedRestore(dataDir, configPath string) (bool, error) {
 	}
 	slog.Info("restore applied", "database", dbPath)
 	return true, nil
+}
+
+// restoredDatabasePathAllowed prüft den Datenbankpfad, den die Konfiguration
+// im Backup nennt (restoredConfig). Er gilt, wenn er im Datenverzeichnis
+// liegt oder derselbe ist wie in der laufenden Konfiguration - die hat der
+// Betreiber gesetzt, ein Backup derselben Installation nennt ihn wieder.
+// Alles andere ließe ein präpariertes Archiv eine beliebige Datei mit den
+// Rechten des Dienstes überschreiben. Ohne Konfiguration im Backup bleibt
+// der Pfad der laufenden.
+func restoredDatabasePathAllowed(dataDir, currentConfig, restoredConfig string) bool {
+	if _, err := os.Stat(restoredConfig); err != nil {
+		return true
+	}
+	if abs, err := filepath.Abs(dataDir); err == nil {
+		dataDir = abs
+	}
+	restored := configuredDatabasePath(dataDir, restoredConfig)
+	if restored == configuredDatabasePath(dataDir, currentConfig) {
+		return true
+	}
+	rel, err := filepath.Rel(dataDir, restored)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// configuredDatabasePath liest database_path aus einer Konfigurationsdatei
+// und löst ihn wie beim Start auf: relativ zum Datenverzeichnis, ohne Angabe
+// app.db. Bewusst ohne config.LoadFrom - das prüft und ergänzt die Datei,
+// hier wird nur gelesen.
+func configuredDatabasePath(dataDir, configFile string) string {
+	var cfg struct {
+		DatabasePath string `json:"database_path"`
+	}
+	if data, err := os.ReadFile(configFile); err == nil {
+		_ = json.Unmarshal(data, &cfg)
+	}
+	dbPath := strings.TrimSpace(cfg.DatabasePath)
+	if dbPath == "" {
+		dbPath = "app.db"
+	}
+	if !filepath.IsAbs(dbPath) {
+		dbPath = filepath.Join(dataDir, dbPath)
+	}
+	return filepath.Clean(dbPath)
 }
 
 // moveFile verschiebt src nach dst (Rename; bei geräteübergreifendem Ziel

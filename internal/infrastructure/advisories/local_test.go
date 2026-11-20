@@ -147,6 +147,34 @@ func TestLocalTrenntDistributionen(t *testing.T) {
 	}
 }
 
+// TestLocalKenntAlpine: Ohne eigenes Ökosystem fiel Alpine aus der lokalen
+// Kopie ganz heraus. Der Datensatz ist wie bei OSV je Zweig geführt, die
+// Vorab-Version 3.5.0_rc1 liegt unter dem Fix 3.5.0-r0.
+func TestLocalKenntAlpine(t *testing.T) {
+	srv := dumpServer(t, "Alpine", map[string]string{"ALPINE-CVE-2026-3.json": `{
+	  "id":"ALPINE-CVE-2026-3","modified":"2026-08-18T06:00:00Z",
+	  "affected":[{"package":{"name":"openssl","ecosystem":"Alpine:v3.22"},
+	    "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"3.5.0-r0"}]}]}]}`})
+	t.Cleanup(srv.Close)
+	local := NewLocalOSV(t.TempDir(), srv.URL)
+	if _, err := local.Refresh(context.Background(), []string{"Alpine:v3.22"}); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	vorab := "pkg:apk/alpine/openssl@3.5.0_rc1-r0?distro=alpine-3.22"
+	alt := "pkg:apk/alpine/openssl@3.3.2-r0?distro=alpine-3.22"
+	behoben := "pkg:apk/alpine/openssl@3.5.0-r0?distro=alpine-3.22"
+	got, err := local.Query(context.Background(), []string{vorab, alt, behoben})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(got[vorab]) != 1 || len(got[alt]) != 1 {
+		t.Errorf("betroffene alpine-versionen nicht erkannt: %+v", got)
+	}
+	if len(got[behoben]) != 0 {
+		t.Errorf("behobene alpine-version darf nicht treffen: %+v", got[behoben])
+	}
+}
+
 // TestLocalSpiegeltNurGebrauchtes: Was nicht im Bestand vorkommt, wird auch
 // nicht indiziert - sonst wäre die Kopie ein Vielfaches größer als nötig.
 func TestLocalSpiegeltNurGebrauchtes(t *testing.T) {
@@ -190,6 +218,7 @@ func TestEcosystemForPurl(t *testing.T) {
 		"pkg:deb/debian/openssl@1?distro=debian-12":    "Debian:12",
 		"pkg:deb/ubuntu/openssl@1?distro=ubuntu-22.04": "Ubuntu:22.04",
 		"pkg:rpm/rocky/openssl@1?distro=rocky-9":       "Rocky Linux:9",
+		"pkg:apk/alpine/openssl@1?distro=alpine-3.22":  "Alpine:v3.22",
 		"pkg:deb/exotic/openssl@1?distro=exotic-1":     "",
 		"pkg:deb/debian/openssl@1":                     "",
 		"kaputt":                                       "",

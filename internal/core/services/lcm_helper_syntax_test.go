@@ -36,6 +36,30 @@ func TestHelperSkriptIstGueltigesShell(t *testing.T) {
 	}
 }
 
+// TestHelperSkriptBestehtShellcheck prüft den fertig gerenderten Helper - mit
+// allen eingesetzten Skripten - mit shellcheck. Lokal fehlt shellcheck meist;
+// der CI-Job helper-shellcheck läuft immer mit.
+//
+// Schwelle `-S warning`: Die Hinweise darunter (info/style) sind hier fast
+// alle gewollte Muster - Wortzerlegung geprüfter Paketlisten unter set -f,
+// einfach gequotete Skripte für systemd-run und awk, `[ -f ] && grep ||
+// continue`. Sie einzeln zu unterdrücken hieße, Dutzende Direktiven in
+// Skripte zu streuen, die auch der Voll-Modus ausführt.
+func TestHelperSkriptBestehtShellcheck(t *testing.T) {
+	shellcheck, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Skip("shellcheck nicht im PATH - Prüfung läuft im CI-Job helper-shellcheck")
+	}
+	path := filepath.Join(t.TempDir(), "lcm-helper")
+	if err := os.WriteFile(path, []byte(lcmHelperScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(shellcheck, "-s", "sh", "-S", "warning", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("shellcheck: %v\n%s", err, out)
+	}
+}
+
 // TestHostAktionenImEingeschraenktenModusUeberDenHelper: Auf einem
 // eingeschränkten LCM-Host läuft jede Host-Aktion über ein Helper-
 // Unterkommando - nie über ein Skript, das eine Root-Shell bräuchte.

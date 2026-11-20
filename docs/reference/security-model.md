@@ -91,7 +91,10 @@ Die Client-IP wird **einmal je Anfrage** bestimmt (`middlewares.ResolveClientIP`
 und von IP-Allowlist, Anmeldesperre, Zugriffs- und Sicherheitsprotokoll
 gemeinsam gelesen. Hinter einem Reverse-Proxy kommt sie aus `X-Forwarded-For` -
 aber nur, wenn `trust_proxy_header` gesetzt ist **und** der Peer in
-`trusted_proxies` steht (`netfilter.ProxyTrust`). Ohne das wäre die Adresse
+`trusted_proxies` steht (`netfilter.ProxyTrust`). Die Kopfzeile wird von rechts
+gelesen: Es gilt die erste Adresse, die kein vertrauter Proxy ist. Was der
+Client selbst links einträgt, zählt nicht. Eine leere Liste vertraut seit 2.0
+niemandem. Ohne das wäre die Adresse
 hinter einem Proxy für **alle** Clients dieselbe - fünf Fehlversuche eines
 Angreifers hätten die Anmeldung der gesamten Installation gesperrt; und ohne die
 Liste könnte jeder, der den Port direkt erreicht, seine Adresse selbst wählen.
@@ -293,6 +296,13 @@ dabei warnt nur. Entfernte eingeschränkte Server erneuert **Neu verbinden**
 mit einem Admin-Login - ein sich selbst aktualisierender Helper wäre ein freier
 Root-Weg. Solange das nicht geschehen ist, zeigt die Ampel „Helper veraltet“.
 
+**Quelle und Prüfung.** Die Vorlage des Helpers liegt als Shell-Skript in
+`internal/core/services/lcm-helper.sh` und wird ins Binary eingebettet;
+`lcm_helper.go` setzt die gemeinsamen Skriptteile an den Platzhaltern
+`@@…@@` ein und leitet aus Vorlage und Skriptteilen den Helper-Stand ab.
+Die Pipeline prüft das fertige Skript mit `sh -n` und im Job
+`helper-shellcheck` mit shellcheck (POSIX sh, ab Schwere `warning`).
+
 **Wirkungsprobe statt Annahme.** Nach dem Umschalten prüft LCM als
 eingeschränkter Benutzer, ob der Helper und die Paketverwaltung des Systems
 über `sudo` tatsächlich erreichbar sind. Schlägt das fehl, wird der
@@ -355,11 +365,41 @@ vollständig: Sie fängt die verbreiteten Fälle ab, die Verantwortung für die
 Zusammenstellung eines Profils bleibt beim Betreiber.
 
 Im **eingeschränkten Modus** schreibt nicht LCM die Datei, sondern der
-`lcm-helper` - und der übernimmt die Spezifikation nicht blind: Jede Zeile muss
-auf die eigene Profilgruppe ausgestellt sein und darf kein `ALL` als Kommando
-tragen, danach läuft `visudo`. Ohne diese Prüfung könnte ein kompromittiertes
-LCM dem eingeschränkten Service-User über eine Profil-Datei genau die vollen
-Rechte zurückgeben, die der Modus verhindern soll.
+`lcm-helper` - und der übernimmt die Spezifikation nicht blind. Er nimmt nur
+genau die Zeilenform an, die LCM selbst schreibt: eigene Profilgruppe, ein
+Zielbenutzer, nur `NOPASSWD:` oder `PASSWD:`, ein absoluter Pfad oder
+`sudoedit <datei>`. Abgelehnt werden `ALL` in jeder Form, Kommas, Platzhalter,
+`#include`-Zeilen und jedes Programm aus derselben Liste der Root-gleichwertigen
+Programme, gegen die LCM beim Speichern prüft. Danach läuft `visudo`. Ohne
+diese Prüfung könnte ein kompromittiertes LCM dem eingeschränkten Service-User
+über eine Profil-Datei genau die vollen Rechte zurückgeben, die der Modus
+verhindern soll. Bestätigte Root-gleichwertige Regeln entfallen im
+eingeschränkten Modus deshalb, mit einem Vermerk im Job-Protokoll. Ebenso
+nimmt `repo-add` keine Quelle mit `trusted`, `Trusted:` oder `allow-insecure`
+an.
+
+Ein Linux-Benutzer mit dem Profil „volle Root-Rechte" bekommt Root dagegen auch
+im eingeschränkten Modus. Der Modus begrenzt den Service-Zugang von LCM, nicht
+die Rechte, die LCM bewusst einem Benutzer gibt. Die Oberfläche sagt das beim
+Zuweisen.
+
+**Pfade, die Root bedeuten.** Datei- und Verzeichnisregeln dürfen keine Pfade
+freigeben, über die sich Code als root starten lässt: `/etc/cron*`,
+`/var/spool/cron`, `/etc/systemd`, `/run/systemd`, `/etc/pam.d`, `/etc/ld.so.*`,
+`/etc/profile*`, `/etc/environment`, `/etc/sudo*`, `/etc/init.d`,
+`/etc/logrotate*`, `/etc/apt/apt.conf.d` und weitere, dazu das Home des
+Service-Users. Für Lesen und Schreiben ist auch ein Pfad darüber gesperrt, etwa
+`/var`, weil die Freigabe rekursiv bis hinunter reicht. Gespeicherte Regeln auf
+inzwischen gesperrten Pfaden entfallen beim nächsten Abgleich sichtbar. Der
+Helper prüft dieselbe Liste noch einmal.
+
+**Verzeichnisrechte und SFTP im eingeschränkten Modus.** Die Zugriffsrechte der
+Profile setzt und entfernt der Helper über `profile-acl`: nur für
+`lcm-prof-*`-Gruppen, nur auf geprüften Pfaden und nie durch einen Symlink.
+Entfernt wird mit dem Gruppennamen und vor `groupdel`, damit kein Recht an einer
+frei werdenden Gruppennummer hängen bleibt. SFTP-Konten bekommen auch hier die
+Shell `nologin` und über `profile-sftp` denselben Block mit
+`ForceCommand internal-sftp` wie im Voll-Modus, geprüft mit `sshd -t`.
 
 ## SSH-Härtung: belegt, nicht behauptet
 

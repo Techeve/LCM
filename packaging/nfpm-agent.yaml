@@ -44,10 +44,25 @@ contents:
     file_info:
       mode: 0755
 
+# Die Skripte unterscheiden Entfernen und Upgrade an ihren Argumenten (deb,
+# rpm, apk und pacman rufen sie verschieden auf, siehe Kopf der Skripte). Bei
+# einem Upgrade bleibt der Agent stehen und wechselt selbst aufs neue Binary:
+# Läuft das Upgrade über den Agenten, risse ein Stopp das apt mit.
 scripts:
   postinstall: ./packaging/scripts/agent-postinstall.sh
   preremove: ./packaging/scripts/agent-preremove.sh
   postremove: ./packaging/scripts/agent-postremove.sh
+
+# apk und pacman rufen bei einem Upgrade weder postinstall noch preremove,
+# sondern eigene Upgrade-Skripte. Ohne post-upgrade liefe ein Agent, den ein
+# Admin von Hand aktualisiert, weiter mit dem alten Binary; agent-postinstall
+# erkennt das Upgrade an der zweiten Version im Aufruf.
+apk:
+  scripts:
+    postupgrade: ./packaging/scripts/agent-postinstall.sh
+archlinux:
+  scripts:
+    postupgrade: ./packaging/scripts/agent-postinstall.sh
 
 deb:
   compression: xz

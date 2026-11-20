@@ -239,7 +239,7 @@ func (s *ProvisioningService) distributeUsers(conn sshx.Conn, server *domain.Ser
 			if code != 0 {
 				return log.String(), fmt.Errorf("linux-user %s sperren: exit %d: %s", u.Username, code, summarize(out))
 			}
-			log.WriteString("gesperrt (deaktiviert): " + u.Username + " - Passwort gesperrt, LCM-Schlüssel und sudo entfernt\n")
+			log.WriteString("gesperrt (deaktiviert): " + u.Username + " - Passwort gesperrt, Konto abgelaufen, LCM-Schlüssel, sudo und Profilgruppen entfernt\n")
 			continue
 		}
 		// Passwort (falls per Aktivierung gesetzt) entschlüsseln, damit es
@@ -304,6 +304,7 @@ func provisionScript(u *domain.LinuxUser, password string, effect profileEffect)
 		// Konten konnten sich aber nicht anmelden (BUG-028).
 		createUserWithShellScript(u.Username, shell),
 		unlockAccountScript(u.Username),
+		accountUnexpireFragment(u.Username),
 		fmt.Sprintf("usermod -s %s %s 2>/dev/null || true", shell, u.Username),
 		fmt.Sprintf("install -d -m 700 -o %s -g %s /home/%s/.ssh", u.Username, u.Username, u.Username),
 		fmt.Sprintf("touch /home/%s/.ssh/authorized_keys", u.Username),
@@ -346,20 +347,37 @@ func provisionScript(u *domain.LinuxUser, password string, effect profileEffect)
 }
 
 // lockUserScript sperrt einen deaktivierten Benutzer auf dem Zielsystem:
-// Passwort-Login gesperrt (usermod -L, BusyBox-Fallback passwd -l),
-// LCM-Schlüsselblock aus den authorized_keys entfernt, sudo-Grant weg.
-// Konto und Home bleiben - Deaktivierung ist umkehrbar; endgültiges
-// Entfernen ist die getrennte Deprovisionierung. Idempotent; ein fehlendes
-// Konto ist kein Fehler (der Benutzer war dort nie provisioniert).
+// Passwort-Login gesperrt (usermod -L, BusyBox-Fallback passwd -l), Konto
+// abgelaufen, LCM-Schlüsselblock aus den authorized_keys entfernt, sudo-Grant
+// weg, Profilgruppen verlassen. Konto und Home bleiben - Deaktivierung ist
+// umkehrbar; endgültiges Entfernen ist die getrennte Deprovisionierung.
+// Idempotent; ein fehlendes Konto ist kein Fehler (der Benutzer war dort nie
+// provisioniert).
+//
+// Das Ablaufdatum ist der Teil, der jeden Login sperrt: usermod -L trifft nur
+// das Passwort, ein Schlüssel außerhalb des LCM-Blocks käme weiter durch. Die
+// Profilgruppen behielten sonst sudo-Regeln und Verzeichnisrechte am Konto.
 func lockUserScript(username string) string {
 	return strings.Join([]string{
 		fmt.Sprintf("if id -u %s >/dev/null 2>&1; then", username),
 		fmt.Sprintf("usermod -L %s 2>/dev/null || passwd -l %s 2>/dev/null || true;", username, username),
+		fmt.Sprintf("usermod -e 1 %s 2>/dev/null || chage -E 1 %s 2>/dev/null || true;", username, username),
 		fmt.Sprintf("if [ -f /home/%s/.ssh/authorized_keys ]; then sed -i '/%s/,/%s/d' /home/%s/.ssh/authorized_keys; fi;",
 			username, escapeSed(managedBegin), escapeSed(managedEnd), username),
 		fmt.Sprintf("rm -f /etc/sudoers.d/lcm-%s;", username),
+		setProfileMembershipScript(username, "") + ";",
 		"fi",
 	}, " ")
+}
+
+// accountUnexpireFragment hebt das Ablaufdatum auf, das LCM beim Deaktivieren
+// setzt (usermod -e 1: Tag 1, der 02.01.1970) - nur genau dieses, ein von Hand
+// gesetztes Datum bleibt stehen. Ohne den Schritt bliebe ein wieder
+// aktivierter Benutzer ausgesperrt, während LCM „provisioniert" meldet.
+// nameExpr ist der Kontoname als Shell-Ausdruck (Voll-Modus und Helper).
+func accountUnexpireFragment(nameExpr string) string {
+	return fmt.Sprintf(`[ "$(awk -F: -v u=%[1]s '$1==u{print $8}' /etc/shadow 2>/dev/null)" != 1 ] || `+
+		`usermod -e '' %[1]s 2>/dev/null || chage -E -1 %[1]s 2>/dev/null || true`, nameExpr)
 }
 
 // removeUserScript entfernt einen Benutzer ENDGÜLTIG vom Zielsystem -

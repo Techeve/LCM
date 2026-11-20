@@ -1,0 +1,15 @@
+{
+ "success": true,
+ "data": {
+  "model": "VirtualDSM",
+  "firmware_ver": "DSM 7.3.2-86009",
+  "serial": "V44G7CKO1S97X",
+  "cpu_cores": "2",
+  "ram_size": 2048,
+  "up_time": "48:52:9",
+  "time_zone": "Amsterdam",
+  "enabled_ntp": true,
+  "ntp_server": "time.google.com",
+  "time": "2026-08-06 17:40:02"
+ }
+}

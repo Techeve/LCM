@@ -372,11 +372,18 @@ func (ctrl *GroupController) ListAllRules(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	states, err := ctrl.groups.ScheduleStates()
+	if err != nil {
+		return err
+	}
 	// Der Gruppen-Kontext ist der Sinn dieser Sicht - domain.Rule serialisiert
 	// die Gruppe selbst nicht (json:"-"), deshalb hier als group_name daneben.
+	// schedule_enabled sagt, ob der Zeitplan einer geplanten Regel läuft: Nur
+	// dann zählt sie beim Vorrang mehrerer Gruppen mit.
 	type ruleWithGroup struct {
 		domain.Rule
-		GroupName string `json:"group_name"`
+		GroupName       string `json:"group_name"`
+		ScheduleEnabled *bool  `json:"schedule_enabled,omitempty"`
 	}
 	out := make([]ruleWithGroup, 0, len(rules))
 	for _, r := range rules {
@@ -384,7 +391,12 @@ func (ctrl *GroupController) ListAllRules(c fiber.Ctx) error {
 		if r.Group != nil {
 			name = r.Group.Name
 		}
-		out = append(out, ruleWithGroup{Rule: r, GroupName: name})
+		entry := ruleWithGroup{Rule: r, GroupName: name}
+		if r.ScheduleID != nil {
+			enabled := states[*r.ScheduleID]
+			entry.ScheduleEnabled = &enabled
+		}
+		out = append(out, entry)
 	}
 	return c.JSON(out)
 }

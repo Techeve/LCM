@@ -1,6 +1,7 @@
 package wire_test
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -9,28 +10,41 @@ import (
 
 func TestTokenRoundtrip(t *testing.T) {
 	tests := []struct {
-		name    string
-		agentID string
-		secret  string
-		certFP  string
+		name  string
+		token wire.Token
 	}{
-		{"mit fingerprint", "0b39a4f2-1111-2222-3333-444455556666", "s3cr3t-abcdef", "aa11bb22"},
-		{"ohne fingerprint (dev)", "agent-1", "geheim", ""},
+		{"mit fingerprint und ca", wire.Token{AgentID: "0b39a4f2-1111-2222-3333-444455556666", Secret: "s3cr3t-abcdef",
+			CertFingerprint: "aa11bb22", CAFingerprint: "cc33dd44"}},
+		{"ohne ca (älteres LCM)", wire.Token{AgentID: "agent-2", Secret: "geheim", CertFingerprint: "aa11"}},
+		{"ohne fingerprint (dev)", wire.Token{AgentID: "agent-1", Secret: "geheim"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			token := wire.EncodeToken(tt.agentID, tt.secret, tt.certFP)
+			token := wire.EncodeToken(tt.token)
 			if !strings.HasPrefix(token, wire.TokenPrefix) {
 				t.Fatalf("token ohne präfix: %q", token)
 			}
-			id, secret, fp, err := wire.ParseToken(token)
+			got, err := wire.ParseToken(token)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			if id != tt.agentID || secret != tt.secret || fp != tt.certFP {
-				t.Fatalf("roundtrip: got (%q,%q,%q)", id, secret, fp)
+			if got != tt.token {
+				t.Fatalf("roundtrip: got %+v", got)
 			}
 		})
+	}
+}
+
+// TestParseTokenAltesFormat: Ein Token aus LCM vor der CA (nur u, k, f)
+// bleibt lesbar - der CA-Pin fehlt dann einfach.
+func TestParseTokenAltesFormat(t *testing.T) {
+	old := wire.TokenPrefix + base64.RawURLEncoding.EncodeToString([]byte(`{"u":"id","k":"geheim","f":"ff00"}`))
+	got, err := wire.ParseToken(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CertFingerprint != "ff00" || got.CAFingerprint != "" {
+		t.Errorf("altes Token gelesen als %+v", got)
 	}
 }
 
@@ -43,11 +57,11 @@ func TestParseTokenErrors(t *testing.T) {
 		{"falsches präfix", "lcmb1.abc"},
 		{"kaputtes base64", wire.TokenPrefix + "%%%%"},
 		{"kein json", wire.TokenPrefix + "bm90LWpzb24"},
-		{"unvollständig (nur agent-id)", wire.EncodeToken("id", "", "")},
+		{"unvollständig (nur agent-id)", wire.EncodeToken(wire.Token{AgentID: "id"})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, _, _, err := wire.ParseToken(tt.token); err == nil {
+			if _, err := wire.ParseToken(tt.token); err == nil {
 				t.Fatalf("erwartete fehler für %q", tt.token)
 			}
 		})

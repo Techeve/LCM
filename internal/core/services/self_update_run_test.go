@@ -107,7 +107,7 @@ func TestSelfUpdateScriptSurvivesTheRestart(t *testing.T) {
 
 	// Im eingeschränkten Modus darf der Service-User kein systemd-run - der
 	// Lauf geht deshalb über das Helper-Unterkommando, das denselben Ablauf
-	// als root trägt (siehe lcm_helper.go, host-self-update).
+	// als root trägt (siehe lcm-helper.sh, host-self-update).
 	restricted := services.SelfUpdateScriptForTest(true)
 	if restricted != "lcm-helper host-self-update" {
 		t.Errorf("eingeschränkter Modus muss über den Helper laufen, bekam:\n%s", restricted)

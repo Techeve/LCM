@@ -1,8 +1,9 @@
-// Service Worker: nur Cache für die gehashten Dateien des aktuellen Builds.
+// Service Worker: nur Cache für die gehashten Dateien des aktuellen Builds,
+// dazu der Cache des vorigen Builds für Tabs, die noch nicht neu geladen haben.
 // Der Build (vite-plugins/sw.ts) setzt die Dateiliste und die Build-Kennung ein.
 
 import { broadcast } from './lib/broadcast';
-import { isPrecachedRequest } from './lib/sw-rules';
+import { isBuildFile, isPrecachedRequest, outdatedCaches } from './lib/sw-rules';
 
 declare const self: ServiceWorkerGlobalScope;
 declare const __BUILD_ID__: string;
@@ -18,11 +19,11 @@ async function precache(): Promise<void> {
 }
 
 async function activate(): Promise<void> {
-  const stale = (await caches.keys()).filter((name) => name !== CACHE_NAME);
-  await Promise.all(stale.map((name) => caches.delete(name)));
+  const others = (await caches.keys()).filter((name) => name !== CACHE_NAME);
+  await Promise.all(outdatedCaches(others).map((name) => caches.delete(name)));
   await self.clients.claim();
   // Gab es keinen alten Build, ist es die Erstinstallation: kein Neuladen nötig.
-  if (stale.length > 0) broadcast({ type: 'new-version' });
+  if (others.length > 0) broadcast({ type: 'new-version' });
 }
 
 async function fromCache(request: Request): Promise<Response> {
@@ -30,8 +31,15 @@ async function fromCache(request: Request): Promise<Response> {
   return (await cache.match(request)) ?? fetch(request);
 }
 
+/** Datei eines älteren Builds: aus dessen Cache, falls noch da. */
+async function fromAnyCache(request: Request): Promise<Response> {
+  return (await caches.match(request)) ?? fetch(request);
+}
+
 self.addEventListener('install', (event) => event.waitUntil(precache()));
 self.addEventListener('activate', (event) => event.waitUntil(activate()));
 self.addEventListener('fetch', (event) => {
-  if (isPrecachedRequest(event.request, self.location.origin, assets)) event.respondWith(fromCache(event.request));
+  const { request } = event;
+  if (isPrecachedRequest(request, self.location.origin, assets)) event.respondWith(fromCache(request));
+  else if (isBuildFile(request, self.location.origin)) event.respondWith(fromAnyCache(request));
 });

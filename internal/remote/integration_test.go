@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -81,6 +83,38 @@ func TestAgentEndToEnd(t *testing.T) {
 	}
 	if _, err := hub.Conn(server); err == nil {
 		t.Fatal("Conn muss nach revocation offline melden")
+	}
+}
+
+// TestAbortStopsAgentCommand: Bricht LCM einen Job ab (Close der Conn), hält
+// der Agent das Kommando samt Kindern an - die ganze Strecke über den Broker.
+func TestAbortStopsAgentCommand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integrationstest (echter broker + websocket)")
+	}
+	hub, _, server, app := connectedAgent(t)
+	t.Cleanup(func() {
+		_ = app.Shutdown()
+		hub.Close()
+	})
+	conn, err := hub.Conn(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "durchgelaufen")
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := conn.Run("sleep 2; touch " + marker)
+		done <- err
+	}()
+	time.Sleep(500 * time.Millisecond) // Kommando läuft im Agenten
+	_ = conn.Close()
+	if err := <-done; err == nil {
+		t.Fatal("abgebrochenes kommando meldet erfolg")
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("kommando lief nach dem abbruch im agenten weiter")
 	}
 }
 

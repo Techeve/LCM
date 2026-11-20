@@ -66,15 +66,12 @@ func TestPinScriptProPaketverwaltung(t *testing.T) {
 	}
 }
 
-// TestAptPinScriptHold: Holds werden zuerst komplett geloest und dann neu
-// gesetzt - sonst blieben in LCM entfernte Pins auf dem Server aktiv.
+// TestAptPinScriptHold: Ein reiner Hold-Pin landet nur in $HOLD, und der
+// Abgleich laeuft ueber die Zustandsdatei.
 func TestAptPinScriptHold(t *testing.T) {
 	s := pkgPinScript(false, pkgApt, []domain.PackagePin{{Name: "nginx", Hold: true}})
-	if !strings.Contains(s, "apt-mark unhold $(apt-mark showhold)") {
-		t.Errorf("apt-Pin-Skript sollte bestehende Holds loesen:\n%s", s)
-	}
-	if !strings.Contains(s, "apt-mark hold $hold") {
-		t.Errorf("apt-Pin-Skript sollte Holds setzen:\n%s", s)
+	if !strings.Contains(s, "state="+pinHoldState) || !strings.Contains(s, "apt-mark hold") {
+		t.Errorf("apt-Pin-Skript sollte Holds ueber die Zustandsdatei abgleichen:\n%s", s)
 	}
 	// Ein reiner Hold-Pin hat keine Schutz-Muster: $NOREMOVE bleibt leer,
 	// und der Rumpf schreibt dann keine NeverAutoRemove-Datei.
@@ -83,6 +80,43 @@ func TestAptPinScriptHold(t *testing.T) {
 	}
 	if !strings.Contains(s, "rm -f "+aptPinFile) {
 		t.Errorf("ohne Schutz-Pins sollte die Schutzdatei entfernt werden:\n%s", s)
+	}
+}
+
+// TestPinScriptGibtNichtAlleHoldsFrei: Kein Pin-Skript raeumt mehr pauschal
+// alle Holds ab - das traf auch die, die ein Admin gesetzt hat.
+func TestPinScriptGibtNichtAlleHoldsFrei(t *testing.T) {
+	pauschal := []string{"unhold $(", "versionlock clear", "removelock '*'"}
+	for _, restricted := range []bool{false, true} {
+		for _, mgr := range []string{pkgApt, pkgDnf, pkgYum, pkgZypper, pkgApk} {
+			s := pkgPinScript(restricted, mgr, []domain.PackagePin{{Name: "nginx", Hold: true}})
+			for _, bad := range pauschal {
+				if strings.Contains(s, bad) {
+					t.Errorf("%s (eingeschraenkt=%v) gibt pauschal frei (%q):\n%s", mgr, restricted, bad, s)
+				}
+			}
+		}
+	}
+	for _, body := range []string{pinAptBody, pinDnfBody, pinZypperBody, pinApkBody} {
+		for _, bad := range pauschal {
+			if strings.Contains(body, bad) {
+				t.Errorf("Rumpf gibt pauschal frei (%q):\n%s", bad, body)
+			}
+		}
+	}
+}
+
+// TestPinScriptEingeschraenktPrueftDenHelper: Ein veralteter Helper traegt
+// noch den Rumpf, der alle Holds freigibt. Das Skript bricht dann ab, statt
+// ihn aufzurufen.
+func TestPinScriptEingeschraenktPrueftDenHelper(t *testing.T) {
+	for _, mgr := range []string{pkgApt, pkgDnf, pkgZypper, pkgApk, pkgPacman} {
+		s := pkgPinScript(true, mgr, []domain.PackagePin{{Name: "nginx", Hold: true}})
+		check := strings.Index(s, lcmHelperVersion)
+		call := strings.Index(s, "lcm-helper package-pins")
+		if check < 0 || call < check {
+			t.Errorf("%s: Versionspruefung fehlt vor dem Helper-Aufruf:\n%s", mgr, s)
+		}
 	}
 }
 

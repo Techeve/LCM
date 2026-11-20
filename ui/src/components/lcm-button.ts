@@ -5,7 +5,7 @@ import { baseStyles } from './shared.js';
 
 /**
  * <lcm-button variant="primary" icon="plus">Text</lcm-button>
- * Mit `href` wird ein Link daraus, mit `block` füllt der Knopf die Breite. Ohne sichtbaren Text (`icon-only`) ist `label` Pflicht (aria-label).
+ * Mit `href` wird ein Link daraus, mit `target="_blank"` öffnet er in einem neuen Tab (ohne Zugriff auf dieses Fenster), mit `block` füllt der Knopf die Breite. Ohne sichtbaren Text (`icon-only`) ist `label` Pflicht (aria-label).
  */
 export class LcmButton extends LitElement {
   static override properties = {
@@ -14,6 +14,7 @@ export class LcmButton extends LitElement {
     icon: { type: String },
     label: { type: String },
     href: { type: String },
+    target: { type: String },
     disabled: { type: Boolean, reflect: true },
     busy: { type: Boolean, reflect: true },
     iconOnly: { type: Boolean, attribute: 'icon-only', reflect: true },
@@ -43,6 +44,7 @@ export class LcmButton extends LitElement {
   declare icon: IconName | '';
   declare label: string;
   declare href: string;
+  declare target: string;
   declare disabled: boolean;
   declare busy: boolean;
   declare iconOnly: boolean;
@@ -55,6 +57,7 @@ export class LcmButton extends LitElement {
     this.icon = '';
     this.label = '';
     this.href = '';
+    this.target = '';
     this.disabled = false;
     this.busy = false;
     this.iconOnly = false;
@@ -71,7 +74,8 @@ export class LcmButton extends LitElement {
     const content = html`${this.busy ? html`<span class="spinner" aria-hidden="true"></span>` : this.icon ? icon(this.icon) : nothing}<slot></slot>`;
     const label = this.label || nothing;
     if (this.href) {
-      return html`<a class=${this.classes()} href=${this.href} aria-label=${label} aria-disabled=${this.disabled ? 'true' : nothing}>${content}</a>`;
+      const rel = this.target === '_blank' ? 'noopener noreferrer' : nothing;
+      return html`<a class=${this.classes()} href=${this.href} target=${this.target || nothing} rel=${rel} aria-label=${label} aria-disabled=${this.disabled ? 'true' : nothing}>${content}</a>`;
     }
     return html`<button class=${this.classes()} type="button" ?disabled=${this.disabled} aria-label=${label} aria-busy=${this.busy ? 'true' : nothing}>${content}</button>`;
   }

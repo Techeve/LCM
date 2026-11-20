@@ -184,6 +184,15 @@ type Server struct {
 	// AgentLastSeenAt/AgentVersion pflegt der Broker bei Connect/Disconnect.
 	AgentLastSeenAt *time.Time `json:"agent_last_seen_at,omitempty"`
 	AgentVersion    string     `json:"agent_version,omitempty"`
+	// AgentKeyPin ist der Schlüssel-Pin, den der Agent beim letzten Connect
+	// gemeldet hat (wire.Inventory.KeyPin; leer bei Agenten bis 2.0). LCM
+	// stellt sein Zertifikat erst auf die CA um, wenn jeder Agent den Pin
+	// des aktuellen Schlüssels führt (CertRenewal).
+	AgentKeyPin string `json:"-"`
+	// AgentCAPin ist der CA-Pin, den der Agent beim letzten Connect gemeldet
+	// hat (wire.Inventory.CAPin). Erst wenn jeder Agent den der aktuellen CA
+	// führt, bekommt das Server-Zertifikat einen neuen Schlüssel.
+	AgentCAPin string `json:"-"`
 	// AgentConnected ist der Laufzeitzustand aus dem AgentHub (nicht
 	// persistiert) - vom Controller vor der Auslieferung befüllt.
 	AgentConnected bool `gorm:"-" json:"agent_connected"`
@@ -290,6 +299,13 @@ type Server struct {
 	// statt sie ohne Shell-Zugriff nachzubauen.
 	DSMSecurityRisks   int    `gorm:"default:0" json:"dsm_security_risks"`
 	DSMSecuritySummary string `json:"dsm_security_summary,omitempty"`
+	// DSMChecks sind Firewall und Sicherheitseinstellungen von DSM, gelesen
+	// und gegen die Sollwerte geprüft (siehe dsm_checks.go). Nur Lesen - die
+	// Werte setzt der Admin in DSM selbst.
+	DSMChecks DSMChecks `gorm:"type:text" json:"dsm_checks,omitempty"`
+	// DSMFirewall sind die Regeln des aktiven Firewall-Profils, damit die
+	// Oberfläche sie zeigen kann (siehe dsm_firewall.go). Leer = nicht gelesen.
+	DSMFirewall DSMFirewall `gorm:"type:text" json:"dsm_firewall,omitzero"`
 	// Maintenance nimmt einen Server vorübergehend aus dem Betrieb: keine
 	// Zeitplan-Läufe, kein Health-Check, keine Frühwarnung, kein CVE-Scan,
 	// keine Alarme. Er bleibt erfasst und sichtbar - nur wird er nicht mehr
@@ -529,7 +545,7 @@ type Server struct {
 	// CrowdSec-Einstellungsseite.
 	CrowdSecLapiMode string `gorm:"column:crowdsec_lapi_mode" json:"crowdsec_lapi_mode"`
 	CrowdSecLapiURL  string `gorm:"column:crowdsec_lapi_url" json:"crowdsec_lapi_url"`
-	// SSH2FAEnabled: SSH-Logins verlangen Key + TOTP (Drop-in 55-lcm-2fa.conf,
+	// SSH2FAEnabled: SSH-Logins verlangen Key + TOTP (Drop-in 40-lcm-2fa.conf,
 	// siehe ssh_2fa.go). Spaltenname explizit - GORM zerlegte das Akronym sonst.
 	SSH2FAEnabled bool `gorm:"column:ssh_2fa_enabled;default:false" json:"ssh_2fa_enabled"`
 	// LCMSourceIP ist die Quell-IP, mit der LCM diesen Server erreicht (aus
@@ -1150,6 +1166,9 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 					"Befund des DSM-Security-Advisors", "Befunde des DSM-Security-Advisors"),
 				countParams(s.DSMSecurityRisks)))
 		}
+		checkInsights, checkInfos := s.DSMChecks.insights()
+		insights = append(insights, checkInsights...)
+		infos = append(infos, checkInfos...)
 	}
 
 	// Kritische CVEs oder ein (bald) nicht mehr unterstütztes Betriebssystem

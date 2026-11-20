@@ -24,6 +24,9 @@ var encryptedColumns = []struct {
 	{"global_settings", "id", "tls_key_pem_enc"},
 	{"global_settings", "id", "onboarding_key_enc"}, // System-Onboarding-SSH-Key
 	{"global_settings", "id", "mail_password_enc"},  // System-Mailer (SMTP)
+	{"global_settings", "id", "backup_passphrase_enc"},
+	{"global_settings", "id", "subscription_key_enc"},
+	{"global_settings", "id", "subscription_access_key_enc"},
 	// Achtung Spaltenname: gorm trennt CrowdSec → crowd_sec (anders als die
 	// explizit gepinnten crowdsec_*-Spalten am Server-Modell).
 	{"global_settings", "id", "crowd_sec_lapi_password_enc"}, // CrowdSec-LAPI-Maschinenkonto
@@ -90,6 +93,8 @@ var serializerColumns = []struct {
 	{"server_capabilities", "id", "last_error_message"},
 	{"server_capabilities", "id", "last_error_params"},
 	{"server_capabilities", "id", "warning_message"},
+	// Letzter Portscan von LCM aus (Adressen und offene Dienste).
+	{"port_scans", "id", "result"},
 }
 
 // blindIndexedColumns sind verschlüsselte Felder mit einem MITZUFÜHRENDEN
@@ -110,6 +115,12 @@ var blindIndexedColumns = []struct {
 	{"server_user_logins", "username", "username_bidx"},
 	{"pending_user_syncs", "username", "username_bidx"},
 }
+
+// serverRefTables hängen über das Server-Token server_ref (HMAC der id) an
+// einem Server. Das Token leitet sich aus dem Master-Key ab; fehlt hier eine
+// Tabelle, verlieren ihre Zeilen bei der Rotation den Server. Der Schema-Test
+// TestRotationKenntJedeEncSpalteUndJedeServerRefTabelle meldet neue Tabellen.
+var serverRefTables = []string{"vulnerabilities", "packages", "advisory_findings"}
 
 // RotateEncryptedFields entschlüsselt alle verschlüsselten Spalten mit
 // dem alten Master-Key und verschlüsselt sie mit dem neuen - transaktional,
@@ -225,7 +236,7 @@ func RotateEncryptedFields(db *gorm.DB, oldCipher, newCipher *crypto.Cipher) err
 			if err := tx.Exec("UPDATE servers SET ref = ? WHERE id = ?", newRef, id).Error; err != nil {
 				return fmt.Errorf("servers.ref (id %d) schreiben: %w", id, err)
 			}
-			for _, table := range []string{"vulnerabilities", "packages"} {
+			for _, table := range serverRefTables {
 				if err := tx.Exec(fmt.Sprintf("UPDATE %s SET server_ref = ? WHERE server_ref = ?", table), newRef, oldRef).Error; err != nil {
 					return fmt.Errorf("%s.server_ref (server %d) schreiben: %w", table, id, err)
 				}

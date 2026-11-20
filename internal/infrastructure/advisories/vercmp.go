@@ -217,12 +217,28 @@ func compareRPMPart(a, b string) int {
 }
 
 // CompareVersions vergleicht zwei Versionen nach dem Verfahren des jeweiligen
-// Pakettyps ("deb" oder "rpm").
+// Pakettyps ("deb", "rpm" oder "apk").
 func CompareVersions(pkgType, a, b string) int {
-	if pkgType == "rpm" {
+	switch pkgType {
+	case "rpm":
 		return compareRPM(a, b)
+	case "apk":
+		return compareAPK(a, b)
 	}
 	return compareDeb(a, b)
+}
+
+// apkPreRelease schreibt die Vorab-Endungen von apk in die Tilde von dpkg um.
+var apkPreRelease = strings.NewReplacer("_alpha", "~alpha", "_beta", "~beta", "_pre", "~pre", "_rc", "~rc")
+
+// compareAPK vergleicht zwei Alpine-Versionen (1.2.3_rc1-r0). Bis auf die
+// Vorab-Endungen deckt sich apk mit dpkg: "-r15" ist die Revision, und eine
+// Nachfolge-Endung wie "_p1" sortiert hinter die nackte Version. Nur
+// _alpha, _beta, _pre und _rc stehen VOR ihr - dpkg drückt das mit der
+// Tilde aus, und die Reihenfolge alpha < beta < pre < rc ergibt sich dort
+// alphabetisch.
+func compareAPK(a, b string) int {
+	return compareDeb(apkPreRelease.Replace(a), apkPreRelease.Replace(b))
 }
 
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }

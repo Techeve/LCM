@@ -32,6 +32,76 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+export interface DsmCheck {
+  key: string;
+  state: 'ok' | 'deviation' | 'unknown';
+  value: string;
+  params: Record<string, string>;
+}
+
+function normaliseDsmChecks(value: unknown): DsmCheck[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw: unknown) => {
+    if (!raw || typeof raw !== 'object') return [];
+    const r = raw as Record<string, unknown>;
+    const state = r.state === 'ok' || r.state === 'deviation' ? r.state : 'unknown';
+    const params = r.params && typeof r.params === 'object' ? (r.params as Record<string, string>) : {};
+    return [{ key: text(r.key), state, value: text(r.value), params }];
+  });
+}
+
+/** Eine Regel der DSM-Firewall, wie DSM sie liefert. Ports sind Dienstnamen von DSM oder Nummern, "all" heißt alle. */
+export interface DsmFirewallRule {
+  enabled: boolean;
+  policy: string;
+  protocol: string;
+  ports: string;
+  port_group: string;
+  source_ip: string;
+  source_ip_group: string;
+  name: string;
+}
+
+/** Die Regeln einer Schnittstelle ("global" = alle). `policy` gilt, wenn keine Regel trifft ("none" = nicht festgelegt). */
+export interface DsmFirewallSection {
+  name: string;
+  policy: string;
+  rules: DsmFirewallRule[];
+}
+
+/** Das aktive Firewall-Profil von DSM mit seinen Regeln. */
+export interface DsmFirewall {
+  profile: string;
+  sections: DsmFirewallSection[];
+}
+
+function normaliseDsmFirewallRule(r: Raw): DsmFirewallRule {
+  return {
+    enabled: r.enabled !== false,
+    policy: text(r.policy),
+    protocol: text(r.protocol),
+    ports: text(r.ports),
+    port_group: text(r.port_group),
+    source_ip: text(r.source_ip),
+    source_ip_group: text(r.source_ip_group),
+    name: text(r.name),
+  };
+}
+
+/** Das gelesene Profil; `null`, solange LCM es nicht gelesen hat. */
+export function normaliseDsmFirewall(value: unknown): DsmFirewall | null {
+  if (!isRecord(value) || text(value.profile) === '') return null;
+  const sections = Array.isArray(value.sections) ? value.sections.filter(isRecord) : [];
+  return {
+    profile: text(value.profile),
+    sections: sections.map((s) => ({
+      name: text(s.name),
+      policy: text(s.policy),
+      rules: Array.isArray(s.rules) ? s.rules.filter(isRecord).map(normaliseDsmFirewallRule) : [],
+    })),
+  };
+}
+
 function textOrNull(value: unknown): string | null {
   return typeof value === 'string' && value !== '' ? value : null;
 }
@@ -120,6 +190,10 @@ export interface ServerItem {
   routeros_latest_version: string;
   routeros_update_available: boolean;
   dsm_model: string;
+  /** Firewall und Sicherheitseinstellungen von DSM, je Prüfung der Stand; leer = nie gelesen. */
+  dsm_checks: DsmCheck[];
+  /** Regeln des aktiven Firewall-Profils; `null` = nicht gelesen. */
+  dsm_firewall: DsmFirewall | null;
   dsm_port: number;
   dsm_latest_version: string;
   dsm_update_available: boolean;
@@ -255,6 +329,8 @@ export function normaliseServer(raw: unknown): ServerItem {
     routeros_latest_version: text(r.routeros_latest_version),
     routeros_update_available: r.routeros_update_available === true,
     dsm_model: text(r.dsm_model),
+    dsm_checks: normaliseDsmChecks(r.dsm_checks),
+    dsm_firewall: normaliseDsmFirewall(r.dsm_firewall),
     dsm_port: numberOr(r.dsm_port, 0),
     dsm_latest_version: text(r.dsm_latest_version),
     dsm_update_available: r.dsm_update_available === true,
@@ -585,6 +661,17 @@ export const SERVER_TABS: readonly ServerTab[] = [
 ];
 
 /** Reine API-Geräte (RouterOS, Synology DSM) haben keine Shell und keine Paketverwaltung. */
+/** VirtualDSM: Synologys DSM als virtuelle Maschine - CPU und Platten sind virtuell. */
+export function isVirtualDsm(server: Pick<ServerItem, 'os_id' | 'dsm_model'>): boolean {
+  return server.os_id === 'dsm' && /virtualdsm/i.test(server.dsm_model);
+}
+
+/** Adresse der DSM-Oberfläche: HTTPS auf dem DSM-Port (Standard 5001), IPv6 in eckigen Klammern. */
+export function dsmUrl(server: Pick<ServerItem, 'host' | 'dsm_port'>): string {
+  const host = server.host.includes(':') && !server.host.startsWith('[') ? `[${server.host}]` : server.host;
+  return `https://${host}:${server.dsm_port || 5001}/`;
+}
+
 export function isApiDevice(server: Pick<ServerItem, 'os_id'>): boolean {
   return server.os_id === 'routeros' || server.os_id === 'dsm';
 }
@@ -599,7 +686,9 @@ export function visibleTabs(server: Pick<ServerItem, 'os_id' | 'has_snap' | 'has
   const device = isApiDevice(server);
   return SERVER_TABS.filter((tab) => {
     if (tab === 'jobs') return can('jobs:read');
-    if (tab === 'repositories' || tab === 'users' || tab === 'security' || tab === 'deep-scan') return !device;
+    if (tab === 'repositories' || tab === 'users' || tab === 'deep-scan') return !device;
+    // DSM-Pakete stehen unter Pakete; einen eigenen App-Bestand gibt es dort nicht.
+    if (tab === 'apps') return server.os_id !== 'dsm';
     if (tab === 'snaps') return server.has_snap;
     if (tab === 'containers') return server.has_docker;
     return true;

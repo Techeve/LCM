@@ -66,3 +66,21 @@ func containsPath(list []string, want string) bool {
 	}
 	return false
 }
+
+// TestChildEnvNurProxyUndZertifikate: Der eingesperrte Prozess bekommt
+// Proxy-Angaben mit, aber nichts sonst aus LCMs Umgebung - schon gar nicht
+// den Master-Key.
+func TestChildEnvNurProxyUndZertifikate(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://proxy.example:3128")
+	t.Setenv("SSL_CERT_FILE", "/etc/ssl/firma.pem")
+	t.Setenv("LCM_ENCRYPTION_KEY", "geheim")
+	env := strings.Join(childEnv(), "\n")
+	for _, want := range []string{"HTTPS_PROXY=http://proxy.example:3128", "SSL_CERT_FILE=/etc/ssl/firma.pem", "HOME=/nonexistent"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("%s fehlt in\n%s", want, env)
+		}
+	}
+	if strings.Contains(env, "geheim") {
+		t.Errorf("LCM_ENCRYPTION_KEY durchgereicht:\n%s", env)
+	}
+}

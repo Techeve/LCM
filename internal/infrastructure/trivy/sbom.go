@@ -87,15 +87,12 @@ func BuildSBOM(target Target) ([]byte, error) {
 	return json.MarshalIndent(bom, "", "  ")
 }
 
-// PurlFor baut die package URL eines Pakets. deb- und rpm-Typ bestimmt die
-// Paketverwaltung; der distro-Qualifier nennt Trivy die Distribution.
+// PurlFor baut die package URL eines Pakets. Den Typ (deb, rpm, apk) bestimmt
+// die Paketverwaltung; der distro-Qualifier nennt Trivy die Distribution.
 // Exportiert, weil die Frühwarnung (Etappe B) dieselben purls fuer ihre
 // Online-Abfragen braucht - eine Quelle fuer SBOM, Scan-Cache und Poller.
 func PurlFor(target Target, name, version string) string {
-	typ := "deb"
-	if pkgIsRPM(target.PackageManager) {
-		typ = "rpm"
-	}
+	typ := purlType(target.PackageManager)
 	namespace := purlNamespace(target.OSID)
 	distro := namespace + "-" + osVersion(target.OSID, target.OSVersionID)
 	purl := "pkg:" + typ + "/" + namespace + "/" + name
@@ -105,13 +102,16 @@ func PurlFor(target Target, name, version string) string {
 	return purl + "?distro=" + distro
 }
 
-// pkgIsRPM meldet, ob die Paketverwaltung rpm-basiert ist (dnf/yum/zypper).
-func pkgIsRPM(mgr string) bool {
+// purlType ist der purl-Typ der Paketverwaltung. Alpine lief früher als deb
+// und bekam damit den Versionsvergleich von dpkg und keinen Bestand.
+func purlType(mgr string) string {
 	switch mgr {
 	case "dnf", "yum", "zypper":
-		return true
+		return "rpm"
+	case "apk":
+		return "apk"
 	default:
-		return false
+		return "deb"
 	}
 }
 
@@ -162,7 +162,9 @@ func purlNamespace(osID string) string {
 
 // osVersion normalisiert die VERSION_ID für Trivy: RPM-Familien und Debian
 // werden auf die Major-Version gekürzt (Trivy adressiert Advisories je
-// Major-Release), Ubuntu/SUSE behalten "major.minor".
+// Major-Release), Ubuntu/SUSE behalten "major.minor". Alpine führt seine
+// Meldungen je Zweig (v3.22) - "3.22.1" wird zu "3.22", aus "3" ließe sich
+// kein Zweig mehr ablesen.
 func osVersion(osID, versionID string) string {
 	versionID = strings.TrimSpace(versionID)
 	if versionID == "" {
@@ -171,6 +173,8 @@ func osVersion(osID, versionID string) string {
 	switch strings.ToLower(osID) {
 	case "ubuntu", "opensuse-leap", "opensuse", "sles", "suse":
 		return versionID // "22.04", "15.5"
+	case "alpine":
+		return majorMinor(versionID)
 	default:
 		// debian, rhel-familie, rocky, alma, fedora, oracle, amazon → Major.
 		if i := strings.IndexByte(versionID, '.'); i >= 0 {
@@ -178,4 +182,15 @@ func osVersion(osID, versionID string) string {
 		}
 		return versionID
 	}
+}
+
+// majorMinor kürzt "3.22.1" auf "3.22"; eine Version ohne Punkt bleibt, wie
+// sie ist.
+func majorMinor(versionID string) string {
+	major, rest, ok := strings.Cut(versionID, ".")
+	if !ok {
+		return versionID
+	}
+	minor, _, _ := strings.Cut(rest, ".")
+	return major + "." + minor
 }

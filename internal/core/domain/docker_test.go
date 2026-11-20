@@ -43,6 +43,25 @@ func TestPublishedPortsAndFirewallBypass(t *testing.T) {
 			wantPorts:  []string{"192.168.6.122:8000/tcp"},
 			wantBypass: true,
 		},
+		{
+			name:       "IPv6 in Klammern, nur Loopback (harmlos)",
+			ports:      "127.0.0.1:8080->80/tcp, [::1]:8080->80/tcp",
+			wantPorts:  []string{"127.0.0.1:8080/tcp", "::1:8080/tcp"},
+			wantBypass: false,
+		},
+		{
+			// Docker 26+ schreibt die IPv6-Any-Adresse in Klammern.
+			name:       "IPv6-Any in Klammern (umgeht ufw)",
+			ports:      "0.0.0.0:8080->80/tcp, [::]:8080->80/tcp",
+			wantPorts:  []string{"0.0.0.0:8080/tcp", ":::8080/tcp"},
+			wantBypass: true,
+		},
+		{
+			name:       "nur an eine IPv6-Adresse gebunden (extern erreichbar)",
+			ports:      "[2001:db8::5]:443->443/tcp",
+			wantPorts:  []string{"2001:db8::5:443/tcp"},
+			wantBypass: true,
+		},
 		{name: "ohne Ports", ports: "", wantPorts: nil, wantBypass: false},
 	}
 

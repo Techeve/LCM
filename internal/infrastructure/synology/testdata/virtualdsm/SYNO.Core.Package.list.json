@@ -1,0 +1,12 @@
+{
+ "success": true,
+ "data": {
+  "packages": [
+   {
+    "id": "FileStation",
+    "name": "File Station",
+    "version": "1.4.3-1609"
+   }
+  ]
+ }
+}

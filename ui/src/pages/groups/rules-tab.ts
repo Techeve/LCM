@@ -274,10 +274,9 @@ export class LcmGroupsRules extends LitElement {
     }
   }
 
-  #onSwitch(rule: Rule, enabled: boolean, element: Element): void {
+  #onSwitch(rule: Rule, enabled: boolean): void {
     if (enabled && rule.enforce) {
       // Aktivieren wirkt bei der nächsten Verbindung auf die Server: erst bestätigen lassen.
-      (element as HTMLElement & { checked: boolean }).checked = false;
       this._confirm = { kind: 'enable', rule };
       return;
     }
@@ -325,7 +324,7 @@ export class LcmGroupsRules extends LitElement {
       if (confirm.kind === 'run') {
         heading = t('rules.run.title', { name: rule.name });
         message = t('rules.run.message');
-        impacts = runImpacts([rule], servers);
+        impacts = [...runImpacts([rule], servers), ...this.#conflictImpacts(rule)];
         confirmLabel = t('groups.run.start');
       } else if (confirm.kind === 'enable') {
         heading = t('rules.enable.title', { name: rule.name });
@@ -368,22 +367,30 @@ export class LcmGroupsRules extends LitElement {
     return this.schedules.find((schedule) => schedule.id === rule.schedule_id)?.name ?? '';
   }
 
+  #serverNames(ids: number[]): string {
+    return ids.map((id) => this.group.servers.find((server) => server.id === id)?.name ?? `#${id}`).join(', ');
+  }
+
+  /** Im Bestätigungsdialog: Auf diesen Servern überspringt der Lauf die Regel, eine andere Gruppe führt. */
+  #conflictImpacts(rule: Rule): Impact[] {
+    const conflict = this.conflicts.get(rule.id);
+    if (!conflict || conflict.overriddenOn.length === 0) return [];
+    const groups = conflict.overriddenBy.map((o) => `${o.groupName} (${o.priority})`).join(', ');
+    return [{ label: t('rules.conflict.runLabel'), value: t('rules.conflict.overridden', { servers: this.#serverNames(conflict.overriddenOn), groups }), tone: 'warn' }];
+  }
+
   #conflictNote(rule: Rule) {
     const conflict = this.conflicts.get(rule.id);
     if (!conflict) return nothing;
-    const serverNames = (ids: number[]) =>
-      ids
-        .map((id) => this.group.servers.find((server) => server.id === id)?.name ?? `#${id}`)
-        .join(', ');
     const others = (list: RuleConflict['overriddenBy']) => list.map((o) => `${o.groupName} (${o.priority})`).join(', ');
     return html`
       ${conflict.overriddenOn.length > 0
         ? html`<p class="conflict" role="note">
-            ${t('rules.conflict.overridden', { servers: serverNames(conflict.overriddenOn), groups: others(conflict.overriddenBy) })}
+            ${t('rules.conflict.overridden', { servers: this.#serverNames(conflict.overriddenOn), groups: others(conflict.overriddenBy) })}
           </p>`
         : nothing}
       ${conflict.winsOn.length > 0
-        ? html`<p class="conflict win" role="note">${t('rules.conflict.wins', { servers: serverNames(conflict.winsOn), groups: others(conflict.winsOver) })}</p>`
+        ? html`<p class="conflict win" role="note">${t('rules.conflict.wins', { servers: this.#serverNames(conflict.winsOn), groups: others(conflict.winsOver) })}</p>`
         : nothing}
       ${conflict.tie ? html`<p class="conflict" role="note">${t('rules.conflict.tie')}</p>` : nothing}
     `;
@@ -423,7 +430,7 @@ export class LcmGroupsRules extends LitElement {
       <div class="info">
         <span class="name">${rule.name}${rule.is_system ? html`<lcm-badge>${t('groups.system')}</lcm-badge>` : nothing}${rule.enabled ? nothing : html`<lcm-badge tone="warn">${t('rules.row.off')}</lcm-badge>`}</span>
         <span class="detail">${typeLabel(rule.type)}${summary ? html` · <span class=${rule.type === 'script' || rule.type === 'packages' ? 'mono' : ''}>${summary}</span>` : nothing}</span>
-        ${rule.enforce ? this.#conflictNote(rule) : nothing}
+        ${this.#conflictNote(rule)}
       </div>
       ${this.canManage ? this.#renderTools(trigger, rule, index, total) : nothing}
     </li>`;
@@ -452,7 +459,7 @@ export class LcmGroupsRules extends LitElement {
         off-label=${t('rules.row.offLabel')}
         on-text=${t(rule.enforce ? 'rules.row.onEnforce' : 'rules.row.onScheduled')}
         off-text=${t('rules.row.offText')}
-        @lcm-change=${(e: CustomEvent<{ checked: boolean }>) => this.#onSwitch(rule, e.detail.checked, e.target as Element)}
+        @lcm-change=${(e: CustomEvent<{ checked: boolean }>) => this.#onSwitch(rule, e.detail.checked)}
       ></lcm-switch>
       ${rule.is_system
         ? nothing

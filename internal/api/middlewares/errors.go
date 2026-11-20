@@ -13,4 +13,5 @@ var (
 	errDemoDisabled    = apierr.Define(403, "demo.disabled", "disabled in this public demo")
 	errLengthRequired  = apierr.Define(411, "request.length_required", "Content-Length is required, bodies without length are only allowed for the backup upload")
 	errBodyTooLarge    = apierr.Define(413, "request.body_too_large", "request body too large")
+	errUnsupportedBody = apierr.Define(415, "request.unsupported_media_type", "the API accepts JSON, form and multipart bodies only")
 )

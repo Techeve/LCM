@@ -67,25 +67,30 @@ type StorageForecast struct {
 
 // ComputeForecast berechnet per linearer Regression über den gesamten Verlauf
 // die geschätzte Restlaufzeit. Die Regression minimiert den quadratischen
-// Fehler über alle Tages-Snapshots (y = DiskUsedMB).
+// Fehler über alle Tages-Snapshots (x = Tag, y = DiskUsedMB).
+//
+// x ist der Kalendertag, nicht die Stelle in der Liste: War ein Server eine
+// Woche aus, liegen zwischen zwei Zeilen sieben Tage. Mit dem Index gezählt,
+// stünde der Zuwachs dieser Woche auf einem einzigen Tag, und die Prognose
+// meldete die Platte viel zu früh voll.
+//
 // Rückgabe:
 //   - InsufficientData: < minForecastSamples Datenpunkte
 //   - Unlimited: Zuwachs ≤ 0 oder Restlaufzeit > 365 Tage
 //   - DaysRemaining: konkrete Schätzung (abgerundet auf ganze Tage)
 func ComputeForecast(history []StorageHistory, currentTotalMB int64) StorageForecast {
-	if len(history) < minForecastSamples {
+	points := forecastPoints(history)
+	if len(points) < minForecastSamples {
 		return StorageForecast{InsufficientData: true}
 	}
 
-	n := float64(len(history))
+	n := float64(len(points))
 	var sumX, sumY, sumXY, sumX2 float64
-	for i, h := range history {
-		x := float64(i)
-		y := float64(h.DiskUsedMB)
-		sumX += x
-		sumY += y
-		sumXY += x * y
-		sumX2 += x * x
+	for _, p := range points {
+		sumX += p.x
+		sumY += p.y
+		sumXY += p.x * p.y
+		sumX2 += p.x * p.x
 	}
 
 	denom := n*sumX2 - sumX*sumX
@@ -98,7 +103,7 @@ func ComputeForecast(history []StorageHistory, currentTotalMB int64) StorageFore
 		return StorageForecast{Unlimited: true}
 	}
 
-	lastUsed := float64(history[len(history)-1].DiskUsedMB)
+	lastUsed := points[len(points)-1].y
 	remaining := float64(currentTotalMB) - lastUsed
 	if remaining <= 0 {
 		return StorageForecast{DaysRemaining: 0}
@@ -109,4 +114,26 @@ func ComputeForecast(history []StorageHistory, currentTotalMB int64) StorageFore
 		return StorageForecast{Unlimited: true}
 	}
 	return StorageForecast{DaysRemaining: days}
+}
+
+// forecastPoint ist ein Tages-Snapshot als Punkt der Regression: x in Tagen
+// seit dem ersten Snapshot, y in MB.
+type forecastPoint struct{ x, y float64 }
+
+// forecastPoints rechnet den Verlauf in Punkte um. Zeilen ohne lesbaren Tag
+// fallen heraus - ohne Datum lässt sich ihr Abstand nicht bestimmen.
+func forecastPoints(history []StorageHistory) []forecastPoint {
+	points := make([]forecastPoint, 0, len(history))
+	var first time.Time
+	for _, h := range history {
+		day, err := time.Parse(time.DateOnly, h.Day)
+		if err != nil {
+			continue
+		}
+		if first.IsZero() {
+			first = day
+		}
+		points = append(points, forecastPoint{x: day.Sub(first).Hours() / 24, y: float64(h.DiskUsedMB)})
+	}
+	return points
 }

@@ -12,13 +12,15 @@ import (
 // die Verzeichnis-Härtung gemeinsam nutzen.
 var (
 	errPathRelative       = apierr.Define(422, "path.relative", "the path must be absolute")
-	errPathMeta           = apierr.Define(422, "path.meta_characters", "shell metacharacters and wildcards are not allowed in the path")
+	errPathMeta           = apierr.Define(422, "path.meta_characters", "only letters without accents, digits and ._+@%:=~^/- are allowed in the path")
 	errPathProtected      = apierr.Define(422, "path.protected", "this path is protected, the system or LCM access depends on it")
 	errPathModeInvalid    = apierr.Define(422, "path.invalid_mode", "invalid mode, allowed: read, readwrite, deny")
+	errPathParentRef      = apierr.Define(422, "path.parent_reference", `the path must not contain ".."`)
+	errPathRootEquivalent = apierr.Define(422, "path.root_equivalent", "access to this path means root rights, the system runs what is stored there as root")
 	errCommandEmpty       = apierr.Define(422, "command.empty", "the rule needs a command")
 	errCommandRelative    = apierr.Define(422, "command.relative", "the command must start with an absolute path")
 	errCommandWildcard    = apierr.Define(422, "command.wildcard", "wildcards are not allowed in the command")
-	errCommandMeta        = apierr.Define(422, "command.meta_characters", "shell metacharacters are not allowed in the command")
+	errCommandMeta        = apierr.Define(422, "command.meta_characters", "only letters without accents, digits, spaces and ._+@%:=~^/- are allowed in the command")
 	errCommandNoArguments = apierr.Define(422, "command.needs_arguments", "this command needs fixed arguments")
 )
 
@@ -28,6 +30,7 @@ var (
 	errProfileBuiltin     = apierr.Define(403, "profile.builtin", "built-in profiles cannot be changed or deleted")
 	errProfileSlugTaken   = apierr.Define(409, "profile.slug_taken", "this slug is already taken")
 	errProfileNameTaken   = apierr.Define(409, "profile.name_taken", "this name is already taken")
+	errProfileInUse       = apierr.Define(409, "profile.in_use", "the profile is still assigned to a user, server or group and cannot be deleted")
 	errProfileSlugInvalid = apierr.Define(422, "profile.invalid_slug", "invalid slug")
 	errProfileNameEmpty   = apierr.Define(422, "profile.name_required", "the profile needs a name")
 	errRootEquivalent     = apierr.Define(422, "profile.root_equivalent", "this command effectively grants full root rights and needs explicit confirmation")
@@ -57,6 +60,8 @@ var pathErrors = []sentinelCode{
 	{domain.ErrPathRelative, errPathRelative},
 	{domain.ErrPathMeta, errPathMeta},
 	{domain.ErrPathProtected, errPathProtected},
+	{domain.ErrPathParentRef, errPathParentRef},
+	{domain.ErrPathRootEquivalent, errPathRootEquivalent},
 }
 
 // commandErrors sind die Kommando-Prüfungen der Domäne.
@@ -74,6 +79,7 @@ var profileErrors = concat(
 		{services.ErrProfileBuiltin, errProfileBuiltin},
 		{services.ErrProfileSlugTaken, errProfileSlugTaken},
 		{services.ErrProfileNameTaken, errProfileNameTaken},
+		{services.ErrProfileInUse, errProfileInUse},
 		{domain.ErrProfileSlugInvalid, errProfileSlugInvalid.With("limit", domain.MaxProfileSlugLen)},
 		{domain.ErrProfileNameEmpty, errProfileNameEmpty},
 		{domain.ErrPathModeInvalid, errPathModeInvalid},

@@ -26,7 +26,7 @@ func staleEnv(t *testing.T) (*BackupService, string) {
 	if err := db.AutoMigrate(&domain.Backup{}, &domain.GlobalSettings{}); err != nil {
 		t.Fatal(err)
 	}
-	bs := NewBackupService(db, repositories.NewSettingsRepository(db), dataDir, dbFile, "")
+	bs := NewBackupService(repositories.NewDatabaseRepository(db), repositories.NewSettingsRepository(db), dataDir, dbFile, "")
 	dir, err := bs.backupDir()
 	if err != nil {
 		t.Fatal(err)

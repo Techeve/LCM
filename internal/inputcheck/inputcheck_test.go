@@ -178,3 +178,15 @@ func TestLooksLikeSQLLeavesTextAlone(t *testing.T) {
 		}
 	}
 }
+
+// TestSQLSignalsUnique: Jedes Merkmal zählt einmal. Ein doppelt eingetragenes
+// Muster verdoppelte stillschweigend sein Gewicht.
+func TestSQLSignalsUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, s := range sqlSignals {
+		if seen[s.name] {
+			t.Errorf("Merkmal %s ist doppelt eingetragen", s.name)
+		}
+		seen[s.name] = true
+	}
+}

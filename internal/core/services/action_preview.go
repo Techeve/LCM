@@ -710,7 +710,7 @@ func (s *ServerService) previewRule(server *domain.Server, rule *domain.Rule) (*
 		return s.previewCustom(server, id)
 	case domain.RuleTypeScript:
 		p := newActionPreview(PreviewRetry, server)
-		p.addLogin(rule.Command)
+		p.addRoot(rule.Command)
 		p.Duration = roughDuration(1, 0, 300, 0, 0)
 		return p, nil
 	case domain.RuleTypeHealth:

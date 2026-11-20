@@ -135,6 +135,15 @@ rm -f /etc/sudoers.d/lcm-prof-<slug>
 groupdel lcm-prof-<slug>
 ```
 
+Profiles with the account type "file access only" also get a block in
+`/etc/ssh/sshd_config.d/70-lcm-profiles.conf` (`ForceCommand internal-sftp`),
+their accounts the shell `nologin`:
+
+```sh
+rm -f /etc/ssh/sshd_config.d/70-lcm-profiles.conf
+systemctl reload sshd
+```
+
 ### Lock or disable an account
 
 Locking sets the password to locked (`usermod -L` or `passwd -l`), disabling
@@ -204,8 +213,12 @@ Two effects, depending on the pin:
 
 - **Do not remove** is remembered inside LCM only and excludes the package from
   cleanup. Nothing changes on the server.
-- **Freeze version** sets `apt-mark hold`. When applying, LCM first lifts all
-  existing holds and then sets those from the pins.
+- **Freeze version** sets `apt-mark hold`, with dnf `versionlock` and with
+  zypper a lock. What LCM holds itself is listed in
+  `/var/lib/lcm-managed/package-holds`. LCM only lifts those holds again when a
+  pin goes away. Holds you set yourself stay, even if a pin points at the same
+  package. At the first sync after the update LCM adopts only the holds that
+  match a current pin.
 
 ```sh
 apt-mark showhold      # what is frozen?

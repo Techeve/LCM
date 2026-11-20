@@ -67,9 +67,29 @@ cases in the log at startup and points out the tie in the health report. Set the
 priority explicitly in that case.
 
 Rules of **different** types do not contradict each other (firewall and APT
-cache concern different things) - those all keep running. And scheduled rules
-are not affected by priority at all: two update runs from two groups are not a
-conflict, they are two jobs.
+cache concern different things) - those all keep running.
+
+For **firewall** and **APT cache** the priority also applies across scheduled
+rules: on each server the group with the strongest priority leads among all
+groups that govern the type there with a running rule - whether on a schedule
+or as a baseline rule. Only its rules of that type take effect on the server.
+The scheduled rule of another group does not run there; its job ends green with
+a report naming the leading group and its rule:
+
+```
+übersprungen - auf diesem Server führt Gruppe "Basis-Härtung" (Vorrang 10) den Typ "firewall" mit der Regel "Basis-Firewall"; Regeln anderer Gruppen dieses Typs greifen hier nicht.
+```
+
+Likewise, a baseline rule of a weaker group gives way when the stronger group
+governs the same type only on a schedule - otherwise the next health check would
+undo what the schedule applied overnight. Rules on a disabled schedule never run
+and therefore do not count. Within one group, scheduled rules do not give way to
+each other. The **Rules** tab shows on every affected rule on which servers it
+is set aside or prevails, and the confirmation dialog of "Run now" names the
+servers on which the run is skipped.
+
+All other scheduled rules are not affected by priority: two update runs from two
+groups are not a conflict, they are two jobs.
 
 :::caution[Firewall baseline rule: the target state is mandatory]
 A firewall baseline rule must state explicitly which ports should be open - as

@@ -1516,6 +1516,7 @@
         "deepScan": "Deep scan with findings",
         "cveDbStale": "CVE database outdated",
         "backupStale": "System backup overdue",
+        "tlsCertExpiring": "TLS certificate expires soon",
         "advisory": "Early warning: new findings"
       },
       "hints": {
@@ -1531,6 +1532,7 @@
         "deepScan": "Fires when the last deep scan of a server reports warnings or asks for a reboot for the kernel.",
         "cveDbStale": "Fires when the vulnerability database is older than 48 hours. An old database reports no error, it simply does not find new issues: that looks like “all safe”.",
         "backupStale": "Fires when automatic backups are on but the latest one is older than two intervals or there is none yet. It measures the result, not single failed attempts.",
+        "tlsCertExpiring": "Fires from 60 days before the LCM certificate expires if LCM does not renew it itself: for a certificate of your own, or while agents still only know the old certificate. The message names those agents. It also fires one year before the LCM CA expires.",
         "advisory": "Reports open early-warning findings from the chosen severity upwards. Malicious packages always fire. Findings you acknowledge under Security no longer fire."
       },
       "severity": {
@@ -1762,6 +1764,7 @@
       "totp_setup_required": "Two-factor authentication is mandatory for your role – set it up first"
     },
     "backup": {
+      "database_path": "The archive places the database outside the data directory, so LCM does not restore it.",
       "failed": "The backup failed",
       "incomplete": "The archive contains no database",
       "invalid_archive": "This is not a valid LCM backup archive",
@@ -1795,7 +1798,7 @@
     },
     "command": {
       "empty": "The rule needs a command",
-      "meta_characters": "Shell special characters are not allowed in the command",
+      "meta_characters": "Only letters without accents, digits, spaces and ._+@%:=~^/- are allowed in the command",
       "needs_arguments": "This command needs fixed arguments – without them it allows every sub-action",
       "relative": "The command must start with an absolute path",
       "wildcard": "Wildcards are not allowed in the command"
@@ -1922,12 +1925,15 @@
     },
     "path": {
       "invalid_mode": "Invalid mode – allowed: read, readwrite, deny",
-      "meta_characters": "Shell special characters and wildcards are not allowed in the path",
+      "meta_characters": "Only letters without accents, digits and ._+@%:=~^/- are allowed in the path",
+      "parent_reference": "The path must not contain “..”",
       "protected": "This path is protected – system operation or LCM’s access depends on it",
-      "relative": "The path must be absolute"
+      "relative": "The path must be absolute",
+      "root_equivalent": "Access to this path means root rights – the system runs what is stored there as root (cron, systemd, PAM, login scripts, sudo), or it is LCM’s access"
     },
     "profile": {
       "builtin": "Built-in profiles cannot be changed or deleted – create a new one for your own rules",
+      "in_use": "The profile is still assigned – as a user’s default profile or on a server or group assignment. Remove these assignments first",
       "invalid_slug": "Invalid slug – lowercase letters, digits and hyphen only, at most {limit} characters",
       "name_required": "The profile needs a name",
       "name_taken": "This name is already taken",
@@ -1945,6 +1951,7 @@
       "invalid_filter": "Invalid filter value for {filter}",
       "invalid_id": "Invalid ID",
       "length_required": "The request needs a Content-Length",
+      "unsupported_media_type": "The API accepts JSON, form and multipart bodies only",
       "missing_fields": "Required fields are missing: {fields}",
       "rate_limited": "Too many requests – please try again later",
       "unknown_endpoint": "Unknown API endpoint"
@@ -2012,7 +2019,9 @@
       "routeros_unsupported": "Not available for MikroTik RouterOS",
       "unknown_capability": "Unknown capability category",
       "unknown_repair_action": "Unknown repair action",
-      "volume_not_monitorable": "This volume cannot be monitored"
+      "volume_not_monitorable": "This volume cannot be monitored",
+      "portscan_no_target": "This server has no address LCM can check - for example the LCM host itself or an agent server without an address.",
+      "not_dsm": "Only available for Synology DSM"
     },
     "server_user": {
       "invalid_username": "Invalid user name",
@@ -2100,6 +2109,10 @@
     },
     "system": {
       "maintenance": "LCM is being updated. All actions are locked until it has restarted."
+    },
+    "dsm": {
+      "not_settable": "LCM does not set this DSM setting.",
+      "firewall_not_settable": "LCM does not switch the DSM firewall. Its rules stay with DSM."
     }
   },
   "insights": {
@@ -2224,7 +2237,34 @@
       "scanner_unavailable": "CVE scanner unavailable",
       "unknown": "Cause unknown - details are in the job output"
     },
-    "jobSuffix": " - job: {job}"
+    "jobSuffix": " - job: {job}",
+    "dsmFirewallOff": "DSM firewall is off - enable it under Control Panel → Security → Firewall",
+    "dsmFirewallNoRules": "DSM firewall is on, but the active profile \"{profile}\" has no rules and lets everything through - add rules under Control Panel → Security → Firewall",
+    "dsmFirewallNoDeny": "DSM firewall is on, but no rule in the active profile \"{profile}\" denies the remaining traffic - add a final \"deny all\" rule or deny access for \"If no rules are matched\" under Control Panel → Security → Firewall",
+    "dsmSkipIpCheck": "DSM skips the session IP check - turn it off under Control Panel → Security → Security (\"Enhance browser compatibility by skipping IP checking\")",
+    "dsmCsrfOff": "DSM cross-site request forgery protection is off - enable it under Control Panel → Security → Security",
+    "dsmCspOff": "DSM sends no HTTP Content Security Policy - enable it under Control Panel → Security → Security",
+    "dsmIframeAllowed": "DSM can be embedded in other sites (iframe) - enable \"Do not allow DSM to be embedded with iFrame\" under Control Panel → Security → Security",
+    "dsmSessionsKept": "DSM keeps login sessions across a restart - enable \"Clear all saved login sessions upon restart\" under Control Panel → Security → Security",
+    "dsmAutoBlockOff": "DSM auto block is off - enable it (at most 10 attempts within 5 minutes) under Control Panel → Security → Protection",
+    "dsmAutoBlockWeak": "DSM only blocks after {attempts} failed attempts within {minutes} minutes - set at most 10 attempts within 5 minutes under Control Panel → Security → Protection",
+    "dsmDosOff": "DSM DoS protection is off - if the device is reachable from the internet, enable it under Control Panel → Security → Protection",
+    "dsmTlsProfile": "DSM TLS/SSL profile level is \"{level}\" instead of \"modern compatibility\" - change it under Control Panel → Security → Advanced",
+    "dsmSpectreOff": "DSM Spectre and Meltdown protection is off - enable it under Control Panel → Security → Advanced",
+    "dsmChecksUnknown": {
+      "one": "1 DSM security setting could not be read - the raw response is in the job log of the collection run",
+      "other": "{count} DSM security settings could not be read - the raw response is in the job log of the collection run"
+    },
+    "dsmPoolDegraded": "Storage pool {name} runs without its intended redundancy - check the drives and repair it in Storage Manager",
+    "dsmPoolCrashed": "Storage pool {name} has crashed - the data on it is at risk (Storage Manager)",
+    "dsmPoolRepairing": "Storage pool {name} is being repaired - without full redundancy until it finishes",
+    "dsmVolumeDegraded": "Volume {name} is degraded - check the storage pool underneath",
+    "dsmVolumeCrashed": "Volume {name} has crashed - back up the data and check it in Storage Manager",
+    "dsmVolumeReadOnly": "Volume {name} is mounted read-only - DSM protected it after an error",
+    "dsmDiskFailed": "Drive {name} has failed (DSM: {rawState}) - replace it (Storage Manager → HDD/SSD)",
+    "dsmDiskSmart": "Drive {name}: SMART reports a problem - prepare a replacement (Storage Manager → HDD/SSD)",
+    "dsmDiskBadSectors": "Drive {name}: bad sectors above the warning threshold - prepare a replacement",
+    "dsmDiskWearOut": "Drive {name}: remaining life below the warning threshold - prepare a replacement"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -2351,6 +2391,7 @@
       "reboot-if-needed": "Reboot if needed",
       "dns-test": "DNS test",
       "deep-scan": "Deep scan",
+      "port-scan": "Port scan",
       "acl-setup": "Set up ACL",
       "perm-sync": "Sync permissions",
       "hardware-refresh": "Read hardware",
@@ -2358,7 +2399,8 @@
       "repair-dpkg": "Repair dpkg",
       "repair-deps": "Repair dependencies",
       "join": "Set up server",
-      "harden-ssh": "Harden SSH"
+      "harden-ssh": "Harden SSH",
+      "dsm-apply": "Set DSM targets"
     },
     "palette": {
       "running": "Show running jobs",
@@ -2636,7 +2678,7 @@
     "overview": {
       "facts": "Details",
       "priority": "Priority",
-      "priorityHint": "For baseline rules of the same type, the group with the smaller number wins.",
+      "priorityHint": "When several groups govern the firewall or the APT cache of a server, the group with the smaller number wins, whether on a schedule or as a baseline rule.",
       "acl": "ACL",
       "aclHint": "Profiles with directory permissions only work on servers that can use ACLs.",
       "aclNone": "Without servers there is nothing to check.",
@@ -2648,8 +2690,8 @@
         "other": "{count} rules ({enforce} baseline)"
       },
       "overridden": {
-        "one": "One baseline rule of this group is overridden by another group on some servers. See Rules for details.",
-        "other": "{count} baseline rules of this group are overridden by another group on some servers. See Rules for details."
+        "one": "One rule of this group is overridden by another group on some servers. See Rules for details.",
+        "other": "{count} rules of this group are overridden by another group on some servers. See Rules for details."
       }
     },
     "managers": {
@@ -2898,7 +2940,8 @@
     "conflict": {
       "overridden": "Set aside on {servers}: the rule of group {groups} takes precedence.",
       "wins": "Prevails on {servers} against group {groups}.",
-      "tie": "Same priority: only the group ID decides. Set the priority explicitly."
+      "tie": "Same priority: only the group ID decides. Set the priority explicitly.",
+      "runLabel": "Precedence"
     },
     "form": {
       "newTitle": "Add rule",
@@ -4156,6 +4199,7 @@
       "profile": "Default profile",
       "profileHint": "Applies on all servers where you choose nothing else per group.",
       "fullRoot": "full root rights",
+      "fullRootHint": "Unrestricted sudo, also on servers in restricted mode.",
       "active": "Account active",
       "activeOnLabel": "Active:",
       "activeOn": "The user can log in on their servers.",
@@ -4438,7 +4482,7 @@
     "clone": "Make a copy",
     "copySuffix": "(copy)",
     "fullRoot": "full root rights",
-    "fullRootHint": "This profile grants unrestricted sudo. It cannot be edited.",
+    "fullRootHint": "This profile grants unrestricted sudo, also on servers in restricted mode. It cannot be edited.",
     "empty": {
       "title": "No profiles yet"
     },
@@ -4784,7 +4828,7 @@
       "portHint": "The token is valid for this server only. The agent connects on port {port}; the server must be able to reach it.",
       "manual": "Without the package source",
       "manualLabel": "Load the agent directly from LCM and connect",
-      "manualHint": "Downloads the program from this LCM (-k: self-signed certificate, the agent pins it afterwards through the token). For ARM64 servers replace amd64 with arm64.",
+      "manualHint": "Downloads the program from this LCM. curl accepts the self-signed certificate only with the key of this LCM. Behind a reverse proxy the second attempt checks normally. For ARM64 servers replace amd64 with arm64.",
       "after": "Once connected the server goes online and the first scan starts by itself."
     },
     "routeros": {
@@ -5438,7 +5482,10 @@
         "zfs": "ZFS pool",
         "btrfs": "Btrfs",
         "mdraid": "Software RAID",
-        "lvmThin": "LVM thin pool"
+        "lvmThin": "LVM thin pool",
+        "dsmPool": "Storage pool",
+        "dsmVolume": "Volume",
+        "dsmDisk": "Drive"
       },
       "fillData": "data {percent} %",
       "fillMeta": "metadata {percent} %"
@@ -5852,7 +5899,12 @@
         "other": "{count} of them are not bound to a specific address and apply to every interface of the server."
       },
       "dockerBypassShow": "Show ports",
-      "dockerBypassOnly": "only"
+      "dockerBypassOnly": "only",
+      "cpuVirtual": "virtual",
+      "vcpuCount": {
+        "one": "1 vCPU",
+        "other": "{count} vCPUs"
+      }
     },
     "kernels": {
       "title": "Installed kernels",
@@ -6035,6 +6087,8 @@
     "bar": {
       "refreshHardware": "Refresh hardware",
       "refreshAll": "Refresh everything",
+      "openDsm": "Open DSM",
+      "openDsmHelp": "Opens the DSM sign-in page in a new tab.",
       "unharden": "Undo hardening",
       "hardenHeading": "Harden SSH on {name}?",
       "unhardenHeading": "Undo SSH hardening on {name}?",
@@ -6257,6 +6311,148 @@
       "unusedCount": "{count} in unused images",
       "unusedHint": "From Docker images no container uses. Shown but not counted: an image that runs nowhere offers no attack surface.",
       "listening": "Weighted higher because they listen on ports reachable from outside:"
+    },
+    "portScan": {
+      "title": "Open ports",
+      "subtitle": "Which services the server offers as seen from LCM",
+      "lastScan": "Last checked {when}",
+      "run": {
+        "label": "Check ports",
+        "help": "LCM connects to common ports of the server and shows which ones answer - and whether the LCM firewall allows them.",
+        "meaning": "Only a connection attempt from LCM, nothing changes on the server. Intrusion detection such as CrowdSec may treat the scan as a port scan - add the LCM address to its allow list.",
+        "heading": "Check the ports of {name}?",
+        "done": "Port scan for {name} is running"
+      },
+      "never": {
+        "title": "Not checked yet",
+        "text": "“Check ports” shows which services the server offers to the network, so you can allow or block them."
+      },
+      "none": {
+        "title": "No open port",
+        "text": "None of the checked ports answers from LCM."
+      },
+      "targets": "Checked from LCM: {addresses}",
+      "silent": "{address} did not answer on any port - the address cannot be reached from LCM, or a firewall drops everything.",
+      "noCompare": "LCM keeps no firewall rule set for this device. Only risky services are rated.",
+      "firewallOff": "The LCM firewall is not enabled on this server - every open port is reachable unfiltered.",
+      "count": {
+        "critical": "{count} critical",
+        "warning": {
+          "one": "{count} warning",
+          "other": "{count} warnings"
+        }
+      },
+      "column": {
+        "rating": "Rating",
+        "port": "Port",
+        "service": "Service",
+        "family": "Address",
+        "hint": "Hint"
+      },
+      "severity": {
+        "critical": "critical",
+        "warning": "warning",
+        "ok": "fine"
+      },
+      "reason": {
+        "risky_service": "risky service",
+        "not_in_firewall": "not allowed in the LCM firewall"
+      },
+      "hint": {
+        "ftp": "File transfer without encryption - prefer SFTP over SSH.",
+        "ssh": "Remote access. LCM always allows it in the firewall.",
+        "telnet": "Login in plain text - switch it off and use SSH.",
+        "http": "Web server without encryption, usually just the redirect to HTTPS.",
+        "rpcbind": "Port mapper for NFS - does not belong on an open network.",
+        "netbios": "Old Windows file sharing - local network only.",
+        "ldap": "Directory service without encryption - prefer LDAPS or StartTLS.",
+        "https": "Web server with encryption.",
+        "smb": "Windows file sharing - allow it on the local network only.",
+        "ldaps": "Directory service with encryption.",
+        "mqtt": "MQTT without encryption - prefer port 8883 with TLS.",
+        "nfs": "Network file system - allow known clients only.",
+        "docker": "Docker API without TLS - whoever reaches it is root on the server.",
+        "docker-tls": "Docker API with TLS - run it with client certificates only.",
+        "database": "Database - allow only the applications that need it.",
+        "redis": "Redis often runs without a password - never make it openly reachable.",
+        "rdp": "Remote desktop - do not expose it to the internet.",
+        "dsm-http": "DSM interface without encryption - prefer 5001 only.",
+        "dsm-https": "DSM interface with encryption.",
+        "vnc": "Screen sharing, often weakly protected - only over VPN or an SSH tunnel.",
+        "kubernetes": "Kubernetes API - reachable for administration only.",
+        "kubelet": "Kubelet of a Kubernetes node - never make it openly reachable.",
+        "admin": "Management interface - reachable from the management network only.",
+        "http-alt": "Web service on an alternative port, often a developer or admin interface.",
+        "routeros-api": "RouterOS API without encryption - prefer 8729.",
+        "routeros-api-tls": "RouterOS API with encryption.",
+        "mqtt-tls": "MQTT with encryption."
+      }
+    },
+    "device": {
+      "title": "DSM security settings",
+      "notRead": "LCM has not read the settings yet. They come with the next refresh.",
+      "state": {
+        "ok": "as intended",
+        "deviation": "deviates",
+        "unknown": "unknown"
+      },
+      "check": {
+        "firewall": "Firewall",
+        "skipIpCheck": "Browser compatibility by skipping the IP check off",
+        "csrf": "Cross-site request forgery protection",
+        "csp": "HTTP Content Security Policy",
+        "iframe": "Prevent embedding in an iFrame",
+        "sessionClear": "Clear sessions on restart",
+        "autoBlock": "Auto block, at most 10 attempts in 5 minutes",
+        "dos": "DoS protection, if reachable from the internet",
+        "tlsProfile": "TLS/SSL profile level modern compatibility",
+        "spectre": "Spectre and Meltdown protection"
+      },
+      "firewallNote": "LCM does not switch the firewall. Unsuitable rules can lock out LCM and you. The rules stay with DSM.",
+      "target": {
+        "on": "on",
+        "off": "off",
+        "autoBlock": "on, at most 10 attempts within at least 5 minutes",
+        "tlsProfile": "modern compatibility"
+      },
+      "apply": {
+        "one": "Set to target",
+        "all": "Fix all deviations",
+        "heading": "Set DSM targets on {name}",
+        "message": "LCM changes these settings in DSM. Everything else stays as it is.",
+        "change": "now {current}, then {target}",
+        "confirm": "Set targets",
+        "jobLabel": "Set DSM targets",
+        "hint": {
+          "dos": "Only useful if the device is reachable from the internet.",
+          "tlsProfile": "Older devices and apps may lose the connection.",
+          "spectre": "Takes effect only after the device restarts."
+        }
+      },
+      "firewall": {
+        "heading": "Firewall rules · profile {profile}",
+        "readOnly": "View only. You maintain the rules in DSM under Control Panel → Security → Firewall.",
+        "allInterfaces": "All interfaces",
+        "column": {
+          "action": "Action",
+          "protocol": "Protocol",
+          "ports": "Ports",
+          "source": "Source"
+        },
+        "action": {
+          "allow": "Allow",
+          "deny": "Drop"
+        },
+        "all": "all",
+        "off": "off",
+        "noRules": "No rules.",
+        "fallback": "If no rules are matched: {policy}",
+        "default": {
+          "none": "not set",
+          "allow": "allow access",
+          "deny": "deny access"
+        }
+      }
     }
   },
   "previews": {
@@ -6303,6 +6499,7 @@
       "apt_cache_enforced": "A policy rule of the group connects the server again at the next health check.",
       "dns_unmanage": "LCM stops managing DNS and restores the previous state.",
       "dns_servers": "Name servers afterwards: {servers}.",
+      "dns_guard": "So the servers still apply after a restart, Proxmox and DHCP clients no longer overwrite /etc/resolv.conf.",
       "dns_test_rollback": "LCM checks name resolution with {domain}; if it breaks, LCM reverts the change.",
       "timezone": "Schedules (cron) and logs then show the local time of {timezone}. The clock itself stays correct.",
       "ntp_servers": "Time servers afterwards: {servers}.",

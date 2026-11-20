@@ -46,6 +46,17 @@ func newTestAppWithRateLimit(t *testing.T, ratePerMinute int) *fiber.App {
 // Sitzungen, das Proxy-Vertrauen oder den Ereignisbus des Tests).
 func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS, opts ...func(*router.Deps)) (*fiber.App, *gorm.DB) {
 	t.Helper()
+	return buildTestAppDB(t, ratePerMinute, frontendFS, func(d *router.Deps, _ *gorm.DB) {
+		for _, opt := range opts {
+			opt(d)
+		}
+	})
+}
+
+// buildTestAppDB ist buildTestApp für Optionen, die die Datenbank brauchen
+// (etwa ein eigenes Repository für einen Dienst).
+func buildTestAppDB(t *testing.T, ratePerMinute int, frontendFS fs.FS, opt func(*router.Deps, *gorm.DB)) (*fiber.App, *gorm.DB) {
+	t.Helper()
 	db, err := storage.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -89,11 +100,11 @@ func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS, opts ...fun
 	servers := services.NewServerService(serverRepo, jobs, audit, cipher, sshx.NewClient())
 	prov := services.NewProvisioningService(linuxRepo, serverRepo, cipher, servers.Connect)
 	executor := services.NewExecutor(serverRepo, groupRepo, jobs, audit, prov,
-		services.NewBackupService(db, settingsRepo, t.TempDir(), ":memory:", ""), settingsRepo, servers.Connect)
+		services.NewBackupService(repositories.NewDatabaseRepository(db), settingsRepo, t.TempDir(), ":memory:", ""), settingsRepo, servers.Connect)
 	scheduler := services.NewScheduler(groupRepo, settingsRepo, executor)
 	// Betriebsfähigkeit samt „Erneut versuchen" wie in cmd/app/main.go.
 	servers.WithGroups(groupRepo).WithCapabilities(repositories.NewCapabilityRepository(db)).WithRetryRunner(executor).
-		WithCustomActions(repositories.NewCustomActionRepository(db))
+		WithCustomActions(repositories.NewCustomActionRepository(db)).WithPackagePins(repositories.NewPackagePinRepository(db))
 	bus := events.NewBus()
 	alertRepo := repositories.NewAlertRepository(db)
 	notifications := services.NewNotificationService(repositories.NewNotificationRepository(db), alertRepo, cipher, audit)
@@ -105,12 +116,13 @@ func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS, opts ...fun
 		Users:                    services.NewUserService(userRepo, roleRepo),
 		Servers:                  servers,
 		CustomActions:            services.NewCustomActionService(repositories.NewCustomActionRepository(db), audit),
+		Apps:                     services.NewAppService(repositories.NewAppRepository(db), repositories.NewCustomActionRepository(db), audit),
 		Alerts:                   services.NewAlertService(alertRepo, serverRepo, groupRepo, notifications, audit),
 		Jobs:                     jobs,
 		Audit:                    audit,
 		Groups:                   services.NewGroupService(groupRepo, serverRepo, audit, scheduler.Reload),
 		Scheduler:                scheduler,
-		Backups:                  services.NewBackupService(db, settingsRepo, t.TempDir(), ":memory:", ""),
+		Backups:                  services.NewBackupService(repositories.NewDatabaseRepository(db), settingsRepo, t.TempDir(), ":memory:", ""),
 		Packages:                 services.NewPackageService(serverRepo),
 		Provisioning:             prov,
 		LinuxUsers:               services.NewLinuxUserService(linuxRepo, groupRepo, audit, cipher, prov),
@@ -120,9 +132,7 @@ func buildTestApp(t *testing.T, ratePerMinute int, frontendFS fs.FS, opts ...fun
 		APIKeyRateLimitPerMinute: ratePerMinute,
 		FrontendFS:               frontendFS,
 	}
-	for _, opt := range opts {
-		opt(&deps)
-	}
+	opt(&deps, db)
 	return router.New(deps), db
 }
 

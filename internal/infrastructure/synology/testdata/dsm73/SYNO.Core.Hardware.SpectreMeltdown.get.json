@@ -1,0 +1,4 @@
+{
+ "success": true,
+ "data": {"enable_spectre_meltdown_mitigation":true}
+}

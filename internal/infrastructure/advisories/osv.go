@@ -66,10 +66,15 @@ type osvBatchRequest struct {
 
 type osvQuery struct {
 	Package osvPackage `json:"package"`
+	Version string     `json:"version,omitempty"`
 }
 
+// osvPackage nennt das Paket entweder als purl oder als Name samt
+// Ökosystem (dann steht die Version in osvQuery).
 type osvPackage struct {
-	Purl string `json:"purl"`
+	Purl      string `json:"purl,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Ecosystem string `json:"ecosystem,omitempty"`
 }
 
 type osvBatchResponse struct {
@@ -126,7 +131,7 @@ func (o *OSV) Query(ctx context.Context, purls []string) (map[string][]Advisory,
 
 		req := osvBatchRequest{Queries: make([]osvQuery, 0, len(chunk))}
 		for _, p := range chunk {
-			req.Queries = append(req.Queries, osvQuery{Package: osvPackage{Purl: queryPurl(p)}})
+			req.Queries = append(req.Queries, queryFor(p))
 		}
 		var res osvBatchResponse
 		if err := o.post(ctx, "/v1/querybatch", req, &res); err != nil {
@@ -150,6 +155,17 @@ func (o *OSV) Query(ctx context.Context, purls []string) (map[string][]Advisory,
 		}
 	}
 	return out, nil
+}
+
+// queryFor baut die Abfrage zu einem purl. Alpine fragt über Name und
+// Ökosystem ("Alpine:v3.22"): Für einen apk-purl antwortet api.osv.dev mit
+// oder ohne distro-Qualifier mit NULL Treffern (am 09.11.2026 nachgesehen,
+// openssl 3.1.4-r0 - über das Ökosystem kamen 13 Meldungen).
+func queryFor(purl string) osvQuery {
+	if p, ok := parsePurl(purl); ok && p.pkgType == "apk" {
+		return osvQuery{Package: osvPackage{Name: p.name, Ecosystem: p.ecosystem}, Version: p.version}
+	}
+	return osvQuery{Package: osvPackage{Purl: queryPurl(purl)}}
 }
 
 // queryPurl bringt einen purl in die Form, die api.osv.dev tatsächlich

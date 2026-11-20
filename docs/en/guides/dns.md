@@ -49,7 +49,15 @@ four nameservers (free IP **or** a choice from the presets) and **"Apply DNS"**.
   ```ini
   [Resolve]
   DNS=1.1.1.1 9.9.9.9
+  Domains=~.
   ```
+
+  `Domains=~.` routes all queries to these servers. Without that line,
+  systemd-resolved prefers the DNS servers a DHCP server hands to the
+  interface. If `/etc/resolv.conf` does not lead to systemd-resolved because a
+  plain file sits there, LCM restores the symlink to
+  `../run/systemd/resolve/stub-resolv.conf`. Otherwise the drop-in would apply
+  to no application.
 
 - otherwise → LCM writes `/etc/resolv.conf` (with a `*.lcm-bak` backup; an
   existing symlink is removed first):
@@ -61,6 +69,17 @@ four nameservers (free IP **or** a choice from the presets) and **"Apply DNS"**.
 
   glibc reads only the first **three** `nameserver` lines from this file; a
   fourth only takes effect with systemd-resolved.
+
+  So the file stays, LCM stops the DHCP clients from rewriting it on the next
+  lease: a hook for dhclient, `dns=none` for NetworkManager, `RESOLV_CONF=no`
+  for udhcpc on Alpine. LCM does not know dhcpcd and other tools; there the
+  setting belongs in the respective tool.
+
+- **Proxmox containers:** Proxmox rewrites a container's `/etc/resolv.conf` on
+  every start. If no DNS is set for the container, it uses the host's servers
+  and also replaces the symlink to systemd-resolved. LCM therefore creates
+  `/etc/.pve-ignore.resolv.conf` in containers. After that Proxmox leaves the
+  file alone, and the container's *DNS* tab no longer has any effect.
 
 - After writing, LCM verifies resolution (against the first maintained test
   domain, falling back to `deb.debian.org`). **If it fails, the change is rolled
@@ -83,11 +102,11 @@ You accidentally set `10.0.0.99` (a resolver not reachable from this server):
 4. Job outcome: *"DNS test after setting failed - rolled back"* (exit 1). The
    server keeps using its previous resolvers.
 
-:::note[NetworkManager / netplan / Proxmox]
-When DNS is managed by NetworkManager, netplan or (on Proxmox VE) the host network
-configuration, a directly written config may be overwritten later. The resolution
-test guards against broken name resolution; **permanent** maintenance then belongs
-in the respective network tool.
+:::note[What the display shows]
+Under *DNS servers* LCM shows the servers applications actually query.
+`/etc/resolv.conf` decides: if it leads to systemd-resolved, its servers
+count, otherwise the file's `nameserver` lines. If the display differs from
+the servers you set, something else overwrites the setting.
 :::
 
 :::caution[Restricted sudo mode]

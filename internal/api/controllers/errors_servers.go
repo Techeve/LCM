@@ -29,6 +29,9 @@ var (
 	errProxmoxRestricted      = apierr.Define(409, "server.proxmox_restricted", "not available on Proxmox systems")
 	errRouterOSUnsupported    = apierr.Define(409, "server.routeros_unsupported", "not available for MikroTik RouterOS")
 	errDSMUnsupported         = apierr.Define(409, "server.dsm_unsupported", "not available for Synology DSM")
+	errNotDSM                 = apierr.Define(409, "server.not_dsm", "only available for Synology DSM")
+	errDSMNotSettable         = apierr.Define(422, "dsm.not_settable", "LCM does not set this DSM setting")
+	errDSMFirewallNotSettable = apierr.Define(422, "dsm.firewall_not_settable", "LCM does not switch the DSM firewall, its rules stay with DSM")
 	errFirewallToolMissing    = apierr.Define(409, "server.firewall_tool_missing", "the firewall tool is not installed on this system")
 	errRestrictedSudo         = apierr.Define(409, "server.restricted_sudo", "not available in restricted sudo mode")
 	errAgentTransport         = apierr.Define(409, "server.agent_unsupported", "not available for agent servers")
@@ -113,8 +116,12 @@ var serverErrors = []sentinelCode{
 	{services.ErrProxmoxRestricted, errProxmoxRestricted},
 	{services.ErrPackagePinsUnavailable, errPinsUnavailable},
 	{services.ErrPackagePinsNotWired, errPinsNotWired},
+	{services.ErrGlobalPinScope, apierr.Forbidden},
 	{services.ErrRouterOSUnsupported, errRouterOSUnsupported},
 	{services.ErrDSMUnsupported, errDSMUnsupported},
+	{services.ErrNotDSM, errNotDSM},
+	{services.ErrDSMNotSettable, errDSMNotSettable},
+	{services.ErrDSMNoTargets, errMissingFields.With("fields", "keys")},
 	{services.ErrFirewallToolMissing, errFirewallToolMissing},
 	{services.ErrRestrictedSudo, errRestrictedSudo},
 	{services.ErrAgentTransport, errAgentTransport},

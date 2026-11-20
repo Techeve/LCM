@@ -66,3 +66,9 @@ func (s *JobService) SetLastActivityForTest(jobID string, at time.Time) {
 func (p *ActionPreview) ExpectedCommandsForTest(server *domain.Server) []string {
 	return p.commandsFor(server)
 }
+
+// RunSpreadForTest verteilt Regeln über ein beliebig kurzes Fenster - ein
+// Zeitplan kennt nur ganze Minuten, ein Test soll nicht minutenlang warten.
+func (e *Executor) RunSpreadForTest(rules []domain.Rule, window time.Duration) {
+	e.runSpread(rules, window, ActorScheduler)
+}

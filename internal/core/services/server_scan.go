@@ -240,7 +240,7 @@ func scanServerMode(conn sshx.Conn, loginUser string, restricted bool) *scanResu
 	res.Fail2banInstalled = firstLine(run("has-f2b", "command -v fail2ban-client 2>/dev/null || true")) != ""
 	res.CrowdSecInstalled = firstLine(run("has-cs", "command -v cscli 2>/dev/null || command -v crowdsec 2>/dev/null || true")) != ""
 	// SSH-2FA: das Drop-in ist weltlesbar - kein sudo nötig.
-	res.SSH2FAEnabled = firstLine(run("has-2fa", "test -f "+ssh2faDropinPath+" && echo yes || echo no")) == "yes"
+	res.SSH2FAEnabled = firstLine(run("has-2fa", "{ test -f "+ssh2faDropinPath+" || test -f "+ssh2faLegacyDropinPath+"; } && echo yes || echo no")) == "yes"
 	// LCM-Quell-IP OHNE sudo lesen ($SSH_CONNECTION ist nur in der Session-Umgebung,
 	// nicht nach einem sudo-Wrap) - für die Auto-Allowlist von fail2ban/CrowdSec.
 	res.LCMSourceIP = firstLine(run("lcm-ip", "echo \"$SSH_CONNECTION\" | awk '{print $1}'"))

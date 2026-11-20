@@ -5,12 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/crypto"
+	"LCM/internal/infrastructure/tlsx"
+	"LCM/internal/infrastructure/tlsx/tlsxtest"
 	"LCM/internal/storage/repositories"
 )
 
@@ -24,6 +27,9 @@ func TestBackupCreateBundlesAndEncrypts(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(`{"jwt_secret":"streng-geheim"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// CA und Server-Zertifikat gehören dazu: Ohne die CA vertrauten die
+	// Agenten einem zurückgespielten LCM nach der nächsten Erneuerung nicht.
+	tlsxtest.ServerCert(t, dataDir, time.Now().Add(-time.Hour))
 	dbFile := filepath.Join(dataDir, "app.db")
 	db, err := gorm.Open(sqlite.Open(dbFile), &gorm.Config{})
 	if err != nil {
@@ -32,7 +38,7 @@ func TestBackupCreateBundlesAndEncrypts(t *testing.T) {
 	if err := db.AutoMigrate(&domain.Backup{}, &domain.GlobalSettings{}); err != nil {
 		t.Fatal(err)
 	}
-	bs := NewBackupService(db, repositories.NewSettingsRepository(db), dataDir, dbFile, configPath)
+	bs := NewBackupService(repositories.NewDatabaseRepository(db), repositories.NewSettingsRepository(db), dataDir, dbFile, configPath)
 
 	// Ohne Passphrase (kein Env) muss Create klar fehlschlagen.
 	if _, err := bs.Create("test", ""); err != ErrBackupNoPassphrase {
@@ -63,7 +69,8 @@ func TestBackupCreateBundlesAndEncrypts(t *testing.T) {
 	for _, f := range files {
 		names[f.Name] = true
 	}
-	for _, want := range []string{"app.db", crypto.KeyFileName, "config.json"} {
+	for _, want := range []string{"app.db", crypto.KeyFileName, "config.json",
+		tlsx.CertFileName, tlsx.KeyFileName, tlsx.CAFileName, tlsx.CAKeyFileName} {
 		if !names[want] {
 			t.Errorf("Archiv fehlt %q (enthält: %v)", want, names)
 		}
@@ -89,7 +96,7 @@ func TestBackupDelete(t *testing.T) {
 	if err := db.AutoMigrate(&domain.Backup{}, &domain.GlobalSettings{}); err != nil {
 		t.Fatal(err)
 	}
-	bs := NewBackupService(db, repositories.NewSettingsRepository(db), dataDir, dbFile, configPath)
+	bs := NewBackupService(repositories.NewDatabaseRepository(db), repositories.NewSettingsRepository(db), dataDir, dbFile, configPath)
 
 	b, err := bs.Create("test", "Korrekt-Pferd-Batterie-42")
 	if err != nil {
@@ -143,7 +150,7 @@ func TestResolvePassphraseAusEinstellungen(t *testing.T) {
 	if err := repo.Save(&domain.GlobalSettings{BackupPassphraseEnc: enc}); err != nil {
 		t.Fatal(err)
 	}
-	bs := NewBackupService(db, repo, t.TempDir(), ":memory:", "").WithCipher(cipher)
+	bs := NewBackupService(repositories.NewDatabaseRepository(db), repo, t.TempDir(), ":memory:", "").WithCipher(cipher)
 
 	// Ohne Parameter und ohne Umgebung: die gespeicherte greift.
 	if p, err := bs.resolvePassphrase(""); err != nil || p != "gespeicherte-passphrase" {
@@ -160,7 +167,7 @@ func TestResolvePassphraseAusEinstellungen(t *testing.T) {
 	}
 	// Ohne alles: ehrlicher Fehler.
 	t.Setenv(EnvBackupPassphrase, "")
-	bs2 := NewBackupService(db, repo, t.TempDir(), ":memory:", "").WithCipher(cipher)
+	bs2 := NewBackupService(repositories.NewDatabaseRepository(db), repo, t.TempDir(), ":memory:", "").WithCipher(cipher)
 	_ = repo.UpdateFields(map[string]any{"backup_passphrase_enc": ""})
 	if _, err := bs2.resolvePassphrase(""); !errors.Is(err, ErrBackupNoPassphrase) {
 		t.Errorf("ohne jede Passphrase: erwartet ErrBackupNoPassphrase, bekam %v", err)

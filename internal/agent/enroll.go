@@ -99,7 +99,7 @@ func Enroll(serverURL, token, version string, log *slog.Logger) error {
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("enroll benötigt root (sudo lcm-agent enroll …)")
 	}
-	agentID, secret, certFP, err := wire.ParseToken(token)
+	tok, err := wire.ParseToken(token)
 	if err != nil {
 		return fmt.Errorf("token ungültig: %w", err)
 	}
@@ -107,7 +107,8 @@ func Enroll(serverURL, token, version string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	cfg := &Config{URL: normalized, AgentID: agentID, Secret: secret, CertFingerprint: certFP}
+	cfg := &Config{URL: normalized, AgentID: tok.AgentID, Secret: tok.Secret,
+		CertFingerprint: tok.CertFingerprint, CAFingerprint: tok.CAFingerprint}
 
 	// Erst verbinden, dann installieren - ein Tippfehler in Adresse oder
 	// Token fällt so sofort auf, nicht erst im Dienst-Log.

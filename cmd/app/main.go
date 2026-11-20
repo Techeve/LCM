@@ -542,8 +542,12 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	serverService.WithCertFingerprint(func() (string, error) {
 		return tlsx.Fingerprint(filepath.Join(dataDir, tlsx.CertFileName))
 	})
+	// Derselbe Schlüssel als Pin für den Download-Befehl im Join-Assistenten.
+	serverService.WithAgentDownloadPin(func() (string, error) {
+		return tlsx.PublicKeyPin(filepath.Join(dataDir, tlsx.CertFileName))
+	})
 	packageService := services.NewPackageService(serverRepo)
-	backupService := services.NewBackupService(db, settingsRepo, dataDir, dbPath, configPath).
+	backupService := services.NewBackupService(repositories.NewDatabaseRepository(db), settingsRepo, dataDir, dbPath, configPath).
 		WithConfigDir(cfg.BackupDir).WithCipher(cipher).WithMasterKey(masterKey)
 	// Reste eines abgebrochenen Sicherungslaufs jetzt wegräumen: Ein neuer
 	// Prozess hat keinen laufenden Lauf, den er stören könnte, und eine
@@ -660,6 +664,26 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Stand der CVE-Datenbank fuer den cve_db_stale-Alarm (derselbe Wert, den
 	// auch Ampel und Sicherheitsseite zeigen).
 	alertService.WithCVEDBChecker(serverService.CVEDBStatus)
+	// Erneuerung des eigenen TLS-Zertifikats vor Ablauf (services.CertRenewal).
+	// Das Laden in die Listener verdrahtet der HTTPS-Start unten; im
+	// --dev-Modus gibt es kein Zertifikat, und die Prüfung bleibt still.
+	var certStore *tlsx.CertStore
+	certRenewal := services.NewCertRenewal(dataDir, serverRepo, func() error {
+		if certStore == nil {
+			return nil
+		}
+		return certStore.Reload()
+	}).WithOnline(agentHub.Online)
+	// CA-Pin fürs Enrollment-Token: Neue Agenten folgen damit von Anfang an
+	// den monatlich neuen Schlüsseln.
+	serverService.WithCAFingerprint(certRenewal.TokenCAFingerprint)
+	alertService.WithCertWarning(func() string {
+		st, err := certRenewal.State()
+		if err != nil {
+			return ""
+		}
+		return certRenewal.Warning(st)
+	})
 	// Backup-Zustand fuer den backup_stale-Alarm: Aktivierung/Intervall aus
 	// den Einstellungen, Alter des juengsten Backups aus der Historie
 	// (neueste-zuerst; auch manuelle Backups zaehlen - derselbe Stand).
@@ -929,11 +953,14 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		return err
 	}
 	if proxyTrust.Enabled && proxyTrust.Proxies.IsEmpty() {
-		// Bisheriges Verhalten, aber benannt: Ohne Liste gilt die Kopfzeile
-		// von JEDEM Peer - wer den Port am Proxy vorbei erreicht, wählt seine
-		// Adresse selbst.
-		slog.Warn("trust_proxy_header is set without trusted_proxies - X-Forwarded-For is believed from ANY peer; " +
-			"list the proxy addresses in trusted_proxies unless the port is reachable only from the proxy")
+		// Ohne Liste vertraut LCM niemandem (netfilter.ProxyTrust). Wer das
+		// früher als „jeder Peer" eingerichtet hat, sieht sonst nur, dass
+		// hinter dem Proxy plötzlich alle Clients dieselbe Adresse haben.
+		slog.Warn("trust_proxy_header ist an, aber trusted_proxies ist leer - LCM vertraut damit keinem Proxy " +
+			"und ignoriert X-Forwarded-For und X-Forwarded-Proto: Als Client-Adresse gilt die direkte Verbindung " +
+			"(für IP-Filter, Anmeldesperre und Protokolle), HTTPS nur bei TLS direkt an LCM. Abhilfe: die " +
+			"Adressen des Reverse-Proxys in trusted_proxies eintragen (z.B. [\"127.0.0.1\"] oder [\"10.0.0.5/32\"]) " +
+			"oder trust_proxy_header ausschalten")
 	}
 
 	// healthCheckTimeout begrenzt eine einzelne Selbstprüfung. Deutlich unter der
@@ -971,6 +998,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	})
 
 	dashboardService := services.NewDashboardService(serverService, jobRepo, alertRepo, groupRepo, eventBus)
+	portScanService := services.NewPortScanService(serverRepo, repositories.NewPortScanRepository(db), jobService, auditService)
 
 	// Messung der Datenbank (GET /api/v1/system/db, /metrics). Die Zeilen je
 	// Tabelle zählt sie stündlich selbst, alles andere fällt nebenbei an.
@@ -1020,6 +1048,8 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		Dashboard:                dashboardService,
 		ReleaseNotes:             releaseNotes,
 		DBMetrics:                dbReporter,
+		TLSCACert:                certRenewal.CAPEM,
+		PortScans:                portScanService,
 	})
 
 	// LCM Remote: Der Agent-WebSocket (MQTT) läuft auf einem EIGENEN,
@@ -1070,19 +1100,36 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		return app.Listen(cfg.Address())
 	}
 
-	certPath, keyPath, err := tlsx.EnsureSelfSigned(dataDir, buildTime())
+	// Die CA stellt das Server-Zertifikat aus: die des Betreibers
+	// (tls_ca_cert/tls_ca_key) oder die eigene, beim ersten Start erzeugt.
+	ca, err := tlsx.OpenCA(dataDir, cfg.TLSCACert, cfg.TLSCAKey, buildTime())
+	if err != nil {
+		return fmt.Errorf("tls-ca vorbereiten: %w", err)
+	}
+	certRenewal.SetCA(ca)
+	certPath, keyPath, err := tlsx.EnsureServerCert(dataDir, ca, buildTime())
 	if err != nil {
 		return fmt.Errorf("tls-zertifikat vorbereiten: %w", err)
 	}
+	// Beide Listener holen das Zertifikat bei jedem Handshake aus dem
+	// Speicher - so nimmt die Erneuerung es ohne Neustart in Betrieb.
+	certStore, err = tlsx.NewCertStore(certPath, keyPath)
+	if err != nil {
+		return fmt.Errorf("tls-zertifikat laden: %w", err)
+	}
+	// Erste Prüfung vor den Listenern: Steht der Umstieg auf die CA an,
+	// verbinden sich die Agenten nach dem Neustart gleich mit dem neuen
+	// Zertifikat und lernen die CA (services.CertRenewal).
+	certRenewal.Run()
+	safego.Go("tls-cert-renewal", certRenewal.RunDaily)
 	// LCM Remote: den dedizierten Agent-Listener mit DEMSELBEN TLS-Zertifikat
-	// wie die UI starten - der Agent pinnt dessen Fingerprint. Läuft nebenläufig
+	// wie die UI starten - der Agent pinnt die CA, die es ausstellt. Läuft nebenläufig
 	// zum UI/REST-Listener; ein Fehler dort beendet nicht den Hauptdienst.
 	if agentApp != nil {
 		slog.Info("LCM remote: agent listener (HTTPS)", "address", "https://"+cfg.AgentAddress())
 		safego.Go("agent-listener-tls", func() {
 			if err := agentApp.Listen(cfg.AgentAddress(), fiber.ListenConfig{
-				CertFile:    certPath,
-				CertKeyFile: keyPath,
+				TLSConfig: certStore.TLSConfig(),
 			}); err != nil {
 				slog.Error("agent listener terminated", "error", err)
 			}
@@ -1094,8 +1141,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		"log_level", cfg.LogLevel,
 	)
 	return app.Listen(cfg.Address(), fiber.ListenConfig{
-		CertFile:    certPath,
-		CertKeyFile: keyPath,
+		TLSConfig: certStore.TLSConfig(),
 	})
 }
 

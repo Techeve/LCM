@@ -75,14 +75,29 @@ func (l *localRunner) command(ctx context.Context, allowNet bool, readFiles []st
 	}
 	// Absoluter Binärpfad: liegt Trivy außerhalb der Standardverzeichnisse,
 	// muss sein Verzeichnis ausdrücklich erlaubt werden.
-	if bin, err := exec.LookPath(l.binary); err == nil {
+	bin, err := resolveBinary(l.binary)
+	if err == nil {
 		read = append(read, filepath.Dir(bin))
+	} else {
+		bin = l.binary // der Aufruf scheitert dann mit Trivys eigener Meldung
 	}
 	spec := sandbox.BaseSystemSpec().WithPaths(read, readFiles, write).WithNet(allowNet)
 	// Trivy legt beim Auswerten Zwischendateien an - es bekommt dafür ein
 	// eigenes /tmp, nicht das des Hosts.
 	spec.ScratchTmp = true
-	return sandbox.Command(ctx, spec, l.binary, args...)
+	return sandbox.Command(ctx, spec, bin, args...)
+}
+
+// resolveBinary liefert den absoluten Pfad des Trivy-Binaries. Der
+// Landlock-Starter wird per execve zum Programm und sucht dabei nicht im
+// PATH: Mit dem bloßen Namen „trivy" scheiterte dort jeder Aufruf, auf Hosts
+// ohne Bubblewrap lief der CVE-Scan also gar nicht.
+func resolveBinary(name string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(path)
 }
 
 // scanSBOM schreibt das SBOM in eine temporäre Datei und lässt Trivy es prüfen.
@@ -113,6 +128,12 @@ func (l *localRunner) scanImage(ctx context.Context, ref string) ([]byte, error)
 	ctx, cancel := context.WithTimeout(ctx, imageTimeout)
 	defer cancel()
 
+	// Netz nötig: zieht die Image-Layer aus der Registry.
+	return l.run(ctx, true, nil, imageScanArgs(l.cacheDir, ref)...)
+}
+
+// imageScanArgs baut die Aufrufzeile des Image-Scans.
+func imageScanArgs(cacheDir, ref string) []string {
 	args := []string{"image", "--format", "json", "--quiet", "--scanners", "vuln",
 		// --skip-java-db-update: Die Java-Datenbank ist ein zweiter Download
 		// von rund anderthalb Gigabyte, den Trivy beim ersten Java-Artefakt in
@@ -124,12 +145,12 @@ func (l *localRunner) scanImage(ctx context.Context, ref string) ([]byte, error)
 		// --skip-db-update: Sonst lüde Trivy mitten im Scan selbst nach und
 		// schriebe in die aktive Datenbank. Das macht allein der DBRefresher.
 		"--skip-db-update"}
-	if l.cacheDir != "" {
-		args = append(args, "--cache-dir", l.cacheDir)
+	if cacheDir != "" {
+		args = append(args, "--cache-dir", cacheDir)
 	}
-	args = append(args, ref)
-	// Netz nötig: zieht die Image-Layer aus der Registry.
-	return l.run(ctx, true, nil, args...)
+	// Die Referenz kommt vom verwalteten Server. „--" davor: Eine Referenz
+	// mit führendem Bindestrich läse Trivy sonst als Option.
+	return append(args, "--", ref)
 }
 
 // run führt den Aufruf aus und liefert stdout; stderr landet im Fehlertext.

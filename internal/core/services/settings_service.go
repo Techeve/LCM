@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/cron"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/notify"
 	"LCM/internal/infrastructure/sshx"
@@ -485,7 +486,7 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		// Cron-Ausdruck sofort validieren - ein Tippfehler fiele sonst erst
 		// als Log-Zeile beim Scheduler-Reload auf und der CVE-Scan liefe
 		// still nie.
-		if _, err := cronParser.Parse(*in.CVEScanCron); err != nil {
+		if _, err := cron.Parse(*in.CVEScanCron); err != nil {
 			return nil, fmt.Errorf("%w: ungültiger CVE-Scan-Zeitplan %q: %v", ErrSettingInvalid, *in.CVEScanCron, err)
 		}
 		settings.CVEScanCron = *in.CVEScanCron
@@ -739,12 +740,19 @@ func (s *SettingsService) UpdateBackupSettings(in BackupSettingsInput, actor str
 		return nil, err
 	}
 	settings.BackupTime = backupTime
-	// Ein geleertes Verzeichnis-Feld fällt auf den effektiven Standard
-	// zurück - das Backup-Ziel ist damit in der UI immer sichtbar gesetzt.
-	settings.BackupDir = strings.TrimSpace(in.Dir)
-	if settings.BackupDir == "" {
-		settings.BackupDir = s.defaultBackupDir
+	// Dieselbe Prüfung wie in UpdateGlobal: Das Backup enthält den
+	// Master-Key, ein relativer Pfad oder einer mit ".." oder Sonderzeichen
+	// gehört nicht in die Einstellungen. Ein geleertes Feld fällt auf den
+	// effektiven Standard zurück - das Backup-Ziel ist damit in der UI immer
+	// sichtbar gesetzt.
+	backupDir, err := normalizeBackupDir(in.Dir)
+	if err != nil {
+		return nil, err
 	}
+	if backupDir == "" {
+		backupDir = s.defaultBackupDir
+	}
+	settings.BackupDir = backupDir
 	settings.RestoreAutoRestart = in.AutoRestart
 	// Passphrase für geplante Backups: write-only, verschlüsselt (leer =
 	// unverändert). R2-027 - vorher gab es KEINEN Weg, sie über API/UI zu

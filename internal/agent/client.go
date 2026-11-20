@@ -1,10 +1,8 @@
 package agent
 
 import (
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -30,6 +29,18 @@ type Client struct {
 	log     *slog.Logger
 	version string
 	mqtt    mqtt.Client
+
+	// configPath ist die Datei, in der neu gelernte Pins landen (leer =
+	// nur im Speicher, etwa beim Verbindungstest des Enrollments - das
+	// speichert die Konfiguration danach selbst).
+	configPath string
+	// pinMu schützt die Pins in cfg: Der TLS-Handshake schreibt sie, das
+	// Inventar liest sie.
+	pinMu sync.Mutex
+
+	// work zählt die Kommandos in Arbeit - der Wechsel aufs neue Binary
+	// nach einem Upgrade wartet, bis keins mehr läuft (switch.go).
+	work workState
 }
 
 // NewClient baut den Agent-Client (verbindet noch nicht).
@@ -40,6 +51,13 @@ func NewClient(cfg *Config, log *slog.Logger, version string) *Client {
 	return &Client{cfg: cfg, runner: NewRunner(), log: log, version: version}
 }
 
+// WithConfigPath legt fest, wohin neu gelernte Pins geschrieben werden
+// (der Dienst: ConfigPath).
+func (c *Client) WithConfigPath(path string) *Client {
+	c.configPath = path
+	return c
+}
+
 // Run verbindet sich (mit endloser Wiederholung) und bedient Kommandos,
 // bis der Prozess beendet wird. Für den Service-Betrieb (lcm-agent run).
 func (c *Client) Run() error {
@@ -48,6 +66,9 @@ func (c *Client) Run() error {
 		return err
 	}
 	c.mqtt = mqtt.NewClient(opts)
+	// Vor dem Connect: Mit ConnectRetry wartet der Connect, bis LCM
+	// erreichbar ist - ein neues Binary soll trotzdem übernommen werden.
+	safego.Go("agent-binary-switch", c.switchOnNewBinary)
 	token := c.mqtt.Connect()
 	token.Wait()
 	if err := token.Error(); err != nil {
@@ -106,11 +127,11 @@ func (c *Client) clientOptions() (*mqtt.ClientOptions, error) {
 	if strings.HasPrefix(brokerURL, "wss://") {
 		opts.SetTLSConfig(&tls.Config{
 			// Die Standard-Verifikation ist abgeschaltet, weil das LCM-
-			// Zertifikat üblicherweise selbstsigniert ist - an ihre Stelle
-			// tritt VerifyPeerCertificate: Fingerprint-Pin aus dem
-			// Enrollment-Token ODER reguläre Systemroot-Prüfung.
+			// Zertifikat von der eigenen CA stammt (früher selbstsigniert) -
+			// an ihre Stelle tritt VerifyPeerCertificate: Zertifikats-,
+			// Schlüssel- oder CA-Pin ODER reguläre Systemroot-Prüfung.
 			InsecureSkipVerify:    true, //nolint:gosec - eigene Prüfung s.u.
-			VerifyPeerCertificate: verifyPeer(c.cfg.CertFingerprint, u.Hostname()),
+			VerifyPeerCertificate: c.verifyPeer(u.Hostname()),
 			MinVersion:            tls.VersionTLS12,
 		})
 	}
@@ -125,38 +146,46 @@ func (c *Client) clientOptions() (*mqtt.ClientOptions, error) {
 	return opts, nil
 }
 
-// verifyPeer akzeptiert das Server-Zertifikat, wenn sein SHA-256-
-// Fingerprint dem Pin aus dem Enrollment-Token entspricht ODER die
-// reguläre x509-Prüfung gegen die Systemroots (inkl. Hostname) gelingt.
-func verifyPeer(pin, hostname string) func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+// verifyPeer prüft das Server-Zertifikat (checkPeer) und merkt sich
+// Schlüssel- und CA-Pin, sobald ein Pin gepasst hat.
+func (c *Client) verifyPeer(hostname string) func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-		if len(rawCerts) == 0 {
-			return errors.New("server hat kein zertifikat präsentiert")
-		}
-		if pin != "" {
-			sum := sha256.Sum256(rawCerts[0])
-			if hex.EncodeToString(sum[:]) == strings.ToLower(pin) {
-				return nil
-			}
-		}
-		// Fallback: reguläres Zertifikat (z.B. Let's Encrypt) oder ein
-		// rotiertes Self-Signed - dann muss die Kette samt Hostname stimmen.
-		leaf, err := x509.ParseCertificate(rawCerts[0])
-		if err != nil {
-			return fmt.Errorf("zertifikat parsen: %w", err)
-		}
-		inter := x509.NewCertPool()
-		for _, raw := range rawCerts[1:] {
-			if c, err := x509.ParseCertificate(raw); err == nil {
-				inter.AddCert(c)
-			}
-		}
-		_, err = leaf.Verify(x509.VerifyOptions{DNSName: hostname, Intermediates: inter})
-		if err != nil && pin != "" {
-			return fmt.Errorf("zertifikat entspricht weder dem gepinnten fingerprint noch den systemroots: %w", err)
+		learned, err := checkPeer(rawCerts, c.pins(), hostname)
+		if err == nil {
+			c.learn(learned)
 		}
 		return err
 	}
+}
+
+// pins liefert die Vertrauensanker aus der Konfiguration.
+func (c *Client) pins() pins {
+	c.pinMu.Lock()
+	defer c.pinMu.Unlock()
+	return pins{cert: c.cfg.CertFingerprint, key: c.cfg.KeyPin, ca: c.cfg.CAFingerprint}
+}
+
+// learn übernimmt neue Pins und schreibt sie in die Konfiguration. Scheitert
+// das Schreiben, gelten sie bis zum nächsten Neustart nur im Speicher - das
+// Protokoll sagt es, die Verbindung steht trotzdem.
+func (c *Client) learn(learned pins) {
+	c.pinMu.Lock()
+	defer c.pinMu.Unlock()
+	changed := false
+	if learned.key != "" && learned.key != c.cfg.KeyPin {
+		c.cfg.KeyPin, changed = learned.key, true
+	}
+	if learned.ca != "" && learned.ca != c.cfg.CAFingerprint {
+		c.cfg.CAFingerprint, changed = learned.ca, true
+	}
+	if !changed || c.configPath == "" {
+		return
+	}
+	if err := c.cfg.Save(c.configPath); err != nil {
+		c.log.Warn("certificate pins could not be saved", "error", err)
+		return
+	}
+	c.log.Info("pins of the lcm certificate saved - renewed certificates of the lcm ca are accepted")
 }
 
 // onConnect meldet den Agent nach jedem (Re-)Connect an. Reihenfolge ist
@@ -179,7 +208,8 @@ func (c *Client) onConnect(cl mqtt.Client) {
 
 // handleCommand führt ein Kommando asynchron aus (bzw. bricht es ab) und
 // stellt das Ergebnis mit Wiederholung zu - auch wenn die Verbindung
-// zwischendurch abreißt, geht ein fertiges Ergebnis nicht verloren.
+// zwischendurch abreißt, geht ein fertiges Ergebnis nicht verloren. Eine
+// zweite Zustellung derselben ID führt es nicht noch einmal aus.
 func (c *Client) handleCommand(payload []byte) {
 	var cmd wire.Command
 	if err := json.Unmarshal(payload, &cmd); err != nil || cmd.ID == "" {
@@ -190,7 +220,18 @@ func (c *Client) handleCommand(payload []byte) {
 		c.runner.Cancel(cmd.ID)
 		return
 	}
+	if !c.runner.Claim(cmd.ID) {
+		c.log.Info("command delivered again - ignored", "id", cmd.ID)
+		return
+	}
+	if !c.work.begin() {
+		// Der Agent wechselt gerade aufs neue Binary und trennt sich gleich;
+		// LCM erfährt es über die Trennung und lässt das Kommando scheitern.
+		c.log.Warn("switching to the new binary - command not run", "id", cmd.ID)
+		return
+	}
 	safego.Go("agent-cmd:"+cmd.ID, func() {
+		defer c.work.end()
 		c.log.Info("command started", "id", cmd.ID)
 		res := c.runner.Run(cmd, func(outputBytes int) {
 			c.publishProgress(cmd.ID, outputBytes)
@@ -233,7 +274,8 @@ func (c *Client) publishResult(res wire.Result) {
 
 // inventory sammelt die Basis-Infos für den LCM-Server (best effort).
 func (c *Client) inventory() wire.Inventory {
-	inv := wire.Inventory{AgentVersion: c.version}
+	p := c.pins()
+	inv := wire.Inventory{AgentVersion: c.version, KeyPin: p.key, CAPin: p.ca}
 	if hn, err := os.Hostname(); err == nil {
 		inv.Hostname = hn
 	}

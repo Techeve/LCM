@@ -1,7 +1,9 @@
 package services
 
 import (
+	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 
@@ -310,25 +312,13 @@ func (s *ProvisioningService) applyProfiles(conn sshx.Conn, server *domain.Serve
 		byUser[users[i].Username] = cache[id]
 	}
 
-	wanted := ownProfiles(byUser)
-	if len(wanted) == 0 {
-		// Auch ohne eigene Profile aufräumen: Ein Server, von dem das letzte
-		// Profil abgezogen wurde, darf weder dessen Gruppe und sudoers-Datei
-		// noch dessen Verzeichnisrechte behalten.
-		script := pruneProfilesScript(nil) + "\n" + profileSSHDScript(nil)
-		if server.RestrictedSudo {
-			script = helperCmd("profile-prune", "-")
-		}
-		out, code, runErr := conn.Run(privRun(server, script))
-		if runErr != nil || code != 0 {
-			return nil, "", profileScriptError(runErr, code, out)
-		}
-		pathReport, err := s.applyPathRules(conn, server, nil)
-		return byUser, pathReport, err
-	}
 	// Regelbausteine für die Distributions-Familie DIESES Servers auflösen -
 	// derselbe Baustein ergibt auf Debian und RHEL unterschiedliche Zeilen.
+	// Auch ohne eigene Profile geht es weiter: Ein Server, von dem das letzte
+	// Profil abgezogen wurde, darf weder dessen Gruppe und sudoers-Datei noch
+	// dessen Verzeichnisrechte behalten.
 	family := pkgFamily(server.PackageManager)
+	wanted := ownProfiles(byUser)
 	expanded := make([]*domain.PrivilegeProfile, 0, len(wanted))
 	names := make([]string, 0, len(wanted))
 	var notes []string
@@ -338,33 +328,85 @@ func (s *ProvisioningService) applyProfiles(conn sshx.Conn, server *domain.Serve
 		names = append(names, profile.Name)
 		notes = append(notes, blockNotes...)
 	}
-	// Eingeschränkter Modus: dieselbe Wirkung über den validierenden Helper
-	// statt über ein Root-Shell-Skript.
-	if server.RestrictedSudo {
-		for _, cmd := range helperProfileApplyCmds(expanded) {
-			out, code, runErr := conn.Run(privRun(server, cmd))
-			if runErr != nil || code != 0 {
-				return nil, "", profileScriptError(runErr, code, out)
-			}
-		}
-	} else {
-		out, code, runErr := conn.Run(privRun(server, profileApplyScript(expanded)))
-		if runErr != nil || code != 0 {
-			return nil, "", profileScriptError(runErr, code, out)
-		}
-		notes = append(notes, pauschalRegelHinweise(out)...)
+	paths, err := s.planPathRules(server, expanded)
+	if err != nil {
+		return nil, "", err
 	}
-	report := "Berechtigungsprofile eingerichtet: " + strings.Join(names, ", ") + "\n"
-	for _, note := range notes {
-		report += "  " + note + "\n"
+	// Verzeichnisrechte ZUERST zurücknehmen, solange die Gruppe noch besteht:
+	// setfacl kennt sie nur beim Namen. Nach dem Aufräumen (groupdel) blieb der
+	// Eintrag an der nackten GID hängen, und eine später angelegte Gruppe mit
+	// derselben GID erbte die Rechte.
+	if _, err := runPathSteps(conn, server, paths.revoke); err != nil {
+		return nil, "", err
 	}
-	// Verzeichnisrechte danach: Sie hängen an der Profilgruppe, die im Schritt
+	groupNotes, err := applyProfileGroups(conn, server, expanded)
+	if err != nil {
+		return nil, "", err
+	}
+	report := ""
+	if len(expanded) > 0 {
+		report = "Berechtigungsprofile eingerichtet: " + strings.Join(names, ", ") + "\n"
+		for _, note := range append(notes, groupNotes...) {
+			report += "  " + note + "\n"
+		}
+	}
+	// Vergeben danach: Die Rechte hängen an der Profilgruppe, die im Schritt
 	// davor entstanden ist.
-	pathReport, err := s.applyPathRules(conn, server, expanded)
+	pathReport, err := s.grantPathRules(conn, server, paths)
 	if err != nil {
 		return nil, report, err
 	}
 	return byUser, report + pathReport, nil
+}
+
+// applyProfileGroups richtet Gruppen und sudoers-Dateien der Profile ein und
+// räumt nicht mehr gebrauchte ab. Eingeschränkter Modus: dieselbe Wirkung über
+// den validierenden Helper statt über ein Root-Shell-Skript. Liefert die
+// Hinweise für den Bericht.
+func applyProfileGroups(conn sshx.Conn, server *domain.Server, profiles []*domain.PrivilegeProfile) ([]string, error) {
+	if !server.RestrictedSudo {
+		out, code, runErr := conn.Run(privRun(server, profileApplyScript(profiles)))
+		if runErr != nil || code != 0 {
+			return nil, profileScriptError(runErr, code, out)
+		}
+		return pauschalRegelHinweise(out), nil
+	}
+	var notes []string
+	accepted := make([]*domain.PrivilegeProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		kept, dropped := helperAcceptedRules(profile)
+		accepted = append(accepted, kept)
+		notes = append(notes, dropped...)
+	}
+	for _, cmd := range helperProfileApplyCmds(accepted) {
+		out, code, runErr := conn.Run(privRun(server, cmd))
+		if runErr != nil || code != 0 {
+			return nil, profileScriptError(runErr, code, out)
+		}
+	}
+	return notes, nil
+}
+
+// helperAcceptedRules lässt im eingeschränkten Modus die Kommandos weg, die
+// faktisch Root gewähren. Im Voll-Modus gelten sie nach ausdrücklicher
+// Bestätigung; der Helper nimmt sie nie an, und eine einzige solche Regel ließe
+// sonst den ganzen Abgleich scheitern. Jede wird gemeldet, damit niemand eine
+// Regel sucht, die es auf diesem Server nicht gibt.
+func helperAcceptedRules(profile *domain.PrivilegeProfile) (*domain.PrivilegeProfile, []string) {
+	var notes []string
+	kept := make([]domain.ProfileSudoRule, 0, len(profile.SudoRules))
+	for _, rule := range profile.SudoRules {
+		var rootEquivalent *domain.ErrRootEquivalent
+		if errors.As(domain.ValidateSudoCommand(rule.Command, false), &rootEquivalent) {
+			notes = append(notes, fmt.Sprintf("Regel %q gilt im eingeschränkten Modus nicht: %s gewährt faktisch Root-Rechte (%s)",
+				rule.Command, rootEquivalent.Binary, rootEquivalent.Reason))
+			continue
+		}
+		kept = append(kept, rule)
+	}
+	filtered := *profile
+	filtered.SudoRules = kept
+	return &filtered, notes
 }
 
 // profileScriptError macht aus Fehlschlag und Ausgabe eine sprechende Meldung.
@@ -393,10 +435,9 @@ func profileScriptError(runErr error, code int, out string) error {
 func expandProfile(profile *domain.PrivilegeProfile, family string) (*domain.PrivilegeProfile, []string) {
 	expanded := *profile
 	expanded.SudoRules = append([]domain.ProfileSudoRule(nil), profile.SudoRules...)
-	expanded.EditRules = append([]domain.ProfileEditRule(nil), profile.EditRules...)
-	expanded.PathRules = append([]domain.ProfilePathRule(nil), profile.PathRules...)
-
 	var notes []string
+	expanded.EditRules, expanded.PathRules, notes = stillValidRules(profile)
+
 	for i := range profile.BlockUses {
 		use := &profile.BlockUses[i]
 		if use.Block == nil {
@@ -425,13 +466,13 @@ func expandProfile(profile *domain.PrivilegeProfile, family string) (*domain.Pri
 			}
 			expanded.SudoRules = append(expanded.SudoRules, domain.ProfileSudoRule{Command: rendered, RunAs: runAs})
 		}
-		for _, path := range domain.BlockLines(variant.EditPaths) {
-			rendered := domain.SubstituteBlockParams(path, values)
+		for _, file := range domain.BlockLines(variant.EditPaths) {
+			rendered := domain.SubstituteBlockParams(file, values)
 			if err := domain.ValidateEditPath(rendered); err != nil {
 				notes = append(notes, fmt.Sprintf("Datei aus Baustein %q verworfen (%v): %s", use.Block.Name, err, rendered))
 				continue
 			}
-			expanded.EditRules = append(expanded.EditRules, domain.ProfileEditRule{Path: rendered})
+			expanded.EditRules = append(expanded.EditRules, domain.ProfileEditRule{Path: path.Clean(rendered)})
 		}
 		for _, line := range domain.BlockLines(variant.PathRules) {
 			rendered := domain.SubstituteBlockParams(line, values)
@@ -444,10 +485,38 @@ func expandProfile(profile *domain.PrivilegeProfile, family string) (*domain.Pri
 				notes = append(notes, fmt.Sprintf("Verzeichnisrecht aus Baustein %q verworfen (%v): %s", use.Block.Name, err, rendered))
 				continue
 			}
-			expanded.PathRules = append(expanded.PathRules, domain.ProfilePathRule{Path: dir, Mode: mode})
+			expanded.PathRules = append(expanded.PathRules, domain.ProfilePathRule{Path: path.Clean(dir), Mode: mode})
 		}
 	}
 	return &expanded, notes
+}
+
+// stillValidRules prüft die eigenen Datei- und Verzeichnisregeln beim Anwenden
+// erneut. Eine Regel, die vor einer verschärften Prüfung gespeichert wurde -
+// etwa ein Schreibrecht auf /etc/systemd -, darf nicht weiter wirken, nur weil
+// sie schon in der Datenbank steht. Sie fällt weg und wird gemeldet; ein
+// zuvor gesetztes Verzeichnisrecht nimmt der Abgleich danach zurück.
+func stillValidRules(profile *domain.PrivilegeProfile) ([]domain.ProfileEditRule, []domain.ProfilePathRule, []string) {
+	var notes []string
+	edits := make([]domain.ProfileEditRule, 0, len(profile.EditRules))
+	for _, rule := range profile.EditRules {
+		if err := domain.ValidateEditPath(rule.Path); err != nil {
+			notes = append(notes, fmt.Sprintf("Datei %s verworfen (%v)", rule.Path, err))
+			continue
+		}
+		rule.Path = path.Clean(rule.Path)
+		edits = append(edits, rule)
+	}
+	paths := make([]domain.ProfilePathRule, 0, len(profile.PathRules))
+	for _, rule := range profile.PathRules {
+		if err := domain.ValidatePathRule(rule.Path, rule.Mode); err != nil {
+			notes = append(notes, fmt.Sprintf("Verzeichnisrecht %s verworfen (%v)", rule.Path, err))
+			continue
+		}
+		rule.Path = path.Clean(rule.Path)
+		paths = append(paths, rule)
+	}
+	return edits, paths, notes
 }
 
 // ---- Verzeichnisrechte (POSIX-ACL) -------------------------------------------
@@ -524,63 +593,150 @@ func removeProfilePathScript(slug, path string) string {
 		path, group, path, group, path)
 }
 
-// applyPathRules setzt die Verzeichnisrechte der auf diesem Server wirksamen
-// Profile und nimmt zurück, was aus den Profilen verschwunden ist.
+// pathPlan ist der Abgleich der Verzeichnisrechte eines Servers, getrennt in
+// Rücknahme und Vergabe: Zurückgenommen wird vor dem Aufräumen der Gruppen,
+// vergeben nach ihrem Anlegen.
+type pathPlan struct {
+	soll   []domain.AppliedProfilePath
+	revoke []string
+	grant  []string
+	// report sammelt, was übersprungen wurde und warum.
+	report string
+	// apply ist gesetzt, wenn der Server ACLs trägt und es etwas abzugleichen
+	// gibt - erst dann wird soll fortgeschrieben.
+	apply bool
+}
+
+// planPathRules plant die Verzeichnisrechte der auf diesem Server wirksamen
+// Profile und die Rücknahme dessen, was aus den Profilen verschwunden ist.
 //
 // Übersprungen wird sichtbar: Ohne nutzbare ACLs bleiben die Pfadregeln eines
 // Profils wirkungslos - das gehört in den Bericht, damit sich niemand auf
 // Rechte verlässt, die es dort nicht gibt.
-func (s *ProvisioningService) applyPathRules(conn sshx.Conn, server *domain.Server, wanted []*domain.PrivilegeProfile) (string, error) {
+func (s *ProvisioningService) planPathRules(server *domain.Server, wanted []*domain.PrivilegeProfile) (*pathPlan, error) {
 	previous, err := s.profiles.AppliedPathsForServer(server.ID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	var soll []domain.AppliedProfilePath
+	wanted, skipped := withoutServiceHome(server, wanted)
+	plan := &pathPlan{report: skipped}
 	for _, profile := range wanted {
 		for _, rule := range profile.PathRules {
-			soll = append(soll, domain.AppliedProfilePath{
-				ServerID: server.ID, ProfileID: profile.ID, Path: rule.Path, Mode: rule.Mode,
+			plan.soll = append(plan.soll, domain.AppliedProfilePath{
+				ServerID: server.ID, ProfileID: profile.ID, Slug: profile.Slug, Path: rule.Path, Mode: rule.Mode,
 			})
 		}
 	}
-	if len(soll) == 0 && len(previous) == 0 {
-		return "", nil
+	if len(plan.soll) == 0 && len(previous) == 0 {
+		return plan, nil
 	}
 	if !server.ACLUsable {
-		if len(soll) == 0 {
-			return "", nil
+		if len(plan.soll) > 0 {
+			hint := "das Paket acl fehlt"
+			if server.HasACL {
+				hint = "das Dateisystem trägt keine ACLs (z.B. ZFS ohne acltype=posixacl)"
+			}
+			plan.report += fmt.Sprintf("Verzeichnisrechte übersprungen - %s. Die Pfadregeln der Profile wirken auf diesem Server NICHT.\n", hint)
 		}
-		hint := "das Paket acl fehlt"
-		if server.HasACL {
-			hint = "das Dateisystem trägt keine ACLs (z.B. ZFS ohne acltype=posixacl)"
-		}
-		return fmt.Sprintf("Verzeichnisrechte übersprungen - %s. Die Pfadregeln der Profile wirken auf diesem Server NICHT.\n", hint), nil
+		return plan, nil
 	}
-
-	var steps []string
-	// Zuerst zurücknehmen, was nicht mehr gefordert ist: Ein entfernter Pfad
-	// darf keinen Zugriff überleben.
+	plan.apply = true
+	// Ein entfernter Pfad darf keinen Zugriff überleben.
 	for _, old := range previous {
-		if !pathStillWanted(old, soll) {
-			steps = append(steps, removeProfilePathScript(slugOf(wanted, old.ProfileID), old.Path))
+		if pathStillWanted(old, plan.soll) {
+			continue
 		}
+		slug := s.appliedSlug(old)
+		if slug == "" {
+			plan.report += fmt.Sprintf("Verzeichnisrecht auf %s NICHT zurückgenommen: Profil #%d ist gelöscht, "+
+				"seine Gruppe ist nicht überliefert. Bitte auf dem Server prüfen (getfacl -p %s).\n", old.Path, old.ProfileID, old.Path)
+			continue
+		}
+		plan.revoke = append(plan.revoke, revokePathStep(server, slug, old.Path))
 	}
 	for _, profile := range wanted {
-		if len(profile.PathRules) > 0 {
-			steps = append(steps, profilePathScript(profile))
-		}
+		plan.grant = append(plan.grant, grantPathSteps(server, profile)...)
 	}
+	return plan, nil
+}
+
+// appliedSlug liefert die Gruppe eines gesetzten Eintrags. Einträge aus der
+// Zeit vor dem gespeicherten Slug kennen nur das Profil - besteht es noch,
+// folgt der Name daraus (der Slug ist unveränderlich).
+func (s *ProvisioningService) appliedSlug(applied domain.AppliedProfilePath) string {
+	if applied.Slug != "" {
+		return applied.Slug
+	}
+	profile, err := s.profiles.FindByID(applied.ProfileID)
+	if err != nil {
+		return ""
+	}
+	return profile.Slug
+}
+
+// revokePathStep nimmt die ACL einer Profilgruppe auf einem Pfad zurück - im
+// eingeschränkten Modus über den Helper, denn setfacl auf fremden Dateien
+// braucht root.
+func revokePathStep(server *domain.Server, slug, dir string) string {
+	// Ältere Einträge stehen womöglich mit Schrägstrich am Ende da; der
+	// Helper nimmt nur die kurze Form an.
+	if strings.HasPrefix(dir, "/") {
+		dir = path.Clean(dir)
+	}
+	if server.RestrictedSudo {
+		return helperCmd("profile-acl", "remove", slug, "-", dir)
+	}
+	return removeProfilePathScript(slug, dir)
+}
+
+// grantPathSteps setzt die Verzeichnisrechte eines Profils (eingeschränkt:
+// je Regel ein Helper-Aufruf).
+func grantPathSteps(server *domain.Server, profile *domain.PrivilegeProfile) []string {
+	if len(profile.PathRules) == 0 {
+		return nil
+	}
+	if !server.RestrictedSudo {
+		return []string{profilePathScript(profile)}
+	}
+	steps := make([]string, 0, len(profile.PathRules))
+	for _, rule := range profile.PathRules {
+		steps = append(steps, helperCmd("profile-acl", "set", profile.Slug, rule.Mode, rule.Path))
+	}
+	return steps
+}
+
+// runPathSteps führt die Schritte in einem Aufruf aus. Im eingeschränkten
+// Modus bricht die Kette beim ersten abgelehnten Helper-Aufruf ab - eine
+// Ablehnung darf nicht hinter einem späteren Erfolg verschwinden.
+func runPathSteps(conn sshx.Conn, server *domain.Server, steps []string) (string, error) {
 	if len(steps) == 0 {
 		return "", nil
 	}
-	out, code, runErr := conn.Run(privRun(server, strings.Join(steps, "\n")))
+	sep := "\n"
+	if server.RestrictedSudo {
+		sep = " && "
+	}
+	out, code, runErr := conn.Run(privRun(server, strings.Join(steps, sep)))
 	if runErr != nil || code != 0 {
 		return "", profileScriptError(runErr, code, out)
 	}
-	if err := s.profiles.ReplaceAppliedPaths(server.ID, soll); err != nil {
+	return out, nil
+}
+
+// grantPathRules vergibt die geplanten Verzeichnisrechte und schreibt den
+// neuen Stand fort.
+func (s *ProvisioningService) grantPathRules(conn sshx.Conn, server *domain.Server, plan *pathPlan) (string, error) {
+	if !plan.apply {
+		return plan.report, nil
+	}
+	out, err := runPathSteps(conn, server, plan.grant)
+	if err != nil {
 		return "", err
 	}
-	report := fmt.Sprintf("Verzeichnisrechte gesetzt: %d Pfad(e)\n", len(soll))
+	if err := s.profiles.ReplaceAppliedPaths(server.ID, plan.soll); err != nil {
+		return "", err
+	}
+	report := plan.report + fmt.Sprintf("Verzeichnisrechte gesetzt: %d Pfad(e)\n", len(plan.soll))
 	// Meldungen des Skripts (fehlender Pfad, Symlink) gehören in den Bericht.
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
@@ -588,6 +744,32 @@ func (s *ProvisioningService) applyPathRules(conn sshx.Conn, server *domain.Serv
 		}
 	}
 	return report, nil
+}
+
+// withoutServiceHome lässt die Verzeichnisrechte weg, die das Home des
+// Service-Users dieses Servers erfassen: Seine authorized_keys sind der Zugang
+// von LCM. Den Standardnamen sperrt schon die Prüfung beim Speichern; ein
+// abweichend benannter Service-User ist erst hier bekannt.
+func withoutServiceHome(server *domain.Server, profiles []*domain.PrivilegeProfile) ([]*domain.PrivilegeProfile, string) {
+	if server.ServiceUser == "" {
+		return profiles, ""
+	}
+	home := "/home/" + server.ServiceUser
+	var report string
+	out := make([]*domain.PrivilegeProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		filtered := *profile
+		filtered.PathRules = nil
+		for _, rule := range profile.PathRules {
+			if domain.GrantReaches(rule.Path, rule.Mode, home) {
+				report += fmt.Sprintf("Verzeichnisrecht auf %s übersprungen: es erfasst das Home des Service-Users (%s)\n", rule.Path, home)
+				continue
+			}
+			filtered.PathRules = append(filtered.PathRules, rule)
+		}
+		out = append(out, &filtered)
+	}
+	return out, report
 }
 
 // pathStillWanted meldet, ob ein zuvor gesetzter Pfad weiterhin gefordert ist.
@@ -598,18 +780,6 @@ func pathStillWanted(old domain.AppliedProfilePath, soll []domain.AppliedProfile
 		}
 	}
 	return false
-}
-
-// slugOf liefert den Slug eines Profils aus der Liste der wirksamen Profile.
-// Ist es nicht mehr dabei (gelöscht oder abgezogen), bleibt nur die
-// Zeichenfolge aus der Aufzeichnung - der Gruppenname folgt derselben Regel.
-func slugOf(profiles []*domain.PrivilegeProfile, id uint) string {
-	for _, profile := range profiles {
-		if profile.ID == id {
-			return profile.Slug
-		}
-	}
-	return ""
 }
 
 // InstallACLSupport installiert das Paket `acl` auf einem Server.

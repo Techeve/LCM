@@ -20,6 +20,7 @@ import {
   normalizeGroups,
   normalizeRules,
   normalizeSchedules,
+  refreshAfterJob,
   scheduleUrl,
   type Group,
   type Rule,
@@ -237,7 +238,7 @@ export class GroupsPage extends LitElement {
     this.#eventStops.push(
       events.subscribe(['servers', 'jobs']),
       events.onEvent((message) => {
-        if (message.event === 'job.finished') store.invalidate(GROUPS_URL);
+        if (message.event === 'job.finished') refreshAfterJob(this.#detailId);
       }),
     );
     this.#registerPalette();

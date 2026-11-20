@@ -1,0 +1,17 @@
+{
+ "success": true,
+ "data": {
+  "items": {
+   "network": {
+    "category": "network",
+    "fail": {
+     "danger": 0,
+     "risk": 0,
+     "warning": 1,
+     "outOfDate": 0
+    },
+    "failSeverity": "warning"
+   }
+  }
+ }
+}

@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -108,5 +109,32 @@ func TestBwrapProgrammStehtAmEnde(t *testing.T) {
 	got := strings.Join(args[sep+1:], " ")
 	if got != "/usr/bin/trivy sbom --quiet" {
 		t.Errorf("nach dem Trenner steht %q", got)
+	}
+}
+
+// TestBwrapLeertDieUmgebung: Bubblewrap reicht ohne --clearenv die eigene
+// Umgebung durch - die von LCM, samt LCM_ENCRYPTION_KEY, falls er dort
+// steht. Der Kindprozess bekommt nur PATH und HOME, und schon Bubblewrap
+// selbst erbt nichts.
+func TestBwrapLeertDieUmgebung(t *testing.T) {
+	t.Setenv("LCM_ENCRYPTION_KEY", "master-key-geheim")
+	cmd := bwrapCommand(context.Background(), BaseSystemSpec(), "/usr/bin/trivy", "--version")
+
+	line := strings.Join(cmd.Args, " ")
+	clearEnv := strings.Index(line, "--clearenv")
+	sep := strings.Index(line, " -- ")
+	if clearEnv < 0 || sep < 0 || clearEnv > sep {
+		t.Fatalf("--clearenv fehlt vor dem Programm: %s", line)
+	}
+	if !strings.Contains(line, "--setenv PATH /usr/local/sbin:") || !strings.Contains(line, "--setenv HOME /nonexistent") {
+		t.Errorf("PATH bzw. HOME fehlen in der Umgebung des Kindprozesses: %s", line)
+	}
+	if cmd.Env == nil {
+		t.Fatal("cmd.Env ist nil - Bubblewrap erbte damit die ganze Umgebung von LCM")
+	}
+	for _, kv := range append(cmd.Env, cmd.Args...) {
+		if strings.Contains(kv, "master-key-geheim") {
+			t.Errorf("der Master-Key steht im Aufruf: %q", kv)
+		}
 	}
 }

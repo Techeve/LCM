@@ -59,9 +59,20 @@ func (f *DeepScanFinding) BeforeCreate(*gorm.DB) error {
 	return nil
 }
 
+// deepScanRanks ordnet die Befund-Schwere (kleiner = schwerer).
+var deepScanRanks = map[string]int{DeepScanCritical: 0, DeepScanWarning: 1, DeepScanInfo: 2}
+
+// deepScanRank liefert den Rang; Unbekanntes steht hinter info, statt über
+// den Nullwert der Map als critical zu gelten.
+func deepScanRank(sev string) int {
+	if r, ok := deepScanRanks[sev]; ok {
+		return r
+	}
+	return len(deepScanRanks)
+}
+
 // DeepScanSeverityAtLeast meldet, ob sev mindestens warning-schwer ist (für die
 // Ampel-Kopplung: nur echte Warnungen/kritische Befunde zählen, info nicht).
 func DeepScanSeverityAtLeast(sev, min string) bool {
-	rank := map[string]int{DeepScanCritical: 0, DeepScanWarning: 1, DeepScanInfo: 2}
-	return rank[sev] <= rank[min]
+	return deepScanRank(sev) <= deepScanRank(min)
 }

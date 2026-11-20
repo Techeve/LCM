@@ -231,7 +231,7 @@ const betaProofSnippet = candidateSnippet +
 // statt eingesetzter Werte. Im Voll-Modus setzt LCM die Variablen vor den
 // Rumpf (…Script), im eingeschränkten Modus trägt der Helper denselben Rumpf
 // und setzt sie aus seinen geprüften Parametern (host-apt-channel,
-// lcm_helper.go). So können beide Wege nicht auseinanderlaufen.
+// lcm-helper.sh). So können beide Wege nicht auseinanderlaufen.
 
 // enterpriseChannelScript baut das Umstell-Skript. login/secret sind
 // Instanz-ID (UUID) und Zugangsschlüssel (hex), repoURL kommt vom Dienst

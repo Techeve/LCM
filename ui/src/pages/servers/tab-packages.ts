@@ -6,7 +6,7 @@ import '../../components/lcm-empty-state';
 import '../../components/lcm-input';
 import '../../components/lcm-skeleton';
 import '../../components/lcm-switch';
-import type { Column, TableLabels } from '../../components/lcm-data-table';
+import { sortRows, type Column, type SortState, type TableLabels } from '../../components/lcm-data-table';
 import { baseStyles } from '../../components/shared';
 import { toast } from '../../components/lcm-toaster';
 import { normalisePackages, packagesUrl, pendingOf, serversApi, type PreviewAction, type ServerPackage } from '../../api/servers';
@@ -31,6 +31,11 @@ interface PackageRow extends ServerPackage {
   id: string;
 }
 
+/** Die ersten `count` Zeilen nach der Sortierung. Erst sortieren, dann abschneiden: sonst ordnete ein Klick nur die gezeigten neu. */
+export function shownRows<T extends { id: string }>(rows: T[], columns: Column<T>[], sort: SortState | null, count: number): T[] {
+  return sortRows(rows, columns, sort).slice(0, count);
+}
+
 /**
  * Pakete: ausstehende Updates (Standard) oder der ganze Bestand. Alle Aktionen sind Server-Aktionen mit Erklärblase,
  * Befehlsvorschau und Bestätigung. Ausgewählte Pakete lassen sich gemeinsam aktualisieren oder entfernen.
@@ -43,6 +48,7 @@ export class SrvPackages extends SrvTab {
     ...SrvTab.properties,
     _selected: { state: true },
     _shown: { state: true },
+    _sort: { state: true },
   };
   static override styles = [
     baseStyles,
@@ -72,6 +78,7 @@ export class SrvPackages extends SrvTab {
 
   declare _selected: string[];
   declare _shown: number;
+  declare _sort: SortState | null;
 
   readonly #packages = new LiveData<ServerPackage[]>(this, {
     url: () => packagesUrl(this.server.id),
@@ -88,6 +95,7 @@ export class SrvPackages extends SrvTab {
     super();
     this._selected = [];
     this._shown = SHOWN_STEP;
+    this._sort = null;
     new SubscribeController(this, (listener) => router.onChange(listener));
   }
 
@@ -280,14 +288,18 @@ export class SrvPackages extends SrvTab {
   }
 
   #renderTable(rows: PackageRow[]): TemplateResult {
-    const shown = rows.slice(0, this._shown);
+    const columns = this.#columns;
+    const shown = shownRows(rows, columns, this._sort, this._shown);
     return html`<lcm-data-table
+        external
         density="compact"
         no-chooser
         ?selectable=${this.canWrite}
-        .columns=${this.#columns}
+        .columns=${columns}
         .rows=${shown}
+        .sort=${this._sort}
         .labels=${this.#labels}
+        @lcm-sort=${(e: CustomEvent<SortState | null>) => (this._sort = e.detail)}
         .selected=${this._selected}
         @lcm-selection-change=${this.#onSelection}
       >

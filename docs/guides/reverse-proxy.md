@@ -49,13 +49,18 @@ Einträge sind IP-Adressen, CIDR-Bereiche oder die Schlüsselwörter
 `localhost`/`private`. Kommt eine Anfrage von einer anderen Adresse, zählt
 die Kopfzeile nicht - die Peer-Adresse gilt.
 
-:::caution[Leere Liste heißt: jeder darf]
-`trust_proxy_header: true` ohne `trusted_proxies` glaubt die Kopfzeile von
-**jedem** Peer (das Verhalten älterer Versionen; LCM warnt beim Start). Das ist
-nur vertretbar, wenn der LCM-Port ausschließlich vom Proxy erreichbar ist.
-Sonst gibt sich ein Client, der den Port direkt erreicht, mit einer
-gefälschten Kopfzeile jede beliebige Adresse - in die Allowlist hinein und
-aus der Anmeldesperre heraus.
+LCM liest die Kopfzeile von rechts. Jeder Proxy hängt die Adresse, von der er
+die Anfrage bekam, hinten an. Die erste Adresse von rechts, die kein vertrauter
+Proxy ist, gilt als Client. Was ein Client selbst links in die Kopfzeile
+schreibt, zählt damit nicht, auch hinter mehreren Proxys.
+
+:::caution[Leere Liste heißt: niemandem glauben]
+Seit 2.0 glaubt `trust_proxy_header: true` ohne `trusted_proxies` die Kopfzeile
+**keinem** Peer, LCM warnt beim Start. Ältere Versionen glaubten in diesem Fall
+jedem. Steht LCM hinter einem Proxy, gehört dessen Adresse in die Liste. Sonst
+sehen Allowlist, Anmeldesperre und Protokolle nur die Adresse des Proxys, alle
+Clients teilen sich eine Anmeldesperre, und LCM erkennt HTTPS über
+`X-Forwarded-Proto` nicht mehr.
 :::
 
 Dieselbe Regel entscheidet, ob LCM eine Anfrage als **HTTPS** erkennt:

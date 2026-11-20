@@ -358,6 +358,15 @@ W: Some index files failed to download. They have been ignored, or old ones used
 			1, nil, true, false, true, false},
 		{"nur W:", "Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease\nReading package lists... Done\nW: Target Packages (main/binary-amd64/Packages) is configured multiple times in /etc/apt/sources.list:1 and /etc/apt/sources.list.d/x.list:1\n",
 			1, nil, false, true, false, false},
+		// apt mit APT::Color: Vor „Err:" und „E: " stehen Farbcodes. Nur das
+		// ESC zu streichen ließ „[31m" stehen, und weder die gescheiterte
+		// Quelle noch der Fehler wurden erkannt.
+		{"farbcodes", "\x1b[32mHit:1 http://archive.ubuntu.com/ubuntu jammy InRelease\x1b[0m\n" +
+			"\x1b[31mErr:2 https://ppa.example.org/foo/ubuntu jammy InRelease\x1b[0m\n  404  Not Found\n" +
+			"\x1b[1;31mE: \x1b[0mThe repository 'https://ppa.example.org/foo/ubuntu jammy InRelease' does not have a Release file.\x1b[0m\n",
+			2, []string{"https://ppa.example.org/foo/ubuntu jammy"}, false, false, false, true},
+		{"farbcodes vor E:", "\x1b[1;31mE: \x1b[0mCould not get lock /var/lib/apt/lists/lock. It is held by process 99 (apt)\x1b[0m\n",
+			0, nil, true, false, true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

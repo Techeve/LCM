@@ -38,17 +38,26 @@ import (
 // Nicht rekursiv: Fehlt am Kopf eines Baums das Durchgangsrecht, ist alles
 // darunter unerreichbar. Ein `chmod -R` fasste stattdessen jede Datei an,
 // dauerte auf großen Beständen ewig und wäre kaum zurückzunehmen.
+//
+// Abgeschottet werden Verzeichnisse und einzelne Dateien, nie ein Symlink:
+// chmod folgt ihm, und eine Härtung von /srv/link träfe sein Ziel. Der
+// Symlink-Test steht deshalb VOR dem Typ-Test - `[ -d ]` und `[ -f ]` lösen
+// den Link auf.
 func hardenScript(path, group, unit string) string {
+	p := shellQuote(path)
 	steps := []string{
-		fmt.Sprintf("[ -d %s ] || { echo 'kein verzeichnis: %s' >&2; exit 1; }", path, path),
-		fmt.Sprintf("[ -L %s ] && { echo 'pfad ist ein symlink: %s' >&2; exit 1; }", path, path),
-		// Vorzustand ausgeben - die Grundlage der Rücknahme.
-		fmt.Sprintf("echo \"LCM-VORHER: $(stat -c '%%a %%G' %s)\"", path),
+		fmt.Sprintf("[ -L %[1]s ] && { echo 'pfad ist ein symlink:' %[1]s >&2; exit 1; }", p),
+		fmt.Sprintf("[ -d %[1]s ] || [ -f %[1]s ] || { echo 'weder verzeichnis noch datei:' %[1]s >&2; exit 1; }", p),
+		// Vorzustand ausgeben - die Grundlage der Rücknahme. Modus und
+		// Gruppen-ID merkt sich das Skript zusätzlich für die eigene
+		// Rücknahme nach einer gescheiterten Dienstprobe.
+		fmt.Sprintf("echo \"LCM-VORHER: $(stat -c '%%a %%G' %s)\"", p),
+		fmt.Sprintf("LCM_PREV_MODE=$(stat -c '%%a' %[1]s); LCM_PREV_GID=$(stat -c '%%g' %[1]s)", p),
 	}
 	if group != "" {
-		steps = append(steps, fmt.Sprintf("chgrp %s %s", group, path))
+		steps = append(steps, fmt.Sprintf("chgrp -h %s %s", group, p))
 	}
-	steps = append(steps, fmt.Sprintf("chmod o-rwx %s", path))
+	steps = append(steps, fmt.Sprintf("chmod o-rwx %s", p))
 	if unit != "" {
 		// Wirkungsprobe: Läuft der Dienst danach nicht mehr, war die Härtung
 		// zu eng - dann wird sie sofort zurückgenommen, statt ein kaputtes
@@ -60,24 +69,35 @@ func hardenScript(path, group, unit string) string {
 		steps = append(steps, strings.Join([]string{
 			fmt.Sprintf("if command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet %s; then", unit),
 			fmt.Sprintf("  echo 'dienst %s läuft nach dem abschotten nicht mehr - zurückgenommen' >&2;", unit),
-			fmt.Sprintf("  chmod o+rX %s;", path),
+			// Gruppe UND Modus zurück, wie sie vorher waren - `chmod o+rX`
+			// allein ließ die neue Gruppe stehen und öffnete einen Pfad, der
+			// vorher nur 750 hatte, für alle zum Lesen.
+			fmt.Sprintf(`  chgrp -h "$LCM_PREV_GID" %[1]s; chmod "$LCM_PREV_MODE" %[1]s;`, p),
 			"  exit 2;",
 			fmt.Sprintf("elif ! command -v systemctl >/dev/null 2>&1; then echo 'kein systemd - dienstprobe für %s übersprungen';", unit),
 			"fi",
 		}, " "))
 	}
-	steps = append(steps, fmt.Sprintf("echo \"LCM-NACHHER: $(stat -c '%%a %%G' %s)\"", path))
+	steps = append(steps, fmt.Sprintf("echo \"LCM-NACHHER: $(stat -c '%%a %%G' %s)\"", p))
 	return strings.Join(steps, "; ")
 }
 
 // restoreScript stellt den aufgezeichneten Vorzustand wieder her.
+//
+// Steht an der Stelle inzwischen ein Symlink, bricht die Rücknahme ab: Der
+// Vorzustand war meist 755, und chmod folgt dem Link - ein untergeschobener
+// Verweis auf /etc/shadow würde sonst für alle lesbar.
 func restoreScript(hardened *domain.HardenedPath) string {
-	steps := []string{fmt.Sprintf("[ -d %s ] || exit 0", hardened.Path)}
-	if hardened.PrevGroup != "" {
-		steps = append(steps, fmt.Sprintf("chgrp %s %s", hardened.PrevGroup, hardened.Path))
+	p := shellQuote(hardened.Path)
+	steps := []string{
+		fmt.Sprintf("[ -L %[1]s ] && { echo 'pfad ist ein symlink:' %[1]s >&2; exit 1; }", p),
+		fmt.Sprintf("[ -e %s ] || exit 0", p),
 	}
-	if hardened.PrevMode != "" {
-		steps = append(steps, fmt.Sprintf("chmod %s %s", hardened.PrevMode, hardened.Path))
+	if hardened.PrevGroup != "" {
+		steps = append(steps, fmt.Sprintf("chgrp -h %s %s", shellQuote(hardened.PrevGroup), p))
+	}
+	if mode, ok := parseMode(hardened.PrevMode); ok {
+		steps = append(steps, fmt.Sprintf("chmod %o %s", mode, p))
 	}
 	return strings.Join(steps, "; ")
 }

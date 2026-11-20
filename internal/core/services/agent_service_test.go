@@ -28,9 +28,28 @@ func (f *fakeHub) Conn(server *domain.Server) (sshx.Conn, error) {
 func (f *fakeHub) Online(agentID string) bool { return f.online[agentID] }
 func (f *fakeHub) Disconnect(agentID string)  { f.disconnected = append(f.disconnected, agentID) }
 
+// TestAgentDownloadPin: Ohne Pin (nicht verdrahtet oder Zertifikat nicht
+// lesbar) bleibt er leer - der Join-Befehl prüft dann normal, statt mit -k
+// jedes Zertifikat anzunehmen.
+func TestAgentDownloadPin(t *testing.T) {
+	env := newTestEnv(t)
+	if pin := env.Servers.AgentDownloadPin(); pin != "" {
+		t.Errorf("unverdrahtet: Pin %q, erwartet leer", pin)
+	}
+	env.Servers.WithAgentDownloadPin(func() (string, error) { return "", errors.New("kein zertifikat") })
+	if pin := env.Servers.AgentDownloadPin(); pin != "" {
+		t.Errorf("bei Fehler: Pin %q, erwartet leer", pin)
+	}
+	env.Servers.WithAgentDownloadPin(func() (string, error) { return "c2hhMjU2LXBpbg==", nil })
+	if pin := env.Servers.AgentDownloadPin(); pin != "c2hhMjU2LXBpbg==" {
+		t.Errorf("Pin %q nicht durchgereicht", pin)
+	}
+}
+
 func TestCreateAgentServer(t *testing.T) {
 	env := newTestEnv(t)
-	env.Servers.WithCertFingerprint(func() (string, error) { return "cafe01", nil })
+	env.Servers.WithCertFingerprint(func() (string, error) { return "cafe01", nil }).
+		WithCAFingerprint(func() (string, error) { return "ca0001", nil })
 
 	server, token, err := env.Servers.CreateAgentServer("notebook01", "tester")
 	if err != nil {
@@ -44,12 +63,13 @@ func TestCreateAgentServer(t *testing.T) {
 	}
 
 	// Token trägt AgentID, Secret und den Zertifikats-Fingerprint.
-	agentID, secret, fp, err := services.ParseAgentToken(token)
+	parsed, err := services.ParseAgentToken(token)
 	if err != nil {
 		t.Fatalf("token parsen: %v", err)
 	}
-	if agentID != server.AgentID || fp != "cafe01" {
-		t.Fatalf("token-inhalt falsch: id=%q fp=%q", agentID, fp)
+	secret := parsed.Secret
+	if parsed.AgentID != server.AgentID || parsed.CertFingerprint != "cafe01" || parsed.CAFingerprint != "ca0001" {
+		t.Fatalf("token-inhalt falsch: %+v", parsed)
 	}
 	// At rest liegt NUR der Hash; er passt zum Secret aus dem Token.
 	stored, err := repositories.NewServerRepository(env.DB()).FindByAgentID(server.AgentID)
@@ -90,7 +110,8 @@ func TestRegenerateAgentToken(t *testing.T) {
 		t.Fatalf("session nicht getrennt: %v", hub.disconnected)
 	}
 	// Der alte Hash ist ersetzt.
-	_, newSecret, _, _ := services.ParseAgentToken(newToken)
+	parsedNew, _ := services.ParseAgentToken(newToken)
+	newSecret := parsedNew.Secret
 	stored, _ := repositories.NewServerRepository(env.DB()).FindByAgentID(server.AgentID)
 	if stored.AgentTokenHash != wire.HashSecret(newSecret) {
 		t.Fatal("neuer hash nicht gespeichert")

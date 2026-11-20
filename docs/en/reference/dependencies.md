@@ -129,14 +129,17 @@ The switch only touches `internal/storage/database.go`; the repository layer is
 unaffected. Before switching, test migrations and backup/restore against an
 existing database - the drivers differ in details of type conversion.
 
-**`robfig/cron` has slipped to level 1:** last tag v3.0.1 from 2020, over 170
-open issues. Only the expression parser (five fields plus descriptors) and the
-scheduler in `internal/core/services/scheduler.go` and `group_service.go` are
-used. The job falls into the build-it-ourselves category: no cryptography, the
-expressions come from the administrator, and an error shows up in the schedule
-immediately. Replacement by an in-house implementation with a differential test
-against `robfig/cron` (a few days of effort); the fallback is the maintained
-fork `netresearch/go-cron`.
+**2026-11-09: `robfig/cron` (level 1, last tag v3.0.1 from 2020) replaced.**
+Its place is taken by our own package `internal/cron`: a parser for five fields
+plus descriptors (`@daily`, `@every 1h`, `CRON_TZ=` prefix) and a small
+scheduler. The job fell into the build-it-ourselves category: no cryptography,
+the expressions come from the administrator, and an error shows up in the
+schedule immediately. Stored expressions keep working unchanged: a golden test
+records the old library's behaviour for every form of expression, including
+error messages and daylight saving changes. Its generator lives as a separate
+module under `internal/cron/testdata/gen` and is not part of LCM's dependency
+graph. The only difference: a time zone prefix without a following space
+(`TZ=UTC`) is an error instead of a panic.
 
 **Watch `mochi-mqtt/server`:** the broker is indispensable for the agent
 connection and is protocol parsing, so not something to build ourselves. Last

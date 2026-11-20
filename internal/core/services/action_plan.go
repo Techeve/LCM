@@ -29,7 +29,22 @@ type packagePlan struct {
 // RouterOS hat keine (Linux-)Paketverwaltung - alle paketbasierten Aktionen
 // (Updates, Tool-Installationen) sind dort nicht anwendbar. Zentraler
 // Sperrpunkt, bevor ein sinnloser Job startet.
+//
+// Auf dem LCM-Host läuft ein Lauf, der Pakete einspielt, abgekoppelt von der
+// SSH-Sitzung (lcmHostPackageScript) - sonst nähme der Neustart, den das
+// Paket lcm auslöst, apt mitten im Lauf mit.
 func (s *ServerService) newPackagePlan(server *domain.Server, jobType, name string, build func(mgr string) string) (packagePlan, error) {
+	p, err := s.basePackagePlan(server, jobType, name, build)
+	if err != nil {
+		return p, err
+	}
+	p.script = lcmHostPackageScript(server, jobType, p.script)
+	return p, nil
+}
+
+// basePackagePlan ist newPackagePlan ohne das Abkoppeln auf dem LCM-Host -
+// für Skripte, die das selbst erledigen (Selbst-Update, RunLcmHostJob).
+func (s *ServerService) basePackagePlan(server *domain.Server, jobType, name string, build func(mgr string) string) (packagePlan, error) {
 	if err := ensureNotRouterOS(server); err != nil {
 		return packagePlan{}, err
 	}
@@ -207,8 +222,11 @@ func (s *ServerService) planSnapRemove(server *domain.Server, names []string) (p
 // hier. Der zweite Rückgabewert ist false für nicht-paketbezogene Typen.
 func ruleScript(settings *repositories.SettingsRepository, servers *repositories.ServerRepository, server *domain.Server, rule *domain.Rule) (string, bool) {
 	script, ok := scriptForRule(server.PackageManager, rule.Type, rule.Command)
-	if ok && rule.Type == domain.RuleTypeUpdate {
+	if !ok {
+		return "", false
+	}
+	if rule.Type == domain.RuleTypeUpdate {
 		script = aptUpgradeEnv(settings, servers, server) + script
 	}
-	return script, ok
+	return lcmHostPackageScript(server, rule.Type, script), true
 }

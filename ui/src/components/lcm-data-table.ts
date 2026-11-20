@@ -60,6 +60,23 @@ export interface SortState {
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+function cellValue<T extends { id: string | number }>(column: Column<T>, row: T): string | number {
+  return column.value ? column.value(row) : ((row as Record<string, unknown>)[column.key] as string | number);
+}
+
+/** Sortiert wie die Tabelle selbst. Für Aufrufer mit `external`, die erst sortieren und dann abschneiden. */
+export function sortRows<T extends { id: string | number }>(rows: T[], columns: Column<T>[], sort: SortState | null): T[] {
+  const column = sort ? columns.find((c) => c.key === sort.key) : undefined;
+  if (!sort || !column) return rows;
+  const factor = sort.dir === 'asc' ? 1 : -1;
+  const pick = column.sortValue ?? ((row: T) => cellValue(column, row));
+  return [...rows].sort((a, b) => {
+    const x = pick(a);
+    const y = pick(b);
+    return factor * (typeof x === 'number' && typeof y === 'number' ? x - y : collator.compare(String(x), String(y)));
+  });
+}
+
 /**
  * <lcm-data-table .columns=${…} .rows=${…} selectable> – Datentabelle: Sortieren, Filterzeile, Spaltenwahl,
  * Auswahl mit Sammelleiste (Slot `bulk`), Tastaturnavigation (Pfeile, Pos1/Ende, Enter, Leertaste), zwei Dichten.
@@ -143,10 +160,6 @@ export class LcmDataTable extends LitElement {
     return this.columns.filter((c) => !hidden.has(c.key));
   }
 
-  private cellValue(column: Column, row: Row): string | number {
-    return column.value ? column.value(row) : (row[column.key] as string | number);
-  }
-
   private get viewRows(): Row[] {
     if (this.external) return this.rows;
     let rows = this.rows;
@@ -154,20 +167,11 @@ export class LcmDataTable extends LitElement {
       const needle = (this.filters[column.key] ?? '').trim().toLowerCase();
       if (!needle) continue;
       rows = rows.filter((row) => {
-        const text = String(this.cellValue(column, row)).toLowerCase();
+        const text = String(cellValue(column, row)).toLowerCase();
         return column.filter === 'select' ? text === needle : text.includes(needle);
       });
     }
-    const sort = this.sort;
-    const column = sort ? this.columns.find((c) => c.key === sort.key) : undefined;
-    if (!sort || !column) return rows;
-    const factor = sort.dir === 'asc' ? 1 : -1;
-    return [...rows].sort((a, b) => {
-      const pick = column.sortValue ?? ((row) => this.cellValue(column, row));
-      const x = pick(a);
-      const y = pick(b);
-      return factor * (typeof x === 'number' && typeof y === 'number' ? x - y : collator.compare(String(x), String(y)));
-    });
+    return sortRows(rows, this.columns, this.sort);
   }
 
   private toggleSort(column: Column): void {
@@ -238,8 +242,8 @@ export class LcmDataTable extends LitElement {
       return html`<lcm-status level=${status.level} label=${status.label}></lcm-status>`;
     }
     if (column.kind === 'os') {
-      const os = value as { os: string; label: string };
-      return html`<lcm-os os=${os.os} label=${os.label}></lcm-os>`;
+      const os = value as { os: string; label: string; product?: string; model?: string };
+      return html`<lcm-os os=${os.os} product=${os.product ?? ''} model=${os.model ?? ''} label=${os.label}></lcm-os>`;
     }
     return String(value ?? '');
   }

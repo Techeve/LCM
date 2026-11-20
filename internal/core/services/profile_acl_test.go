@@ -96,6 +96,49 @@ func TestACLProbePruefotDasDateisystem(t *testing.T) {
 	}
 }
 
+// TestGespeicherteRootPfadeWirkenNichtWeiter: Eine Regel, die vor der
+// verschärften Prüfung gespeichert wurde, fällt beim Anwenden weg und wird
+// gemeldet - sie wirkte sonst weiter, nur weil sie in der Datenbank steht.
+func TestGespeicherteRootPfadeWirkenNichtWeiter(t *testing.T) {
+	profile := &domain.PrivilegeProfile{
+		Slug:      "web",
+		EditRules: []domain.ProfileEditRule{{Path: "/etc/cron.d/job"}, {Path: "/etc/nginx//nginx.conf"}},
+		PathRules: []domain.ProfilePathRule{
+			{Path: "/etc/systemd", Mode: domain.PathModeReadWrite},
+			{Path: "/srv/www/", Mode: domain.PathModeRead},
+		},
+	}
+	expanded, notes := expandProfile(profile, "apt")
+	if len(expanded.EditRules) != 1 || expanded.EditRules[0].Path != "/etc/nginx/nginx.conf" {
+		t.Errorf("dateiregeln: %+v", expanded.EditRules)
+	}
+	if len(expanded.PathRules) != 1 || expanded.PathRules[0].Path != "/srv/www" {
+		t.Errorf("verzeichnisrechte: %+v", expanded.PathRules)
+	}
+	if len(notes) != 2 {
+		t.Errorf("verworfene regeln nicht gemeldet: %v", notes)
+	}
+}
+
+// TestHomeDesServiceUsersBleibtFrei: Ein abweichend benannter Service-User ist
+// erst am Server bekannt. Ein Verzeichnisrecht auf sein Home - oder rekursiv
+// darüber - fiele sonst auf LCMs eigenen Zugang.
+func TestHomeDesServiceUsersBleibtFrei(t *testing.T) {
+	server := &domain.Server{ServiceUser: "verwalter"}
+	profile := aclProfile(
+		domain.ProfilePathRule{Path: "/home/verwalter/.ssh", Mode: domain.PathModeReadWrite},
+		domain.ProfilePathRule{Path: "/home", Mode: domain.PathModeRead},
+		domain.ProfilePathRule{Path: "/home/anna", Mode: domain.PathModeRead},
+	)
+	kept, report := withoutServiceHome(server, []*domain.PrivilegeProfile{profile})
+	if len(kept[0].PathRules) != 1 || kept[0].PathRules[0].Path != "/home/anna" {
+		t.Errorf("behalten: %+v", kept[0].PathRules)
+	}
+	if strings.Count(report, "übersprungen") != 2 {
+		t.Errorf("übersprungene regeln nicht gemeldet: %q", report)
+	}
+}
+
 // TestGeaenderterPfadWirdErkannt: Nur was unverändert gefordert bleibt, darf
 // stehen bleiben - ein geänderter Modus muss neu gesetzt und der alte Eintrag
 // zurückgenommen werden.

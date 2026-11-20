@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/netip"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -23,12 +25,45 @@ const clientIPContextKey = "client.ip"
 // Adresse brauchen.
 func ResolveClientIP(trust netfilter.ProxyTrust) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		if addr, ok := netfilter.ClientIP(c.IP(), c.Get("X-Forwarded-For"), trust); ok {
+		xff := netfilter.JoinForwardedFor(c.Request().Header.PeekAll(fiber.HeaderXForwardedFor))
+		if addr, ok := netfilter.ClientIP(c.IP(), xff, trust); ok {
 			c.Locals(clientIPContextKey, addr.String())
+		}
+		if xff != "" && trust.Enabled {
+			warnIgnoredForwardedFor(c.IP(), trust)
 		}
 		c.Locals(secureContextKey, requestIsHTTPS(c, trust))
 		return c.Next()
 	}
+}
+
+// ignoredForwardedForWarning hält den Zeitpunkt der letzten Warnung über eine
+// verworfene X-Forwarded-For-Kopfzeile (Unix-Sekunden).
+var ignoredForwardedForWarning atomic.Int64
+
+// ignoredForwardedForInterval: höchstens eine Warnung je Stunde - jede
+// Anfrage einzeln zu melden, füllte bei einem falsch eingetragenen Proxy das
+// Protokoll.
+const ignoredForwardedForInterval = time.Hour
+
+// warnIgnoredForwardedFor meldet, dass trust_proxy_header an ist, die
+// Kopfzeile aber von einer Gegenstelle kommt, die nicht in trusted_proxies
+// steht - meist ein vergessener oder falscher Eintrag, seltener ein Client,
+// der den Proxy umgeht.
+func warnIgnoredForwardedFor(remoteIP string, trust netfilter.ProxyTrust) {
+	peer, err := netip.ParseAddr(strings.TrimSpace(remoteIP))
+	if err != nil || trust.Trusts(peer.Unmap()) {
+		return
+	}
+	now := time.Now().Unix()
+	last := ignoredForwardedForWarning.Load()
+	if now-last < int64(ignoredForwardedForInterval/time.Second) || !ignoredForwardedForWarning.CompareAndSwap(last, now) {
+		return
+	}
+	slog.Warn("X-Forwarded-For von einer Gegenstelle, die nicht in trusted_proxies steht - "+
+		"die Kopfzeile wird ignoriert, es gilt die Adresse der Verbindung. Ist die Gegenstelle "+
+		"der Reverse-Proxy, gehört ihre Adresse in trusted_proxies (höchstens eine Meldung je Stunde)",
+		"peer", peer.Unmap().String())
 }
 
 // ClientIP liefert die für Sperren, Filter und Protokolle maßgebliche

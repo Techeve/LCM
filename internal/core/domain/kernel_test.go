@@ -30,6 +30,33 @@ func TestKernelReleaseFromPackage(t *testing.T) {
 	}
 }
 
+// TestMatchesRunningMitTrennzeichen: Der Abgleich lief ohne Grenze -
+// "6.1.0-1" stellte auch den Kernel "6.1.0-10-amd64", und der echte
+// Rückfall-Kernel stand womöglich zum Entfernen da. SUSE zeigt in uname -r
+// die Variante, die Paket-Version dafür weitere Zähler (Leap 15.6 und
+// Tumbleweed, auch kernel-default-base).
+func TestMatchesRunningMitTrennzeichen(t *testing.T) {
+	for _, tc := range []struct {
+		pkg     KernelPackage
+		running string
+		want    bool
+	}{
+		{KernelPackage{Name: "kernel-x", Version: "6.1.0-1"}, "6.1.0-10-amd64", false},
+		{KernelPackage{Name: "linux-image-6.1.0-10-amd64"}, "6.1.0-1", false},
+		{KernelPackage{Name: "linux-image-6.1.0-13-amd64-unsigned"}, "6.1.0-13-amd64", true},
+		{KernelPackage{Name: "kernel-5.14.0-362.el9.x86_64", Version: "5.14.0-362.el9"}, "5.14.0-362.el9.x86_64", true},
+		{KernelPackage{Name: "kernel-default-6.4.0-150600.23.103.1.x86_64", Version: "6.4.0-150600.23.103.1"}, "6.4.0-150600.23.103-default", true},
+		{KernelPackage{Name: "kernel-default-base-6.4.0-150600.23.103.1.150600.12.48.1.x86_64", Version: "6.4.0-150600.23.103.1.150600.12.48.1"}, "6.4.0-150600.23.103-default", true},
+		{KernelPackage{Name: "kernel-default-6.4.0-150600.23.10.1.x86_64", Version: "6.4.0-150600.23.10.1"}, "6.4.0-150600.23.103-default", false},
+		{KernelPackage{Name: "kernel-default-7.3.1-1.1.x86_64", Version: "7.3.1-1.1"}, "7.3.1-1-default", true},
+		{KernelPackage{Name: "kernel-default-7.3.1-10.1.x86_64", Version: "7.3.1-10.1"}, "7.3.1-1-default", false},
+	} {
+		if p := tc.pkg; p.matchesRunning(tc.running) != tc.want {
+			t.Errorf("%s (%s) gegen %s: erwartet %v", p.Name, p.Version, tc.running, tc.want)
+		}
+	}
+}
+
 // TestBuildKernelInfoProxmox ist der vom Anwender genannte Hauptfall: mehrere
 // Proxmox-Kernel installiert, genau einer laeuft. Die Liste muss den
 // laufenden markieren und die neueste Fassung zuerst zeigen.

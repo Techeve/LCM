@@ -72,6 +72,12 @@ provided the kernel has it enabled - careful: many kernels ship Landlock but do
 not list it among the active LSMs (`/sys/kernel/security/lsm`); the Proxmox
 kernel, for instance, does not without an `lsm=` boot parameter.
 
+Both ways give the process its own minimal environment: `PATH`, an empty
+`HOME` and, if set, proxy settings and custom certificates (`HTTPS_PROXY`,
+`NO_PROXY`, `SSL_CERT_FILE` …). Everything else from LCM's environment stays
+out, including an `LCM_ENCRYPTION_KEY` set there. Bubblewrap needs version 0.5
+or newer for this; an older one falls back to Landlock.
+
 If neither is available, the scan runs unsandboxed as before - but with a
 **visible notice** on the scanner display. A silent fallback would be the worst
 option: you would believe yourself protected without being so.
@@ -342,9 +348,9 @@ Filtering uses the **direct TCP connection** (spoof-proof). If LCM runs behind
 a reverse proxy (e.g. for TLS), the direct peer is the proxy - in that case set
 `"trust_proxy_header": true` so LCM takes the client IP from `X-Forwarded-For`,
 **and** list the proxy address(es) in `trusted_proxies`. The header is believed
-from those peers only; any other peer counts with its own address. Without the
-list the header counts from anyone - a client reaching the port past the proxy
-would enter the allowlist with a forged header. Details and proxy examples:
+from those peers only; any other peer counts with its own address. Since 2.0,
+without the list the header counts from no one, and the allowlist only sees the
+proxy's address. Details and proxy examples:
 [Reverse proxy & external hardening](/en/guides/reverse-proxy/).
 :::
 

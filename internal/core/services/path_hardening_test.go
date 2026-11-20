@@ -1,6 +1,9 @@
 package services
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,7 +37,7 @@ func TestHaertungSichertDenVorzustand(t *testing.T) {
 // oder bei einem Abbruch dauerhaft - tot.
 func TestHaertungSetztGruppeVorDemEntzug(t *testing.T) {
 	script := hardenScript("/var/www", "www-data", "")
-	chgrp := strings.Index(script, "chgrp www-data")
+	chgrp := strings.Index(script, "chgrp -h www-data")
 	chmod := strings.Index(script, "chmod o-rwx")
 	if chgrp < 0 || chmod < 0 {
 		t.Fatalf("schritte fehlen: %s", script)
@@ -51,7 +54,7 @@ func TestHaertungNimmtSichBeiDienstausfallZurueck(t *testing.T) {
 	if !strings.Contains(script, "systemctl is-active --quiet nginx") {
 		t.Errorf("wirkungsprobe fehlt: %s", script)
 	}
-	if !strings.Contains(script, "chmod o+rX /var/www") {
+	if !strings.Contains(script, `chgrp -h "$LCM_PREV_GID" '/var/www'; chmod "$LCM_PREV_MODE" '/var/www'`) {
 		t.Errorf("rücknahme bei fehlschlag fehlt: %s", script)
 	}
 	// Ohne Unit gibt es keine Probe - dann darf auch nichts zurückgenommen
@@ -61,20 +64,49 @@ func TestHaertungNimmtSichBeiDienstausfallZurueck(t *testing.T) {
 	}
 }
 
-// TestHaertungFasstNurVerzeichnisseAn - und keine Symlinks.
-func TestHaertungFasstNurVerzeichnisseAn(t *testing.T) {
-	script := hardenScript("/srv/daten", "", "")
-	if !strings.Contains(script, "[ -d /srv/daten ]") {
-		t.Errorf("verzeichnis-prüfung fehlt: %s", script)
+// TestHaertungFasstVerzeichnisseUndDateienAn - aber keine Symlinks: chmod
+// folgt einem Link, eine Härtung von /srv/link träfe sein Ziel. Läuft gegen
+// echte Pfade.
+func TestHaertungFasstVerzeichnisseUndDateienAn(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "geheim.key")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(script, "[ -L /srv/daten ]") {
-		t.Errorf("symlink-prüfung fehlt: %s", script)
+	if err := os.Chmod(file, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{dir, file} {
+		if out, code, _ := (localConn{}).Run(hardenScript(path, "", "")); code != 0 {
+			t.Errorf("%s nicht abgeschottet (exit %d): %s", path, code, out)
+		}
+		if info, _ := os.Stat(path); info.Mode().Perm()&0o007 != 0 {
+			t.Errorf("%s ist weiter für alle offen: %o", path, info.Mode().Perm())
+		}
+	}
+
+	target := filepath.Join(dir, "ziel")
+	link := filepath.Join(dir, "verweis")
+	if err := os.WriteFile(target, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if out, code, _ := (localConn{}).Run(hardenScript(link, "", "")); code == 0 || !strings.Contains(out, "symlink") {
+		t.Errorf("symlink muss abgelehnt werden (exit %d): %s", code, out)
+	}
+	if info, _ := os.Stat(target); info.Mode().Perm() != 0o644 {
+		t.Errorf("das ziel des symlinks wurde verändert: %o", info.Mode().Perm())
 	}
 	// Nicht rekursiv: Fehlt am Kopf das Durchgangsrecht, ist der ganze Baum
 	// unerreichbar - ein chmod -R fasste jede Datei an und wäre kaum
 	// zurückzunehmen.
-	if strings.Contains(script, "chmod -R") {
-		t.Errorf("die härtung darf nicht rekursiv sein: %s", script)
+	if strings.Contains(hardenScript(dir, "", ""), "chmod -R") {
+		t.Error("die härtung darf nicht rekursiv sein")
 	}
 }
 
@@ -83,8 +115,89 @@ func TestRuecknahmeStelltVorzustandHer(t *testing.T) {
 	script := restoreScript(&domain.HardenedPath{
 		Path: "/var/www", PrevMode: "755", PrevGroup: "root",
 	})
-	if !strings.Contains(script, "chgrp root /var/www") || !strings.Contains(script, "chmod 755 /var/www") {
+	if !strings.Contains(script, "chgrp -h 'root' '/var/www'") || !strings.Contains(script, "chmod 755 '/var/www'") {
 		t.Errorf("vorzustand wird nicht wiederhergestellt: %s", script)
+	}
+}
+
+// TestDienstausfallStelltGruppeUndModusHer läuft echt: Fällt die Dienstprobe
+// durch, nahm die Härtung nur `chmod o+rX` zurück. Die neue Gruppe blieb
+// stehen, und ein Pfad mit 750 stand danach für alle lesbar da.
+func TestDienstausfallStelltGruppeUndModusHer(t *testing.T) {
+	needGNUStat(t)
+	dir := filepath.Join(t.TempDir(), "daten")
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, os.ModeSetgid|0o750); err != nil {
+		t.Fatal(err)
+	}
+	before := pathStat(t, dir)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", hardenScript(dir, otherGroup(t, before), "nginx"))
+	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 {
+		t.Fatalf("dienstprobe sollte mit exit 2 zurücknehmen: %v\n%s", err, out)
+	}
+	if after := pathStat(t, dir); after != before {
+		t.Errorf("vorzustand %q nicht wiederhergestellt, jetzt %q", before, after)
+	}
+}
+
+// pathStat liefert Modus und Gruppen-ID wie stat -c '%a %g'.
+func pathStat(t *testing.T, path string) string {
+	t.Helper()
+	out, err := exec.Command("stat", "-c", "%a %g", path).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// otherGroup sucht eine Gruppe, in die der Test den Pfad umhängen darf. Als
+// root jede, sonst eine weitere eigene; ohne sie bleibt die Gruppe gleich
+// (dann prüft der Test nur den Modus).
+func otherGroup(t *testing.T, state string) string {
+	t.Helper()
+	_, gid, _ := strings.Cut(state, " ")
+	if os.Geteuid() == 0 {
+		if gid == "1" {
+			return "2"
+		}
+		return "1"
+	}
+	groups, _ := exec.Command("id", "-G").Output()
+	for _, g := range strings.Fields(string(groups)) {
+		if g != gid {
+			return g
+		}
+	}
+	return gid
+}
+
+// TestRuecknahmeFolgtKeinemSymlink: Der Vorzustand ist meist 755. Folgte die
+// Rücknahme einem untergeschobenen Link auf /etc/shadow, wäre die Datei
+// danach für alle lesbar.
+func TestRuecknahmeFolgtKeinemSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shadow")
+	link := filepath.Join(dir, "daten")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	out, code, _ := (localConn{}).Run(restoreScript(&domain.HardenedPath{Path: link, PrevMode: "755"}))
+	if code == 0 || !strings.Contains(out, "symlink") {
+		t.Errorf("rücknahme über einen symlink muss scheitern (exit %d): %s", code, out)
+	}
+	if info, _ := os.Stat(target); info.Mode().Perm() != 0o600 {
+		t.Errorf("das ziel des symlinks wurde geöffnet: %o", info.Mode().Perm())
 	}
 }
 

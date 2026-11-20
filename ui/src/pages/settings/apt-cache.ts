@@ -29,7 +29,7 @@ import {
 } from '../../api/settings-more';
 import { auth } from '../../lib/auth';
 import { I18nController, SubscribeController } from '../../lib/controllers';
-import { events } from '../../lib/events';
+import { OwnJobs } from '../../lib/job-watch';
 import { errorText, t } from '../../lib/i18n';
 import { LIMITS } from '../../lib/validate';
 import { LiveData } from '../../lib/live-data';
@@ -105,8 +105,8 @@ export class SettingsAptCache extends LitElement {
   declare _confirm: Confirm | null;
   declare _busy: boolean;
   declare _output: string;
-  #stops: (() => void)[] = [];
-  #pendingJobs = 0;
+  // Neustart und permanentes Caching laufen als Job auf dem LCM-Host; danach den Stand neu holen.
+  readonly #jobs = new OwnJobs(this, () => store.invalidate('/api/v1/settings/apt-cache/overview'));
 
   readonly #caches = new LiveData<AptCache[]>(this, { url: () => APT_CACHES_URL, transform: normaliseAptCaches });
   readonly #overview = new LiveData<AptCacheOverview>(this, {
@@ -139,22 +139,11 @@ export class SettingsAptCache extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     palette.register(this, [{ id: 'apt-cache-new', key: 'n', label: t('settings.aptCache.add'), icon: 'plus', run: () => this.#modal.show({ kind: 'new' }) }]);
-    // Neustart und permanentes Caching laufen als Job auf dem LCM-Host; danach den Stand neu holen.
-    this.#stops = [
-      events.subscribe(['jobs']),
-      events.onEvent((message) => {
-        if (message.event !== 'job.finished' || this.#pendingJobs === 0) return;
-        this.#pendingJobs -= 1;
-        store.invalidate('/api/v1/settings/apt-cache/overview');
-      }),
-    ];
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     palette.unregister(this);
-    this.#stops.forEach((stop) => stop());
-    this.#stops = [];
   }
 
   override willUpdate(): void {
@@ -216,14 +205,12 @@ export class SettingsAptCache extends LitElement {
         return;
       case 'restart':
         if (!serverId) return;
-        await settingsMoreApi.restartAptCacher(serverId);
-        this.#pendingJobs += 1;
+        this.#jobs.watch((await settingsMoreApi.restartAptCacher(serverId)).job_id);
         toast({ tone: 'info', title: t('settings.aptCache.notice.restartStarted') });
         return;
       case 'permanent':
         if (!serverId) return;
-        await settingsMoreApi.setPermanentCache(serverId, confirm.enable);
-        this.#pendingJobs += 1;
+        this.#jobs.watch((await settingsMoreApi.setPermanentCache(serverId, confirm.enable)).job_id);
         toast({ tone: 'info', title: t('settings.aptCache.notice.permanentStarted') });
     }
   }
@@ -404,11 +391,8 @@ export class SettingsAptCache extends LitElement {
         on-text=${t('settings.aptCache.host.permanentOn')}
         off-text=${t('settings.aptCache.host.permanentOff')}
         .checked=${overview.permanent_cache}
-        ?disabled=${!canWrite || this.#pendingJobs > 0}
-        @lcm-change=${(e: CustomEvent<{ checked: boolean }>) => {
-          (e.target as HTMLElement & { checked: boolean }).checked = overview.permanent_cache;
-          this._confirm = { kind: 'permanent', enable: e.detail.checked };
-        }}
+        ?disabled=${!canWrite || this.#jobs.running}
+        @lcm-change=${(e: CustomEvent<{ checked: boolean }>) => (this._confirm = { kind: 'permanent', enable: e.detail.checked })}
       ></lcm-switch>
       ${overview.disk_usage ? html`<dl class="facts"><dt>${t('settings.aptCache.host.disk')}</dt><dd>${overview.disk_usage}</dd></dl>` : nothing}
     </lcm-card>`;

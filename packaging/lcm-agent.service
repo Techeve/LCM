@@ -16,6 +16,10 @@ Type=simple
 ExecStart=/usr/bin/lcm-agent run
 Restart=always
 RestartSec=10
+# KillMode stays at control-group: stopping the agent also stops the commands
+# it runs, as it should on removal. That is why the package scripts never stop
+# or restart it on an upgrade - the upgrade may be one of those commands. The
+# agent switches to a new binary by itself once it is idle (exec, same PID).
 # The agent runs management commands from the LCM server as root (package
 # management, Docker, firewall) - just like an SSH root session. Sandbox
 # hardening as done for the lcm server is therefore not possible here.

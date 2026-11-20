@@ -35,7 +35,7 @@ ARG BIN_SOURCE=prebuilt
 ## ---- Zutaten für das Scratch-Image -------------------------------------------
 # Läuft auf der Bau-Plattform: CA-Zertifikate und leere Verzeichnisse sind
 # nicht architekturabhängig. Damit bleibt der Multi-Arch-Build emulationsfrei.
-FROM --platform=$BUILDPLATFORM alpine:3 AS prep
+FROM --platform=$BUILDPLATFORM alpine:3.24 AS prep
 RUN apk add --no-cache ca-certificates \
     # /data nimmt config.json, Datenbank und Zertifikat auf; /tmp braucht LCM
     # für Zwischendateien (Backup-Archive, SBOM). In scratch lassen sich beide
@@ -54,7 +54,7 @@ ARG TARGETARCH
 COPY bin/lcm-linux-${TARGETARCH} /lcm
 
 ## ---- Bauart „source": alles im Container -------------------------------------
-FROM --platform=$BUILDPLATFORM node:lts-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-builder
 WORKDIR /src/ui
 COPY ui/package.json ui/package-lock.json ./
 # --ignore-scripts ist Absicht: postinstall-Skripte sind der meistgenutzte
@@ -64,14 +64,17 @@ COPY ui/ ./
 # Sicherheits-Gate wie im Makefile: unsichere Pakete brechen den Build ab.
 RUN npm audit --audit-level=high && npm run build
 
-FROM --platform=$BUILDPLATFORM golang:1-alpine AS backend-builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS backend-builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend-builder /src/ui/dist ./ui/dist
 # Sicherheits-Gate: bekannte Go-Schwachstellen brechen den Build ab.
-RUN go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+# Version wie in der CI, von Renovate gepflegt.
+# renovate: datasource=go depName=golang.org/x/vuln
+ARG GOVULNCHECK_VERSION=v1.9.0
+RUN go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
 # Cross-Compile statt Emulation: Go baut für die Zielarchitektur selbst.
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath \
