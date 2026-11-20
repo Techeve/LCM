@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.1.0-beta.1 - 2026-11-12
+## v2.1.0 - 2026-11-20
 
 ### 🚀 Features
 
@@ -36,6 +36,7 @@
 - **classify**: Farbcodes vor der Fehler-Einordnung ganz entfernen (59a2a0bc)
 - **cve**: Alpine bekommt apk-purls mit Zweig und ein eigenes Ökosystem in der Frühwarnung (e6c2862f)
 - **cve**: Unbekannte Schwere fällt auf unknown zurück statt auf critical (83243343)
+- **deps**: update module golang.org/x/crypto to v0.59.0 [security] (8e1ec531)
 - **dns**: Gesetzte DNS-Server gelten auch in Proxmox-Containern und nach einem Neustart (7584567b)
 - **docker**: Veröffentlichte Ports an IPv6-Adressen in Klammern erkennen (efe98be5)
 - **dsm**: DoS-Schutz über configs mit den Netzwerkschnittstellen lesen (07e0019b)
@@ -117,6 +118,9 @@
 - **appdocs**: Paket-Pins lösen nur LCMs eigene Holds (c4a74abe)
 - **changelog**: drei Einträge ohne interne Namen (04c892bb)
 - **ci**: feste Versionen für Werkzeuge und Images, von Renovate gepflegt (c0b20a2d)
+- **deps**: update dependency vite to v8.3.7 (89040aa0)
+- **deps**: update go module directive to v1.27.4 (f1e08ae7)
+- **deps**: update vertrauenswürdige patch-updates (91f41f3e)
 - **dsm**: Firewall-Soll und Regelliste beschreiben (0137d32e)
 - **dsm**: Reihenfolge der Firewall-Abschnitte und Regeln ohne enable (4501029f)
 - **dsm**: Sollwerte auf Klick setzen beschrieben (00dcf69c)
