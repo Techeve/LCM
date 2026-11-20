@@ -9603,7 +9603,7 @@ paths:
         gezählt), die letzten Läufe wie Checkpoint, VACUUM, `VACUUM INTO` und
         System-Jobs, dazu Heap, Goroutines, offene Dateien und Poolstatistik.
         Die Zähler leben im Speicher und beginnen bei jedem Start bei null
-        (`started_at`). Quelle für `lcm-probe`.
+        (`started_at`).
 
 
         Benötigte Berechtigung: `settings:manage`, auch per API-Schlüssel mit

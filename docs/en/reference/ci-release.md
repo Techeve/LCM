@@ -297,7 +297,7 @@ Each file starts with the hand-written text from `release-info/<x.y.z>.md`, if t
 
 ### apt repository rollout (deploy)
 
-On every release the job `deploy:apt` rolls the built `.deb` packages (amd64 + arm64) out to the TechEve repository server (aptly) - after which LCM can be installed and updated from your own repository with `apt install lcm`. The job runs on the channel branches only, and only when a release is actually due (`RELEASE_NEEDED=true`).
+On every release the job `deploy:apt` rolls the built `.deb` packages (amd64 + arm64) out to the Techeve repository server (aptly) - after which LCM can be installed and updated from your own repository with `apt install lcm`. The job runs on the channel branches only, and only when a release is actually due (`RELEASE_NEEDED=true`).
 
 Required CI variables (store them as **masked**):
 

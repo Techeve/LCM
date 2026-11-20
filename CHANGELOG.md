@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.2.0-beta.1 - 2026-11-20
+## v2.2.0 - 2026-11-20
 
 ### 🚀 Features
 
@@ -15,9 +15,12 @@
 
 ### 🔧 Sonstiges
 
+- **monitoring**: Abschnitt zum Werkzeug lcm-probe entfernt, Schreibweise Techeve in der Installationsanleitung (d9092507)
+- **packaging**: lcm-probe nur noch im Beta-Kanal, nicht in Community und Enterprise (7ba6f3a2)
 - **plan**: Agent-Server bekommen SSH-Funktionen und ein Terminal (133102e6)
 - **release**: Hinweise für die Reihe 2.2 (072f0994)
 - **release**: Prüfung auf interne Namen übergeht Commits, die schon auf community liegen (64aa0ded)
+- **repo**: Schreibweise Techeve in Kanal-Metadaten, Skripten und Beschreibungen (f5c06096)
 
 ## v2.1.0 - 2026-11-20
 

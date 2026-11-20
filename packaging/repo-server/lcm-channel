@@ -1,5 +1,5 @@
 #!/bin/sh
-# lcm-channel - maintain the two package channels of the TechEve repository.
+# lcm-channel - maintain the two package channels of the Techeve repository.
 #
 # DEPRECATED: the snapshot freeze/promote model below is superseded by the
 # branch/channel model (develop -> beta -> community -> enterprise). The

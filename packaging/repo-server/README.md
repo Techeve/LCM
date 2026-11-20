@@ -118,7 +118,7 @@ export REPO_URL=https://repo.techeve.de REPO_USER=ci REPO_PASS=...
 ./set-channel-metadata.sh apply
 ```
 
-Vergeben wird `Origin: TechEve` und `Label: techeve-community` /
+Vergeben wird `Origin: Techeve` und `Label: techeve-community` /
 `techeve-beta` / `techeve-enterprise`.
 
 :::caution
