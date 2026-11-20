@@ -62,6 +62,37 @@ func TestSFTPDropinWirdGeprueftUndZurueckgerollt(t *testing.T) {
 	}
 }
 
+// TestProfilAbgleichPruefteSocketAktivierung: Der Abgleich läuft bei jedem
+// Provisioning, auch ohne SFTP-Profil. Ein nacktes `systemctl reload ssh`
+// zerlegt bei ssh.socket (Debian 13) den Dienst („Cannot bind any address“,
+// /run/sshd weg) - der Reload muss deshalb über sshdReloadScript laufen, die
+// Socket-Prüfung VOR der Reload-Kaskade stehen und /run/sshd vor `sshd -t`
+// angelegt werden.
+func TestProfilAbgleichPruefteSocketAktivierung(t *testing.T) {
+	shell := &domain.PrivilegeProfile{ID: 1, Slug: "web", AccountType: domain.AccountTypeShell}
+	for name, profiles := range map[string][]*domain.PrivilegeProfile{
+		"mit sftp-profil": {sftpProfile()},
+		"ohne sftp":       {shell},
+		"ohne profile":    nil,
+	} {
+		script := profileSSHDScript(profiles)
+		if !strings.Contains(script, sshdReloadScript) {
+			t.Errorf("%s: der Reload läuft nicht über sshdReloadScript: %s", name, script)
+		}
+		socket := strings.Index(script, "is-active --quiet ssh.socket")
+		reload := strings.Index(script, "systemctl reload sshd")
+		if socket < 0 || reload < 0 || socket > reload {
+			t.Errorf("%s: die Socket-Prüfung muss VOR dem Reload stehen (socket=%d reload=%d)", name, socket, reload)
+		}
+		if !strings.Contains(script, "systemctl restart ssh;") {
+			t.Errorf("%s: der Socket-Zweig startet den aktiven Dienst nicht neu", name)
+		}
+		if strings.Index(script, "mkdir -p /run/sshd") > strings.Index(script, "sshd -t") {
+			t.Errorf("%s: /run/sshd wird nicht vor sshd -t angelegt: %s", name, script)
+		}
+	}
+}
+
 // TestSFTPKontoVerliertDieShell: Der sshd erzwingt internal-sftp - die Shell
 // wegzunehmen ist der zweite Riegel, damit auch ein Zugang an sshd vorbei
 // (su, cron) keine bekommt.

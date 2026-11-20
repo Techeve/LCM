@@ -851,6 +851,14 @@ func profileSSHDContent(profiles []*domain.PrivilegeProfile) string {
 // Ein Fehler in der sshd-Konfiguration sperrt nicht nur die Benutzer aus,
 // sondern auch LCMs eigenen Zugang. Deshalb dasselbe Muster wie beim
 // SSH-Härten: erst sichern, prüfen, neu laden - und bei Fehlschlag zurück.
+//
+// Neu geladen wird über sshdReloadScript, nicht über ein nacktes
+// `systemctl reload`: Bei socket-aktiviertem sshd (Debian 13) scheitert der
+// Reload am eigenen Bind, ssh.service bleibt `failed` und /run/sshd
+// verschwindet. Dieser Abgleich läuft bei jedem Provisioning, auch ohne
+// SFTP-Profil (dann wird nur das Drop-in entfernt), und traf so jeden Server
+// mit ssh.socket. Ein Fehlschlag des Neuladens bleibt wie bisher folgenlos:
+// die Konfiguration hat `sshd -t` bestanden.
 func profileSSHDScript(profiles []*domain.PrivilegeProfile) string {
 	content := profileSSHDContent(profiles)
 	steps := []string{
@@ -865,11 +873,9 @@ func profileSSHDScript(profiles []*domain.PrivilegeProfile) string {
 			fmt.Sprintf("chmod 644 %s", profileSSHDPath))
 	}
 	steps = append(steps, strings.Join([]string{
-		"if sshd -t 2>/dev/null; then",
+		"if { mkdir -p /run/sshd 2>/dev/null; sshd -t 2>/dev/null; }; then",
 		fmt.Sprintf("  rm -f %s.lcmbak;", profileSSHDPath),
-		"  systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null ||",
-		"    rc-service sshd reload 2>/dev/null || service ssh reload 2>/dev/null ||",
-		"    service sshd reload 2>/dev/null || true;",
+		"  " + sshdReloadScript + " >/dev/null 2>&1 || true;",
 		"else",
 		fmt.Sprintf("  mv %s.lcmbak %s 2>/dev/null || rm -f %s;", profileSSHDPath, profileSSHDPath, profileSSHDPath),
 		"  echo 'sshd lehnt die konfiguration ab - zurückgerollt' >&2;",

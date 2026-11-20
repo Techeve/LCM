@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.2.1 - 2026-11-20
+
+### 🐛 Bugfixes
+
+- **profiles**: Der Abgleich der Berechtigungsprofile legt den SSH-Dienst auf Servern mit Socket-Aktivierung (z. B. Debian 13) nicht mehr lahm (6fd2ea53)
+
 ## v2.2.0 - 2026-11-20
 
 ### 🚀 Features
