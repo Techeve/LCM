@@ -165,12 +165,20 @@ func (s *ServerService) LcmHostStatus(scope repositories.AccessScope, id uint) (
 		scanner := s.ScannerStatus()
 		st.Scanner = &scanner
 	}
-	// Nachrüsten anbieten, solange der Scanner ungesperrt läuft. Ob es dann
-	// wirklich klappt, entscheidet der Host - die Schaltfläche verspricht
-	// nichts, sie installiert bubblewrap und prüft neu.
-	st.SandboxRetrofit = st.TrivyInstalled && !sandbox.Available().Active
+	st.SandboxRetrofit = sandboxRetrofitOffered(st.TrivyInstalled, sandbox.Available())
 	s.fillHostPackages(st, id)
 	return st, nil
+}
+
+// sandboxRetrofitOffered sagt, ob die Karte „Sandbox nachrüsten“ anbietet:
+// sobald Trivy da ist und die Sperre fehlt oder nur auf Landlock ruht, weil
+// bubblewrap fehlt. Wer Trivy eingerichtet hat, spielt keine Rolle - auch ein
+// Trivy aus einer früheren Installation oder von Hand bekommt den Knopf. Ob
+// das Nachrüsten dann klappt, entscheidet der Host: Der Knopf installiert
+// bubblewrap und prüft neu. Ist bubblewrap schon da und startet nur nicht,
+// änderte das Paket nichts; dort bleibt der Knopf stumm, wenn Landlock trägt.
+func sandboxRetrofitOffered(trivyInstalled bool, st sandbox.Status) bool {
+	return trivyInstalled && (!st.Active || st.BubblewrapMissing)
 }
 
 // fillHostPackages leitet apt-cacher-ng und crowdsec aus dem erfassten
@@ -190,10 +198,12 @@ func (s *ServerService) fillHostPackages(st *LcmHostStatus, id uint) {
 	}
 }
 
-// InstallTrivy installiert Trivy auf dem LCM-Host (Aqua-APT-Repo + apt install).
-// Nur für den LCM-Host und nur auf apt-Systemen. Nach dem Job wird der
-// Paketbestand neu erfasst (Trivy erscheint dann im Inventar), und LCM aktiviert
-// den CVE-Scan selbsttätig (Trivy ist dann verfügbar).
+// InstallTrivy installiert Trivy samt Sandbox auf dem LCM-Host (Aqua-APT-Repo,
+// bubblewrap und trivy in einem Lauf, siehe trivyInstallScript). Nur für den
+// LCM-Host und nur auf apt-Systemen. Nach dem Job wird der Paketbestand neu
+// erfasst (Trivy erscheint dann im Inventar), die Sandbox-Erkennung neu
+// ausgewertet, damit der Scanner ohne Neustart gesperrt läuft, und LCM
+// aktiviert den CVE-Scan selbsttätig (Trivy ist dann verfügbar).
 func (s *ServerService) InstallTrivy(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
 	server, err := s.requireLcmHostApt(scope, id)
 	if err != nil {
@@ -201,19 +211,30 @@ func (s *ServerService) InstallTrivy(scope repositories.AccessScope, id uint, ac
 	}
 	script := trivyHostScript(server)
 	job, err := s.startPackageJob(scope, id, domain.RuleTypeScript,
-		"Trivy installieren & einrichten", func(string) string { return script }, actor)
+		"Trivy mit Sandbox installieren & einrichten", func(string) string { return script }, actor)
 	if err != nil {
 		return nil, err
 	}
-	if s.enableCVEScan != nil {
-		jobID := job.ID
-		safego.Go("lcm-host:enable-cve-scan", func() {
-			if s.waitJobTerminal(jobID) {
-				_ = s.enableCVEScan()
-			}
-		})
-	}
+	jobID := job.ID
+	safego.Go("lcm-host:trivy-installed", func() {
+		if !s.waitJobTerminal(jobID) {
+			return
+		}
+		s.recheckSandbox("after trivy install")
+		if s.enableCVEScan != nil {
+			_ = s.enableCVEScan()
+		}
+	})
 	return job, nil
+}
+
+// recheckSandbox wertet die Sandbox-Erkennung nach der Installation von
+// bubblewrap neu aus. Der Scanner merkt sich seinen Status ebenfalls - sonst
+// zeigte die Oberfläche trotz aktiver Sandbox weiter den alten Stand.
+func (s *ServerService) recheckSandbox(reason string) {
+	st := sandbox.Recheck()
+	s.forgetScannerInfo()
+	slog.Info("sandbox rechecked", "reason", reason, "active", st.Active, "backend", st.Backend, "detail", st.Reason)
 }
 
 // trivyPackage ist der Name des Trivy-Pakets aus dem Aqua-APT-Repo.
@@ -274,7 +295,9 @@ func (s *ServerService) forgetScannerInfo() {
 
 // InstallSandbox rüstet die Sandbox des CVE-Scanners nach (bubblewrap) und
 // wertet die Erkennung anschließend neu aus - ohne Neustart des Dienstes.
-// Nur für den LCM-Host und nur auf apt-Systemen.
+// Gedacht für ältere Installationen, auf denen Trivy ohne Sandbox eingerichtet
+// wurde; InstallTrivy bringt sie von Anfang an mit. Nur für den LCM-Host und
+// nur auf apt-Systemen.
 func (s *ServerService) InstallSandbox(scope repositories.AccessScope, id uint, actor string) (*domain.Job, error) {
 	server, err := s.requireLcmHostApt(scope, id)
 	if err != nil {
@@ -288,14 +311,9 @@ func (s *ServerService) InstallSandbox(scope repositories.AccessScope, id uint, 
 	}
 	jobID := job.ID
 	safego.Go("lcm-host:recheck-sandbox", func() {
-		if !s.waitJobTerminal(jobID) {
-			return
+		if s.waitJobTerminal(jobID) {
+			s.recheckSandbox("after retrofit")
 		}
-		st := sandbox.Recheck()
-		// Der Scanner merkt sich seinen Status ebenfalls - sonst zeigte die
-		// Oberfläche trotz aktiver Sandbox weiter den alten Stand.
-		s.forgetScannerInfo()
-		slog.Info("sandbox rechecked after retrofit", "active", st.Active, "backend", st.Backend, "reason", st.Reason)
 	})
 	return job, nil
 }

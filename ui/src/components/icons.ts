@@ -53,6 +53,7 @@ const paths = {
   undo: svg`<path d="M9 8 4.5 12.5 9 17"/><path d="M5 12.5h9a5.5 5.5 0 0 1 0 11"/>`,
   bolt: svg`<path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/>`,
   download: svg`<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>`,
+  upload: svg`<path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 19.5h14"/>`,
   bell: svg`<path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z"/><path d="M10 21h4"/>`,
   logout: svg`<path d="M10 4.5H6.5A2.5 2.5 0 0 0 4 7v10a2.5 2.5 0 0 0 2.5 2.5H10M15 8l4 4-4 4M19 12H9.5"/>`,
   keyboard: svg`<rect x="2.5" y="6" width="19" height="12" rx="3"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7 14h10"/>`,

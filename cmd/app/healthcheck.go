@@ -9,6 +9,7 @@ import (
 
 	"LCM/internal/config"
 	"LCM/internal/infrastructure/tlsx"
+	"LCM/internal/runtimeport"
 )
 
 // healthcheckTimeout: Ein Dienst, der binnen fuenf Sekunden nicht auf seinen
@@ -39,8 +40,14 @@ func runHealthcheck(configPath, dataDir string) error {
 	}
 
 	// Immer ueber den Loopback: Die Bind-Adresse ist im Container 0.0.0.0,
-	// und die ist keine Zieladresse.
-	addr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
+	// und die ist keine Zieladresse. Den Port kennt die config.json nur als
+	// Vorgabe: Die Einstellungen koennen ihn aendern, der laufende Dienst
+	// merkt sich den aktuellen im Datenverzeichnis.
+	port := cfg.Port
+	if running, ok := runtimeport.Read(dir); ok {
+		port = running
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	// Ob der laufende Dienst TLS spricht, haengt an seinem --dev-Flag - das
 	// sieht dieser Prozess nicht. Deshalb erst HTTPS (der Regelfall) und nur

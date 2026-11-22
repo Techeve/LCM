@@ -3,9 +3,10 @@
 // Sicherheitsvorgabe: LCM kommuniziert im produktiven Betrieb zwingend
 // über HTTPS. Beim ersten Start entsteht eine eigene CA (ca.go), die das
 // Server-Zertifikat ausstellt und monatlich erneuert (issue.go) -
-// out-of-the-box HTTPS. Alternativ kann ein eigenes Zertifikat hinterlegt
-// werden. Unverschlüsseltes HTTP ist nur im Entwicklungsmodus (--dev)
-// erlaubt.
+// out-of-the-box HTTPS. Eigene Zertifikate kommen über den Pool dazu
+// (pool.go): Er liefert beim Handshake das zum Namen passende aus, und das
+// der CA bleibt der Rückfall. Unverschlüsseltes HTTP ist nur im
+// Entwicklungsmodus (--dev) erlaubt.
 package tlsx
 
 import (
@@ -42,23 +43,21 @@ func fingerprintOf(der []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// PublicKeyPin liefert den Pin des öffentlichen Schlüssels im Format von
+// CurlKeyPin liefert den Pin des öffentlichen Schlüssels im Format von
 // curl --pinnedpubkey: SHA-256 über die SubjectPublicKeyInfo, Base64. Damit
 // nimmt der Join-Befehl das Zertifikat der eigenen CA nur an, wenn es den
 // Schlüssel genau dieses LCM trägt - ein -k ohne Pin nähme jedes an. Der
 // Schlüssel wechselt monatlich, der Befehl wird aber jedes Mal frisch
 // erzeugt.
-func PublicKeyPin(certPath string) (string, error) {
-	der, err := firstCertificate(certPath)
-	if err != nil {
-		return "", err
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		return "", fmt.Errorf("zertifikat in %s: %w", certPath, err)
-	}
+func CurlKeyPin(cert *x509.Certificate) string {
 	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
-	return base64.StdEncoding.EncodeToString(sum[:]), nil
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// CertFingerprint ist der SHA-256 eines Zertifikats (hex), wie ihn der Agent
+// im Token führt.
+func CertFingerprint(cert *x509.Certificate) string {
+	return fingerprintOf(cert.Raw)
 }
 
 // firstCertificate liest das erste Zertifikat einer PEM-Datei - das des

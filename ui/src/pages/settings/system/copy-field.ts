@@ -35,7 +35,7 @@ export class LcmCopyField extends LitElement {
       .box {
         position: relative;
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         gap: var(--space-3);
         padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
         border-radius: var(--radius-m);
@@ -54,11 +54,23 @@ export class LcmCopyField extends LitElement {
         overflow-wrap: anywhere;
         white-space: pre-wrap;
       }
+      /* Mehrzeilig sitzt der Knopf oben, und die erste Zeile steht auf seiner Höhe. */
+      :host([block]) .box {
+        align-items: flex-start;
+      }
       :host(:not([block])) .value {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
         overflow-wrap: normal;
+      }
+      /* Schmal bricht der Wert um, statt hinter dem Kopierknopf abgeschnitten zu werden. */
+      @media (max-width: 30rem) {
+        :host(:not([block])) .value {
+          white-space: normal;
+          overflow-wrap: anywhere;
+          text-overflow: clip;
+        }
       }
     `,
   ];

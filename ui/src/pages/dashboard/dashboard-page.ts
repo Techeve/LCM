@@ -2,6 +2,7 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import '../../components/lcm-button';
 import '../../components/lcm-card';
 import '../../components/lcm-empty-state';
+import '../../components/lcm-notice';
 import '../../components/lcm-skeleton';
 import '../../components/lcm-status-tile';
 import { DASHBOARD_URL, type Dashboard } from '../../api/dashboard';

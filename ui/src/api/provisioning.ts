@@ -159,12 +159,34 @@ export async function onboardingPublicKey(): Promise<string> {
 export interface AgentListener {
   port: number;
   url: string;
+  /** Die Adresse hat keinen Port, LCM lauscht aber nicht auf 443: Ohne Reverse Proxy davor läuft der Befehl ins Leere. */
+  needsProxy?: boolean;
+  /** Der Agent ist in den Einstellungen ausgeschaltet; ein neuer Agent käme nicht an. Unbekannt gilt als an. */
+  enabled?: boolean;
+}
+
+interface SystemInfo {
+  agent_port?: number;
+  agent_url?: string;
+  agent_url_needs_proxy?: boolean;
+  agent_enabled?: boolean;
+}
+
+/** Schalter „Agent“: aus den Systeminformationen, sonst aus den globalen Einstellungen (nur mit Recht darauf lesbar). */
+async function agentEnabled(info: SystemInfo): Promise<boolean> {
+  if (typeof info.agent_enabled === 'boolean') return info.agent_enabled;
+  try {
+    const settings = await api.get<{ agent_enabled?: boolean }>('/api/v1/settings/global');
+    return settings.agent_enabled !== false;
+  } catch {
+    return true;
+  }
 }
 
 export async function agentListener(): Promise<AgentListener> {
   try {
-    const info = await api.get<{ agent_port?: number; agent_url?: string }>('/api/v1/system/info');
-    return { port: info.agent_port ?? 0, url: info.agent_url ?? '' };
+    const info = await api.get<SystemInfo>('/api/v1/system/info');
+    return { port: info.agent_port ?? 0, url: info.agent_url ?? '', needsProxy: info.agent_url_needs_proxy ?? false, enabled: await agentEnabled(info) };
   } catch {
     return { port: 0, url: '' };
   }

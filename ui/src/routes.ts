@@ -31,6 +31,7 @@ export const routes: Route[] = [
   { path: '/linux-aktivierung/*', redirect: ({ '*': rest }) => under('/linux-activate', rest), public: true },
   { path: '/aktivierung/*', redirect: ({ '*': rest }) => under('/activate', rest), public: true },
   { path: '/servers/by-name/:name', redirect: ({ name }) => serverPathByName(name) },
+  { path: '/setup/addresses', redirect: () => '/setup' },
   { path: '/settings/profiles', redirect: () => '/linux-users/profiles' },
   { path: '/settings/profile-blocks', redirect: () => '/linux-users/profile-blocks' },
   { path: '/settings', redirect: settingsHome },
@@ -46,6 +47,7 @@ export const routes: Route[] = [
   { path: '/containers/*', tag: 'lcm-page-containers', load: () => import('./pages/containers/containers-page') },
   { path: '/jobs/:id?', tag: 'lcm-page-jobs', load: () => import('./pages/jobs/jobs-page') },
   { path: '/settings/:section', tag: 'lcm-page-settings', load: () => import('./pages/settings-page') },
+  { path: '/setup', tag: 'lcm-page-setup', load: () => import('./pages/setup/setup-page') },
   { path: '/account/:section?', tag: 'lcm-page-account', load: () => import('./pages/account/account-page') },
 
   { path: '/login', tag: 'lcm-page-login', load: () => import('./pages/login-page'), public: true },

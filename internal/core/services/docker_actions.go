@@ -372,10 +372,9 @@ func (s *ServerService) startDockerJob(server *domain.Server, plan dockerPlan, a
 		return nil, err // u.a. ErrServerBusy → der Controller mappt auf 409
 	}
 	s.audit.Log(actor, "server.docker-update", "server", server.ID, plan.name)
-	safego.GoCleanup("job:docker", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:docker", job, func() {
 		s.runDockerJob(job, server, plan.script, actor, plan.rescanCVEs)
-	})
-	return job, nil
+	}), nil
 }
 
 // runDockerJob führt das Docker-Skript auf dem Server aus (protokolliert,

@@ -113,10 +113,10 @@ func createCA(certPath, keyPath string, notBefore time.Time) error {
 	if err != nil {
 		return err
 	}
-	if err := replaceFile(keyPath, keyPEM, 0o600); err != nil {
+	if err := ReplaceFile(keyPath, keyPEM, 0o600); err != nil {
 		return err
 	}
-	return replaceFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)
+	return ReplaceFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)
 }
 
 // caTemplate: Wurzel-CA, die nur Server-Zertifikate ausstellt (pathlen 0).

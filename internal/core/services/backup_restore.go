@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"LCM/internal/config"
+	"LCM/internal/infrastructure/acmex"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/tlsx"
 )
@@ -192,6 +193,14 @@ func ApplyStagedRestore(dataDir, configPath string) (bool, error) {
 		}
 	}
 
+	// Dazu gehören auch die hochgeladenen Zertifikate.
+	if err := restoreTLSUploads(staging, dataDir); err != nil {
+		return false, err
+	}
+	if err := restoreACMEFiles(staging, dataDir); err != nil {
+		return false, err
+	}
+
 	// 2. DatabasePath aus der JETZT wiederhergestellten Konfiguration bestimmen.
 	dbPath := filepath.Join(dataDir, "app.db")
 	if cfg, err := config.LoadFrom(configPath); err == nil && cfg.DatabasePath != "" {
@@ -217,6 +226,59 @@ func ApplyStagedRestore(dataDir, configPath string) (bool, error) {
 	}
 	slog.Info("restore applied", "database", dbPath)
 	return true, nil
+}
+
+// restoreTLSUploads legt die hochgeladenen Zertifikate aus dem Staging
+// wieder unter <dataDir>/tls/uploads/<id>/ ab. Das Archiv ist flach: Der
+// Name trägt ID und Datei (tlsx.UploadBackupPrefix), alles andere im
+// Staging bleibt unberührt. Danach entsprechen die Uploads genau dem Stand
+// der Sicherung: Was erst nach ihr hinzukam, wird entfernt.
+func restoreTLSUploads(staging, dataDir string) error {
+	entries, err := os.ReadDir(staging)
+	if err != nil {
+		return fmt.Errorf("restore tls-uploads: %w", err)
+	}
+	restored := map[string]bool{}
+	for _, e := range entries {
+		dst, ok := tlsx.UploadRestoreTarget(dataDir, e.Name())
+		if !ok {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return fmt.Errorf("restore %s: %w", e.Name(), err)
+		}
+		if err := moveFile(filepath.Join(staging, e.Name()), dst, 0o600); err != nil {
+			return fmt.Errorf("restore %s: %w", e.Name(), err)
+		}
+		restored[filepath.Base(filepath.Dir(dst))] = true // die Upload-ID
+	}
+	if err := tlsx.PruneUploads(dataDir, restored); err != nil {
+		return fmt.Errorf("restore tls-uploads: %w", err)
+	}
+	return nil
+}
+
+// restoreACMEFiles legt Konto und Zertifikate von ACME aus dem Staging wieder
+// unter <dataDir>/tls/acme/ ab (Namen: acmex.BackupPrefix). Was nach der
+// Sicherung dazukam, räumt der nächste ACME-Lauf als nicht mehr benötigt ab.
+func restoreACMEFiles(staging, dataDir string) error {
+	entries, err := os.ReadDir(staging)
+	if err != nil {
+		return fmt.Errorf("restore acme: %w", err)
+	}
+	for _, e := range entries {
+		dst, ok := acmex.RestoreTarget(dataDir, e.Name())
+		if !ok {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return fmt.Errorf("restore %s: %w", e.Name(), err)
+		}
+		if err := moveFile(filepath.Join(staging, e.Name()), dst, 0o600); err != nil {
+			return fmt.Errorf("restore %s: %w", e.Name(), err)
+		}
+	}
+	return nil
 }
 
 // restoredDatabasePathAllowed prüft den Datenbankpfad, den die Konfiguration

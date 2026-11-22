@@ -6,10 +6,14 @@ description: nginx/Caddy vor der Weboberfläche - TLS, Anmelde-Bremse, Body-Limi
 ---
 
 LCM spricht ab Werk HTTPS mit einem selbstsignierten Zertifikat und bindet die
-Weboberfläche an `127.0.0.1`. Für eine Installation, die über das eigene Netz
-hinaus erreichbar ist, gehört ein Reverse-Proxy davor - er terminiert TLS mit
-einem echten Zertifikat, bremst Anmeldeversuche über **alle** Quellen hinweg
-und begrenzt, was überhaupt bis zu LCM durchkommt.
+Weboberfläche an `127.0.0.1`. Ein Reverse-Proxy ist **optional**: LCM liefert
+auch ein eigenes Zertifikat oder eines von Let's Encrypt aus, auf Wunsch
+gemeinsam mit Agent und MCP auf Port 443
+([Zertifikate, Let's Encrypt & Port 443](/guides/zertifikate/)). Für eine
+Installation, die über das eigene Netz hinaus erreichbar ist, lohnt sich ein
+Proxy trotzdem: Er terminiert TLS mit einem echten Zertifikat, bremst
+Anmeldeversuche über **alle** Quellen hinweg und begrenzt, was überhaupt bis zu
+LCM durchkommt.
 
 Diese Seite behandelt den **UI/REST-Port** (`9310`). Der Agent-Port hat eigene
 Anforderungen (dauerhafte WebSocket-Verbindung, Zertifikats-Pin) und eine eigene
@@ -36,7 +40,10 @@ bevor er den Go-Prozess überhaupt erreicht.
 Hinter einem Proxy sieht LCM als direkte Gegenstelle nur den Proxy. Damit
 IP-Allowlist, Anmeldesperre und Protokolle den echten Client sehen, schreibt
 der Proxy `X-Forwarded-For`, und LCM liest es - aber **nur von Adressen, die
-in `trusted_proxies` stehen**:
+in `trusted_proxies` stehen**. Beides stellst du in den Einstellungen ein (im
+Einrichtungsassistenten beim Schritt „Zertifikat“ unter „Reverse-Proxy davor“)
+oder über `PATCH /api/v1/settings/global`. In der `config.json` stehen dieselben
+Schlüssel:
 
 ```json
 {
@@ -47,7 +54,10 @@ in `trusted_proxies` stehen**:
 
 Einträge sind IP-Adressen, CIDR-Bereiche oder die Schlüsselwörter
 `localhost`/`private`. Kommt eine Anfrage von einer anderen Adresse, zählt
-die Kopfzeile nicht - die Peer-Adresse gilt.
+die Kopfzeile nicht - die Peer-Adresse gilt. LCM lehnt Bereiche über alle
+Adressen (`0.0.0.0/0`, `::/0`) ab, ebenso eine leere Liste bei eingeschaltetem
+`trust_proxy_header`: Mit `0.0.0.0/0` gäbe sich jeder Client mit einer
+gefälschten Kopfzeile jede Adresse.
 
 LCM liest die Kopfzeile von rechts. Jeder Proxy hängt die Adresse, von der er
 die Anfrage bekam, hinten an. Die erste Adresse von rechts, die kein vertrauter
@@ -70,7 +80,7 @@ Browser*): Ohne vertrauten Proxy gilt jede Anfrage hinter dem Proxy als HTTP, di
 Option ist gesperrt, und ein Login läuft als Arbeitsspeicher-Sitzung. Der Proxy muss
 `X-Forwarded-Proto` also setzen (die Referenzkonfigurationen unten tun das).
 
-Nach der Änderung Dienst neu starten. Prüfen: Fehlversuche im Journal tragen
+Die Änderung wirkt sofort, ohne Neustart. Prüfen: Fehlversuche im Journal tragen
 die Client-Adresse, nicht die des Proxys:
 
 ```sh
@@ -165,8 +175,9 @@ proxy_set_header X-Forwarded-Proto $scheme;
 proxy_ssl_verify off;
 ```
 
-Dazu in LCM: `"trusted_proxies": ["127.0.0.1"]` und `public_base_url` auf
-`https://lcm.example.com`.
+Dazu in LCM: `"trusted_proxies": ["127.0.0.1"]` und die Adresse der
+Weboberfläche (`public_base_url`) auf `https://lcm.example.com`, im Adressmodus A
+([Öffentliche Adressen & Adressmodus](/guides/adressen/#modus-a-hinter-einem-reverse-proxy)).
 
 ## Caddy
 
@@ -193,9 +204,10 @@ Sonderbehandlung. Eine Anfragen-Bremse gibt es in Caddy nur als Erweiterung
   Rechner. Muss LCM auf einer Netzschnittstelle lauschen, gehört eine
   Host-Firewall davor, die Port 9310 nur vom Proxy zulässt - sonst greift
   `trusted_proxies` als zweite Linie.
-- **IP-Allowlist zusätzlich.** Erreichen nur bekannte Netze die Oberfläche
-  (Büro, VPN), sperrt `allowed_ips` alle anderen, bevor die Anmeldung überhaupt
-  antwortet - siehe [IP-Allowlist](/guides/security-cve/#netzwerk-zugriff-auf-lcm-einschränken-ip-allowlist).
+- **Netzbereiche zusätzlich.** Erreichen nur bekannte Netze die Oberfläche
+  (Büro, VPN), sperrt `allowed_ips` (oder der Bereich in der Oberfläche) alle
+  anderen, bevor die Anmeldung überhaupt antwortet - siehe
+  [Erlaubte Netzbereiche](/guides/netzbereiche/).
 - **fail2ban** kann das Sicherheitsprotokoll lesen. Muster für die
   Anmeldefehler: `security event=login.failed ip=<HOST>`, Journal-Einheit
   `lcm`. Die Adresse ist die des Clients, sobald `trusted_proxies` stimmt.

@@ -110,9 +110,7 @@ func srv0URL(r *http.Request) string { return "http://" + r.Host }
 func TestSubscriptionAktivierungSpeichertVerschluesselt(t *testing.T) {
 	svc, settingsRepo := newSubscriptionEnv(t)
 	srv, state := fakeSubscriptionServer(t)
-	if err := settingsRepo.UpdateFields(map[string]any{"subscription_service_url": srv.URL}); err != nil {
-		t.Fatal(err)
-	}
+	svc.serviceBase = srv.URL
 
 	if _, err := svc.Activate("LCM-E-ABCDE-FGHJK-MNPQR-STUVW", "admin"); err != nil {
 		t.Fatalf("aktivierung: %v", err)
@@ -149,7 +147,7 @@ func TestSubscriptionAktivierungSpeichertVerschluesselt(t *testing.T) {
 func TestSubscriptionAktivierungKonflikt(t *testing.T) {
 	svc, settingsRepo := newSubscriptionEnv(t)
 	srv, state := fakeSubscriptionServer(t)
-	_ = settingsRepo.UpdateFields(map[string]any{"subscription_service_url": srv.URL})
+	svc.serviceBase = srv.URL
 	state.ActivateStatus = 409
 
 	_, err := svc.Activate("LCM-E-ABCDE-FGHJK-MNPQR-STUVW", "admin")
@@ -167,7 +165,7 @@ func TestSubscriptionAktivierungKonflikt(t *testing.T) {
 func TestSubscriptionVerifyUebernimmtStand(t *testing.T) {
 	svc, settingsRepo := newSubscriptionEnv(t)
 	srv, state := fakeSubscriptionServer(t)
-	_ = settingsRepo.UpdateFields(map[string]any{"subscription_service_url": srv.URL})
+	svc.serviceBase = srv.URL
 	if _, err := svc.Activate("LCM-E-ABCDE-FGHJK-MNPQR-STUVW", "admin"); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +213,7 @@ func TestSubscriptionVerifyUebernimmtStand(t *testing.T) {
 func TestSubscriptionRemove(t *testing.T) {
 	svc, settingsRepo := newSubscriptionEnv(t)
 	srv, _ := fakeSubscriptionServer(t)
-	_ = settingsRepo.UpdateFields(map[string]any{"subscription_service_url": srv.URL})
+	svc.serviceBase = srv.URL
 	if _, err := svc.Activate("LCM-E-ABCDE-FGHJK-MNPQR-STUVW", "admin"); err != nil {
 		t.Fatal(err)
 	}
@@ -259,9 +257,9 @@ func TestInstanzIDBleibtStabil(t *testing.T) {
 // angelegt werden darf trotzdem beliebig viel (keine Durchsetzung). Ohne
 // hinterlegtes Kontingent (0) gibt es keinen Hinweis.
 func TestSubscriptionKontingentHinweis(t *testing.T) {
-	svc, settingsRepo := newSubscriptionEnv(t)
+	svc, _ := newSubscriptionEnv(t)
 	srv, state := fakeSubscriptionServer(t)
-	_ = settingsRepo.UpdateFields(map[string]any{"subscription_service_url": srv.URL})
+	svc.serviceBase = srv.URL
 	if _, err := svc.Activate("LCM-E-ABCDE-FGHJK-MNPQR-STUVW", "admin"); err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +351,7 @@ func TestEnterpriseChannelScriptRedaction(t *testing.T) {
 // fehlgeschlagener Prüfung enthalten, der Rückweg die Leere-Quellen-Sperre.
 func TestChannelScriptsRollback(t *testing.T) {
 	script := enterpriseChannelScript("https://repo.example/enterprise", "i", "s")
-	for _, must := range []string{"mv \"$COM\" \"$COM.disabled\"", "rm -f \"$AUTH\" \"$ENT\"", "chmod 0600", "Dir::Etc::sourcelist"} {
+	for _, must := range []string{"mv \"$COM.disabled\" \"$COM\"", "Pin: release a=community", "rm -f \"$AUTH\" \"$ENT\"", "chmod 0600", "Dir::Etc::sourcelist"} {
 		if !strings.Contains(script, must) {
 			t.Errorf("Umstell-Skript ohne %q", must)
 		}
@@ -361,5 +359,30 @@ func TestChannelScriptsRollback(t *testing.T) {
 	revert := communityRevertScript()
 	if !strings.Contains(revert, "exit 1") || !strings.Contains(revert, "ohne LCM-Paketquelle") {
 		t.Error("der Rückweg muss abbrechen, wenn keine Community-Quelle da ist - nie ohne Paketquelle zurücklassen")
+	}
+}
+
+// Die Adresse des Subscription-Dienstes ist fest: Auch ein Wert, der aus einer
+// früheren Fassung noch in der Datenbank steht, ändert sie nicht.
+func TestSubscriptionDienstAdresseIstFest(t *testing.T) {
+	svc, _, db := newSubscriptionEnvDB(t)
+	if got := svc.serviceURL(); got != "https://repo.techeve.de" {
+		t.Fatalf("Dienst-Adresse = %q", got)
+	}
+	if err := db.Exec("ALTER TABLE global_settings ADD COLUMN subscription_service_url text").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("UPDATE global_settings SET subscription_service_url = ?", "https://evil.example").Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.serviceURL(); got != "https://repo.techeve.de" {
+		t.Errorf("Dienst-Adresse nach altem DB-Wert = %q", got)
+	}
+	view, err := svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view == nil {
+		t.Fatal("kein Status")
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"LCM/internal/core/domain"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -91,10 +90,9 @@ func (s *ServerService) InstallCrowdSecLapi(scope repositories.AccessScope, id u
 		return nil, err
 	}
 	s.audit.Log(actor, "server.crowdsec-lapi", "server", id, server.Name)
-	safego.GoCleanup("job:crowdsec-lapi", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:crowdsec-lapi", job, func() {
 		s.runCrowdSecLapiJob(job, server, in, actor)
-	})
-	return job, nil
+	}), nil
 }
 
 func (s *ServerService) runCrowdSecLapiJob(job *domain.Job, server *domain.Server, in LapiInstallInput, actor string) {

@@ -10,11 +10,18 @@
 #   REPO_PASS  Basic-Auth-Passwort (masked)
 # Optional:
 #   REPO_NAME       aptly-Repo-Name          (Default: techeve)
-#   DISTRO          zu publizierende Suite   (Default: stable)
+#   DISTRO          zu publizierende Suite   (Default: community; der Server
+#                   spiegelt das selbständig in die alte Suite "stable")
 #   PUBLISH_PREFIX  aptly-Publish-Prefix     (Default: ":." = Wurzel;
-#                   der Enterprise-Kanal nutzt "enterprise", damit sein
-#                   pool/-Baum hinter der Zugriffskontrolle liegt)
+#                   der Enterprise-Kanal nutzt "enterprise/lcm" mit der Suite
+#                   "enterprise", damit sein pool/-Baum hinter der
+#                   Zugriffskontrolle liegt). Öffentlich heißt der Pfad
+#                   "enterprise/lcm/dists/enterprise/..."; nur die aptly-API
+#                   kodiert den Prefix um (siehe API_PREFIX).
 #   GPG_KEY    signing key            (default: repo@techeve.de)
+#   REPO_PUBLIC_URL  öffentliche Adresse der Kanäle für die Gegenprobe
+#                   (Default: https://repo.techeve.de). Die Upload-Adresse
+#                   REPO_URL liefert seit dem Umzug auf RSM keine Indizes aus.
 #
 # Die Kanal-Zuordnung (Branch → REPO_NAME/DISTRO/PUBLISH_PREFIX) trifft die CI
 # (.gitlab-ci.yml, Job deploy:apt); das Kanal-Layout auf dem Server beschreibt
@@ -25,9 +32,20 @@ set -euo pipefail
 : "${REPO_USER:?REPO_USER erforderlich}"
 : "${REPO_PASS:?REPO_PASS erforderlich}"
 REPO_NAME="${REPO_NAME:-techeve}"
-DISTRO="${DISTRO:-stable}"
+DISTRO="${DISTRO:-community}"
 PUBLISH_PREFIX="${PUBLISH_PREFIX:-:.}"
 GPG_KEY="${GPG_KEY:-repo@techeve.de}"
+REPO_PUBLIC_URL="${REPO_PUBLIC_URL:-https://repo.techeve.de}"
+
+# Die aptly-API kodiert den Prefix in der URL: "_" wird "__", "/" wird "_"
+# ("enterprise/lcm" -> "enterprise_lcm"). Die Wurzel ":." bleibt, wie sie ist.
+API_PREFIX="${PUBLISH_PREFIX//_/__}"
+API_PREFIX="${API_PREFIX//\//_}"
+
+# Der Enterprise-Kanal liegt unter "enterprise" oder "enterprise/<name>".
+is_enterprise() {
+  case "${PUBLISH_PREFIX}" in enterprise | enterprise/*) return 0 ;; *) return 1 ;; esac
+}
 
 shopt -s nullglob
 DEBS=(bin/*.deb)
@@ -47,7 +65,7 @@ for deb in "${DEBS[@]}"; do
   name="$(basename "$deb")"
   case "$name" in
     lcm-agent_*)
-      if [ "${PUBLISH_PREFIX}" = "enterprise" ]; then
+      if is_enterprise; then
         echo "   (übersprungen, gehört nicht in den Enterprise-Kanal: ${name})"
         continue
       fi ;;
@@ -79,7 +97,7 @@ ${CURL} -X POST "${REPO_URL}/api/repos/${REPO_NAME}/file/${UPDIR}" >/dev/null
 echo ">> 3/3 Suite '${DISTRO}' (Prefix '${PUBLISH_PREFIX}') neu publizieren und signieren"
 ${CURL} -X PUT -H "Content-Type: application/json" \
   --data "{\"Signing\":{\"Batch\":true,\"GpgKey\":\"${GPG_KEY}\"}}" \
-  "${REPO_URL}/api/publish/${PUBLISH_PREFIX}/${DISTRO}" >/dev/null
+  "${REPO_URL}/api/publish/${API_PREFIX}/${DISTRO}" >/dev/null
 
 # Gegenprobe: Steht die soeben gelieferte Version auch WIRKLICH im
 # veröffentlichten Index?
@@ -93,10 +111,10 @@ VERSION_FILE="${VERSION_FILE:-VERSION}"
 if [ -f "$VERSION_FILE" ]; then
   WANT="$(tr -d ' \n' < "$VERSION_FILE" | tr '-' '~')"   # 1.16.1-beta.1 -> 1.16.1~beta.1
   case "${PUBLISH_PREFIX}" in
-    ":.") IDX="${REPO_URL}/dists/${DISTRO}/main/binary-amd64/Packages" ;;
-    *)    IDX="${REPO_URL}/${PUBLISH_PREFIX}/dists/${DISTRO}/main/binary-amd64/Packages" ;;
+    ":.") IDX="${REPO_PUBLIC_URL}/dists/${DISTRO}/main/binary-amd64/Packages" ;;
+    *)    IDX="${REPO_PUBLIC_URL}/${PUBLISH_PREFIX}/dists/${DISTRO}/main/binary-amd64/Packages" ;;
   esac
-  if [ "${PUBLISH_PREFIX}" = "enterprise" ]; then
+  if is_enterprise; then
     # Der Enterprise-Kanal ist zugangsgeschützt - ein Abruf des Index ohne
     # Subscription-Key antwortet mit 401, und einen Key hat die CI bewusst
     # nicht. Die Gegenprobe läuft deshalb über die aptly-API und prüft die
@@ -110,11 +128,12 @@ if [ -f "$VERSION_FILE" ]; then
     # Zusammen heißt das: genau sie wird ausgeliefert.
     echo ">> Gegenprobe (Enterprise): Kanal ist zugangsgeschützt - Prüfung über die aptly-API"
     PUB_STATE="$(${CURL} "${REPO_URL}/api/publish")"
-    PUB_SOURCE="$(jq -r --arg d "${DISTRO}" \
-      '.[] | select(.Prefix=="enterprise" and .Distribution==$d) | .SourceKind + " " + (.Sources[].Name)' \
+    # Die Liste nennt den Prefix unkodiert ("enterprise/lcm"), nicht wie die URL.
+    PUB_SOURCE="$(jq -r --arg p "${PUBLISH_PREFIX}" --arg d "${DISTRO}" \
+      '.[] | select(.Prefix==$p and .Distribution==$d) | .SourceKind + " " + (.Sources[].Name)' \
       <<<"${PUB_STATE}")"
     if [ "${PUB_SOURCE}" != "local ${REPO_NAME}" ]; then
-      echo "FEHLER: Publish-Punkt 'enterprise/${DISTRO}' hängt nicht am lokalen Repo '${REPO_NAME}'"
+      echo "FEHLER: Publish-Punkt '${PUBLISH_PREFIX}/${DISTRO}' hängt nicht am lokalen Repo '${REPO_NAME}'"
       echo "  (ist: '${PUB_SOURCE:-nicht vorhanden}' - siehe packaging/repo-server/README.md, Migration)."
       exit 1
     fi
@@ -141,7 +160,9 @@ if [ -f "$VERSION_FILE" ]; then
     # Treffer, curl kann den Rest nicht mehr in die Pipe schreiben und meldet
     # exit 23 - der erste Beta-Lauf dieser Prüfung schlug genau daran fehl,
     # obwohl die Version längst im Index stand.
-    INDEX_CONTENT="$(${CURL} "${IDX}")"
+    # Ohne Zugangsdaten: Der öffentliche Index braucht keine, und die des
+    # Upload-Zugangs gehören nicht an die öffentliche Adresse.
+    INDEX_CONTENT="$(curl -fsS --retry 3 --retry-delay 2 "${IDX}")"
     if ! grep -qx "Version: ${WANT}" <<<"${INDEX_CONTENT}"; then
       echo "FEHLER: lcm ${WANT} steht NICHT im veröffentlichten Index."
       echo "  Die Pakete liegen im Repository '${REPO_NAME}', werden aber nicht ausgeliefert."

@@ -48,8 +48,8 @@ func newAptSandbox(t *testing.T) *aptSandbox {
 }
 
 // stubApt legt die Attrappen an: apt-get („update" liefert rc) und apt-cache
-// („policy" bzw. „policy lcm" liefern die vorgegebene Ausgabe) - also genau
-// die Aufrufe der Skripte.
+// („policy lcm" liefert die vorgegebene Ausgabe) - also genau die Aufrufe der
+// Skripte.
 func (s *aptSandbox) stubApt(t *testing.T, updateRC int) {
 	t.Helper()
 	write := func(name, body string) {
@@ -58,26 +58,12 @@ func (s *aptSandbox) stubApt(t *testing.T, updateRC int) {
 		}
 	}
 	write("apt-get", "#!/bin/sh\ncase \"$1\" in\n  update) exit "+itoa(updateRC)+" ;;\nesac\nexit 0\n")
-	write("apt-cache", "#!/bin/sh\ncase \"${2:-}\" in\n  lcm) printf '%s\\n' \"$STUB_POLICY_LCM\" ;;\n  *) printf '%s\\n' \"$STUB_POLICY\" ;;\nesac\n")
-}
-
-// labelled/unlabelled: die Ausgabe von „apt-cache policy" mit bzw. ohne
-// Kennzeichnung der Kanäle im Release-File.
-func (s *aptSandbox) policyLabelled() {
-	s.setEnv("STUB_POLICY", " 500 https://repo.example stable/main amd64 Packages\n"+
-		"     release o=TechEve,a=stable,n=stable,l="+aptLabelCommunity+",c=main,b=amd64\n"+
-		"     origin repo.example")
-}
-
-func (s *aptSandbox) policyUnlabelled() {
-	s.setEnv("STUB_POLICY", " 500 https://repo.example stable/main amd64 Packages\n"+
-		"     release o=.,a=stable,n=stable,c=main,b=amd64\n"+
-		"     origin repo.example")
+	write("apt-cache", "#!/bin/sh\nprintf '%s\\n' \"$STUB_POLICY_LCM\"\n")
 }
 
 // policyLcm gibt vor, woher lcm käme - die Grundlage der Gegenprobe.
 func (s *aptSandbox) policyLcm(candidate, source string) {
-	s.policyLcmSuite(candidate, source, "stable")
+	s.policyLcmSuite(candidate, source, "enterprise")
 }
 
 // policyLcmSuite ist dasselbe mit wählbarer Suite - im Beta-Kanal steht dort
@@ -133,12 +119,12 @@ func (s *aptSandbox) exists(path string) bool {
 const deb822Community = `# TechEve package repository
 Types: deb
 URIs: https://repo.example
-Suites: stable
+Suites: community
 Components: main
 Signed-By: /etc/apt/keyrings/techeve-repo.gpg
 `
 
-const entURL = "https://repo.example/enterprise"
+const entURL = "https://repo.example/enterprise/lcm"
 
 // betaFallback ist die Adresse, die der Dienst kennt - sie greift erst, wenn
 // sich aus den Quellen des Hosts keine ermitteln lässt.
@@ -154,15 +140,14 @@ func (s *aptSandbox) beta() string {
 	return betaChannelScriptIn(s.paths, betaFallback)
 }
 
-// TestKanaltrennungPerVorrangRegel: kennzeichnet der Repository-Server seine
-// Kanäle (Label im Release-File), bleibt die Community-Quelle aktiv - sie
+// TestKanaltrennungPerVorrangRegel: die Community-Quelle bleibt aktiv - sie
 // liefert schließlich auch andere Pakete - und nur die LCM-Pakete werden per
-// Vorrang-Regel auf den Enterprise-Kanal festgelegt.
+// Vorrang-Regel nach Suite auf den Enterprise-Kanal festgelegt. Die Regel
+// braucht keine Kennzeichnung im Release-File und greift immer.
 func TestKanaltrennungPerVorrangRegel(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.policyLcm("1.12.7", entURL)
 
 	out, err := sb.run(t, sb.enterprise())
@@ -173,18 +158,22 @@ func TestKanaltrennungPerVorrangRegel(t *testing.T) {
 	pref := sb.read(t, sb.paths.Pref)
 	for _, must := range []string{
 		"Package: " + aptPinnedPackages,
-		"Pin: release l=" + aptLabelCommunity,
-		"Pin: release l=" + aptLabelBeta,
+		"Pin: release a=community",
+		"Pin: release a=stable",
+		"Pin: release a=beta",
 		"Pin-Priority: -1",
 	} {
 		if !strings.Contains(pref, must) {
 			t.Errorf("Vorrang-Regel ohne %q:\n%s", must, pref)
 		}
 	}
+	if strings.Contains(pref, "l=") || strings.Contains(pref, "a=enterprise") {
+		t.Errorf("die Regel darf weder auf Labels bauen noch den Enterprise-Kanal sperren:\n%s", pref)
+	}
 	if com := sb.read(t, sb.paths.ComSources); strings.Contains(com, "Enabled: no") {
 		t.Errorf("die Community-Quelle wurde stillgelegt, obwohl die Vorrang-Regel greift:\n%s", com)
 	}
-	if !strings.Contains(out, "Gegenprobe: lcm 1.12.7 kommt aus "+entURL) {
+	if !strings.Contains(out, "Gegenprobe: lcm 1.12.7 kommt aus dem Enterprise-Kanal ("+entURL+")") {
 		t.Errorf("die Gegenprobe fehlt oder nennt die falsche Quelle:\n%s", out)
 	}
 	if strings.Contains(out, "WARNUNG") {
@@ -192,71 +181,70 @@ func TestKanaltrennungPerVorrangRegel(t *testing.T) {
 	}
 }
 
-// TestKanaltrennungOhneKennzeichnungLegtStill: trägt der Repository-Server
-// noch kein Label, ist die Vorrang-Regel wirkungslos - dann bleibt nur der
-// grobe Weg. Das muss im Protokoll stehen, samt Folge für andere Pakete.
-func TestKanaltrennungOhneKennzeichnungLegtStill(t *testing.T) {
+// TestKanaltrennungSchreibtEnterpriseQuelleMitSuite: die Quelle trägt die
+// Adresse aus der Subscription, die Suite enterprise und die Komponente main.
+func TestKanaltrennungSchreibtEnterpriseQuelleMitSuite(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyUnlabelled()
 	sb.policyLcm("1.12.7", entURL)
 
-	out, err := sb.run(t, sb.enterprise())
-	if err != nil {
+	if out, err := sb.run(t, sb.enterprise()); err != nil {
 		t.Fatalf("Umstellung fehlgeschlagen: %v\n%s", err, out)
 	}
-
-	com := sb.read(t, sb.paths.ComSources)
-	if !strings.Contains(com, "Enabled: no") {
-		t.Errorf("die Community-Quelle ist weiterhin aktiv - beide Kanäle nebeneinander:\n%s", com)
-	}
-	// Die Datei bleibt sonst unverändert: der Rückweg braucht sie vollständig.
-	for _, must := range []string{"URIs: https://repo.example", "Signed-By: /etc/apt/keyrings/techeve-repo.gpg"} {
-		if !strings.Contains(com, must) {
-			t.Errorf("Stilllegen hat %q verloren:\n%s", must, com)
-		}
-	}
-	if sb.exists(sb.paths.Pref) {
-		t.Error("eine Vorrang-Regel ohne Kennzeichnung wäre wirkungslos und darf nicht liegen bleiben")
-	}
-	if !strings.Contains(out, "kennzeichnet seine Kanäle noch nicht") {
-		t.Errorf("der grobe Weg wurde nicht begründet:\n%s", out)
+	want := "deb [signed-by=/etc/apt/keyrings/techeve-repo.gpg] " + entURL + " enterprise main\n"
+	if got := sb.read(t, sb.paths.Ent); got != want {
+		t.Errorf("Enterprise-Quelle: %q, erwartet %q", got, want)
 	}
 }
 
-// TestKanaltrennungHeiltStillgelegteQuelle: ein Host, der vor der
-// Kennzeichnung umgestellt wurde, hat die Community-Quelle stillgelegt. Wird
-// die Umstellung danach erneut angewandt, muss die Quelle zurückkommen und die
-// Vorrang-Regel ihre Stelle einnehmen - sonst verstellt der erste Lauf den
-// besseren Weg für immer.
+// TestKanaltrennungHeiltStillgelegteQuelle: ältere LCM-Versionen legten die
+// Community-Quelle beim Wechsel auf Enterprise still. Wird die Umstellung
+// danach erneut angewandt, muss die Quelle zurückkommen und die Vorrang-Regel
+// ihre Stelle einnehmen.
 func TestKanaltrennungHeiltStillgelegteQuelle(t *testing.T) {
-	sb := newAptSandbox(t)
-	sb.write(t, sb.paths.ComSources, deb822Community)
-	sb.stubApt(t, 0)
-	sb.policyLcm("1.12.7", entURL)
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, sb *aptSandbox)
+		check func(t *testing.T, sb *aptSandbox)
+	}{
+		{
+			name: "deb822",
+			setup: func(t *testing.T, sb *aptSandbox) {
+				sb.write(t, sb.paths.ComSources, strings.Replace(deb822Community, "Types: deb\n", "Types: deb\nEnabled: no\n", 1))
+			},
+			check: func(t *testing.T, sb *aptSandbox) {
+				if com := sb.read(t, sb.paths.ComSources); strings.Contains(com, "Enabled: no") {
+					t.Errorf("die Community-Quelle blieb stillgelegt:\n%s", com)
+				}
+			},
+		},
+		{
+			name: "klassisch",
+			setup: func(t *testing.T, sb *aptSandbox) {
+				sb.write(t, sb.paths.ComList+".disabled", "deb https://repo.example community main\n")
+			},
+			check: func(t *testing.T, sb *aptSandbox) {
+				if !sb.exists(sb.paths.ComList) || sb.exists(sb.paths.ComList+".disabled") {
+					t.Error("die klassische Community-Quelle blieb stillgelegt")
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sb := newAptSandbox(t)
+			tc.setup(t, sb)
+			sb.stubApt(t, 0)
+			sb.policyLcm("1.12.7", entURL)
 
-	sb.policyUnlabelled()
-	if out, err := sb.run(t, sb.enterprise()); err != nil {
-		t.Fatalf("erster Lauf: %v\n%s", err, out)
-	}
-	if com := sb.read(t, sb.paths.ComSources); !strings.Contains(com, "Enabled: no") {
-		t.Fatalf("Vorbedingung: die Quelle sollte stillgelegt sein:\n%s", com)
-	}
-
-	// Repository-Server kennzeichnet jetzt - zweiter Lauf.
-	sb.env = nil
-	sb.policyLabelled()
-	sb.policyLcm("1.12.7", entURL)
-	out, err := sb.run(t, sb.enterprise())
-	if err != nil {
-		t.Fatalf("zweiter Lauf: %v\n%s", err, out)
-	}
-	if com := sb.read(t, sb.paths.ComSources); strings.Contains(com, "Enabled: no") {
-		t.Errorf("die Community-Quelle blieb stillgelegt:\n%s", com)
-	}
-	if !sb.exists(sb.paths.Pref) {
-		t.Error("die Vorrang-Regel wurde nicht geschrieben")
+			if out, err := sb.run(t, sb.enterprise()); err != nil {
+				t.Fatalf("Umstellung fehlgeschlagen: %v\n%s", err, out)
+			}
+			tc.check(t, sb)
+			if !sb.exists(sb.paths.Pref) {
+				t.Error("die Vorrang-Regel wurde nicht geschrieben")
+			}
+		})
 	}
 }
 
@@ -267,8 +255,7 @@ func TestGegenprobeWarntBeiFalschemKanal(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
-	sb.policyLcm("1.12.8", "https://repo.example") // freier Kanal ist voraus
+	sb.policyLcmSuite("1.12.8", "https://repo.example", "community") // freier Kanal ist voraus
 
 	out, err := sb.run(t, sb.enterprise())
 	if err != nil {
@@ -285,7 +272,6 @@ func TestGegenprobeSchweigtOhneKandidat(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.setEnv("STUB_POLICY_LCM", "lcm:\n  Installed: 1.12.6\n  Candidate: 1.12.6\n  Version table:\n"+
 		" *** 1.12.6 100\n        100 /var/lib/dpkg/status")
 
@@ -298,20 +284,21 @@ func TestGegenprobeSchweigtOhneKandidat(t *testing.T) {
 	}
 }
 
-// TestEnterpriseWechselOhneCommunityQuelleSagtBescheid: findet sich gar keine
-// Community-Quelle, darf das nicht stillschweigend durchgehen.
-func TestEnterpriseWechselOhneCommunityQuelleSagtBescheid(t *testing.T) {
+// TestEnterpriseWechselOhneCommunityQuelle: fehlt die Community-Quelle, kommt
+// der Keyring aus dem Schlüsselbund-Suchmuster - und die Vorrang-Regel sperrt
+// die LCM-Pakete trotzdem, falls eine anders benannte Quelle auf einen freien
+// Kanal zeigt.
+func TestEnterpriseWechselOhneCommunityQuelle(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.stubApt(t, 0)
-	sb.policyUnlabelled()
 	sb.policyLcm("1.12.7", entURL)
 
 	out, err := sb.run(t, sb.enterprise())
 	if err != nil {
 		t.Fatalf("Umstellung fehlgeschlagen: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "keine Community-Paketquelle gefunden") {
-		t.Errorf("fehlende Community-Quelle wurde verschwiegen:\n%s", out)
+	if !sb.exists(sb.paths.Pref) {
+		t.Error("ohne Community-Quelle fehlt die Vorrang-Regel")
 	}
 }
 
@@ -321,7 +308,6 @@ func TestEnterpriseWechselRollbackStelltDeb822Wieder(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 1) // apt-get update scheitert = Zugang abgelehnt
-	sb.policyLabelled()
 
 	out, err := sb.run(t, sb.enterprise())
 	if err == nil {
@@ -337,96 +323,64 @@ func TestEnterpriseWechselRollbackStelltDeb822Wieder(t *testing.T) {
 	}
 }
 
-// TestCommunityRueckweg: der Rückweg muss die deb822-Quelle wieder einschalten,
-// die Vorrang-Regel entfernen (sie hielte lcm sonst weiterhin vom freien Kanal
-// fern) und darf nicht abbrechen, bloß weil die klassische .list-Datei fehlt.
+// TestCommunityRueckweg: der Rückweg muss die Vorrang-Regel entfernen (sie
+// hielte lcm sonst weiterhin vom freien Kanal fern), Zugang und
+// Enterprise-Quelle abbauen und die Community-Quelle unversehrt lassen - auch
+// wenn die klassische .list-Datei fehlt.
 func TestCommunityRueckweg(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		labelled  bool
-		wantPref  bool
-		wantStill bool
-	}{
-		{name: "mit Vorrang-Regel", labelled: true, wantPref: true},
-		{name: "mit stillgelegter Quelle", labelled: false, wantStill: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			sb := newAptSandbox(t)
-			sb.write(t, sb.paths.ComSources, deb822Community)
-			sb.stubApt(t, 0)
-			if tc.labelled {
-				sb.policyLabelled()
-			} else {
-				sb.policyUnlabelled()
-			}
-			sb.policyLcm("1.12.7", entURL)
+	sb := newAptSandbox(t)
+	sb.write(t, sb.paths.ComSources, deb822Community)
+	sb.stubApt(t, 0)
+	sb.policyLcm("1.12.7", entURL)
+	if out, err := sb.run(t, sb.enterprise()); err != nil {
+		t.Fatalf("Vorbedingung: %v\n%s", err, out)
+	}
+	if !sb.exists(sb.paths.Pref) {
+		t.Fatal("Vorbedingung: Vorrang-Regel fehlt")
+	}
 
-			if out, err := sb.run(t, sb.enterprise()); err != nil {
-				t.Fatalf("Vorbedingung: %v\n%s", err, out)
-			}
-			if sb.exists(sb.paths.Pref) != tc.wantPref {
-				t.Fatalf("Vorbedingung: Vorrang-Regel vorhanden=%v, erwartet %v", !tc.wantPref, tc.wantPref)
-			}
-			if strings.Contains(sb.read(t, sb.paths.ComSources), "Enabled: no") != tc.wantStill {
-				t.Fatalf("Vorbedingung: Quelle stillgelegt=%v, erwartet %v", !tc.wantStill, tc.wantStill)
-			}
-
-			out, err := sb.run(t, communityRevertScriptIn(sb.paths))
-			if err != nil {
-				t.Fatalf("Rückweg fehlgeschlagen: %v\n%s", err, out)
-			}
-			com := sb.read(t, sb.paths.ComSources)
-			if strings.Contains(com, "Enabled: no") {
-				t.Errorf("die Community-Quelle ist nach dem Rückweg noch abgeschaltet:\n%s", com)
-			}
-			if !strings.Contains(com, "URIs: https://repo.example") {
-				t.Errorf("die Community-Quelle wurde beschädigt:\n%s", com)
-			}
-			for _, p := range []string{sb.paths.Auth, sb.paths.Ent, sb.paths.Pref} {
-				if sb.exists(p) {
-					t.Errorf("%s besteht nach dem Rückweg weiter", filepath.Base(p))
-				}
-			}
-		})
+	out, err := sb.run(t, communityRevertScriptIn(sb.paths))
+	if err != nil {
+		t.Fatalf("Rückweg fehlgeschlagen: %v\n%s", err, out)
+	}
+	com := sb.read(t, sb.paths.ComSources)
+	if strings.Contains(com, "Enabled: no") || !strings.Contains(com, "URIs: https://repo.example") {
+		t.Errorf("die Community-Quelle ist nach dem Rückweg nicht unversehrt aktiv:\n%s", com)
+	}
+	for _, p := range []string{sb.paths.Auth, sb.paths.Ent, sb.paths.Pref} {
+		if sb.exists(p) {
+			t.Errorf("%s besteht nach dem Rückweg weiter", filepath.Base(p))
+		}
 	}
 }
 
 // TestAltinstallationKlassischeListe: Installationen von früher haben die
-// klassische techeve.list - die muss weiterhin umbenannt und zurückbenannt
-// werden (ohne Kennzeichnung greift nur dieser Weg).
+// klassische techeve.list - sie bleibt auf Enterprise aktiv (die Vorrang-Regel
+// sperrt nur die LCM-Pakete), und der Keyring kommt aus ihrer signed-by-Option.
 func TestAltinstallationKlassischeListe(t *testing.T) {
 	sb := newAptSandbox(t)
-	sb.write(t, sb.paths.ComList, "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.example stable main\n")
+	sb.write(t, sb.paths.ComList, "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.example community main\n")
 	sb.stubApt(t, 0)
-	sb.policyUnlabelled()
 	sb.policyLcm("1.12.7", entURL)
 
 	if out, err := sb.run(t, sb.enterprise()); err != nil {
 		t.Fatalf("Umstellung fehlgeschlagen: %v\n%s", err, out)
 	}
-	if sb.exists(sb.paths.ComList) {
-		t.Error("die klassische Community-Quelle ist weiterhin aktiv")
+	if !sb.exists(sb.paths.ComList) || sb.exists(sb.paths.ComList+".disabled") {
+		t.Error("die klassische Community-Quelle muss aktiv bleiben")
 	}
-	if !sb.exists(sb.paths.ComList + ".disabled") {
-		t.Error("die klassische Community-Quelle wurde nicht stillgelegt, sondern verloren")
-	}
-	// Keyring aus der signed-by-Option der alten Zeile.
 	if ent := sb.read(t, sb.paths.Ent); !strings.Contains(ent, "signed-by=/etc/apt/keyrings/techeve.asc") {
 		t.Errorf("Keyring der Altinstallation nicht übernommen: %q", ent)
 	}
-
-	if out, err := sb.run(t, communityRevertScriptIn(sb.paths)); err != nil {
-		t.Fatalf("Rückweg fehlgeschlagen: %v\n%s", err, out)
-	}
-	if !sb.exists(sb.paths.ComList) {
-		t.Error("der Rückweg hat die klassische Community-Quelle nicht wiederhergestellt")
+	if !sb.exists(sb.paths.Pref) {
+		t.Error("die Vorrang-Regel fehlt")
 	}
 }
 
 // TestEnterpriseWechselIstWiederholbar: die Umstellung wird auf bereits
 // umgestellten Hosts erneut angewandt (genau der Weg, auf dem eine unvollständig
 // gebliebene Umstellung geradegezogen wird). Beim zweiten Lauf darf sie weder
-// scheitern noch die stillgelegte Quelle als „nicht gefunden" melden.
+// scheitern noch warnen.
 func TestEnterpriseWechselIstWiederholbar(t *testing.T) {
 	for _, tc := range []struct{ name, file string }{
 		{"deb822", "ComSources"},
@@ -437,10 +391,9 @@ func TestEnterpriseWechselIstWiederholbar(t *testing.T) {
 			if tc.file == "ComSources" {
 				sb.write(t, sb.paths.ComSources, deb822Community)
 			} else {
-				sb.write(t, sb.paths.ComList, "deb https://repo.example stable main\n")
+				sb.write(t, sb.paths.ComList, "deb https://repo.example community main\n")
 			}
 			sb.stubApt(t, 0)
-			sb.policyUnlabelled()
 			sb.policyLcm("1.12.7", entURL)
 
 			if out, err := sb.run(t, sb.enterprise()); err != nil {
@@ -449,9 +402,6 @@ func TestEnterpriseWechselIstWiederholbar(t *testing.T) {
 			out, err := sb.run(t, sb.enterprise())
 			if err != nil {
 				t.Fatalf("zweiter Lauf: %v\n%s", err, out)
-			}
-			if strings.Contains(out, "keine Community-Paketquelle gefunden") {
-				t.Errorf("die bereits stillgelegte Quelle wird als fehlend gemeldet:\n%s", out)
 			}
 			if strings.Contains(out, "WARNUNG") {
 				t.Errorf("unerwartete Warnung im zweiten Lauf:\n%s", out)
@@ -469,7 +419,6 @@ func TestBetaKanalNebenCommunity(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.policyLcmSuite("1.13.0~beta.1", "https://repo.example", "beta")
 
 	out, err := sb.run(t, sb.beta())
@@ -504,8 +453,7 @@ func TestBetaKanalOhneVorabversionSagtEsAn(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
-	sb.policyLcmSuite("1.13.0", "https://repo.example", "stable")
+	sb.policyLcmSuite("1.13.0", "https://repo.example", "community")
 
 	out, err := sb.run(t, sb.beta())
 	if err != nil {
@@ -524,9 +472,8 @@ func TestBetaKanalOhneVorabversionSagtEsAn(t *testing.T) {
 // ein eigener Repository-Server plötzlich Pakete von woanders.
 func TestBetaKanalAdresseAusAltinstallation(t *testing.T) {
 	sb := newAptSandbox(t)
-	sb.write(t, sb.paths.ComList, "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.intern.example stable main\n")
+	sb.write(t, sb.paths.ComList, "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.intern.example community main\n")
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.policyLcmSuite("1.13.0~beta.1", "https://repo.intern.example", "beta")
 
 	out, err := sb.run(t, sb.beta())
@@ -547,7 +494,6 @@ func TestBetaKanalAdresseAusAltinstallation(t *testing.T) {
 func TestBetaKanalOhneQuelleNimmtVorgabe(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.policyLcmSuite("1.13.0~beta.1", betaFallback, "beta")
 
 	out, err := sb.run(t, sb.beta())
@@ -566,7 +512,6 @@ func TestBetaKanalUnerreichbarBautZurueck(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 1) // apt-get update scheitert = Suite nicht vorhanden
-	sb.policyLabelled()
 
 	out, err := sb.run(t, sb.beta())
 	if err == nil {
@@ -587,14 +532,12 @@ func TestBetaWechselRaeumtEnterpriseAb(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.policyLcm("1.12.7", entURL)
 	if out, err := sb.run(t, sb.enterprise()); err != nil {
 		t.Fatalf("Vorbedingung: %v\n%s", err, out)
 	}
 
 	sb.env = nil
-	sb.policyLabelled()
 	sb.policyLcmSuite("1.13.0~beta.1", "https://repo.example", "beta")
 	out, err := sb.run(t, sb.beta())
 	if err != nil {
@@ -617,14 +560,12 @@ func TestEnterpriseWechselEntferntBetaQuelle(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.policyLcmSuite("1.13.0~beta.1", "https://repo.example", "beta")
 	if out, err := sb.run(t, sb.beta()); err != nil {
 		t.Fatalf("Vorbedingung: %v\n%s", err, out)
 	}
 
 	sb.env = nil
-	sb.policyLabelled()
 	sb.policyLcm("1.12.7", entURL)
 	if out, err := sb.run(t, sb.enterprise()); err != nil {
 		t.Fatalf("Wechsel auf Enterprise fehlgeschlagen: %v\n%s", err, out)
@@ -640,7 +581,6 @@ func TestCommunityRueckwegEntferntBetaQuelle(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.policyLcmSuite("1.13.0~beta.1", "https://repo.example", "beta")
 	if out, err := sb.run(t, sb.beta()); err != nil {
 		t.Fatalf("Vorbedingung: %v\n%s", err, out)
@@ -663,7 +603,6 @@ func TestAuthDateiNurFuerRoot(t *testing.T) {
 	sb := newAptSandbox(t)
 	sb.write(t, sb.paths.ComSources, deb822Community)
 	sb.stubApt(t, 0)
-	sb.policyLabelled()
 	sb.policyLcm("1.12.7", entURL)
 
 	if out, err := sb.run(t, sb.enterprise()); err != nil {
@@ -685,7 +624,7 @@ func TestAuthDateiNurFuerRoot(t *testing.T) {
 	}
 	// Der Keyring kommt aus dem deb822-Feld Signed-By.
 	ent := sb.read(t, sb.paths.Ent)
-	if !strings.Contains(ent, "signed-by=/etc/apt/keyrings/techeve-repo.gpg") || !strings.Contains(ent, entURL+" stable main") {
+	if !strings.Contains(ent, "signed-by=/etc/apt/keyrings/techeve-repo.gpg") || !strings.Contains(ent, entURL+" enterprise main") {
 		t.Errorf("Enterprise-Quelle falsch geschrieben: %q", ent)
 	}
 }

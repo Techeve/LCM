@@ -43,3 +43,17 @@ func TestImageScanTrenntDieReferenzAb(t *testing.T) {
 		t.Errorf("Optionen des Image-Scans fehlen: %v", args)
 	}
 }
+
+// TestCommandLegtDenCacheAn: Bubblewrap übergeht einen fehlenden Pfad
+// (--bind-try). Gäbe es den Cache beim Start nicht, landete die geladene
+// Datenbank im flüchtigen Dateisystem der Sandbox - der Download meldete
+// Erfolg, und danach fehlte die Datei. Auf einer frischen Installation gibt es
+// das Verzeichnis noch nicht.
+func TestCommandLegtDenCacheAn(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "var", "lib", "lcm", "trivy")
+	newLocal("trivy", cache).command(context.Background(), true, nil, "--version")
+	info, err := os.Stat(cache)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("Cache-Verzeichnis wurde nicht angelegt: %v", err)
+	}
+}

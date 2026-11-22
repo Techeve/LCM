@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +60,8 @@ func TestBrokerURL(t *testing.T) {
 
 func TestConfigSaveLoad(t *testing.T) {
 	path := t.TempDir() + "/agent.json"
-	cfg := &Config{URL: "https://lcm.example.com", AgentID: "id-1", Secret: "geheim", CertFingerprint: "ff00"}
+	cfg := &Config{URL: "https://lcm.example.com", AgentID: "id-1", Secret: "geheim", CertFingerprint: "ff00",
+		CustomCAFingerprints: []string{"aa11", "bb22"}}
 	if err := cfg.Save(path); err != nil {
 		t.Fatal(err)
 	}
@@ -66,8 +69,32 @@ func TestConfigSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *loaded != *cfg {
+	if !reflect.DeepEqual(loaded, cfg) {
 		t.Fatalf("roundtrip: %+v != %+v", loaded, cfg)
+	}
+}
+
+// TestConfigOhneEigeneCAs: Eine Konfiguration aus einem Agent vor den eigenen
+// Zertifikaten lädt unverändert, und ohne Pins schreibt Save das Feld nicht.
+func TestConfigOhneEigeneCAs(t *testing.T) {
+	path := t.TempDir() + "/agent.json"
+	old := `{"url":"https://lcm.example.com","agent_id":"id-1","secret":"geheim","ca_fingerprint":"cc33"}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CAFingerprint != "cc33" || len(cfg.CustomCAFingerprints) != 0 {
+		t.Errorf("alte Konfiguration gelesen als %+v", cfg)
+	}
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := os.ReadFile(path)
+	if strings.Contains(string(saved), "custom_ca_fingerprints") {
+		t.Errorf("leeres Feld geschrieben: %s", saved)
 	}
 }
 

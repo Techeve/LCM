@@ -39,14 +39,27 @@ function list(value: unknown): Raw[] {
 
 // ---- globale Einstellungen ----
 
-/** Die globalen Einstellungen als flache Tabelle; nur Text, Zahlen und Schalter bleiben erhalten. */
+/**
+ * Die globalen Einstellungen als flache Tabelle; nur Text, Zahlen und Schalter bleiben erhalten. Ein Objekt
+ * (`address_locks`, `effective_urls`) wird eine Ebene tief aufgelöst: `effective_urls.ui` ist ein eigener Schlüssel.
+ * Eine Liste von Texten (`trusted_proxies`) wird zu einem Text mit einem Eintrag je Zeile.
+ */
 export type GlobalSettings = Record<string, string | number | boolean>;
+
+const isScalar = (value: unknown): value is string | number | boolean =>
+  typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
+
+const isTextList = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === 'string');
 
 export function readGlobal(raw: unknown): GlobalSettings {
   const settings: GlobalSettings = {};
   if (!isRecord(raw)) return settings;
   for (const [key, value] of Object.entries(raw)) {
-    if (typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) settings[key] = value;
+    if (isScalar(value)) settings[key] = value;
+    else if (isTextList(value)) settings[key] = value.join('\n');
+    else if (isRecord(value)) {
+      for (const [inner, innerValue] of Object.entries(value)) if (isScalar(innerValue)) settings[`${key}.${inner}`] = innerValue;
+    }
   }
   return settings;
 }
@@ -87,7 +100,6 @@ export const APT_CHANNELS: AptChannel[] = ['community', 'beta', 'enterprise'];
 export interface Subscription {
   configured: boolean;
   instanceId: string;
-  serviceUrl: string;
   customer: string;
   keyPrefix: string;
   status: string;
@@ -108,7 +120,6 @@ export function readSubscription(raw: unknown): Subscription {
   return {
     configured: r.configured === true,
     instanceId: text(r.instance_id),
-    serviceUrl: text(r.service_url),
     customer: text(r.customer),
     keyPrefix: text(r.key_prefix),
     status: text(r.status),
@@ -349,13 +360,15 @@ export const settingsApi = {
   /** Schickt eine Testnachricht mit den gespeicherten Mail-Einstellungen an die Admin-Empfänger. */
   testMail: () => api.post('/api/v1/settings/global/test-mail'),
 
-  async setMcp(body: { enabled: boolean; bind_host: string; port: number }): Promise<void> {
+  /** MCP an- oder ausschalten; Adresse, Port und TLS kommen aus den Adressen (immer TLS, Bind-Adresse der Oberfläche). */
+  async setMcp(body: { enabled: boolean }): Promise<void> {
     await api.put('/api/v1/settings/mcp', body);
     refreshGlobal();
   },
 
-  async activateSubscription(subscriptionKey: string, serviceUrl: string): Promise<void> {
-    await api.post(`${SUBSCRIPTION_URL}/activate`, { subscription_key: subscriptionKey, service_url: serviceUrl });
+  /** Die Adresse des Subscription-Dienstes ist fest (repo.techeve.de); die Anfrage trägt nur den Key. */
+  async activateSubscription(subscriptionKey: string): Promise<void> {
+    await api.post(`${SUBSCRIPTION_URL}/activate`, { subscription_key: subscriptionKey });
     store.invalidate(SUBSCRIPTION_URL);
   },
 

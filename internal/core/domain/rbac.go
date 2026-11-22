@@ -56,6 +56,12 @@ const (
 	PermAuditRead      = "audit:read"
 	PermAPIKeysManage  = "apikeys:manage"
 
+	// PermSystemEndpoints legt fest, wer die Endpunkte von LCM (Weboberfläche,
+	// Agent, MCP) verwaltet: erlaubte Netzbereiche, später Zertifikate. Wer
+	// das ändert, bestimmt, wer LCM erreicht - das Recht liegt deshalb allein
+	// bei admin und gehört weder zu settings:manage noch zu ManagerPermissions.
+	PermSystemEndpoints = "system:endpoints"
+
 	PermNotificationsManage = "notifications:manage" // Benachrichtigungskanäle verwalten
 	PermAlertsManage        = "alerts:manage"        // Alarmregeln und -historie verwalten
 )

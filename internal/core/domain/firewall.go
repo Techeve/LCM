@@ -64,4 +64,16 @@ type ListeningPort struct {
 	Bind      string `json:"bind"`       // 0.0.0.0, ::, oder konkrete Adresse
 	IPVersion string `json:"ip_version"` // v4|v6
 	Process   string `json:"process,omitempty"`
+	// LcmRoles nennt, welche Schnittstellen von LCM auf diesem Port bedient
+	// werden (LcmRole*), in fester Reihenfolge. Leer bei fremden Diensten.
+	// Kommt nur beim LCM-Host aus den Adress-Einstellungen, nicht aus dem Scan.
+	LcmRoles []string `json:"lcm_roles,omitempty"`
 }
+
+// Schnittstellen von LCM, die ein lauschender Port tragen kann (LcmRoles).
+const (
+	LcmRoleUI    = "ui"
+	LcmRoleAgent = "agent"
+	LcmRoleMCP   = "mcp"
+	LcmRoleACME  = "acme" // HTTP-01-Prüfung von Let's Encrypt
+)

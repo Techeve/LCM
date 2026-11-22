@@ -6247,7 +6247,7 @@ paths:
     post:
       tags:
       - Server
-      summary: Install Trivy
+      summary: Trivy mit Sandbox installieren.
       operationId: serverCtrl_InstallTrivy
       parameters:
       - name: id
@@ -6258,7 +6258,10 @@ paths:
       security:
       - sessionAuth: []
       - apiKeyAuth: []
-      description: 'Benötigte Berechtigung: `servers:write`.'
+      description: 'Installiert Trivy samt Sandbox (bubblewrap) auf dem LCM-Host in einem Lauf, ohne Body. Älteren Installationen ohne Sandbox bleibt `install-sandbox`.
+
+
+        Benötigte Berechtigung: `servers:write`.'
       responses:
         '200':
           description: Erfolgreich.
@@ -8558,7 +8561,7 @@ paths:
       description: 'Tauscht den Subscription-Key beim Anbieter-Dienst gegen einen an diese
         Instanz gebundenen Repository-Zugangsschlüssel (die erste Instanz gewinnt; ein bereits
         anderweitig gebundener Key wird mit Klartext abgelehnt). Key und Zugangsschlüssel werden
-        AES-GCM-verschlüsselt gespeichert. Benötigte Berechtigung: `settings:manage`.'
+        AES-GCM-verschlüsselt gespeichert. Die Adresse des Dienstes ist fest und nicht einstellbar; ein Feld `service_url` im Body (frühere eigene Dienst-Adresse) wird ignoriert. Benötigte Berechtigung: `settings:manage`.'
       requestBody:
         required: true
         content:
@@ -8570,9 +8573,6 @@ paths:
                 subscription_key:
                   type: string
                   description: Der vom Anbieter ausgestellte Key (LCM-E-…).
-                service_url:
-                  type: string
-                  description: Optionale eigene Dienst-Adresse (leer = Standard).
       responses:
         '200':
           description: Aktiviert; antwortet mit dem neuen Status.
@@ -8786,6 +8786,60 @@ paths:
                   type: string
                 public_base_url:
                   type: string
+                address_mode:
+                  type: string
+                  enum: [separate, one_name, shared_port]
+                  description: 'Adressmodus: eigene Ports und Namen (A), ein Name (B) oder ein gemeinsamer Port mit eigenen Namen (C).'
+                public_host:
+                  type: string
+                  description: Nur Modus B, der eine Name ohne Schema, Port und Pfad.
+                public_agent_url:
+                  type: string
+                public_mcp_url:
+                  type: string
+                  description: In Modus C dürfen Agent- und MCP-Name leer sein; der Dienst ist dann aus.
+                ui_port:
+                  type: integer
+                agent_port:
+                  type: integer
+                mcp_port:
+                  type: integer
+                shared_tls_port:
+                  type: integer
+                  default: 443
+                  description: Nur Modus C.
+                agent_enabled:
+                  type: boolean
+                  description: Agent an/aus. Einschalten ohne Namen in Modus C lehnt LCM mit 400 ab.
+                mcp_enabled:
+                  type: boolean
+                  description: MCP an/aus, wie `PUT /settings/mcp`. MCP spricht immer TLS.
+                setup_step:
+                  type: string
+                  enum: [session, addresses, services, access, certificate, onboarding, mail, retention, backup, subscription, intro, '']
+                  description: >-
+                    Der Schritt des Einrichtungsassistenten, an dem der erste Administrator
+                    steht; leer = erledigt. Eine frische Installation beginnt mit `session`. Der
+                    PATCH darf zwischen `session` und `subscription` von jedem Schritt auf jeden
+                    anderen wechseln, vor und zurück, und von dort auch auf `intro` oder leer; aus `intro` nur auf leer, aus leer gar
+                    nicht, sonst 400 `settings.invalid_input`. Ersetzt `address_setup`. Steht
+                    auch in `GET /auth/me`.
+                trust_proxy_header:
+                  type: boolean
+                  description: >-
+                    LCM glaubt der Client-Adresse aus `X-Forwarded-For` (und
+                    `X-Forwarded-Proto`), aber nur von `trusted_proxies`. Wirkt ohne Neustart.
+                    Eingeschaltet braucht er mindestens einen Eintrag in `trusted_proxies`
+                    (sonst 400 `settings.invalid_input`).
+                trusted_proxies:
+                  type: array
+                  items:
+                    type: string
+                  description: >-
+                    IP-Adressen, Netze in CIDR-Schreibweise oder die Wörter `localhost` und
+                    `private`. Ungültige Einträge sowie `0.0.0.0/0` und `::/0` lehnt LCM mit 400
+                    `settings.invalid_input` ab.
+                  example: ['10.0.0.5', '192.168.0.0/16']
                 mail_enabled:
                   type: boolean
                 mail_host:
@@ -8812,7 +8866,14 @@ paths:
       security:
       - sessionAuth: []
       - apiKeyAuth: []
-      description: 'Benötigte Berechtigung: `settings:manage`.'
+      description: >-
+        Benötigte Berechtigung: `settings:manage`.
+
+
+        Adressmodus, Namen, Ports, die Schalter von Agent und MCP, `trust_proxy_header`,
+        `trusted_proxies` und die erlaubten Netzbereiche stehen auch in der config.json
+        und werden beim Speichern dorthin geschrieben. Klappt das nicht, bleibt die
+        Änderung gültig, und die Antwort enthält `config_sync_error` mit dem Grund.
       responses:
         '200':
           description: Erfolgreich.
@@ -9044,10 +9105,12 @@ paths:
     put:
       tags:
       - Einstellungen
-      summary: Schaltet die MCP-Schnittstelle ein/aus und setzt Bind-Adresse/Port (Listener zur Laufzeit).
+      summary: Schaltet die MCP-Schnittstelle ein/aus (Listener zur Laufzeit).
       operationId: opsCtrl_SetMCP
-      description: 'Schaltet die MCP-Schnittstelle (read-only Serverdaten für KI-Agenten) ein/aus
-        und setzt Bind-Adresse/Port; der separate Listener wird direkt gestartet/gestoppt.
+      description: 'Schaltet die MCP-Schnittstelle (read-only Serverdaten für KI-Agenten) ein/aus;
+        der Listener wird direkt gestartet/gestoppt. MCP spricht immer TLS und bindet an den Host
+        der Oberfläche; den Port stellt PATCH /settings/global ein (mcp_port). bind_host, port und
+        tls im Body älterer Clients werden überlesen.
 
 
         Benoetigte Berechtigung: `settings:manage`.'
@@ -9062,8 +9125,16 @@ paths:
                   type: boolean
                 bind_host:
                   type: string
+                  deprecated: true
+                  description: Wird überlesen.
                 port:
                   type: integer
+                  deprecated: true
+                  description: Wird überlesen (mcp_port steht in PATCH /settings/global).
+                tls:
+                  type: boolean
+                  deprecated: true
+                  description: Wird überlesen, MCP spricht immer TLS.
       security:
       - sessionAuth: []
       - apiKeyAuth: []
@@ -9638,6 +9709,551 @@ paths:
           description: Keine Berechtigung.
         '404':
           description: Keine CA eingerichtet.
+  /api/v1/system/tls:
+    get:
+      tags:
+      - System
+      summary: Zertifikate der Endpunkte und was jeder ausliefert.
+      operationId: tlsCtrl_Status
+      description: >-
+        Liefert die Zertifikate im Pool in der Reihenfolge, in der LCM sie
+        wählt (`certificates`, je mit `id`, `source`, `names`, `issuer`,
+        `not_after`, `expired`, `fingerprint` und `warnings`), zuletzt das
+        LCM-Zertifikat (`source: lcm-ca`) als Rückfall. `source` ist `config`
+        (config.json, hier nicht änderbar), `upload`, `acme` oder `lcm-ca`.
+        Dazu je Endpunkt (`endpoints`: `ui`, `agent`, `mcp`) das Zertifikat, das
+        er für den Namen seiner öffentlichen Adresse ausliefert (`cert`; ohne
+        Adresse fehlen `url`, `host` und `cert`), und der Zustand des
+        gemeinsamen Ports (`shared_port`, fehlt ohne ihn). Entspricht
+        `lcm tls status`.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '409':
+          description: LCM läuft ohne TLS (`--dev`), es gibt keine Zertifikate (`tls.unavailable`).
+  /api/v1/system/tls/certificates:
+    post:
+      tags:
+      - System
+      summary: Lädt ein Zertifikat samt Schlüssel hoch.
+      operationId: tlsCtrl_Upload
+      description: >-
+        Multipart mit den Dateien `certificate` (PEM, bei Bedarf mit Kette) und
+        `key` (PEM, unverschlüsselt), je höchstens 64 KiB. LCM prüft vor dem
+        Speichern, ob der Schlüssel passt, das Zertifikat gilt, für
+        Server-Authentifizierung zugelassen ist und mindestens einen Namen
+        nennt; was die Prüfung nicht besteht, wird nicht gespeichert. Danach
+        lädt LCM die Zertifikate neu, ohne Neustart und ohne Agenten zu
+        trennen. Fehlt in der Datei die Kette bis zum Aussteller, steht eine
+        Warnung im Zertifikat. Gleiche Namen löst die Rangfolge config.json,
+        Upload, ACME.
+
+
+        Antwort: `id` (im Pool, `upload-<id>`) und der neue Stand wie bei
+        `GET /system/tls` (`status`). Audit: `settings.tls.upload`.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - certificate
+              - key
+              properties:
+                certificate:
+                  type: string
+                  format: binary
+                  description: Zertifikat im PEM-Format, bei Bedarf mit der Kette dahinter.
+                key:
+                  type: string
+                  format: binary
+                  description: Privater Schlüssel im PEM-Format, ohne Passwort.
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '201':
+          description: Gespeichert und geladen.
+        '400':
+          description: Eine der beiden Dateien fehlt (`tls.upload_missing`).
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '409':
+          description: LCM läuft ohne TLS (`--dev`).
+        '422':
+          description: Das Zertifikat taugt nicht (`tls.invalid_certificate`, `params.detail` nennt den Grund) oder eine Datei ist größer als 64 KiB (`tls.file_too_large`).
+  /api/v1/system/tls/certificates/{id}:
+    delete:
+      tags:
+      - System
+      summary: Entfernt ein hochgeladenes Zertifikat.
+      operationId: tlsCtrl_Remove
+      description: >-
+        Löscht ein hochgeladenes Zertifikat samt Schlüssel und lädt neu. Danach
+        gilt für den Namen ein anderes passendes Zertifikat oder das
+        LCM-Zertifikat. Zertifikate aus der config.json und von ACME lassen sich
+        hier nicht entfernen. Antwort: der neue Stand (`status`). Audit:
+        `settings.tls.remove`.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Die ID im Pool, `upload-<id>`.
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Entfernt.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Kein hochgeladenes Zertifikat mit dieser ID (`tls.not_found`).
+        '409':
+          description: Das Zertifikat stammt nicht aus einem Upload (`tls.not_removable`).
+  /api/v1/system/tls/certificates/{id}/download:
+    get:
+      tags:
+      - System
+      summary: Lädt die Zertifikatskette eines Zertifikats herunter.
+      operationId: tlsCtrl_Download
+      description: >-
+        Liefert die Zertifikatskette (Zertifikat und Kette dahinter) als
+        PEM-Datei (`application/x-pem-file`, als Anhang). Es kommen nur
+        Zertifikate heraus, nie der private Schlüssel. Gilt für Zertifikate
+        aus der config.json, hochgeladene und von ACME. Der Abruf steht im
+        Audit-Log: `settings.tls.download`.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Die ID im Pool wie in `GET /system/tls`, etwa `upload-<id>` oder `acme-<id>`.
+        schema:
+          type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Die Kette als PEM-Datei.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Kein Zertifikat mit dieser ID (`tls.not_found`).
+        '409':
+          description: LCM läuft ohne TLS (`--dev`).
+  /api/v1/system/tls/reload:
+    post:
+      tags:
+      - System
+      summary: Lädt die Zertifikate neu.
+      operationId: tlsCtrl_Reload
+      description: >-
+        Liest config.json, Uploads und ACME-Zertifikate neu ein, wie
+        `lcm tls reload` und `SIGHUP`. Offene Verbindungen behalten ihr
+        Zertifikat, Agenten werden nicht getrennt. Ein Zertifikat, das sich
+        nicht laden lässt, lässt den bisherigen Stand aktiv. Antwort: der
+        Bericht (`report.certificates`, je mit `error` und `kept`, und
+        `report.problems`) und der neue Stand (`status`). Audit:
+        `settings.tls.reload`.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Der Bericht; auch dann, wenn ein Zertifikat abgelehnt wurde.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '409':
+          description: LCM läuft ohne TLS (`--dev`).
+  /api/v1/system/network:
+    get:
+      tags:
+      - System
+      summary: Erlaubte Netzbereiche der Endpunkte.
+      operationId: networkCtrl_List
+      description: >-
+        Liefert je Endpunkt (`ui`, `agent`, `mcp`) die Liste der erlaubten
+        Netze. Eine leere Liste erlaubt alle Netze. Dazu `client_address`, die Adresse des Aufrufers, wie LCM
+        sie sieht.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/system/network/{endpoint}:
+    put:
+      tags:
+      - System
+      summary: Setzt die erlaubten Netzbereiche eines Endpunkts.
+      operationId: networkCtrl_Update
+      description: >-
+        Ersetzt die Liste des Endpunkts. Einträge sind IP-Adressen, CIDR-Netze
+        oder die Wörter `localhost` und `private`, höchstens 64. Eine leere
+        Liste erlaubt alle Netze. Die Änderung gilt sofort, ohne Neustart.
+
+
+        Die Weboberfläche (`ui`) lehnt eine Liste ab, in der die Adresse des
+        Aufrufers fehlt (409 `endpoint.would_lock_out`). Würde eine engere
+        Liste des Agent-Endpunkts verbundene Agenten ausschließen, antwortet
+        LCM mit 409 `endpoint.agents_outside` und nennt sie in `params.agents`;
+        mit `confirm: true` wird gespeichert und werden sie getrennt. LCM
+        schreibt die Liste auch in die config.json (`allowed_ips`,
+        `agent_allowed_ips`, `mcp_allowed_ips`); klappt das nicht, steht in der
+        Antwort `config_sync_error`, und die Änderung gilt trotzdem.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      parameters:
+      - name: endpoint
+        in: path
+        required: true
+        description: Der Endpunkt.
+        schema:
+          type: string
+          enum:
+          - ui
+          - agent
+          - mcp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - allowed
+              properties:
+                allowed:
+                  type: array
+                  items:
+                    type: string
+                  example:
+                  - 10.0.0.0/8
+                  - 192.168.1.0/24
+                confirm:
+                  type: boolean
+                  description: Bestätigt das Trennen verbundener Agenten außerhalb der neuen Liste.
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Gespeichert; der neue Stand und die getrennten Agenten (`disconnected`).
+        '400':
+          description: Das Feld `allowed` fehlt.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '404':
+          description: Unbekannter Endpunkt.
+        '409':
+          description: Gesperrt, würde den Aufrufer aussperren oder Agenten trennen.
+        '422':
+          description: Ungültiger Eintrag oder mehr als 64 Einträge.
+  /api/v1/system/acme:
+    get:
+      tags:
+      - System
+      summary: Zertifikate von einer ACME-CA, Einstellungen und Zustand.
+      operationId: acmeCtrl_Get
+      description: >-
+        Liefert die Einstellungen (`enabled`, `directory_url`, `email`,
+        `names`, `mode`, `challenge`, `terms_accepted`), den Listener für
+        HTTP-01 (`http_listen`, `listener_running`, `listener_error`), den
+        Zustand der Läufe (`running`, `last_run_at`, `last_error`) und die
+        ausgestellten Zertifikate (`certificates`, je mit `names`, `issuer`,
+        `not_after`, `fingerprint` und `renew_at`, dem Zeitpunkt, ab dem LCM
+        erneuert).
+
+
+        `names` sind die DNS-Namen aus den öffentlichen Adressen (Oberfläche,
+        Agent und MCP, ohne IP-Adressen und `localhost`; MCP nur, solange es
+        eingeschaltet ist), und `mode` ist immer `single`: LCM stellt ein
+        Zertifikat für alle Namen aus. Der Listener für HTTP-01 ist nur
+        während einer Prüfung offen (`listener_running`); `listener_error` nennt
+        den Grund, wenn er sich dabei nicht öffnen ließ. `names_changed_notice`
+        (`old`, `new`, `was_per_name`) ist beim Umstieg von einem eigenen
+        Namensfeld oder je Name ein Zertifikat der einmalige Hinweis, sonst
+        `null`; `POST /system/acme/names-notice/ack` bestätigt ihn.
+
+
+        Bei `challenge: dns-01` kommen dazu `dns_provider`, `dns_values` (die
+        Werte des Anbieters ohne Geheimnisse), `dns_secrets_set` (je
+        Geheimfeld `true` oder `false`; LCM liefert Geheimnisse nie aus) und
+        `dns_check_nameservers`. `dns_providers` listet die wählbaren Anbieter
+        mit ihren Feldern (`name`, `type` als `text`, `secret`, `bool`,
+        `select` oder `number`, `required`, `options`, `default`); `exec` steht
+        nur darin, wenn die config.json `acme_dns_exec` setzt.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+    put:
+      tags:
+      - System
+      summary: Setzt die Einstellungen für Zertifikate von einer ACME-CA.
+      operationId: acmeCtrl_Update
+      description: >-
+        Ersetzt alle Einstellungen. LCM holt und erneuert die Zertifikate dann
+        selbst bei der CA (Let's Encrypt, deren Staging oder eine eigene wie
+        step-ca) und liefert sie nach Namen aus. Die Namen kommen aus den
+        öffentlichen Adressen, es gibt immer ein Zertifikat für alle. Mit
+        HTTP-01 öffnet LCM den Listener (`acme_http_listen` in der config.json,
+        Standard `:80`) nur, solange die CA prüft, und beantwortet dort allein
+        das Token der Prüfung; ohne die Capability `CAP_NET_BIND_SERVICE` (oder
+        eine Portweiterleitung auf einen höheren Port) scheitert der Lauf mit
+        diesem Grund (`last_error`).
+
+
+        Beim Einschalten nimmt `accept_terms: true` die Nutzungsbedingungen der
+        CA an; LCM verlangt es (422 `acme.terms_required`), bis es für diese CA
+        einmal geschehen ist, und registriert nie ein Konto ohne. Namen sind
+        DNS-Namen der Adressen; ist keiner darunter, lehnt LCM das Einschalten ab
+        (422 `acme.invalid`, Feld `names`). Ändern sich die Adressen oder die CA, stellt der nächste Lauf
+        (oder `POST /system/acme/issue`) ein neues Zertifikat aus. Mit
+        `enabled: false` entfernt LCM die ausgestellten Zertifikate.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - enabled
+              properties:
+                enabled:
+                  type: boolean
+                directory_url:
+                  type: string
+                  description: Adresse des ACME-Verzeichnisses (https). Leer heißt Let's Encrypt Produktion.
+                  example: https://acme-v02.api.letsencrypt.org/directory
+                email:
+                  type: string
+                  description: Kontakt bei der CA, optional.
+                names:
+                  type: array
+                  items:
+                    type: string
+                  deprecated: true
+                  description: Wird überlesen. Die Namen kommen aus den öffentlichen Adressen.
+                mode:
+                  type: string
+                  deprecated: true
+                  description: Wird überlesen. Es gibt immer ein Zertifikat für alle Namen (`single`).
+                challenge:
+                  type: string
+                  enum:
+                  - http-01
+                  - dns-01
+                  description: >-
+                    Wie die CA die Namen prüft. Standard `http-01`. `dns-01` braucht
+                    keinen Port 80.
+                accept_terms:
+                  type: boolean
+                  description: Nimmt die Nutzungsbedingungen der CA an.
+                dns_provider:
+                  type: string
+                  enum:
+                  - rfc2136
+                  - acmedns
+                  - httpreq
+                  - exec
+                  - cloudflare
+                  - hetzner
+                  - pdns
+                  - inwx
+                  - ionos
+                  description: >-
+                    Bei `dns-01`: der DNS-Anbieter. `exec` nur, wenn die config.json
+                    `acme_dns_exec` setzt; das Programm ist über die API nicht änderbar.
+                dns_values:
+                  type: object
+                  additionalProperties: true
+                  description: >-
+                    Die Felder des Anbieters (siehe `dns_providers` in GET), Werte als
+                    Text, Zahl oder Wahrheitswert. Ein Geheimfeld, das fehlt, behält den
+                    gespeicherten Wert; ein leerer Text löscht ihn.
+                  example:
+                    api_token: geheim
+                dns_check_nameservers:
+                  type: array
+                  items:
+                    type: string
+                  description: Resolver (`host` oder `host:port`, höchstens drei), über die LCM den TXT-Eintrag prüft. Leer heißt die des Systems.
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Gespeichert; der neue Stand wie bei GET.
+        '400':
+          description: Das Feld `enabled` fehlt.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '409':
+          description: Ein Lauf ist aktiv (`acme.running`); zum Ausschalten abwarten.
+        '422':
+          description: Ungültige Angabe (`acme.invalid`), Pflichtangabe fehlt (`acme.field_missing`) oder Nutzungsbedingungen nicht angenommen (`acme.terms_required`).
+  /api/v1/system/acme/dns-test:
+    post:
+      tags:
+      - System
+      summary: Prüft den DNS-Anbieter für DNS-01.
+      operationId: acmeCtrl_DNSTest
+      description: >-
+        Setzt einen TXT-Eintrag `_acme-challenge.<erster Name>` mit einem
+        Zufallswert über den Anbieter, wartet bis zu 60 Sekunden darauf, dass
+        die Resolver ihn liefern, und entfernt ihn wieder. Das läuft im Aufruf
+        und braucht keine CA. Der Body darf `names`, `dns_provider`,
+        `dns_values` und `dns_check_nameservers` wie bei `PUT /system/acme`
+        enthalten; was fehlt (auch ein Geheimnis), kommt aus den gespeicherten
+        Einstellungen. Ohne Body gelten die gespeicherten.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                names:
+                  type: array
+                  items:
+                    type: string
+                dns_provider:
+                  type: string
+                dns_values:
+                  type: object
+                  additionalProperties: true
+                dns_check_nameservers:
+                  type: array
+                  items:
+                    type: string
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: 'Der Eintrag war sichtbar und ist entfernt (`{"ok": true}`).'
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '409':
+          description: Ein ACME-Lauf ist aktiv (`acme.running`).
+        '422':
+          description: Ungültige Angabe (`acme.invalid`, `acme.field_missing`) oder die Probe ist gescheitert (`acme.dns_test_failed`, mit `detail`).
+  /api/v1/system/acme/names-notice/ack:
+    post:
+      tags:
+      - System
+      summary: Bestätigt den Hinweis zum Umstieg auf die Namen aus den Adressen.
+      operationId: acmeCtrl_AckNamesNotice
+      description: >-
+        Beim Update von einer Version mit eigenem Namensfeld (oder je Name ein
+        Zertifikat) meldet `GET /system/acme` einmalig `names_changed_notice`:
+        die alten Namen, die Namen aus den Adressen und ob es je Name ein
+        Zertifikat gab. Die Bestätigung vergisst den alten Stand; der Hinweis
+        kommt nicht wieder. Auch `PUT /system/acme` beendet ihn. Antwort: der
+        neue Stand wie bei GET. Audit: `settings.acme.notice_ack`.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Bestätigt; der neue Stand.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/system/acme/issue:
+    post:
+      tags:
+      - System
+      summary: Stellt Zertifikate jetzt aus oder erneuert sie.
+      operationId: acmeCtrl_Issue
+      description: >-
+        Stößt einen Lauf im Hintergrund an: stellt fehlende Zertifikate aus und
+        erneuert fällige. Antwortet sofort; das Ergebnis steht danach in
+        `GET /system/acme` (`last_run_at`, `last_error`, `certificates`). Es
+        läuft immer nur ein Lauf.
+
+
+        Benötigte Berechtigung: `system:endpoints` (nur `admin`).
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Der Lauf wurde angestoßen.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+        '409':
+          description: Ein Lauf ist schon aktiv (`acme.running`) oder ACME ist nicht eingeschaltet (`acme.not_enabled`).
   /metrics:
     get:
       tags:

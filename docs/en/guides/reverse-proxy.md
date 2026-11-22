@@ -6,10 +6,13 @@ description: nginx/Caddy in front of the web UI - TLS, login throttling, body li
 ---
 
 Out of the box LCM speaks HTTPS with a self-signed certificate and binds the
-web UI to `127.0.0.1`. An installation reachable beyond your own network
-belongs behind a reverse proxy: it terminates TLS with a real certificate,
-throttles login attempts across **all** sources, and limits what reaches LCM
-at all.
+web UI to `127.0.0.1`. A reverse proxy is **optional**: LCM can also serve a
+certificate of your own or one from Let's Encrypt, if you like together with the
+agent and MCP on port 443
+([Certificates, Let's Encrypt & port 443](/en/guides/zertifikate/)). For an
+installation reachable beyond your own network a proxy is still worthwhile: it
+terminates TLS with a real certificate, throttles login attempts across **all**
+sources, and limits what reaches LCM at all.
 
 This page covers the **UI/REST port** (`9310`). The agent port has its own
 requirements (long-lived WebSocket, certificate pin) and its own page:
@@ -36,7 +39,9 @@ reach the Go process.
 Behind a proxy the only peer LCM sees is the proxy. So that the IP allowlist,
 the login lockout and the logs see the real client, the proxy writes
 `X-Forwarded-For` and LCM reads it - but **only from addresses listed in
-`trusted_proxies`**:
+`trusted_proxies`**. You set both in the settings (in the setup assistant at the
+"Certificate" step under "Reverse proxy in front") or through
+`PATCH /api/v1/settings/global`. The `config.json` carries the same keys:
 
 ```json
 {
@@ -47,7 +52,9 @@ the login lockout and the logs see the real client, the proxy writes
 
 Entries are IP addresses, CIDR ranges or the keywords `localhost`/`private`.
 A request from any other address is taken at its peer address; the header
-does not count.
+does not count. LCM rejects ranges that cover all addresses (`0.0.0.0/0`, `::/0`),
+and an empty list while `trust_proxy_header` is on: with `0.0.0.0/0` every client
+could claim any address with a forged header.
 
 LCM reads the header from the right. Every proxy appends the address it
 received the request from. The first address from the right that is not a
@@ -70,7 +77,7 @@ without a trusted proxy every request behind the proxy counts as HTTP, the optio
 disabled, and a login runs as a memory session. So the proxy must set
 `X-Forwarded-Proto` (the reference configurations below do).
 
-Restart the service after the change. To check: failed attempts in the journal
+The change takes effect at once, without a restart. To check: failed attempts in the journal
 carry the client's address, not the proxy's:
 
 ```sh
@@ -165,8 +172,9 @@ proxy_set_header X-Forwarded-Proto $scheme;
 proxy_ssl_verify off;
 ```
 
-In LCM: `"trusted_proxies": ["127.0.0.1"]` and `public_base_url` set to
-`https://lcm.example.com`.
+In LCM: `"trusted_proxies": ["127.0.0.1"]` and the address of the web UI
+(`public_base_url`) set to `https://lcm.example.com`, in address mode A
+([Public addresses & address mode](/en/guides/adressen/#mode-a-behind-a-reverse-proxy)).
 
 ## Caddy
 
@@ -193,9 +201,10 @@ special treatment. A request throttle exists in Caddy only as an extension
   machine. If LCM has to listen on a network interface, a host firewall
   belongs in front that admits port 9310 from the proxy only - `trusted_proxies`
   is then the second line.
-- **IP allowlist on top.** If only known networks reach the UI (office, VPN),
-  `allowed_ips` locks out everyone else before login even answers - see
-  [IP allowlist](/en/guides/security-cve/#restricting-network-access-to-lcm-ip-allowlist).
+- **Allowed networks on top.** If only known networks reach the UI (office,
+  VPN), `allowed_ips` (or the range in the interface) locks out everyone else
+  before login even answers - see
+  [Allowed networks](/en/guides/netzbereiche/).
 - **fail2ban** can read the security log. Pattern for login failures:
   `security event=login.failed ip=<HOST>`, journal unit `lcm`. The address is
   the client's once `trusted_proxies` is right.

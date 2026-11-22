@@ -9,7 +9,6 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -49,10 +48,9 @@ func (s *ServerService) RefreshHardware(scope repositories.AccessScope, id uint,
 		return nil, err // u.a. ErrServerBusy → 409
 	}
 	s.audit.Log(actor, "server.refresh-hardware", "server", id, "")
-	safego.GoCleanup("job:hardware-refresh", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:hardware-refresh", job, func() {
 		s.runRefreshJob(job, server, actor, false)
-	})
-	return job, nil
+	}), nil
 }
 
 // RefreshAll liest ALLE erfassbaren Daten neu ein: Hardware, Pakete, Snaps,
@@ -68,10 +66,9 @@ func (s *ServerService) RefreshAll(scope repositories.AccessScope, id uint, acto
 		return nil, err
 	}
 	s.audit.Log(actor, "server.refresh-all", "server", id, "")
-	safego.GoCleanup("job:full-refresh", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:full-refresh", job, func() {
 		s.runRefreshJob(job, server, actor, true)
-	})
-	return job, nil
+	}), nil
 }
 
 // runRefreshJob führt den Scan über eine frische Verbindung aus und schreibt

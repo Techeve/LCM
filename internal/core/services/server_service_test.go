@@ -137,6 +137,10 @@ func TestLcmHostSetup(t *testing.T) {
 	if !strings.Contains(all, "trivy-repo") || !strings.Contains(all, "install -y trivy") {
 		t.Errorf("Trivy-Install-Skript fehlt:\n%s", all)
 	}
+	// Trivy kommt immer mit der Sandbox (bubblewrap) in einem Lauf.
+	if !strings.Contains(all, "bubblewrap") {
+		t.Errorf("Trivy-Install-Skript richtet die Sandbox nicht mit ein:\n%s", all)
+	}
 
 	// Auto-Einrichtung: Hooks setzen; nach erfolgreichem Install soll LCM den
 	// CVE-Scan aktivieren und die lokale APT-Cache-URL eintragen.

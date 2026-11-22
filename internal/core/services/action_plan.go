@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"LCM/internal/core/domain"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -76,10 +75,9 @@ func (s *ServerService) startPlan(server *domain.Server, plan packagePlan, actor
 		return nil, err // u.a. ErrServerBusy → der Controller mappt auf 409
 	}
 	s.audit.Log(actor, "server.package-update", "server", server.ID, plan.name)
-	safego.GoCleanup("job:package", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:package", job, func() {
 		s.runPackageJob(job, server, plan.script, actor)
-	})
-	return job, nil
+	}), nil
 }
 
 func (s *ServerService) planUpgradeAll(server *domain.Server) (packagePlan, error) {

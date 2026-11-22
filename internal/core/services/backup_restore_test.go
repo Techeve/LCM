@@ -101,6 +101,59 @@ func TestStageAndApplyRestore(t *testing.T) {
 	}
 }
 
+// TestRestoreLegtUploadsWiederAb: Die Upload-Dateien aus dem flachen Archiv
+// landen wieder unter tls/uploads/<id>/ (0600); Namen mit ungültiger ID oder
+// Pfad bleiben im Staging liegen und werden nicht angewendet. Uploads, die
+// nicht in der Sicherung sind, verschwinden.
+func TestRestoreLegtUploadsWiederAb(t *testing.T) {
+	dataDir := t.TempDir()
+	configPath := filepath.Join(dataDir, "config.json")
+	archive, err := buildEncryptedArchive([]archiveFile{
+		{Name: "app.db", Data: []byte("db")},
+		{Name: "tls-upload-0a1b2c3d-cert.pem", Data: []byte("CERT")},
+		{Name: "tls-upload-0a1b2c3d-key.pem", Data: []byte("KEY")},
+		{Name: "tls-upload-..-cert.pem", Data: []byte("BÖSE")},
+		{Name: "tls-upload-0a1b2c3d-andere.pem", Data: []byte("BÖSE")},
+	}, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ein Upload, den es erst nach der Sicherung gab, und fremde Einträge.
+	uploads := filepath.Join(dataDir, "tls", "uploads")
+	for _, d := range []string{"deadbeef", "kein-upload"} {
+		if err := os.MkdirAll(filepath.Join(uploads, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bs := NewBackupService(nil, nil, dataDir, "", configPath)
+	if err := bs.StageRestore(archive, "pw"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyStagedRestore(dataDir, configPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(uploads, "deadbeef")); !os.IsNotExist(err) {
+		t.Errorf("der Upload nach der Sicherung ist noch da: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(uploads, "kein-upload")); err != nil {
+		t.Errorf("ein Verzeichnis ohne gültige Upload-ID darf nicht angefasst werden: %v", err)
+	}
+
+	dir := filepath.Join(uploads, "0a1b2c3d")
+	for name, want := range map[string]string{"cert.pem": "CERT", "key.pem": "KEY"} {
+		got, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || string(got) != want {
+			t.Errorf("%s: %q, %v", name, got, err)
+		}
+		if info, _ := os.Stat(filepath.Join(dir, name)); info == nil || info.Mode().Perm() != 0o600 {
+			t.Errorf("%s: Rechte %v, erwartet 0600", name, info)
+		}
+	}
+	if entries, _ := os.ReadDir(uploads); len(entries) != 2 {
+		t.Errorf("unerwartete Einträge in tls/uploads: %v", entries)
+	}
+}
+
 func TestBackupPathAndHistoryRestore(t *testing.T) {
 	dataDir := t.TempDir()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(dataDir, "app.db")), &gorm.Config{})

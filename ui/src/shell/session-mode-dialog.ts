@@ -6,6 +6,7 @@ import '../pages/settings/session-mode-field';
 import './release-notes-dialog';
 import { GLOBAL_URL, readGlobal, settingsApi, type GlobalSettings } from '../api/settings';
 import { baseStyles } from '../components/shared';
+import { setupPending } from '../lib/address-setup';
 import { auth } from '../lib/auth';
 import { I18nController, SubscribeController } from '../lib/controllers';
 import { errorText, t } from '../lib/i18n';
@@ -18,6 +19,7 @@ import { router } from '../lib/router';
  * die Wahl nicht bestätigt hat. „Übernehmen“ speichert Weg und Bestätigung; bleibt der Weg gleich, bleibt die Sitzung.
  * Schließen ohne Wahl lässt den Standard stehen, die Frage kommt bei der nächsten Anmeldung wieder.
  * Erst wenn sie beantwortet ist, kommen die Hinweise zum letzten Update: zwei Fenster übereinander wären zu viel.
+ * Solange der Einrichtungsassistent offen ist, erscheint sie nicht: Dort ist sie der erste Schritt (`step-session`).
  */
 export class LcmSessionModeDialog extends LitElement {
   static override properties = { _choice: { state: true }, _dismissed: { state: true }, _busy: { state: true }, _error: { state: true } };
@@ -48,9 +50,9 @@ export class LcmSessionModeDialog extends LitElement {
     new SubscribeController(this, (listener) => auth.onChange(listener));
   }
 
-  /** Wer die Einstellungen ändern darf und keinen Pflichtschritt mehr offen hat. */
+  /** Wer die Einstellungen ändern darf, keinen Pflichtschritt mehr offen hat und nicht im Assistenten steht (dort ist es der erste Schritt). */
   get #mayAsk(): boolean {
-    return auth.isAuthenticated && auth.remediation === null && auth.can('settings:manage');
+    return auth.isAuthenticated && auth.remediation === null && !setupPending(auth.user) && auth.can('settings:manage');
   }
 
   /** Der gespeicherte Weg; leer heißt Arbeitsspeicher. */

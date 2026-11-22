@@ -17,8 +17,9 @@ import (
 // Protokoll, Job-Verknüpfung und Sperre wie jede andere Server-Aktion.
 //
 // Das Vorgehen entspricht packaging/repo-server/setup-enterprise.sh
-// (Zugangsdaten in apt auth.conf.d, eigene Quelle, Community-Quelle
-// stilllegen, Prüfung NUR gegen die neue Quelle, Rückbau bei Fehlschlag)
+// (Zugangsdaten in apt auth.conf.d, eigene Quelle, Prüfung NUR gegen die neue
+// Quelle, Rückbau bei Fehlschlag; die Community-Quelle bleibt, LCM-Pakete
+// daraus sperrt eine Vorrang-Regel nach Suite)
 // - nur dass die Zugangsdaten hier der instanzgebundene Zugangsschlüssel
 // sind, nicht der Subscription-Key.
 //
@@ -42,19 +43,24 @@ const (
 	// Vorrang-Regel: hält die LCM-Pakete auf dem Enterprise-Kanal, ohne die
 	// Community-Quelle abzuschalten - die liefert auch andere Pakete.
 	subAptPrefFile  = "/etc/apt/preferences.d/lcm-enterprise.pref"
-	subAptSuite     = "stable"
-	subAptSuiteBeta = "beta"
 	subAptJobEnable = "Enterprise-Paketkanal einrichten"
 	subAptJobBeta   = "Beta-Paketkanal einrichten"
 	subAptJobRevert = "Zurück zum Community-Paketkanal"
 
-	// Kennzeichnung der Kanäle im Release-File (aptly: Label je Publish-Punkt,
-	// gesetzt mit packaging/repo-server/set-channel-metadata.sh). Erst damit
-	// kann apt die Kanäle auseinanderhalten: gleicher Host, gleiche Suite.
-	aptLabelCommunity = "techeve-community"
-	aptLabelBeta      = "techeve-beta"
-	// Die Pakete, die aus dem Enterprise-Kanal kommen müssen.
-	aptPinnedPackages = "lcm lcm-agent"
+	// Jeder Kanal hat eine eigene Suite, die Komponente ist immer „main". Die
+	// Suite ist das, woran apt (Vorrang-Regel „a=") und LCM die Kanäle
+	// auseinanderhalten; Origin und Label im Release-File zählen nicht.
+	// „stable" ist die alte Bezeichnung des Community-Kanals: der Server liefert
+	// sie mit gleichem Inhalt weiter aus, solange alte Installationen sie noch
+	// eingetragen haben.
+	subAptSuiteCommunity  = "community"
+	subAptSuiteLegacy     = "stable"
+	subAptSuiteBeta       = "beta"
+	subAptSuiteEnterprise = "enterprise"
+	// Die Pakete, die aus dem Enterprise-Kanal kommen müssen. Nur lcm: lcm-agent
+	// liegt nicht im Enterprise-Kanal, gesperrt käme er auf dem LCM-Host aus
+	// keiner Quelle mehr.
+	aptPinnedPackages = "lcm"
 )
 
 // aptChannelPaths bündelt die beteiligten apt-Dateien. Produktiv sind das die
@@ -123,29 +129,13 @@ func baseURLSnippet() string {
 		"[ -n \"$BASE\" ] || { echo 'Adresse des Paket-Servers nicht ermittelbar - ist das TechEve-Repository eingerichtet?'; exit 1; }\n"
 }
 
-// comDisableSnippet legt die Community-Quelle still - in beiden Formaten.
-// Klassisch per Umbenennen (apt liest nur *.list), deb822 per „Enabled: no"
-// (den Schalter kennt apt selbst; die Datei behält Name und Inhalt, der
-// Rückweg ist damit sauber). Findet sich gar keine Community-Quelle, sagt das
-// Skript es laut: dann zeigt womöglich eine anders benannte Datei weiter auf
-// den freien Kanal, und genau das soll niemand übersehen.
-const comDisableSnippet = "DIS=0\n" +
-	"if [ -e \"$COM\" ]; then mv \"$COM\" \"$COM.disabled\"; DIS=1; fi\n" +
-	"if [ -e \"$COM.disabled\" ]; then DIS=1; fi\n" +
-	"if [ -e \"$COMS\" ]; then\n" +
-	"  awk '{k=tolower($1)} k==\"enabled:\"{next} {print} k==\"types:\"{print \"Enabled: no\"}' \"$COMS\" > \"$COMS.lcmtmp\"\n" +
-	// Nur zurückschreiben, wenn wirklich etwas herauskam: ein gescheitertes
-	// awk darf niemals die einzige Paketquelle der Maschine leeren.
-	"  if [ -s \"$COMS.lcmtmp\" ]; then cat \"$COMS.lcmtmp\" > \"$COMS\"; fi\n" +
-	"  rm -f \"$COMS.lcmtmp\"\n" +
-	"  DIS=1\n" +
-	"fi\n" +
-	"if [ \"$DIS\" = 0 ]; then echo \"Hinweis: keine Community-Paketquelle gefunden (weder $COM noch $COMS) - bitte prüfen, ob eine anders benannte Quelle weiterhin auf den freien Kanal zeigt.\"; fi\n"
-
-// comEnableSnippet macht comDisableSnippet rückgängig: klassische Datei
-// zurückbenennen, im deb822-Format die von uns gesetzte Zeile „Enabled: no"
-// wieder entfernen. Ein vom Betreiber selbst gesetztes „Enabled: yes" bleibt
-// unangetastet.
+// comEnableSnippet schaltet eine stillgelegte Community-Quelle wieder ein.
+// Ältere LCM-Versionen legten sie beim Wechsel auf Enterprise still (klassische
+// Datei nach „.disabled" umbenannt, im deb822-Format „Enabled: no" gesetzt);
+// heute bleibt sie aktiv und die Vorrang-Regel sperrt nur die LCM-Pakete. Der
+// Snippet heilt solche Hosts: Datei zurückbenennen, die von LCM gesetzte Zeile
+// „Enabled: no" entfernen. Ein vom Betreiber selbst gesetztes „Enabled: yes"
+// bleibt unangetastet.
 const comEnableSnippet = "if [ -e \"$COM.disabled\" ]; then mv \"$COM.disabled\" \"$COM\"; fi\n" +
 	"if [ -e \"$COMS\" ]; then\n" +
 	"  awk '{k=tolower($1)} k==\"enabled:\" && tolower($2)==\"no\"{next} {print}' \"$COMS\" > \"$COMS.lcmtmp\"\n" +
@@ -153,34 +143,32 @@ const comEnableSnippet = "if [ -e \"$COM.disabled\" ]; then mv \"$COM.disabled\"
 	"  rm -f \"$COMS.lcmtmp\"\n" +
 	"fi\n"
 
-// channelSeparationSnippet trennt die Kanäle - auf dem schonenden Weg, wenn
-// der Repository-Server ihn hergibt.
+// Bausteine eines Abschnitts der Vorrang-Regel (als printf-Argumente): die
+// LCM-Pakete aus einer Suite sperren.
+const (
+	aptPinFor = "'Package: " + aptPinnedPackages + "' 'Pin: release a="
+	aptPinEnd = "' 'Pin-Priority: -1'"
+)
+
+// channelSeparationSnippet trennt die Kanäle per Vorrang-Regel: apt bekommt
+// gesagt, dass die LCM-Pakete aus den Suites community, stable (alter Name des
+// Community-Kanals) und beta nie in Frage kommen (Priorität -1). Die
+// Community-Quelle bleibt dabei aktiv und liefert weiter ihre anderen Pakete -
+// beim Stilllegen der ganzen Quelle wären die mit weg.
 //
-// Bevorzugt per Vorrang-Regel: apt bekommt gesagt, dass die LCM-Pakete aus dem
-// Community-Kanal nie in Frage kommen (Priorität -1). Die Community-Quelle
-// bleibt dabei aktiv und liefert weiter ihre anderen Pakete - beim Stilllegen
-// der ganzen Quelle wären die mit weg.
-//
-// Das setzt voraus, dass die Kanäle im Release-File unterscheidbar sind
-// (Label). Alte Publish-Punkte tragen keins; dann bleibt nur der grobe Weg,
-// und das Skript sagt auch, warum. Die Prüfung läuft gegen die WIEDER
-// eingeschaltete Community-Quelle - sonst könnte eine frühere Umstellung den
-// feineren Weg für immer verstellen.
+// Die Regel greift immer: die Suite steht im Release-File jedes Kanals und ist
+// eindeutig, es braucht keine Vorprüfung am Server. Eine Community-Quelle von
+// einer früheren Umstellung, die sie noch stilllegte, wird dafür zuerst wieder
+// eingeschaltet.
 const channelSeparationSnippet = comEnableSnippet +
-	"apt-get update -qq || true\n" +
-	"if LC_ALL=C apt-cache policy 2>/dev/null | grep -q 'l=" + aptLabelCommunity + "'; then\n" +
-	"  mkdir -p \"$(dirname \"$PREF\")\"\n" +
-	"  printf '%s\\n' '# Von LCM verwaltet: die LCM-Pakete kommen nur aus dem Enterprise-Kanal.' " +
+	"mkdir -p \"$(dirname \"$PREF\")\"\n" +
+	"printf '%s\\n' '# Von LCM verwaltet: die LCM-Pakete kommen nur aus dem Enterprise-Kanal.' " +
 	"'# Die Community-Quelle bleibt fuer alle anderen Pakete nutzbar.' " +
-	"'Package: " + aptPinnedPackages + "' 'Pin: release l=" + aptLabelCommunity + "' 'Pin-Priority: -1' '' " +
-	"'Package: " + aptPinnedPackages + "' 'Pin: release l=" + aptLabelBeta + "' 'Pin-Priority: -1' > \"$PREF\"\n" +
-	"  chmod 0644 \"$PREF\"\n" +
-	"  echo 'Kanaltrennung per Vorrang-Regel: die Community-Quelle bleibt aktiv, liefert aber kein LCM mehr.'\n" +
-	"else\n" +
-	"  rm -f \"$PREF\"\n" +
-	comDisableSnippet +
-	"  echo 'Hinweis: der Repository-Server kennzeichnet seine Kanäle noch nicht (kein Label im Release-File) - deshalb wurde die Community-Quelle stillgelegt. Andere Pakete von dort sind damit vorerst nicht verfügbar.'\n" +
-	"fi\n" +
+	aptPinFor + subAptSuiteCommunity + aptPinEnd + " '' " +
+	aptPinFor + subAptSuiteLegacy + aptPinEnd + " '' " +
+	aptPinFor + subAptSuiteBeta + aptPinEnd + " > \"$PREF\"\n" +
+	"chmod 0644 \"$PREF\"\n" +
+	"echo 'Kanaltrennung per Vorrang-Regel: die Community-Quelle bleibt aktiv, liefert aber kein LCM mehr.'\n" +
 	"apt-get update -qq || true\n"
 
 // candidateSnippet ermittelt, welche lcm-Version apt jetzt nähme und aus
@@ -201,18 +189,16 @@ const candidateSnippet = "CAND=$(LC_ALL=C apt-cache policy lcm 2>/dev/null | sed
 	"SUITE=${LINE#* }\n"
 
 // channelProofSnippet ist die Gegenprobe für den Enterprise-Kanal: aus
-// welcher Quelle käme lcm jetzt? Das ist die Frage, um die es geht - schärfer
-// als „ist die Community-Quelle weg", und sie stimmt für beide Wege der
-// Kanaltrennung.
-func channelProofSnippet() string {
-	return candidateSnippet +
-		"if [ -n \"$SRC\" ]; then\n" +
-		"  case \"$SRC\" in\n" +
-		"    \"$REPO\"*) echo \"Gegenprobe: lcm $CAND kommt aus $SRC.\" ;;\n" +
-		"    *) echo \"WARNUNG: lcm $CAND käme weiterhin aus $SRC statt aus dem Enterprise-Kanal - bitte die apt-Quellen des LCM-Hosts prüfen.\" ;;\n" +
-		"  esac\n" +
-		"fi\n"
-}
+// welcher Suite käme lcm jetzt? Das ist die Frage, um die es geht - schärfer
+// als „ist die Community-Quelle weg". Gemessen wird an der Suite, nicht an
+// der Adresse: sie ist je Kanal eindeutig.
+const channelProofSnippet = candidateSnippet +
+	"if [ -n \"$SRC\" ]; then\n" +
+	"  case \"$SUITE\" in\n" +
+	"    " + subAptSuiteEnterprise + "/*) echo \"Gegenprobe: lcm $CAND kommt aus dem Enterprise-Kanal ($SRC).\" ;;\n" +
+	"    *) echo \"WARNUNG: lcm $CAND käme weiterhin aus $SRC $SUITE statt aus dem Enterprise-Kanal - bitte die apt-Quellen des LCM-Hosts prüfen.\" ;;\n" +
+	"  esac\n" +
+	"fi\n"
 
 // betaProofSnippet ist die Gegenprobe für den Beta-Kanal. Sie warnt bewusst
 // NICHT, wenn der Kandidat aus der Community-Quelle kommt: beide Quellen sind
@@ -235,7 +221,7 @@ const betaProofSnippet = candidateSnippet +
 
 // enterpriseChannelScript baut das Umstell-Skript. login/secret sind
 // Instanz-ID (UUID) und Zugangsschlüssel (hex), repoURL kommt vom Dienst
-// (z. B. https://repo.techeve.de/enterprise). Alle drei werden quotiert.
+// (https://repo.techeve.de/enterprise/lcm, Suite enterprise). Alle drei werden quotiert.
 func enterpriseChannelScript(repoURL, login, secret string) string {
 	return enterpriseChannelScriptIn(defaultAptChannelPaths(), repoURL, login, secret)
 }
@@ -255,7 +241,7 @@ func enterpriseChannelBody(p aptChannelPaths) string {
 		"mkdir -p \"$(dirname \"$AUTH\")\"\n" +
 		"printf 'machine %s\\nlogin %s\\npassword %s\\n' \"$REPO\" \"$LOGIN\" \"$SECRET\" > \"$AUTH\"\n" +
 		"chmod 0600 \"$AUTH\"\n" +
-		"printf 'deb [signed-by=%s] %s " + subAptSuite + " main\\n' \"$KEYRING\" \"$REPO\" > \"$ENT\"\n" +
+		"printf 'deb [signed-by=%s] %s " + subAptSuiteEnterprise + " main\\n' \"$KEYRING\" \"$REPO\" > \"$ENT\"\n" +
 		// Prüfung NUR gegen die neue Quelle - ein falscher Schlüssel muss
 		// laut scheitern und rückgebaut werden, nicht im Rauschen eines
 		// vollen apt-get update untergehen.
@@ -274,7 +260,7 @@ func enterpriseChannelBody(p aptChannelPaths) string {
 		// immer die höhere Version - und die kommt früher oder später aus
 		// dem freien Kanal.
 		channelSeparationSnippet +
-		channelProofSnippet() +
+		channelProofSnippet +
 		"echo 'Enterprise-Paketkanal aktiv - Updates kommen ab jetzt aus dem abgehangenen Kanal.'\n"
 }
 
@@ -413,7 +399,7 @@ func (s *SubscriptionService) SetAptChannel(channel, actor string) (*domain.Job,
 		name, script = subAptJobEnable, hostScript(host, enterpriseChannelScript(repoURL, settings.InstanceID, accessKey),
 			"host-apt-channel", "enterprise", repoURL, settings.InstanceID, helperB64(accessKey))
 	case domain.AptChannelBeta:
-		base := settings.SubscriptionServiceBase()
+		base := s.serviceURL()
 		name, script = subAptJobBeta, hostScript(host, betaChannelScript(base), "host-apt-channel", "beta", base)
 	default:
 		name, script = subAptJobRevert, hostScript(host, communityRevertScript(), "host-apt-channel", "community")

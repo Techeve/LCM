@@ -4,6 +4,7 @@
 
 import type { FirewallRulePayload, ListeningPort, ServerSecurity, SshSources } from '../../api/servers-security';
 import { splitList } from '../../api/servers-security';
+import { t } from '../../lib/i18n';
 import { emptyFirewallRow, firewallErrors, firewallRules, hasRowErrors, parseFirewall, protoSuffix, type FirewallRow, type FirewallRowErrors } from '../groups/rule-model';
 
 /** Die SSH-Freigabe im Editor: Allowlists und eigene Adressen als Freitext. */
@@ -41,10 +42,27 @@ export function listeningSuggestions(listening: readonly ListeningPort[], rows: 
   });
 }
 
+/** Die Rolle der Let's-Encrypt-Prüfung (HTTP-01) auf Port 80, siehe `lcm_roles`. */
+export const ACME_ROLE = 'acme';
+
+/**
+ * Wie ein lauschender Port heißt: bei LCMs eigenen Ports "LCM GUI · Agent · MCP" (nur die Schnittstellen, die dort
+ * laufen), sonst der Prozessname aus dem Scan.
+ */
+export function listeningLabel(l: ListeningPort, translate: (key: string) => string = t): string {
+  if (l.lcm_roles.length === 0) return l.process;
+  return `LCM ${l.lcm_roles.map((role) => translate(`serverSecurity.firewall.listening.role.${role}`)).join(' · ')}`;
+}
+
+/** Der Vorschlag für Port 80 der Let's-Encrypt-Prüfung, falls er noch keine Regel hat. */
+export function acmeSuggestion(suggestions: readonly ListeningPort[]): ListeningPort | undefined {
+  return suggestions.find((l) => l.lcm_roles.includes(ACME_ROLE));
+}
+
 /** Eine Regel aus einem Vorschlag: der Dienstname als Bemerkung, die Adressfamilie nach der Bindung. */
-export function ruleFromListening(l: ListeningPort): FirewallRow {
+export function ruleFromListening(l: ListeningPort, translate?: (key: string) => string): FirewallRow {
   const version = isWildcard(l.bind) ? 'any' : l.ip_version === 'v4' || l.ip_version === 'v6' ? l.ip_version : 'any';
-  return { ...emptyFirewallRow(), port: String(l.port), proto: l.proto === 'udp' ? 'udp' : 'tcp', ip_version: version, comment: l.process };
+  return { ...emptyFirewallRow(), port: String(l.port), proto: l.proto === 'udp' ? 'udp' : 'tcp', ip_version: version, comment: listeningLabel(l, translate) };
 }
 
 /** Fehler der eigenen Adressen der SSH-Freigabe, geprüft wie die Quellen jeder anderen Regel. */

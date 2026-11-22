@@ -21,12 +21,12 @@ var encryptedColumns = []struct {
 	{"users", "id", "totp_secret_enc"},
 	{"linux_users", "id", "password_enc"},
 	{"global_settings", "id", "default_ssh_password_enc"},
-	{"global_settings", "id", "tls_key_pem_enc"},
 	{"global_settings", "id", "onboarding_key_enc"}, // System-Onboarding-SSH-Key
 	{"global_settings", "id", "mail_password_enc"},  // System-Mailer (SMTP)
 	{"global_settings", "id", "backup_passphrase_enc"},
 	{"global_settings", "id", "subscription_key_enc"},
 	{"global_settings", "id", "subscription_access_key_enc"},
+	{"global_settings", "id", "acme_dns_config_enc"}, // Let's-Encrypt-DNS-01-Zugangsdaten (JSON)
 	// Achtung Spaltenname: gorm trennt CrowdSec → crowd_sec (anders als die
 	// explizit gepinnten crowdsec_*-Spalten am Server-Modell).
 	{"global_settings", "id", "crowd_sec_lapi_password_enc"}, // CrowdSec-LAPI-Maschinenkonto

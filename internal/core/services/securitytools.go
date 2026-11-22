@@ -10,7 +10,6 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -417,10 +416,9 @@ func (s *ServerService) ConfigureSecurityTool(scope repositories.AccessScope, id
 		return nil, err
 	}
 	s.audit.Log(actor, "server.security-tool", "server", id, server.Name+": "+in.Tool)
-	safego.GoCleanup("job:security-tool", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:security-tool", job, func() {
 		s.runSecurityToolJob(job, server, in, actor)
-	})
-	return job, nil
+	}), nil
 }
 
 // planSecurityTool prüft Server und Eingabe der Einrichtung - für den Lauf

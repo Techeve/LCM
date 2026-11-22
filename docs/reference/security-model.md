@@ -109,9 +109,11 @@ absichtlich teuer, und der Endpunkt ist anonym erreichbar.
 
 ## Links in E-Mails: `public_base_url`
 
-Links in Passwort-Reset- und Einladungs-Mails werden **ausschließlich** aus der
-Einstellung `public_base_url` gebildet (*Einstellungen → Allgemein*), niemals aus
-dem `Host`-Header des Requests.
+Links in Passwort-Reset- und Einladungs-Mails werden **ausschließlich** aus den
+öffentlichen Adressen gebildet (*Einstellungen → Allgemein*), niemals aus dem
+`Host`-Header des Requests. Im Adressmodus A ist das die Einstellung
+`public_base_url`, in B und C die aus Name und Port abgeleitete Adresse der
+Weboberfläche.
 
 :::caution[Warum das wichtig ist]
 Würde die Basis-Adresse aus dem Request stammen, könnte ein Angreifer einen
@@ -226,6 +228,8 @@ servers.Get("/:id/storage-history", middlewares.RequirePermission(domain.PermSer
 ```
 
 `RequirePermission` antwortet 401 (nicht eingeloggt) bzw. 403 (eingeloggt, aber Recht fehlt). Die Rollenauflösung passiert im Hintergrund: `Authenticate` lädt den User mit `Preload("Roles.Permissions")`, `HasPermission` prüft dann nur noch in-memory.
+
+**Das Recht `system:endpoints`** verwaltet die Endpunkte von LCM: erlaubte Netzbereiche je Dienst und Zertifikate (Hochladen, Entfernen, Neuladen, Let's Encrypt). Es liegt **allein bei `admin`** und gehört weder zu `settings:manage` noch zu den Rechten des Managers: Wer das ändert, bestimmt, wer LCM erreicht und wem Browser und Agenten LCM abnehmen.
 
 **Neue Permission einführen:**
 
@@ -509,8 +513,12 @@ sudo userdel -r lcm-svc
 
 ## Dateirechte: geprüft, nicht vorausgesetzt
 
-Das Datenverzeichnis (`/var/lib/lcm`, Datenbank, Master-Key, TLS-Schlüssel,
-Backups) gehört dem Dienstbenutzer allein: `0700`, Geheimnisse `0600`. Die
+Das Datenverzeichnis (`/var/lib/lcm`, Datenbank, Master-Key, TLS-Schlüssel
+auch hochgeladener und bezogener Zertifikate, Backups) gehört dem
+Dienstbenutzer allein: `0700`, Geheimnisse `0600`. Dazu zählt die Steuerbuchse
+`control.sock` (`0600`): Nur der Dienstbenutzer und root dürfen die Befehle
+`lcm tls` und `lcm network` an den laufenden Dienst schicken, eine eigene
+Anmeldung gibt es dort nicht. Die
 Konfiguration (`/etc/lcm`) gehört root, Gruppe `lcm` darf lesen und schreiben
 (Restore), sonst niemand. Das Paketskript setzt das - und LCM **prüft es beim
 Start und alle 15 Minuten selbst** (`internal/perms`): Dateien, die dem Dienst
@@ -590,7 +598,7 @@ Verschlüsselt gespeichert werden u.&nbsp;a. (vollständige Liste in `internal/s
 - **2FA-Secrets** der Benutzer (`users.totp_secret_enc`) und Linux-User-Passwörter;
 - **System-Mailer**-SMTP-Passwort und **Benachrichtigungskanal-Secrets** (SMTP-Passwort bzw. Webhook-URL);
 - **CrowdSec-Zugänge** auf dem LCM-Host: LAPI-Maschinen-Passwörter (`crowdsec_lapis.password_enc`) und Console-Key (`crowd_sec_console_key_enc`);
-- das hinterlegte **TLS-Key-PEM**.
+- die **Zugangsdaten des DNS-Anbieters** für Let's Encrypt mit DNS-01 (`global_settings.acme_dns_config_enc`). Die Schlüssel hochgeladener und bezogener Zertifikate liegen als Dateien mit `0600` im Datenverzeichnis und gehören zum System-Backup.
 
 Großvolumige Konsolen-Ausgaben (Job-/SSH-Output) sowie der Server-Host/-Name laufen über einen GORM-Serializer (`aesgcm`); der Servername trägt zusätzlich einen aus dem Master-Key abgeleiteten **Blindindex** für die Suche, ohne den Klartext zu speichern.
 
@@ -600,16 +608,17 @@ Werte ab 512 Byte komprimiert der Serializer **vor** dem Verschlüsseln mit zstd
 
 ## LCM Remote (Agent-Listener)
 
-Server hinter NAT verbinden sich **ausgehend** per `lcm-agent` (MQTT-über-WebSocket) auf einem **eigenen, dedizierten Port** (Default `9320`, `internal/remote`) - getrennt von UI/REST. Der Enrollment-Token wird nur bei der Erstanzeige im Klartext gezeigt; at rest liegt ausschließlich sein Hash. Der Agent-Listener nutzt dasselbe TLS-Zertifikat wie die UI, dessen Fingerprint der Agent beim Enrollment **pinnt** (MitM-Schutz). Kommandos über den Agent-Transport unterliegen derselben Stille-Frist wie der Job-Watchdog: Sie werden abgebrochen, wenn über die erlaubte Zeit hinaus keine Ausgabe mehr entsteht. Details: [LCM Remote](/guides/remote/).
+Server hinter NAT verbinden sich **ausgehend** per `lcm-agent` (MQTT-über-WebSocket) auf einem **eigenen, dedizierten Port** (Default `9320`, `internal/remote`) - getrennt von UI/REST. Der Enrollment-Token wird nur bei der Erstanzeige im Klartext gezeigt; at rest liegt ausschließlich sein Hash. Der Agent-Listener liefert das Zertifikat nach dem angefragten Namen aus (eigenes Zertifikat, sonst das der LCM-eigenen CA). Der Agent **pinnt** beim Enrollment den Fingerprint des Zertifikats, das LCM für seine Adresse ausliefert, dazu die ausstellende Zertifizierungsstelle, soweit sie eine eigene ist (MitM-Schutz). Eine private Zertifizierungsstelle gilt nur zusammen mit der **Namensprüfung** gegen die Adresse des Agents. Kommandos über den Agent-Transport unterliegen derselben Stille-Frist wie der Job-Watchdog: Sie werden abgebrochen, wenn über die erlaubte Zeit hinaus keine Ausgabe mehr entsteht. Details: [LCM Remote](/guides/remote/).
 
 ## MCP-Schnittstelle (KI-Agenten)
 
-Der optionale MCP-Listener (`internal/mcp`, Default aus, Bind `127.0.0.1:9330`) gibt KI-Agenten **ausschließlich read-only** Server-Eigenschaften heraus. Sicherheitsrelevant:
+Der optionale MCP-Listener (`internal/mcp`, Default aus, Port `9330`, Bind-Adresse wie die Weboberfläche) gibt KI-Agenten **ausschließlich read-only** Server-Eigenschaften heraus. Sicherheitsrelevant:
 
 - **Eigener Scope:** Zugriff nur mit einem API-Key vom Scope `mcp` (Bearer-Token); solche Keys funktionieren nirgends sonst.
 - **Whitelist-DTO:** Serialisiert wird ausschließlich das kuratierte `ServerView`-Struct - **niemals** das `domain.Server`. Es trägt per Konstruktion keine Passwörter, Login-Benutzer, privaten/öffentlichen Schlüssel, Host-Key-Fingerprints oder Agent-Token.
 - **Keine Schreib-Tools:** Es gibt nur `list_servers`, `get_server` und `fleet_summary` - keine konfigurierenden Aktionen.
-- **Zur Laufzeit schaltbar:** über *Einstellungen → MCP*. Der Endpunkt spricht HTTP; für Fernzugriff gehört ein TLS-terminierender Reverse-Proxy davor. Details: [MCP-Schnittstelle](/guides/mcp/).
+- **Immer verschlüsselt:** Der Endpunkt spricht ausschließlich HTTPS (Zertifikatspool von LCM), auch auf bestehenden Installationen. Ein Client mit `http://` kommt nicht durch.
+- **Zur Laufzeit schaltbar:** mit einem Schalter unter *Einstellungen → Allgemein* und *Einstellungen → MCP*. Details: [MCP-Schnittstelle](/guides/mcp/).
 
 ## Weitere Maßnahmen
 
@@ -618,8 +627,9 @@ Der optionale MCP-Listener (`internal/mcp`, Default aus, Bind `127.0.0.1:9330`) 
 - **XSS:** Die Oberfläche rendert ausschließlich über Lit-Templates (automatisches Escaping), dazu kommen die strenge CSP und Trusted Types.
 - **Eingabeprüfung:** Das Backend prüft jede Eingabe selbst und verlässt sich nicht allein auf gebundene Parameter. Eine Suchmetrik weist SQL in Strings ab, Zahlen haben feste Grenzen, IP-Adressen, Netze und IPv6 werden streng geprüft (`internal/inputcheck`, `middlewares.InputGuard`).
 - **Build-Gates:** `make build` bricht bei `npm audit`- oder `govulncheck`-Funden ab.
-- **Default-Bind:** `127.0.0.1` - wer nach außen exponiert, setzt bewusst `"host": "0.0.0.0"` und sollte TLS über einen Reverse-Proxy (Caddy, nginx) terminieren.
-- **IP-Allowlist:** `allowed_ips` in der config.json beschränkt den Netzwerk-Zugriff auf zugelassene Client-Adressen (Schlüsselwörter `localhost`/`private` oder IP/CIDR); nicht passende Clients erhalten früh **403** (Middleware `IPAllowlist`, vor Auth/Logging). Gefiltert wird die direkte TCP-Verbindung; hinter einem Reverse-Proxy `trust_proxy_header: true` **plus** `trusted_proxies` (nur von diesen Peers zählt `X-Forwarded-For`). Der Matcher liegt im Paket `internal/netfilter`. Siehe [Sicherheit & CVE-Scans](/guides/security-cve/) und [Reverse-Proxy](/guides/reverse-proxy/).
+- **Default-Bind:** `127.0.0.1` - wer nach außen exponiert, setzt bewusst `"host": "0.0.0.0"` und sollte TLS mit einem echten Zertifikat ausliefern, entweder über ein eigenes Zertifikat oder Let's Encrypt in LCM selbst ([Zertifikate](/guides/zertifikate/)) oder über einen Reverse-Proxy (Caddy, nginx).
+- **Netzbereiche je Dienst:** Für Weboberfläche, Agent und MCP gibt es je eine Liste erlaubter Netze (`allowed_ips`, `agent_allowed_ips`, `mcp_allowed_ips` in der config.json, sonst die Einstellung in der Oberfläche, die nur ein Admin ändert). Leer heißt alle Netze, der Standard. Nicht passende Clients erhalten früh **403** (Middleware `IPAllowlist`, vor Auth/Logging). Die Listen sind zur Laufzeit austauschbar. Steht ein Dienst in der config.json, gilt nur diese Liste (in der Oberfläche schreibgeschützt), so führt eine Aussperrung über die Konsole wieder hinein; `lcm network reset` setzt die Einstellung zurück. LCM lehnt eine Liste der Weboberfläche ab, die den eigenen Admin ausschlösse, und trennt Agenten außerhalb einer engeren Agent-Liste erst nach Bestätigung. Gefiltert wird die Adresse des Clients: die der direkten TCP-Verbindung, hinter einem Reverse-Proxy mit `trust_proxy_header: true` **plus** `trusted_proxies` die aus `X-Forwarded-For` (nur von diesen Peers). Ausgenommen sind der öffentliche Agent-Download und die Prüfung von Let's Encrypt auf Port 80. Der Matcher liegt im Paket `internal/netfilter`. Siehe [Erlaubte Netzbereiche](/guides/netzbereiche/) und [Reverse-Proxy](/guides/reverse-proxy/).
+- **Zertifikate prüfen vor dem Laden:** Jedes Zertifikat (Datei, Upload, ACME) durchläuft PEM-Prüfung, Schlüsselabgleich, Gültigkeit und `serverAuth`, bevor es ausgeliefert wird. Besteht es nicht, bleibt der bisherige Stand aktiv. Geändert, hochgeladen oder per Let's Encrypt bezogen wird es nur mit dem Recht `system:endpoints`, jede Änderung steht im Audit-Log. Die Programmdatei für den DNS-Anbieter `exec` legt allein die config.json fest (`acme_dns_exec`), kein Konto in LCM.
 - **Rumpf-Budget:** 1 MiB je Anfrage, geprüft an der Kopfzeile, bevor der Rumpf gelesen wird (`middlewares.BodyBudget`, Request-Streaming). Das große Limit von 64 MiB gilt allein dem Backup-Upload. Rümpfe ohne Längenangabe (chunked) werden außerhalb des Uploads abgewiesen.
 - **E-Mail-Adresse nur mit Passwort:** Die eigene Adresse empfängt den Passwort-Reset. Sie zu ändern verlangt das aktuelle Passwort - eine erbeutete Sitzung allein kann das Konto nicht auf eine fremde Adresse umbiegen.
 - **Konsolen-Fahrkarte im Sichtbereich:** Die Fahrkarte für die Web-Konsole gibt es nur für Server, die der Benutzer sehen darf - das Konsolen-Recht allein reicht nicht.

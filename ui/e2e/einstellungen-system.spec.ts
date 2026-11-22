@@ -6,20 +6,27 @@ import { speichere, speicherleiste } from './helpers';
 test.describe('Einstellungen: Allgemein', () => {
   test('zeigt den Onboarding-Schlüssel und gliedert die Karten', async ({ page }) => {
     await page.goto('/settings/general');
-    // Der beim ersten Start erzeugte öffentliche Schlüssel ist sichtbar (ssh-ed25519 …).
-    await expect(page.getByRole('heading', { level: 2, name: 'Onboarding-Schlüssel' })).toBeVisible();
+    // Onboarding ist eine Karte mit drei eingeklappten Unterkarten; der beim ersten Start erzeugte öffentliche Schlüssel
+    // (ssh-ed25519 …) steht in „Onboarding-Schlüssel“, mit Kopierknopf und Anleitung.
+    await expect(page.getByRole('heading', { level: 2, name: 'Onboarding', exact: true })).toBeVisible();
+    for (const unterkarte of ['Vorgabe für neue Server', 'Onboarding-Schlüssel', 'Mit Agent verwenden']) {
+      await expect(page.getByRole('button', { name: unterkarte, exact: true })).toHaveAttribute('aria-expanded', 'false');
+    }
+    await page.getByRole('button', { name: 'Onboarding-Schlüssel', exact: true }).click();
     await expect(page.getByText(/^ssh-ed25519 /)).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Kopieren' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Kopieren' }).first()).toBeVisible();
+    await expect(page.getByRole('heading', { level: 4, name: 'RHEL-Familie (Rocky, Alma, Fedora)' })).toBeVisible();
 
-    // Zuerst die Onboarding-Themen, dann Adresse und Anmeldung im Browser, danach Überwachung, E-Mail und Aufbewahrung.
+    // Zuerst Onboarding, dann der Block Öffentliche Adressen (Let's Encrypt darin ist eine Unterkarte)
+    // und Anmeldung im Browser, danach Überwachung, E-Mail und Aufbewahrung. Zuletzt steht die Hilfe-Spalte zu den Adressen.
     await expect(page.locator('main').getByRole('heading', { level: 2 })).toHaveText([
-      'Vorgabe für neue Server',
-      'Onboarding-Schlüssel',
-      'Öffentliche Adresse',
+      'Onboarding',
+      'Öffentliche Adressen',
       'Anmeldung im Browser',
       'Überwachung',
       'E-Mail-Versand',
       'Aufbewahrung',
+      'Hilfe zu den Adressen',
     ]);
     // Der Docker-Check hat keine eigenen Einstellungen mehr: Er läuft als Regel des System-Zeitplans.
     await expect(page.getByText('Docker-Check', { exact: false })).toHaveCount(0);
@@ -90,11 +97,20 @@ test.describe('Einstellungen: Subscription', () => {
     await schluessel.fill('LCM-E-AAAAA-BBBBB-CCCCC-DDDDD');
     await expect(page.getByRole('button', { name: 'Aktivieren' })).toBeEnabled();
 
-    // Eigene Dienst-Adresse auf einen toten Port: Die Aktivierung muss EHRLICH scheitern.
-    await page.getByRole('button', { name: 'Eigene Dienst-Adresse' }).click();
-    await page.getByRole('textbox', { name: /Dienst-Adresse|Adresse/ }).last().fill('http://127.0.0.1:1');
+    // Es gibt keine eigene Dienst-Adresse: Die Subscription kommt nur von Techeve.
+    await expect(page.getByRole('button', { name: 'Eigene Dienst-Adresse' })).toHaveCount(0);
+    // Der Dienst ist nicht erreichbar: Die Aktivierung muss EHRLICH scheitern, und die Anfrage trägt nur den Key.
+    const gesendet: unknown[] = [];
+    await page.route('**/api/v1/subscription/activate', (route) => {
+      gesendet.push(route.request().postDataJSON());
+      return route.fulfill({
+        status: 502,
+        json: { error: 'x', code: 'subscription.activation_failed', params: { detail: 'Subscription-Dienst nicht erreichbar: connection refused' } },
+      });
+    });
     await page.getByRole('button', { name: 'Aktivieren' }).click();
     await expect(page.getByText(/nicht erreichbar/i).first()).toBeVisible();
+    expect(gesendet).toEqual([{ subscription_key: 'LCM-E-AAAAA-BBBBB-CCCCC-DDDDD' }]);
     // Weiterhin keine Subscription: Die Aktivierung bleibt angeboten.
     await expect(page.getByRole('button', { name: 'Aktivieren' })).toBeVisible();
   });

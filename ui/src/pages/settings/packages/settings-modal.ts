@@ -22,6 +22,7 @@ export class LcmSettingsModal extends LitElement {
     open: { type: Boolean },
     heading: { type: String },
     subtitle: { type: String },
+    size: { type: String },
     saveLabel: { type: String, attribute: 'save-label' },
     dirty: { type: Boolean },
     busy: { type: Boolean },
@@ -55,6 +56,8 @@ export class LcmSettingsModal extends LitElement {
   declare open: boolean;
   declare heading: string;
   declare subtitle: string;
+  /** Größte Breite des Fensters, siehe `lcm-modal`; Vorgabe `m`. */
+  declare size: LcmModal['size'];
   declare saveLabel: string;
   declare dirty: boolean;
   declare busy: boolean;
@@ -68,6 +71,7 @@ export class LcmSettingsModal extends LitElement {
     this.open = false;
     this.heading = '';
     this.subtitle = '';
+    this.size = 'm';
     this.saveLabel = '';
     this.dirty = false;
     this.busy = false;
@@ -140,6 +144,7 @@ export class LcmSettingsModal extends LitElement {
         ?open=${this.open}
         heading=${this.heading}
         subtitle=${this.subtitle}
+        size=${this.size}
         close-label=${t('settings.more.modal.close')}
         @lcm-close=${this.#onModalClose}
       >

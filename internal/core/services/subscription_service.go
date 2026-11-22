@@ -28,12 +28,21 @@ import (
 // Community und Enterprise sind funktional identisch - dieser Service
 // schaltet KEINE Features. Er hält nur den Vertragsstand sichtbar und
 // besorgt den Repository-Zugang.
+// subscriptionServiceURL ist die Adresse des Subscription-Dienstes
+// (Aktivierung, Lebenszeichen, Beta-Paketkanal). Sie ist fest: Nur Techeve
+// stellt gültige Subscriptions aus, also gibt es keine eigene Dienst-Adresse in
+// Einstellungen, Umgebung oder API.
+const subscriptionServiceURL = "https://repo.techeve.de"
+
 type SubscriptionService struct {
 	settings *repositories.SettingsRepository
 	servers  *repositories.ServerRepository
 	cipher   *crypto.Cipher
 	audit    *AuditService
 	client   *http.Client
+	// serviceBase ersetzt in Tests subscriptionServiceURL (Fake-Dienst). Nur
+	// Tests im Paket setzen es, nichts davon ist von außen erreichbar.
+	serviceBase string
 	// runLcmHostScript führt ein Skript als Job auf dem LCM-Host aus
 	// (apt-Umstellung); after wird nach Job-Ende mit dem Erfolg gerufen.
 	// Optional - ohne Verdrahtung ist die apt-Umstellung nicht verfügbar.
@@ -45,6 +54,14 @@ func NewSubscriptionService(settings *repositories.SettingsRepository, servers *
 		settings: settings, servers: servers, cipher: cipher, audit: audit,
 		client: &http.Client{Timeout: 20 * time.Second},
 	}
+}
+
+// serviceURL liefert die Basis-Adresse des Subscription-Dienstes.
+func (s *SubscriptionService) serviceURL() string {
+	if s.serviceBase != "" {
+		return s.serviceBase
+	}
+	return subscriptionServiceURL
 }
 
 // WithLcmHostRunner verdrahtet die Job-Ausführung auf dem LCM-Host
@@ -179,7 +196,7 @@ func (s *SubscriptionService) Activate(key, actor string) (*domain.GlobalSetting
 		return nil, err
 	}
 
-	status, data, err := s.postJSON(settings.SubscriptionServiceBase()+"/subscription/v1/activate", subscriptionActivateReq{
+	status, data, err := s.postJSON(s.serviceURL()+"/subscription/v1/activate", subscriptionActivateReq{
 		SubscriptionKey: key,
 		InstanceID:      settings.InstanceID,
 		InstanceName:    instanceName(settings),
@@ -244,7 +261,7 @@ func (s *SubscriptionService) Verify(actor string) (*domain.GlobalSettings, erro
 	}
 
 	now := time.Now()
-	status, data, err := s.postJSON(settings.SubscriptionServiceBase()+"/subscription/v1/verify", subscriptionVerifyReq{
+	status, data, err := s.postJSON(s.serviceURL()+"/subscription/v1/verify", subscriptionVerifyReq{
 		InstanceID:  settings.InstanceID,
 		AccessKey:   accessKey,
 		LCMVersion:  version.Version,
@@ -340,7 +357,6 @@ var ErrNoSubscription = errors.New("keine Subscription hinterlegt")
 type SubscriptionStatusView struct {
 	Configured  bool   `json:"configured"`
 	InstanceID  string `json:"instance_id"`
-	ServiceURL  string `json:"service_url"`
 	Customer    string `json:"customer,omitempty"`
 	KeyPrefix   string `json:"key_prefix,omitempty"`
 	Status      string `json:"status,omitempty"`
@@ -379,7 +395,6 @@ func (s *SubscriptionService) Status() (*SubscriptionStatusView, error) {
 	v := &SubscriptionStatusView{
 		Configured:      settings.SubscriptionConfigured(),
 		InstanceID:      settings.InstanceID,
-		ServiceURL:      settings.SubscriptionServiceBase(),
 		Customer:        settings.SubscriptionCustomer,
 		KeyPrefix:       settings.SubscriptionKeyPrefix,
 		Status:          settings.SubscriptionStatus,
@@ -419,18 +434,4 @@ func subscriptionDaysLeft(expires string, now time.Time) (int, bool) {
 		return 0, true
 	}
 	return int(left / (24 * time.Hour)), true
-}
-
-// SetServiceURL speichert die Dienst-Adresse (leer = Standard). Nur die
-// Basis - die Pfade (/subscription/v1/…) sind Protokoll, keine Konfiguration.
-func (s *SubscriptionService) SetServiceURL(raw, actor string) error {
-	u := strings.TrimSpace(raw)
-	if u != "" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
-		return errors.New("die Dienst-Adresse muss mit https:// beginnen")
-	}
-	if err := s.settings.UpdateFields(map[string]any{"subscription_service_url": strings.TrimRight(u, "/")}); err != nil {
-		return err
-	}
-	s.audit.Log(actor, "subscription.service-url", "settings", 1, u)
-	return nil
 }

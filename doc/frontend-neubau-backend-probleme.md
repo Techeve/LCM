@@ -13,8 +13,6 @@ Endpunkte) werden direkt im Neubau korrigiert und stehen hier nicht.
   nur je Server abschalten. Entscheiden: Schalter anbieten oder entfernen.
 - **`GET /servers/:id/outdated-packages`** nutzte nur die alte Oberfläche. Bleibt
   als dokumentierte REST-API, kann aber weg, wenn niemand sie braucht.
-- **Eigene TLS-Felder** (`TLSCertPEM`, `TLSKeyPEMEnc`, `TLSCustomUsed`) sind nie
-  verdrahtet worden, nur eine Spalte in `rotate.go`.
 - **Nur von Tests benutzt:** `BuildKernelInfo`, `Server.IsOffline`,
   `JobService.QueuedForServer`, `LinuxUserService.RemoveFromAllServers`,
   `ProvisioningService.DrainServer`, `Codes`, `GroupService.List`,

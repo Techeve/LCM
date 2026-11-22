@@ -160,6 +160,15 @@ func (r *ServerRepository) FindAllUnscoped() ([]domain.Server, error) {
 	return servers, nil
 }
 
+// CountByTransport zählt die Server mit diesem Transport (ssh oder agent).
+func (r *ServerRepository) CountByTransport(transport string) (int, error) {
+	var n int64
+	if err := r.db.Model(&domain.Server{}).Where("transport = ?", transport).Count(&n).Error; err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // sortByName sortiert Server nach dem (entschlüsselten) Namen - App-seitig,
 // da der Name at rest verschlüsselt liegt und nicht per SQL sortierbar ist.
 func sortByName(servers []domain.Server) {

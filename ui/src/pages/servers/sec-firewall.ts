@@ -22,7 +22,9 @@ import type { FirewallRow } from '../groups/rule-model';
 import {
   hasEditorErrors,
   initialRows,
+  acmeSuggestion,
   initialSshSources,
+  listeningLabel,
   listeningSuggestions,
   openPortsSummary,
   ruleFromListening,
@@ -82,6 +84,9 @@ export class SrvFirewall extends LitElement {
       .ssh-port {
         font-family: var(--font-mono);
         font-weight: var(--fw-semibold);
+      }
+      .acme-notice {
+        margin-block-start: var(--space-3);
       }
       .footer-start {
         margin-inline-end: auto;
@@ -292,11 +297,24 @@ export class SrvFirewall extends LitElement {
                   aria-label=${t('serverSecurity.firewall.listening.add', { port: l.port, proto: l.proto })}
                   @click=${() => this.#setRows([...rows, ruleFromListening(l)])}
                 >
-                  + <span class="mono">${l.port}/${l.proto}</span>${l.process ? html` · ${l.process}` : nothing}${l.bind && l.bind !== '0.0.0.0' && l.bind !== '::' ? html` <span class="muted mono">(${l.bind})</span>` : nothing}
+                  + <span class="mono">${l.port}/${l.proto}</span>${listeningLabel(l) ? html` · ${listeningLabel(l)}` : nothing}${l.bind && l.bind !== '0.0.0.0' && l.bind !== '::' ? html` <span class="muted mono">(${l.bind})</span>` : nothing}
                 </button>`,
               )}
             </div>`}
+      ${this.#renderAcmeNotice(suggestions, rows)}
     </section>`;
+  }
+
+  /** Port 80 für Let's Encrypt (HTTP-01) ohne Regel: LCM öffnet ihn nur während der Prüfung, die Firewall muss ihn durchlassen. */
+  #renderAcmeNotice(suggestions: ListeningPort[], rows: FirewallRow[]): TemplateResult | typeof nothing {
+    const acme = acmeSuggestion(suggestions);
+    if (!acme) return nothing;
+    return html`<lcm-notice class="acme-notice" tone="warn" heading=${t('serverSecurity.firewall.listening.acme.title', { port: acme.port })}>
+      ${t('serverSecurity.firewall.listening.acme.hint')}
+      <div>
+        <lcm-button size="small" icon="plus" @click=${() => this.#setRows([...rows, ruleFromListening(acme)])}>${t('serverSecurity.firewall.listening.acme.add', { port: acme.port })}</lcm-button>
+      </div>
+    </lcm-notice>`;
   }
 
   #renderDocker(security: ServerSecurity): TemplateResult | typeof nothing {

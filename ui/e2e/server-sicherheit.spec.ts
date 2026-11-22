@@ -171,6 +171,40 @@ test.describe('Serverdetail: Firewall und gefährliche Aktionen', () => {
     expect(gesendet.rules.some((regel: { port: number }) => regel.port === 9100)).toBeTruthy();
   });
 
+  test('beim LCM-Host stehen die Schnittstellen an den Ports, Port 80 für HTTP-01 mit Hinweis', async ({ page }) => {
+    // Auf web01 veröffentlicht ein Container Port 80; der LCM-Host hat keinen.
+    await page.route('**/api/v1/servers/1/docker', (route) => route.fulfill({ json: { containers: [] } }));
+    // Die Demo hat keinen LCM-Host; die Rollen setzt sonst das Backend aus den Adress-Einstellungen.
+    await page.route(/\/api\/v1\/servers\/1(\?.*)?$/, async (route) => {
+      const antwort = await route.fetch();
+      const server = await antwort.json();
+      server.listening_ports = JSON.stringify([
+        { port: 80, proto: 'tcp', bind: '0.0.0.0', ip_version: 'v4', process: 'lcm', lcm_roles: ['acme'] },
+        { port: 443, proto: 'tcp', bind: '0.0.0.0', ip_version: 'v4', lcm_roles: ['ui', 'agent', 'mcp'] },
+        { port: 9320, proto: 'tcp', bind: '0.0.0.0', ip_version: 'v4', lcm_roles: ['agent'] },
+      ]);
+      await route.fulfill({ response: antwort, json: server });
+    });
+    await page.goto('/servers/1');
+    await page.getByRole('button', { name: /^Firewall/ }).click();
+    const firewall = fenster(page, 'Firewall von web01');
+    // web01 gibt 80 und 443 schon frei; ohne diese Regeln werden beide wieder Vorschläge.
+    await firewall.getByRole('button', { name: 'Freigabe 1 entfernen' }).click();
+    await firewall.getByRole('button', { name: 'Freigabe 1 entfernen' }).click();
+
+    await expect(firewall.getByRole('button', { name: 'Freigabe 443/tcp hinzufügen' })).toContainText('LCM GUI · Agent · MCP');
+    await expect(firewall.getByRole('button', { name: 'Freigabe 9320/tcp hinzufügen' })).toContainText('LCM Agent');
+    await expect(firewall.getByRole('button', { name: 'Freigabe 80/tcp hinzufügen' })).toContainText("LCM Let's Encrypt (HTTP-01)");
+
+    const hinweis = firewall.locator('lcm-notice').filter({ hasText: "Let's Encrypt braucht Port 80" });
+    await expect(hinweis).toBeVisible();
+    await hinweis.getByRole('button', { name: 'Port 80 freigeben' }).click();
+    // Freigegeben: Hinweis und Vorschlag verschwinden, die Bemerkung nennt den Zweck.
+    await expect(hinweis).toHaveCount(0);
+    await expect(firewall.getByRole('button', { name: 'Freigabe 80/tcp hinzufügen' })).toHaveCount(0);
+    await expect(firewall.getByRole('textbox', { name: 'Bemerkung' }).last()).toHaveValue("LCM Let's Encrypt (HTTP-01)");
+  });
+
   test('Rechte einschränken erklärt die Folge und lässt sich abbrechen', async ({ page }) => {
     await page.goto('/servers/1');
     await page.getByRole('button', { name: 'Aktionen' }).click();

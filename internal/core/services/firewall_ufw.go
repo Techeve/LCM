@@ -129,7 +129,7 @@ func ufwEnableScript(ssh domain.FirewallRule, rules []domain.FirewallRule) strin
 	// (sie kann Quellen tragen); der Regelsatz-Hash hängt als Kommentar dran.
 	sshLines := ufwRuleLines(ssh, "lcm:"+firewallRulesHash(ssh, rules))
 	steps := []string{
-		"command -v ufw >/dev/null 2>&1 || { echo '" + firewallToolMissingMarker(domain.FirewallToolUfw) + "'; exit 1; }",
+		realBinaryExists("ufw") + " || { echo '" + firewallToolMissingMarker(domain.FirewallToolUfw) + "'; exit 1; }",
 		ufwIPv6Probe,
 	}
 	if guard := ufwSSHGuard(sshLines); guard != "" {
@@ -150,7 +150,7 @@ func ufwEnableScript(ssh domain.FirewallRule, rules []domain.FirewallRule) strin
 // ufwDisableScript deaktiviert die ufw-Firewall.
 func ufwDisableScript() string {
 	return strings.Join([]string{
-		"command -v ufw >/dev/null 2>&1 || { echo '" + firewallToolMissingMarker(domain.FirewallToolUfw) + "'; exit 1; }",
+		realBinaryExists("ufw") + " || { echo '" + firewallToolMissingMarker(domain.FirewallToolUfw) + "'; exit 1; }",
 		"ufw --force disable",
 		"ufw status",
 	}, " && ")
@@ -323,9 +323,9 @@ func ufwKeyIsV6(key string) bool {
 // ein fehlendes Werkzeug abgesichert - der Portwechsel selbst darf daran
 // nicht scheitern.
 func ufwAllowPortCmd(port int) string {
-	return fmt.Sprintf("command -v ufw >/dev/null 2>&1 && ufw allow %d/tcp || true", port)
+	return fmt.Sprintf("%s && ufw allow %d/tcp || true", realBinaryExists("ufw"), port)
 }
 
 func ufwRemovePortCmd(port int) string {
-	return fmt.Sprintf("command -v ufw >/dev/null 2>&1 && ufw delete allow %d/tcp || true", port)
+	return fmt.Sprintf("%s && ufw delete allow %d/tcp || true", realBinaryExists("ufw"), port)
 }

@@ -74,13 +74,24 @@ type Deps struct {
 	AccessLog bool
 	// APIKeyRateLimitPerMinute: Requests pro API-Key und Minute (0 = aus).
 	APIKeyRateLimitPerMinute int
-	// IPAllowlist beschränkt den Zugriff auf zugelassene Client-Adressen
-	// (leerer Matcher = keine Einschränkung, bisheriges Verhalten).
-	IPAllowlist netfilter.Allowlist
+	// UIAccess hält die erlaubten Netzbereiche der Weboberfläche, zur
+	// Laufzeit änderbar (leer oder nil = keine Einschränkung, bisheriges
+	// Verhalten).
+	UIAccess *netfilter.Holder
+	// Network verwaltet die Netzbereiche aller Endpunkte; nil in Tests =>
+	// die Routen unter /system/network fehlen.
+	Network *services.NetworkAccessService
+	// TLS verwaltet die Zertifikate der Endpunkte (Pool); nil in Tests =>
+	// die Routen unter /system/tls fehlen.
+	TLS controllers.TLSManager
+	// ACME holt und erneuert Zertifikate bei einer ACME-CA; nil in Tests =>
+	// die Routen unter /system/acme fehlen.
+	ACME *services.ACMEService
 	// ProxyTrust sagt, wessen X-Forwarded-For als Client-Adresse gilt
 	// (trust_proxy_header + trusted_proxies) - für IP-Filter, Anmeldesperre
-	// und Protokolle gleichermaßen.
-	ProxyTrust netfilter.ProxyTrust
+	// und Protokolle gleichermaßen. Zur Laufzeit austauschbar; nil = niemandem
+	// vertrauen.
+	ProxyTrust *netfilter.ProxyTrustHolder
 	// Restart löst einen Prozess-Neustart aus (für Auto-Apply eines Restores).
 	// nil in Tests / wenn kein Supervisor den Prozess neu startet.
 	Restart func()
@@ -154,10 +165,9 @@ func New(deps Deps) *fiber.App {
 	app.Use(middlewares.ResolveClientIP(deps.ProxyTrust))
 	// IP-Allowlist so früh wie möglich (nach recover): nicht zugelassene
 	// Clients werden mit 403 abgewiesen, bevor Logging, Auth oder Controller
-	// laufen. Nur registrieren, wenn konfiguriert - sonst kein Overhead.
-	if !deps.IPAllowlist.IsEmpty() {
-		app.Use(middlewares.IPAllowlist(deps.IPAllowlist, logger))
-	}
+	// laufen. Immer registriert, damit ein Admin sie ohne Neustart ändern
+	// kann; eine leere Liste kostet einen atomaren Lesezugriff.
+	app.Use(middlewares.IPAllowlist(deps.UIAccess, netfilter.EndpointUI, logger))
 	if deps.AccessLog {
 		app.Use(middlewares.AccessLog(logger))
 	}
@@ -735,6 +745,32 @@ func New(deps Deps) *fiber.App {
 	api.Delete("/settings/ip-allowlists/:id", middlewares.RequirePermission(domain.PermSettingsManage), opsCtrl.DeleteIPAllowlist)
 	api.Get("/ip-allowlists", middlewares.RequirePermission(domain.PermServersRead), opsCtrl.ListIPAllowlists)
 
+	// Netzbereiche der Endpunkte: allein admin (system:endpoints), nicht
+	// settings:manage - wer sie ändert, bestimmt, wer LCM erreicht.
+	if deps.Network != nil {
+		networkCtrl := controllers.NewNetworkController(deps.Network)
+		api.Get("/system/network", middlewares.RequirePermission(domain.PermSystemEndpoints), networkCtrl.List)
+		api.Put("/system/network/:endpoint", middlewares.RequirePermission(domain.PermSystemEndpoints), networkCtrl.Update)
+	}
+	// Zertifikate der Endpunkte: ebenfalls allein admin.
+	if deps.TLS != nil {
+		tlsCtrl := controllers.NewTLSController(deps.TLS)
+		api.Get("/system/tls", middlewares.RequirePermission(domain.PermSystemEndpoints), tlsCtrl.Status)
+		api.Post("/system/tls/certificates", middlewares.RequirePermission(domain.PermSystemEndpoints), tlsCtrl.Upload)
+		api.Delete("/system/tls/certificates/:id", middlewares.RequirePermission(domain.PermSystemEndpoints), tlsCtrl.Remove)
+		api.Get("/system/tls/certificates/:id/download", middlewares.RequirePermission(domain.PermSystemEndpoints), tlsCtrl.Download)
+		api.Post("/system/tls/reload", middlewares.RequirePermission(domain.PermSystemEndpoints), tlsCtrl.Reload)
+	}
+	// Zertifikate von einer ACME-CA: ebenfalls allein admin.
+	if deps.ACME != nil {
+		acmeCtrl := controllers.NewACMEController(deps.ACME)
+		api.Get("/system/acme", middlewares.RequirePermission(domain.PermSystemEndpoints), acmeCtrl.Get)
+		api.Put("/system/acme", middlewares.RequirePermission(domain.PermSystemEndpoints), acmeCtrl.Update)
+		api.Post("/system/acme/names-notice/ack", middlewares.RequirePermission(domain.PermSystemEndpoints), acmeCtrl.AckNamesNotice)
+		api.Post("/system/acme/issue", middlewares.RequirePermission(domain.PermSystemEndpoints), acmeCtrl.Issue)
+		api.Post("/system/acme/dns-test", middlewares.RequirePermission(domain.PermSystemEndpoints), acmeCtrl.DNSTest)
+	}
+
 	// System-Scheduler & Backups. Diese /system/*-Endpunkte wirken
 	// system-/mandantenübergreifend (Gesamt-Übersicht, globale/fremde
 	// Schedules, systemweite Backup-/Cleanup-/CVE-/Alarm-Läufe) und sind
@@ -854,11 +890,12 @@ func publicHost(baseURL string) string {
 // (GET /mqtt) - keine UI, keine REST-API, keine statischen Assets. Damit ist
 // die Agent-Schnittstelle vollständig vom UI/REST-Listener getrennt.
 //
-// Kein RequireAuth und keine IP-Allowlist: Agents haben keine Browser-Sitzung (die
-// Authentifizierung per AgentID + Token macht der Broker selbst im MQTT-
-// CONNECT) und verbinden sich roamend von wechselnden IPs. Alles andere auf
+// Kein RequireAuth: Agents haben keine Browser-Sitzung (die Authentifizierung
+// per AgentID + Token macht der Broker selbst im MQTT-CONNECT). Netzbereiche
+// gelten nur, wenn der Admin welche für den Agent-Endpunkt festlegt; ohne
+// Liste dürfen Agents von überall kommen (Roaming, NAT). Alles andere auf
 // diesem Port liefert 404.
-func NewAgentGateway(ws fiber.Handler, logger *slog.Logger) *fiber.App {
+func NewAgentGateway(ws fiber.Handler, trust *netfilter.ProxyTrustHolder, access *netfilter.Holder, logger *slog.Logger) *fiber.App {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -870,6 +907,8 @@ func NewAgentGateway(ws fiber.Handler, logger *slog.Logger) *fiber.App {
 		// langlebig und wird von der gekaperten Verbindung selbst gehalten.
 	})
 	app.Use(recover.New())
+	app.Use(middlewares.ResolveClientIP(trust))
+	app.Use(middlewares.IPAllowlist(access, netfilter.EndpointAgent, logger))
 	app.Use(middlewares.SecurityHeaders())
 	if ws != nil {
 		app.Get(wire.WSPath, ws)

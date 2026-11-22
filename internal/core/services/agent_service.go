@@ -64,47 +64,36 @@ func (s *ServerService) WithAgentHub(h AgentConnector) *ServerService {
 	return s
 }
 
-// WithCertFingerprint verdrahtet die Abfrage des SHA-256-Fingerprints des
-// aktiven HTTPS-Zertifikats - er wird ins Enrollment-Token eingebettet,
-// damit der Agent beim Erstkontakt das (selbstsignierte) Broker-Zertifikat
-// pinnen kann (MitM-Schutz, analog zur SSH-Fingerprint-Bestätigung).
-// Optional; leer/nil im --dev-Modus (dort kein TLS).
-func (s *ServerService) WithCertFingerprint(fn func() (string, error)) *ServerService {
-	s.agentCertFP = fn
+// CountAgentServers zählt die Server, die LCM über den Agenten erreicht.
+func (s *ServerService) CountAgentServers() (int, error) {
+	return s.servers.CountByTransport(domain.TransportAgent)
+}
+
+// WithAgentTrust verdrahtet die Pins des Zertifikats, das LCM für einen
+// Namen ausliefert (AgentTrustFor). Das Enrollment-Token trägt sie, damit
+// der Agent beim Erstkontakt das Zertifikat erkennt (MitM-Schutz, analog zur
+// SSH-Fingerprint-Bestätigung), der Join-Befehl den Schlüssel-Pin, damit
+// curl das Agent-Binary nur von diesem LCM annimmt. Optional; ohne sie
+// (--dev ohne TLS) bleiben Token und Befehl ohne Pins.
+func (s *ServerService) WithAgentTrust(fn func(host string) AgentTrust) *ServerService {
+	s.agentTrust = fn
 	return s
 }
 
-// WithCAFingerprint verdrahtet den Fingerprint der LCM-CA (SHA-256 über das
-// CA-Zertifikat, hex) fürs Enrollment-Token: Mit ihm nimmt der Agent auch
-// die monatlich erneuerten Server-Zertifikate mit neuem Schlüssel an.
-// Optional; leer, solange LCM kein von der CA ausgestelltes Zertifikat
-// ausliefert.
-func (s *ServerService) WithCAFingerprint(fn func() (string, error)) *ServerService {
-	s.agentCAFP = fn
-	return s
-}
-
-// WithAgentDownloadPin verdrahtet den Schlüssel-Pin des HTTPS-Zertifikats
-// (Base64, Format von curl --pinnedpubkey). Mit ihm lädt der Join-Befehl das
-// Agent-Binary nur von diesem LCM, obwohl er das selbstsignierte Zertifikat
-// mit -k annimmt. Optional; ohne ihn prüft curl ganz normal.
-func (s *ServerService) WithAgentDownloadPin(fn func() (string, error)) *ServerService {
-	s.agentDownloadPin = fn
-	return s
-}
-
-// AgentDownloadPin liefert den Pin für den Download-Befehl, leer, wenn er
-// nicht zu ermitteln ist. Leer heißt für den Befehl: ohne -k, mit normaler
-// Prüfung gegen die Systemzertifikate.
-func (s *ServerService) AgentDownloadPin() string {
-	if s.agentDownloadPin == nil {
-		return ""
+// trustFor liefert die Pins für den Namen, leer, wenn nichts verdrahtet ist.
+func (s *ServerService) trustFor(host string) AgentTrust {
+	if s.agentTrust == nil {
+		return AgentTrust{}
 	}
-	pin, err := s.agentDownloadPin()
-	if err != nil {
-		return ""
-	}
-	return pin
+	return s.agentTrust(host)
+}
+
+// AgentDownloadPin liefert den Pin für den Download-Befehl über den Namen,
+// unter dem der Anwender LCM im Browser aufruft, leer, wenn er nicht zu
+// ermitteln ist. Leer heißt für den Befehl: ohne -k, mit normaler Prüfung
+// gegen die Systemzertifikate.
+func (s *ServerService) AgentDownloadPin(browserHost string) string {
+	return s.trustFor(browserHost).KeyPin
 }
 
 // ---- Token ------------------------------------------------------------------
@@ -119,10 +108,13 @@ func ParseAgentToken(token string) (wire.Token, error) {
 }
 
 // agentToken baut das Klartext-Token für die einmalige Anzeige: Zugang
-// und die Pins, mit denen der Agent LCM beim ersten Kontakt erkennt.
-func (s *ServerService) agentToken(agentID, secret string) string {
+// und die Pins, mit denen der Agent LCM beim ersten Kontakt erkennt - die des
+// Zertifikats, das LCM unter der Adresse des Agents ausliefert.
+func (s *ServerService) agentToken(agentID, secret, browserHost string) string {
+	trust := s.trustFor(s.agentHost(browserHost))
 	return wire.EncodeToken(wire.Token{AgentID: agentID, Secret: secret,
-		CertFingerprint: s.certFingerprint(), CAFingerprint: bestEffort(s.agentCAFP)})
+		CertFingerprint: trust.CertFingerprint, CAFingerprint: trust.CAFingerprint,
+		CustomCAFingerprint: trust.CustomCAFingerprint})
 }
 
 // HashAgentSecret bildet den At-Rest-Hash des Token-Secrets - dieselbe
@@ -134,31 +126,14 @@ func HashAgentSecret(secret string) string {
 
 // ---- Enrollment ---------------------------------------------------------------
 
-// certFingerprint liefert den Zertifikats-Fingerprint fürs Token
-// (leer, wenn nicht verdrahtet - z.B. --dev ohne TLS).
-func (s *ServerService) certFingerprint() string {
-	return bestEffort(s.agentCertFP)
-}
-
-// bestEffort liefert den Pin aus fn, leer, wenn er fehlt: Ohne Pin fällt der
-// Agent auf die Systemroot-Prüfung zurück - besser als das Enrollment ganz zu
-// blockieren.
-func bestEffort(fn func() (string, error)) string {
-	if fn == nil {
-		return ""
-	}
-	pin, err := fn()
-	if err != nil {
-		return ""
-	}
-	return pin
-}
-
 // CreateAgentServer legt einen Agent-Server an (Transport=agent, offline)
 // und erzeugt sein Enrollment-Token. Rückgabe: Server + Klartext-Token
 // (einmalig!). Der Server geht online, sobald sich der Agent verbindet;
 // der Erst-Scan läuft dann automatisch über den Broker-Callback.
-func (s *ServerService) CreateAgentServer(name, actor string) (*domain.Server, string, error) {
+//
+// browserHost ist der Name, unter dem der Anwender LCM aufruft. Er gilt für
+// die Pins im Token, solange keine öffentliche Agent-Adresse eingestellt ist.
+func (s *ServerService) CreateAgentServer(name, actor, browserHost string) (*domain.Server, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, "", errors.New("name darf nicht leer sein")
@@ -201,13 +176,14 @@ func (s *ServerService) CreateAgentServer(name, actor string) (*domain.Server, s
 	_ = s.jobs.jobs.Create(job)
 	s.audit.Log(actor, "server.agent_create", "server", server.ID, "Agent-ID "+server.AgentID)
 
-	return server, s.agentToken(server.AgentID, secret), nil
+	return server, s.agentToken(server.AgentID, secret, browserHost), nil
 }
 
 // RegenerateAgentToken ersetzt das Token eines Agent-Servers (z.B. bei
 // Verlust oder Kompromittierung). Das alte Secret ist sofort wertlos; eine
 // aktive Agent-Session wird getrennt, der Agent muss neu enrollt werden.
-func (s *ServerService) RegenerateAgentToken(scope repositories.AccessScope, id uint, actor string) (string, error) {
+// browserHost wie bei CreateAgentServer.
+func (s *ServerService) RegenerateAgentToken(scope repositories.AccessScope, id uint, actor, browserHost string) (string, error) {
 	server, err := s.servers.FindByID(scope, id)
 	if err != nil {
 		return "", err
@@ -227,5 +203,5 @@ func (s *ServerService) RegenerateAgentToken(scope repositories.AccessScope, id 
 		s.agents.Disconnect(server.AgentID)
 	}
 	s.audit.Log(actor, "server.agent_token_regenerate", "server", server.ID, "Agent-ID "+server.AgentID)
-	return s.agentToken(server.AgentID, secret), nil
+	return s.agentToken(server.AgentID, secret, browserHost), nil
 }

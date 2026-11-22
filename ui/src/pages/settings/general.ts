@@ -1,51 +1,65 @@
-import { html, nothing, type TemplateResult } from 'lit';
+import { css, html, nothing, type TemplateResult } from 'lit';
+import '../../components/lcm-button';
 import '../../components/lcm-card';
+import '../../components/lcm-explainer';
 import '../../components/lcm-notice';
 import '../../components/lcm-server-action';
+import '../../components/lcm-status';
 import { toast } from '../../components/lcm-toaster';
 import { MAIL_CHANNEL_URL, readMailChannel, settingsApi, type GlobalSettings, type MailChannel } from '../../api/settings';
 import { errorText, t } from '../../lib/i18n';
 import { LiveData } from '../../lib/live-data';
-import { portForSecurity, readMailSecurity, type MailSecurity } from '../../lib/mail-security';
+import { portForSecurity, type MailSecurity } from '../../lib/mail-security';
 import { auth } from '../../lib/auth';
 import { router } from '../../lib/router';
 import { LIMITS } from '../../lib/validate';
-import { mailSecurityField } from './mail-security-field';
+import { addressHelp } from './addresses/address-help';
+import { ADDRESS_FIELDS, PORT_KEY, redirectTarget, shownUrls, switchState, uiPortChange, validateAddresses } from './addresses/address-model';
+import { MAIL_FIELDS, RETENTION_FIELDS, mailFields, retentionFields, type InputRenderer } from './general-fields';
+import { onboardingGuide, onboardingGuideStyles } from './onboarding-guide';
+import { onboardingUser } from './onboarding-model';
+import './addresses/address-block';
 import './session-mode-field';
 import './system/copy-field';
 import { sessionTtlError } from './access/security-model';
-import { choice, flag, int, secret, text, type Draft, type FieldErrors, type FieldSpec } from './system/form-state';
+import { choice, int, text, type Draft, type FieldErrors, type FieldSpec } from './system/form-state';
 import { helpLabels } from './system/help';
 import { SettingsForm } from './system/settings-form';
 
 const FIELDS: FieldSpec[] = [
   text('default_ssh_user', LIMITS.loginUser),
   int('default_ssh_port', 1, 65535),
-  text('public_base_url', LIMITS.path, 'url'),
-  text('public_agent_url', LIMITS.path, 'url'),
-  text('public_mcp_url', LIMITS.path, 'url'),
+  ...ADDRESS_FIELDS,
   choice('browser_session_mode', () => 'memory'),
   int('session_ttl_minutes', 0, 43200),
   int('job_idle_timeout_minutes', 0, 1440),
   int('job_idle_timeout_slow_minutes', 0, 1440),
   int('packages_stale_warn_hours', 24, 720),
   int('packages_stale_critical_days', 2, 90),
-  flag('mail_enabled'),
-  text('mail_host', LIMITS.host, 'host'),
-  int('mail_port', 1, 65535),
-  choice('mail_security', (settings) => readMailSecurity(undefined, settings.mail_use_tls)),
-  text('mail_username', LIMITS.loginUser),
-  secret('mail_password', LIMITS.password),
-  text('mail_from', LIMITS.sender, 'sender'),
-  text('mail_admin_recipients', LIMITS.list, 'emails'),
-  int('log_retention_days', 0, 3650),
-  int('routine_log_retention_days', 1, 3650),
-  int('storage_history_retention_days', 90, 365),
+  ...MAIL_FIELDS,
+  ...RETENTION_FIELDS,
 ];
 
-/** Einstellungen → Allgemein: Vorgaben für neue Server, Adresse, Anmeldung im Browser, Job-Überwachung, E-Mail-Versand, Aufbewahrung. */
+/** Einstellungen → Allgemein: Onboarding (Vorgabe, Schlüssel, Agent), öffentliche Adressen, Anmeldung im Browser, Job-Überwachung, E-Mail-Versand, Aufbewahrung. */
 export class SettingsGeneral extends SettingsForm {
   static override properties = { ...SettingsForm.properties, _testing: { state: true } };
+  static override styles = [
+    ...SettingsForm.styles,
+    onboardingGuideStyles,
+    css`
+      .subcards {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+      }
+      /* Auf schmalen Bildschirmen steht die Hilfe zu den Adressen im Block selbst, nicht über der Seite. */
+      @media (max-width: 75rem) {
+        .layout.explain lcm-explainer {
+          display: none;
+        }
+      }
+    `,
+  ];
 
   declare _testing: boolean;
   protected readonly fields = FIELDS;
@@ -62,10 +76,13 @@ export class SettingsGeneral extends SettingsForm {
    * steht der Router schon auf der Anmeldung.
    */
   #returnAfterSwitch: string | undefined;
+  /** Der Port der Oberfläche wechselt mit dem Speichern, und die Adresse danach: Die Seite folgt ihr. */
+  #uiPortChange: { changed: boolean; announced: string | null } = { changed: false, announced: null };
 
   protected override async request(body: Record<string, unknown>, draft: Draft, base: Draft): Promise<GlobalSettings | void> {
     const switched = 'browser_session_mode' in body;
     this.#returnAfterSwitch = switched ? router.state.path : undefined;
+    this.#uiPortChange = { changed: PORT_KEY.ui in body, announced: uiPortChange(draft, this.settings, window.location.href) };
     // Wer den Weg hier bewusst wählt, muss die einmalige Frage nach den Pflichtschritten nicht mehr beantworten.
     return super.request(switched ? { ...body, browser_session_mode_confirmed: true } : body, draft, base);
   }
@@ -77,16 +94,20 @@ export class SettingsGeneral extends SettingsForm {
     }
     // Ohne E-Mail-Versand kann es auch keinen E-Mail-Kanal geben.
     if (updated && updated.mail_enabled !== true && this.#channel.data?.enabled) await settingsApi.setMailChannel(false);
+    const target = redirectTarget(updated, window.location.href, this.#uiPortChange.changed, this.#uiPortChange.announced);
+    if (target) window.location.assign(target);
   }
 
   protected override validate(draft: Draft): FieldErrors {
     const ttl = sessionTtlError(String(draft.session_ttl_minutes));
-    return ttl ? { session_ttl_minutes: ttl } : {};
+    return { ...validateAddresses(draft), ...(ttl ? { session_ttl_minutes: ttl } : {}) };
   }
 
   protected override fieldForCode(code: string): string | undefined {
     return code === 'settings.mailer_incomplete' ? 'mail_host' : undefined;
   }
+
+  readonly #input: InputRenderer = (key, label, options) => this.input(key, label, options);
 
   /** Moduswechsel: steht der Port auf einem Standardport, folgt er dem neuen Modus. */
   #setSecurity(security: MailSecurity): void {
@@ -127,33 +148,68 @@ export class SettingsGeneral extends SettingsForm {
     </lcm-card>`;
   }
 
-  #ssh(settings: GlobalSettings): TemplateResult {
-    const key = String(settings.onboarding_pub_key ?? '');
-    return html`<lcm-card level="2" heading=${t('settings.general.ssh.title')} subtitle=${t('settings.general.ssh.subtitle')}>
-        <div class="field-row">
-          ${this.input('default_ssh_user', t('settings.general.ssh.user'), { placeholder: 'root', mono: true })}
-          ${this.input('default_ssh_port', t('settings.general.ssh.port'), { width: 'xs' })}
-        </div>
-      </lcm-card>
-      <lcm-card level="2" heading=${t('settings.general.key.title')} subtitle=${t('settings.general.key.subtitle')}>
-        ${key
-          ? html`<div class="fields">
-              <lcm-copy-field block value=${key}></lcm-copy-field>
-              <p class="muted">${t('settings.general.key.how')}</p>
-            </div>`
-          : html`<lcm-notice>${t('settings.general.key.none')}</lcm-notice>`}
-      </lcm-card>`;
-  }
-
-  #address(draft: Draft): TemplateResult {
-    return html`<lcm-card level="2" heading=${t('settings.general.address.title')} subtitle=${t('settings.general.address.subtitle')}>
-      <div class="fields">
-        ${this.input('public_base_url', t('settings.general.address.label'), { placeholder: 'https://lcm.example.com', mono: true, width: 'l', hint: t('settings.general.address.hint') })}
-        ${String(draft.public_base_url).trim() === '' ? html`<lcm-notice tone="warn">${t('settings.general.address.warning')}</lcm-notice>` : nothing}
-        ${this.input('public_agent_url', t('settings.general.address.agentLabel'), { placeholder: 'https://agent.example.com', mono: true, width: 'l', hint: t('settings.general.address.agentHint') })}
-        ${this.input('public_mcp_url', t('settings.general.address.mcpLabel'), { placeholder: 'https://mcp.example.com', mono: true, width: 'l', hint: t('settings.general.address.mcpHint') })}
+  #sshDefaults(): TemplateResult {
+    return html`<lcm-card level="3" variant="inset" collapsible ?open=${'default_ssh_user' in this._errors || 'default_ssh_port' in this._errors} data-card="ssh" heading=${t('settings.general.ssh.title')} subtitle=${t('settings.general.ssh.subtitle')}>
+      <div class="field-row">
+        ${this.input('default_ssh_user', t('settings.general.ssh.user'), { placeholder: 'root', mono: true })}
+        ${this.input('default_ssh_port', t('settings.general.ssh.port'), { width: 'xs' })}
       </div>
     </lcm-card>`;
+  }
+
+  #onboardingKey(settings: GlobalSettings): TemplateResult {
+    const key = String(settings.onboarding_pub_key ?? '');
+    return html`<lcm-card level="3" variant="inset" collapsible data-card="key" heading=${t('settings.general.key.title')} subtitle=${t('settings.general.key.subtitle')}>
+      ${key
+        ? html`<div class="fields">
+            <lcm-copy-field block value=${key}></lcm-copy-field>
+            ${onboardingGuide(key, onboardingUser(settings.default_ssh_user))}
+          </div>`
+        : html`<lcm-notice>${t('settings.general.key.none')}</lcm-notice>`}
+    </lcm-card>`;
+  }
+
+  /** Der Schalter für den Agenten steht im Block der Adressen; hier führt ein Knopf dorthin. */
+  #toAddresses(): void {
+    this.renderRoot.querySelector('lcm-address-block')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /** Der Hinweis, solange die Agenten-Schnittstelle aus ist: warum und wo man sie einschaltet. */
+  #agentOff(noName: boolean): TemplateResult {
+    return html`<div class="row" data-field="agent-off">
+      <span class="muted">${t(noName ? 'settings.general.agent.noDomain' : 'settings.general.agent.off')}</span>
+      <lcm-button variant="ghost" size="small" icon="arrow-right" data-action="to-addresses" @click=${() => this.#toAddresses()}>${t('settings.general.agent.toAddresses')}</lcm-button>
+    </div>`;
+  }
+
+  #agentMode(settings: GlobalSettings, draft: Draft): TemplateResult {
+    const address = shownUrls(draft, settings).agent;
+    const { checked, lock } = switchState(draft, settings, 'agent');
+    return html`<lcm-card level="3" variant="inset" collapsible data-card="agent" heading=${t('settings.general.agent.title')} subtitle=${t('settings.general.agent.subtitle')}>
+      <lcm-status slot="actions" data-field="agent-status" level=${checked ? 'ok' : 'unknown'} label=${t(checked ? 'settings.general.agent.statusOn' : 'settings.general.agent.statusOff')}></lcm-status>
+      <div class="fields">
+        <p class="muted">${t('settings.general.agent.text')}</p>
+        ${checked ? nothing : this.#agentOff(lock === 'noName')}
+        ${address ? html`<lcm-copy-field label=${t('settings.general.agent.address')} value=${address}></lcm-copy-field>` : nothing}
+        <div class="row">
+          <lcm-button variant="outline" icon="server" href="/servers/join?mode=agent">${t('settings.general.agent.join')}</lcm-button>
+        </div>
+      </div>
+    </lcm-card>`;
+  }
+
+  #onboarding(settings: GlobalSettings, draft: Draft): TemplateResult {
+    return html`<lcm-card level="2" heading=${t('settings.general.onboarding.title')} subtitle=${t('settings.general.onboarding.subtitle')}>
+      <div class="subcards">${this.#sshDefaults()} ${this.#onboardingKey(settings)} ${this.#agentMode(settings, draft)}</div>
+    </lcm-card>`;
+  }
+
+  #onAddressChange(event: CustomEvent<{ values: Record<string, string | boolean> }>): void {
+    for (const [key, value] of Object.entries(event.detail.values)) this.set(key, value);
+  }
+
+  #address(settings: GlobalSettings, draft: Draft): TemplateResult {
+    return html`<lcm-address-block .settings=${settings} .draft=${draft} .errors=${this._errors} @lcm-address-change=${this.#onAddressChange}></lcm-address-block>`;
   }
 
   #jobs(): TemplateResult {
@@ -174,20 +230,7 @@ export class SettingsGeneral extends SettingsForm {
     return html`<lcm-card level="2" heading=${t('settings.general.mail.title')} subtitle=${t('settings.general.mail.subtitle')}>
       <div class="fields">
         ${this.flag('mail_enabled', t('settings.general.mail.enable'), { on: t('settings.general.mail.enableOn'), off: t('settings.general.mail.enableOff') })}
-        <div class="field-row">
-          ${this.input('mail_host', t('settings.general.mail.host'), { placeholder: 'smtp.example.com', mono: true, disabled: !enabled })}
-          ${this.input('mail_port', t('settings.general.mail.port'), { width: 'xs', disabled: !enabled })}
-        </div>
-        ${mailSecurityField(this.value('mail_security'), (security) => this.#setSecurity(security), !enabled)}
-        ${this.input('mail_username', t('settings.general.mail.user'), { disabled: !enabled })}
-        ${this.input('mail_password', t('settings.general.mail.password'), {
-          type: 'password',
-          autocomplete: 'new-password',
-          disabled: !enabled,
-          placeholder: t('settings.form.unchangedSecret'),
-        })}
-        ${this.input('mail_from', t('settings.general.mail.from'), { placeholder: 'lcm@example.com', width: 'l', disabled: !enabled, hint: t('settings.general.mail.fromHint') })}
-        ${this.input('mail_admin_recipients', t('settings.general.mail.admins'), { placeholder: 'admin@example.com', width: 'l', disabled: !enabled, hint: t('settings.general.mail.adminsHint') })}
+        ${mailFields(this.#input, this.value('mail_security'), (security) => this.#setSecurity(security), !enabled)}
         <lcm-switch
           label=${t('settings.general.mail.channel')}
           description=${t('settings.general.mail.channelHint')}
@@ -219,15 +262,24 @@ export class SettingsGeneral extends SettingsForm {
   #keeping(): TemplateResult {
     return html`<lcm-card level="2" heading=${t('settings.general.keep.title')} subtitle=${t('settings.general.keep.subtitle')}>
       <div class="form-stack">
-        ${this.input('log_retention_days', t('settings.general.keep.logs'), { hint: t('settings.general.keep.logsHint') })}
-        ${this.input('routine_log_retention_days', t('settings.general.keep.routine'), { hint: t('settings.general.keep.routineHint') })}
-        ${this.input('storage_history_retention_days', t('settings.general.keep.storage'), { hint: t('settings.general.keep.storageHint') })}
+        ${retentionFields(this.#input)}
       </div>
     </lcm-card>`;
   }
 
+  protected override explainer(): TemplateResult {
+    return html`<lcm-explainer
+      topic="settings-addresses"
+      heading=${t('settings.general.address.help.title')}
+      collapse-label=${t('settings.form.collapse')}
+      expand-label=${t('settings.form.expand')}
+    >
+      ${addressHelp(this._draft ?? {})}
+    </lcm-explainer>`;
+  }
+
   protected renderForm(settings: GlobalSettings, draft: Draft): TemplateResult {
-    return html`${this.#ssh(settings)} ${this.#address(draft)} ${this.#session(settings)} ${this.#jobs()} ${this.#mail(settings, draft)} ${this.#keeping()}`;
+    return html`${this.#onboarding(settings, draft)} ${this.#address(settings, draft)} ${this.#session(settings)} ${this.#jobs()} ${this.#mail(settings, draft)} ${this.#keeping()}`;
   }
 }
 customElements.define('lcm-settings-general', SettingsGeneral);

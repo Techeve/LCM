@@ -21,10 +21,14 @@ const clientIPContextKey = "client.ip"
 // IP-Allowlist, die Anmeldesperre, das Zugriffs- und das Sicherheitsprotokoll -
 // lesen sie über ClientIP und sehen damit garantiert DIESELBE Adresse.
 //
+// Die Vertrauensregel liegt im Halter und wird bei jeder Anfrage gelesen: Wer
+// trusted_proxies ändert, wirkt sofort, ohne Neustart.
+//
 // Läuft so früh wie möglich (direkt nach recover): nichts davor darf eine
 // Adresse brauchen.
-func ResolveClientIP(trust netfilter.ProxyTrust) fiber.Handler {
+func ResolveClientIP(holder *netfilter.ProxyTrustHolder) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		trust := holder.Load()
 		xff := netfilter.JoinForwardedFor(c.Request().Header.PeekAll(fiber.HeaderXForwardedFor))
 		if addr, ok := netfilter.ClientIP(c.IP(), xff, trust); ok {
 			c.Locals(clientIPContextKey, addr.String())
@@ -84,31 +88,28 @@ func ClientIP(c fiber.Ctx) string {
 // dann aus X-Forwarded-For, wenn der Proxy als vertrauenswürdig konfiguriert
 // ist (trust_proxy_header + trusted_proxies).
 //
-// Der Aufrufer registriert diese Middleware nur, wenn die Allowlist nicht leer
-// ist - ohne Konfiguration entsteht so gar kein Overhead.
-func IPAllowlist(list netfilter.Allowlist, logger *slog.Logger) fiber.Handler {
+// Die Liste liegt im Holder und wird bei jeder Anfrage gelesen: Ein Admin
+// ändert sie zur Laufzeit. Eine leere Liste lässt alles zu und kostet einen
+// atomaren Lesezugriff, deshalb sitzt die Middleware in jeder App und
+// endpoint benennt sie nur für das Protokoll.
+func IPAllowlist(holder *netfilter.Holder, endpoint netfilter.Endpoint, logger *slog.Logger) fiber.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return func(c fiber.Ctx) error {
-		// LCM Remote: Agent-Endpunkte sind vom IP-Filter ausgenommen - der
-		// ganze Zweck des Agents sind Server OHNE feste IP (Roaming, NAT),
-		// eine Allowlist würde genau sie aussperren. Die Absicherung liegt
-		// dort in der Token-Authentifizierung des Brokers (/mqtt) bzw. im
-		// öffentlichen Charakter des Binary-Downloads; die Allowlist schützt
-		// weiterhin Admin-UI und API.
-		if isAgentPath(c.Path()) {
+		list := holder.Load()
+		if list.IsEmpty() || isAgentPath(c.Path()) {
 			return c.Next()
 		}
 		addr, err := netip.ParseAddr(ClientIP(c))
 		if err != nil {
 			logger.Warn("access denied: client ip not determinable",
-				"path", c.Path(), "remote", c.IP())
+				"endpoint", string(endpoint), "path", c.Path(), "remote", c.IP())
 			return errIPDenied
 		}
 		if !list.Allows(addr) {
 			logger.Warn("access denied: ip not in allowlist",
-				"ip", addr.String(), "method", c.Method(), "path", c.Path())
+				"endpoint", string(endpoint), "ip", addr.String(), "method", c.Method(), "path", c.Path())
 			return errIPDenied
 		}
 		return c.Next()
@@ -117,12 +118,10 @@ func IPAllowlist(list netfilter.Allowlist, logger *slog.Logger) fiber.Handler {
 
 // isAgentPath meldet die vom IP-Filter ausgenommenen LCM-Remote-Pfade.
 //
-// AUSSCHLIESSLICH der öffentliche Binary-Download. Der MQTT-WebSocket (/mqtt)
-// gehört bewusst NICHT hierher: er existiert nur auf dem dedizierten
-// Agent-Gateway, und das registriert diese Middleware gar nicht erst. Auf dem
-// UI/REST-Port wäre /mqtt keine Route, sondern liefe in den SPA-Catch-All -
-// eine Ausnahme hier hätte also nur bewirkt, dass nicht zugelassene Clients
-// die Admin-Oberfläche ausgeliefert bekommen.
+// AUSSCHLIESSLICH der öffentliche Binary-Download auf dem UI-Port: Wer einen
+// Server aufnehmen will, lädt den Agent von einem Netz aus, das der Admin
+// nicht kennen muss. Der MQTT-WebSocket (/mqtt) gehört bewusst NICHT hierher:
+// Er läuft auf dem Agent-Gateway, dort gilt die Liste des Agent-Endpunkts.
 func isAgentPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/agent/download/")
 }

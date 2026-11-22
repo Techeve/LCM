@@ -173,7 +173,7 @@ func TestFahrkarteGiltNurVonIhrerAdresse(t *testing.T) {
 func TestKonsoleAgentNachFaehigkeit(t *testing.T) {
 	env := newTestEnv(t)
 	schalteKonsole(t, env, true)
-	server, _, err := env.Servers.CreateAgentServer("agent01", "tester")
+	server, _, err := env.Servers.CreateAgentServer("agent01", "tester", "lcm.example")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -241,7 +241,9 @@ func (s *ServerService) ScanListeningPortsNow(scope repositories.AccessScope, id
 	if err := s.servers.UpdateFields(id, map[string]any{"listening_ports": raw}); err != nil {
 		return nil, err
 	}
-	return parseListeningPortsJSON(raw), nil
+	server.ListeningPorts = raw
+	s.fillLcmListeners(server)
+	return parseListeningPortsJSON(server.ListeningPorts), nil
 }
 
 // parseListeningPortsJSON liest das gespeicherte Inventar zurück (leer bei

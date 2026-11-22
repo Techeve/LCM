@@ -2,9 +2,9 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"LCM/internal/core/domain"
@@ -12,18 +12,22 @@ import (
 	"LCM/internal/version"
 )
 
-// fakeChannelRepos stellt die Paketquellen nach: je Pfadteil (Suite bzw. das
-// Enterprise-Präfix) die Version des lcm-Pakets. Fehlt ein Eintrag, antwortet
-// die Quelle mit 404. Liefert die Adresse des Enterprise-Repositorys.
+// fakeChannelRepos stellt die Paketquellen nach: je Kanal unter seinem echten
+// Index-Pfad die Version des lcm-Pakets (jede andere Adresse, auch die alte
+// Suite „stable", antwortet mit 404). Fehlt ein Eintrag, antwortet auch der
+// Kanal mit 404. Liefert die Adresse des Enterprise-Repositorys.
 func fakeChannelRepos(t *testing.T, community, beta, enterprise string) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		v := community
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/enterprise/"):
-			v = enterprise
-		case strings.Contains(r.URL.Path, "/dists/"+subAptSuiteBeta+"/"):
+		const index = "/dists/%s/main/binary-amd64/Packages"
+		v := ""
+		switch r.URL.Path {
+		case fmt.Sprintf(index, subAptSuiteCommunity):
+			v = community
+		case fmt.Sprintf(index, subAptSuiteBeta):
 			v = beta
+		case "/enterprise/lcm" + fmt.Sprintf(index, subAptSuiteEnterprise):
+			v = enterprise
 		}
 		if v == "" {
 			http.NotFound(w, r)
@@ -35,7 +39,7 @@ func fakeChannelRepos(t *testing.T, community, beta, enterprise string) string {
 	orig := RepoBaseURL
 	RepoBaseURL = srv.URL
 	t.Cleanup(func() { RepoBaseURL = orig })
-	return srv.URL + "/enterprise"
+	return srv.URL + "/enterprise/lcm"
 }
 
 func withInstalledVersion(t *testing.T, v string) {

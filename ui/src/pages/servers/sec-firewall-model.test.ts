@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { ListeningPort } from '../../api/servers-security';
 import { emptyFirewallRow } from '../groups/rule-model';
-import { hasEditorErrors, initialRows, listeningSuggestions, openPortsSummary, ruleFromListening, rulesPayload, sshLocksOut, sshPayload, sshSourceErrors, withLcmAddress } from './sec-firewall-model';
+import { acmeSuggestion, hasEditorErrors, initialRows, listeningLabel, listeningSuggestions, openPortsSummary, ruleFromListening, rulesPayload, sshLocksOut, sshPayload, sshSourceErrors, withLcmAddress } from './sec-firewall-model';
 import { emptyInstallForm, installPayload } from './sec-tool-install';
 import { chosenTargets } from './sec-harden';
 
-const port = (p: Partial<ListeningPort>): ListeningPort => ({ port: 80, proto: 'tcp', bind: '0.0.0.0', ip_version: 'v4', process: '', ...p });
+const port = (p: Partial<ListeningPort>): ListeningPort => ({ port: 80, proto: 'tcp', bind: '0.0.0.0', ip_version: 'v4', process: '', lcm_roles: [], ...p });
+const words: Record<string, string> = {
+  'serverSecurity.firewall.listening.role.ui': 'GUI',
+  'serverSecurity.firewall.listening.role.agent': 'Agent',
+  'serverSecurity.firewall.listening.role.mcp': 'MCP',
+  'serverSecurity.firewall.listening.role.acme': "Let's Encrypt (HTTP-01)",
+};
+const tr = (key: string) => words[key] ?? key;
 
 describe('initialRows', () => {
   it('prefers the stored rules and falls back to the old port list', () => {
@@ -32,6 +39,26 @@ describe('listeningSuggestions', () => {
   it('turns a suggestion into a rule with the service as note', () => {
     expect(ruleFromListening(port({ port: 9100, bind: '10.0.0.1', ip_version: 'v4', process: 'node_exporter' }))).toMatchObject({ port: '9100', proto: 'tcp', ip_version: 'v4', comment: 'node_exporter' });
     expect(ruleFromListening(port({ bind: '::', ip_version: 'v6' })).ip_version).toBe('any');
+  });
+});
+
+describe('listeningLabel', () => {
+  it('names the LCM interfaces on a port and falls back to the process', () => {
+    expect(listeningLabel(port({ port: 9310, process: 'lcm', lcm_roles: ['ui'] }), tr)).toBe('LCM GUI');
+    expect(listeningLabel(port({ port: 443, process: 'lcm', lcm_roles: ['ui', 'agent', 'mcp'] }), tr)).toBe('LCM GUI · Agent · MCP');
+    expect(listeningLabel(port({ port: 80, lcm_roles: ['acme'] }), tr)).toBe("LCM Let's Encrypt (HTTP-01)");
+    expect(listeningLabel(port({ port: 9100, process: 'node_exporter' }), tr)).toBe('node_exporter');
+  });
+
+  it('uses the label as the rule note', () => {
+    expect(ruleFromListening(port({ port: 9320, process: 'lcm', lcm_roles: ['agent'] }), tr).comment).toBe('LCM Agent');
+    expect(ruleFromListening(port({ port: 9100, process: 'node_exporter' }), tr).comment).toBe('node_exporter');
+  });
+
+  it('finds the HTTP-01 port among the suggestions', () => {
+    const acme = port({ port: 80, lcm_roles: ['acme'] });
+    expect(acmeSuggestion([port({ port: 9310, lcm_roles: ['ui'] }), acme])).toBe(acme);
+    expect(acmeSuggestion([port({ port: 9310, lcm_roles: ['ui'] })])).toBeUndefined();
   });
 });
 

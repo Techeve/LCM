@@ -62,6 +62,8 @@ export interface ListeningPort {
   bind: string;
   ip_version: string;
   process: string;
+  /** Schnittstellen von LCM auf diesem Port (`ui`, `agent`, `mcp`, `acme`); leer bei fremden Diensten. */
+  lcm_roles: string[];
 }
 
 export interface ServerSecurity {
@@ -89,7 +91,7 @@ export interface ServerSecurity {
 }
 
 export function normaliseListening(raw: unknown): ListeningPort[] {
-  return list(raw).map((p) => ({ port: num(p.port), proto: text(p.proto) || 'tcp', bind: text(p.bind), ip_version: text(p.ip_version), process: text(p.process) }));
+  return list(raw).map((p) => ({ port: num(p.port), proto: text(p.proto) || 'tcp', bind: text(p.bind), ip_version: text(p.ip_version), process: text(p.process), lcm_roles: strings(p.lcm_roles) }));
 }
 
 export function normaliseServerSecurity(raw: unknown): ServerSecurity {

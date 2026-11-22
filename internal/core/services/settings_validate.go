@@ -3,11 +3,13 @@ package services
 import (
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"LCM/internal/core/domain"
+	"LCM/internal/sniroute"
 )
 
 // Validierung der globalen Einstellungen. Bewusst streng und an EINER Stelle:
@@ -31,6 +33,9 @@ var (
 	// Adresse des Agent-Ports bzw. der MCP-Schnittstelle ist unbrauchbar.
 	ErrPublicAgentURLInvalid = fmt.Errorf("%w: ungültige öffentliche agent-adresse", ErrSettingInvalid)
 	ErrPublicMCPURLInvalid   = fmt.Errorf("%w: ungültige öffentliche mcp-adresse", ErrSettingInvalid)
+	// ErrPublicHostConflict: zwei Dienste haben auf dem gemeinsamen Port
+	// denselben Namen. Der Fehler kommt als *PublicHostConflict.
+	ErrPublicHostConflict = fmt.Errorf("%w: zwei Dienste haben denselben namen", ErrSettingInvalid)
 	// ErrBackupDirInvalid: das Backup-Verzeichnis ist unbrauchbar.
 	ErrBackupDirInvalid = fmt.Errorf("%w: ungültiges backup-verzeichnis", ErrSettingInvalid)
 )
@@ -171,44 +176,140 @@ func (s *SettingsService) normalizeRequire2FARoles(raw string) (string, error) {
 	return strings.Join(out, ","), nil
 }
 
+// PublicHostConflict sagt, welche zwei Dienste sich auf dem gemeinsamen Port
+// einen Namen teilen.
+type PublicHostConflict struct {
+	Host          string
+	First, Second string // UI, Agent oder MCP
+}
+
+func (c *PublicHostConflict) Error() string {
+	return fmt.Sprintf("%v: %s steht für %s und %s - auf dem gemeinsamen Port braucht jeder Dienst einen eigenen Namen",
+		ErrPublicHostConflict, c.Host, c.First, c.Second)
+}
+
+func (c *PublicHostConflict) Unwrap() error { return ErrPublicHostConflict }
+
+// FindPublicHostConflict nennt die ersten zwei Dienste, deren öffentliche
+// Adressen auf demselben Namen liegen, in der Rangfolge UI, Agent, MCP (so
+// entscheidet auch die Namensweiche des gemeinsamen Ports). MCP zählt nur,
+// solange es eingeschaltet ist; leere Adressen zählen nicht.
+func FindPublicHostConflict(uiURL, agentURL, mcpURL string, mcpEnabled bool) *PublicHostConflict {
+	endpoints := []struct {
+		name, url string
+		active    bool
+	}{
+		{"UI", uiURL, true},
+		{"Agent", agentURL, true},
+		{"MCP", mcpURL, mcpEnabled},
+	}
+	owners := map[string]string{}
+	for _, ep := range endpoints {
+		host := sniroute.HostOf(ep.url)
+		if host == "" || !ep.active {
+			continue
+		}
+		if first, taken := owners[host]; taken {
+			return &PublicHostConflict{Host: host, First: first, Second: ep.name}
+		}
+		owners[host] = ep.name
+	}
+	return nil
+}
+
+// checkSharedPortHosts lehnt öffentliche Adressen ab, die sich auf dem
+// gemeinsamen Port einen Namen teilen: Der Name entscheidet dort, welcher
+// Dienst die Verbindung bekommt. Im Modus C ist nur der Name der Oberfläche
+// Pflicht; Agent und MCP dürfen ohne Namen bleiben, sind dann aber aus (siehe
+// settleServiceNames). Gesetzte Namen müssen verschieden sein. Ohne gemeinsamen
+// Port ist derselbe Name erlaubt.
+func (s *SettingsService) checkSharedPortHosts(st *domain.GlobalSettings) error {
+	if !s.AddressesOf(st).SharedPortActive() {
+		return nil
+	}
+	if sniHost(st.PublicBaseURL) == "" {
+		return fmt.Errorf("%w: auf dem gemeinsamen Port braucht die Oberfläche einen Namen - die Adresse für die Oberfläche fehlt",
+			ErrSettingInvalid)
+	}
+	if conflict := FindPublicHostConflict(st.PublicBaseURL, st.PublicAgentURL, st.PublicMCPURL, true); conflict != nil {
+		return conflict
+	}
+	return nil
+}
+
+// errServiceNeedsName: Im Modus C hat der Dienst keinen Namen, unter dem er
+// erreichbar wäre, also lässt er sich nicht einschalten.
+func errServiceNeedsName(service string) error {
+	return fmt.Errorf("%w: für %s ist keine Domain eingerichtet - im Modus „ein Port“ lässt er sich erst mit einem eigenen Namen einschalten",
+		ErrSettingInvalid, service)
+}
+
 // LinkBaseURL liefert die Basis-Adresse für Links in versendeten Mails.
 //
-// Rangfolge: konfigurierte PublicBaseURL → Rückfall aus der lokalen
-// Konfiguration. NIEMALS aus dem Request: der Host-Header ist frei fälschbar,
-// und ein Angreifer könnte damit einen echten Passwort-Reset-Link mit
-// gültigem Token auf seine eigene Domain ausstellen lassen. Ist nichts
-// konfiguriert, ist der Link im Zweifel nicht von außen erreichbar - das ist
-// ein Betriebs-, kein Sicherheitsproblem, und die UI weist darauf hin.
+// Rangfolge: die wirksame Adresse der Oberfläche (Addresses: im Modus A die
+// PublicBaseURL, sonst aus Name und Port abgeleitet) → Rückfall aus der lokalen
+// Konfiguration, auch wenn die Ableitung nichts ergibt (Modus C ohne Namen,
+// Modus B ohne Host): Ein Mail-Link ist nie relativ. NIEMALS aus dem Request:
+// der Host-Header ist frei fälschbar, und ein Angreifer könnte damit einen
+// echten Passwort-Reset-Link mit gültigem Token auf seine eigene Domain
+// ausstellen lassen. Ist nichts konfiguriert, ist der Link im Zweifel nicht von
+// außen erreichbar - das ist ein Betriebs-, kein Sicherheitsproblem, und die UI
+// weist darauf hin.
 func (s *SettingsService) LinkBaseURL() string {
-	if cfg, err := s.settings.Get(); err == nil && cfg.PublicBaseURL != "" {
-		return cfg.PublicBaseURL
+	a, err := s.Addresses()
+	if err != nil {
+		return urlFor(s.scheme(), s.addr.FallbackHost, s.fixedOrDefaultUIPort())
 	}
-	return s.fallbackBaseURL
+	if a.URLs.UI != "" {
+		return a.URLs.UI
+	}
+	return urlFor(s.scheme(), s.addr.FallbackHost, a.UIPort)
 }
 
-// PublicAgentURL liefert die eingestellte öffentliche Adresse des Agent-Ports
-// (leer = nicht gesetzt oder Einstellungen nicht lesbar).
+// fixedOrDefaultUIPort ist der Port der Oberfläche, wenn die Einstellungen
+// nicht lesbar sind: der aus config.json oder Umgebung, sonst die Vorgabe.
+func (s *SettingsService) fixedOrDefaultUIPort() int {
+	return pickPort(s.addr.UI, 0, domain.DefaultUIPort)
+}
+
+// PublicAgentURL liefert die Adresse des Agent-Ports, wenn sie feststeht: im
+// Modus A die eingestellte öffentliche Adresse, in B und C die abgeleitete.
+// Leer heißt: keine bekannt - die Oberfläche nimmt dann den Host, unter dem sie
+// selbst aufgerufen wird, mit dem Agent-Port. Einstellungen nicht lesbar: leer.
 func (s *SettingsService) PublicAgentURL() string {
-	if cfg, err := s.settings.Get(); err == nil {
-		return cfg.PublicAgentURL
+	st, err := s.settings.Get()
+	if err != nil {
+		return ""
 	}
-	return ""
+	a := s.AddressesOf(st)
+	if a.Mode == domain.AddressModeSeparate && st.PublicAgentURL == "" {
+		return ""
+	}
+	return a.URLs.Agent
 }
 
-// WithFallbackBaseURL hinterlegt die aus der lokalen Konfiguration
-// abgeleitete Basis-Adresse (Schema + Host + Port des eigenen Listeners).
-func (s *SettingsService) WithFallbackBaseURL(u string) *SettingsService {
-	s.fallbackBaseURL = strings.TrimRight(strings.TrimSpace(u), "/")
-	return s
+// AgentURLNeedsProxy meldet, ob die Agent-Adresse ohne Port auf 443 zeigt,
+// obwohl dort kein gemeinsamer Port von LCM lauscht (Modus A mit eigenem
+// Namen ohne Port). Das geht nur mit einem Reverse Proxy auf 443, der an den
+// Agent-Port weiterreicht; sonst läuft der Enroll-Befehl ins Leere.
+func (s *SettingsService) AgentURLNeedsProxy() bool {
+	st, err := s.settings.Get()
+	if err != nil || st.PublicAgentURL == "" {
+		return false
+	}
+	a := s.AddressesOf(st)
+	if a.Mode != domain.AddressModeSeparate || a.AgentPort == 0 || a.AgentPort == 443 {
+		return false
+	}
+	u, err := url.Parse(st.PublicAgentURL)
+	return err == nil && u.Scheme == "https" && u.Port() == ""
 }
 
-// isLoopbackHost meldet, ob ein Bind-Host ausschließlich lokal erreichbar ist.
-// Grundlage der MCP-Bind-Prüfung (siehe SetMCP).
-func isLoopbackHost(host string) bool {
-	host = strings.TrimSpace(strings.Trim(strings.TrimSpace(host), "[]"))
-	if strings.EqualFold(host, "localhost") {
-		return true
+// AgentPort liefert den wirksamen Port des Agent-Listeners (0 = abgeschaltet,
+// ausgeschaltet oder von LCM_AGENT_PORT=0 gesperrt).
+func (s *SettingsService) AgentPort() int {
+	if a, err := s.Addresses(); err == nil {
+		return a.AgentListenPort()
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return 0
 }

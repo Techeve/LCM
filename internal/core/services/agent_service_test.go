@@ -33,25 +33,28 @@ func (f *fakeHub) Disconnect(agentID string)  { f.disconnected = append(f.discon
 // jedes Zertifikat anzunehmen.
 func TestAgentDownloadPin(t *testing.T) {
 	env := newTestEnv(t)
-	if pin := env.Servers.AgentDownloadPin(); pin != "" {
+	if pin := env.Servers.AgentDownloadPin("lcm.example"); pin != "" {
 		t.Errorf("unverdrahtet: Pin %q, erwartet leer", pin)
 	}
-	env.Servers.WithAgentDownloadPin(func() (string, error) { return "", errors.New("kein zertifikat") })
-	if pin := env.Servers.AgentDownloadPin(); pin != "" {
-		t.Errorf("bei Fehler: Pin %q, erwartet leer", pin)
+	env.Servers.WithAgentTrust(func(string) services.AgentTrust { return services.AgentTrust{} })
+	if pin := env.Servers.AgentDownloadPin("lcm.example"); pin != "" {
+		t.Errorf("ohne Zertifikat: Pin %q, erwartet leer", pin)
 	}
-	env.Servers.WithAgentDownloadPin(func() (string, error) { return "c2hhMjU2LXBpbg==", nil })
-	if pin := env.Servers.AgentDownloadPin(); pin != "c2hhMjU2LXBpbg==" {
+	env.Servers.WithAgentTrust(func(host string) services.AgentTrust {
+		return services.AgentTrust{KeyPin: "c2hhMjU2LXBpbg==" + host}
+	})
+	if pin := env.Servers.AgentDownloadPin("lcm.example"); pin != "c2hhMjU2LXBpbg==lcm.example" {
 		t.Errorf("Pin %q nicht durchgereicht", pin)
 	}
 }
 
 func TestCreateAgentServer(t *testing.T) {
 	env := newTestEnv(t)
-	env.Servers.WithCertFingerprint(func() (string, error) { return "cafe01", nil }).
-		WithCAFingerprint(func() (string, error) { return "ca0001", nil })
+	env.Servers.WithAgentTrust(func(string) services.AgentTrust {
+		return services.AgentTrust{CertFingerprint: "cafe01", CAFingerprint: "ca0001"}
+	})
 
-	server, token, err := env.Servers.CreateAgentServer("notebook01", "tester")
+	server, token, err := env.Servers.CreateAgentServer("notebook01", "tester", "lcm.example")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -84,7 +87,7 @@ func TestCreateAgentServer(t *testing.T) {
 	}
 
 	// Doppelter Name wird abgewiesen.
-	if _, _, err := env.Servers.CreateAgentServer("notebook01", "tester"); !errors.Is(err, services.ErrServerNameTaken) {
+	if _, _, err := env.Servers.CreateAgentServer("notebook01", "tester", "lcm.example"); !errors.Is(err, services.ErrServerNameTaken) {
 		t.Fatalf("erwartete ErrServerNameTaken, got %v", err)
 	}
 }
@@ -94,11 +97,11 @@ func TestRegenerateAgentToken(t *testing.T) {
 	hub := &fakeHub{online: map[string]bool{}}
 	env.Servers.WithAgentHub(hub)
 
-	server, oldToken, err := env.Servers.CreateAgentServer("agent02", "tester")
+	server, oldToken, err := env.Servers.CreateAgentServer("agent02", "tester", "lcm.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	newToken, err := env.Servers.RegenerateAgentToken(repositories.ScopeAll(), server.ID, "tester")
+	newToken, err := env.Servers.RegenerateAgentToken(repositories.ScopeAll(), server.ID, "tester", "lcm.example")
 	if err != nil {
 		t.Fatalf("regenerate: %v", err)
 	}
@@ -119,7 +122,7 @@ func TestRegenerateAgentToken(t *testing.T) {
 
 	// Nur für Agent-Server erlaubt.
 	sshServer := seedSSHServer(t, env, "ssh01")
-	if _, err := env.Servers.RegenerateAgentToken(repositories.ScopeAll(), sshServer.ID, "tester"); !errors.Is(err, services.ErrNotAgentServer) {
+	if _, err := env.Servers.RegenerateAgentToken(repositories.ScopeAll(), sshServer.ID, "tester", "lcm.example"); !errors.Is(err, services.ErrNotAgentServer) {
 		t.Fatalf("erwartete ErrNotAgentServer, got %v", err)
 	}
 }
@@ -139,7 +142,7 @@ func seedSSHServer(t *testing.T, env *testEnv, name string) *domain.Server {
 
 func TestAgentTransportGating(t *testing.T) {
 	env := newTestEnv(t)
-	server, _, err := env.Servers.CreateAgentServer("gated", "tester")
+	server, _, err := env.Servers.CreateAgentServer("gated", "tester", "lcm.example")
 	if err != nil {
 		t.Fatal(err)
 	}

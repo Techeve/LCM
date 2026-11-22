@@ -107,8 +107,9 @@ endpoint is reachable anonymously.
 ## Links in emails: `public_base_url`
 
 Links in password-reset and invitation emails are built **exclusively** from the
-`public_base_url` setting (*Settings → General*), never from the request's `Host`
-header.
+public addresses (*Settings → General*), never from the request's `Host` header.
+In address mode A that is the `public_base_url` setting, in B and C the address of
+the web UI derived from name and port.
 
 :::caution[Why this matters]
 If the base address came from the request, an attacker could trigger a password
@@ -219,6 +220,8 @@ servers.Get("/:id/storage-history", middlewares.RequirePermission(domain.PermSer
 ```
 
 `RequirePermission` responds 401 (not logged in) or 403 (logged in, but the right is missing). Role resolution happens in the background: `Authenticate` loads the user with `Preload("Roles.Permissions")`, and `HasPermission` then only checks in-memory.
+
+**The right `system:endpoints`** manages LCM's endpoints: allowed networks per service and certificates (upload, removal, reload, Let's Encrypt). It belongs to **`admin` alone** and is part of neither `settings:manage` nor the manager's rights: whoever changes it decides who can reach LCM and whom browsers and agents accept LCM from.
 
 **Introducing a new permission:**
 
@@ -488,8 +491,11 @@ sudo userdel -r lcm-svc
 
 ## File permissions: checked, not assumed
 
-The data directory (`/var/lib/lcm`: database, master key, TLS key, backups)
-belongs to the service user alone: `0700`, secrets `0600`. The configuration
+The data directory (`/var/lib/lcm`: database, master key, the TLS keys of
+uploaded and obtained certificates too, backups) belongs to the service user
+alone: `0700`, secrets `0600`. That includes the control socket `control.sock`
+(`0600`): only the service user and root may send the `lcm tls` and `lcm network`
+commands to the running service, there is no login of its own. The configuration
 (`/etc/lcm`) belongs to root, group `lcm` may read and write (restore), nobody
 else. The package script sets this - and LCM **checks it itself at start and
 every 15 minutes** (`internal/perms`): files owned by the service are tightened
@@ -564,7 +570,7 @@ Stored encrypted are, among others (full list in `internal/storage/rotate.go`):
 - users' **2FA secrets** (`users.totp_secret_enc`) and Linux-user passwords;
 - the **system mailer** SMTP password and **notification-channel secrets** (SMTP password or webhook URL);
 - **CrowdSec credentials** on the LCM host: the LAPI machine passwords (`crowdsec_lapis.password_enc`) and console key (`crowd_sec_console_key_enc`);
-- the stored **TLS key PEM**.
+- the **credentials of the DNS provider** for Let's Encrypt with DNS-01 (`global_settings.acme_dns_config_enc`). The keys of uploaded and obtained certificates live as files with `0600` in the data directory and are part of the system backup.
 
 Large console output (job/SSH output) as well as the server host/name go through a GORM serializer (`aesgcm`); the server name additionally carries a **blind index** derived from the master key for searching without storing the plaintext.
 
@@ -574,16 +580,17 @@ Values of 512 bytes and more are compressed with zstd **before** encryption - en
 
 ## LCM Remote (agent listener)
 
-Servers behind NAT connect **outbound** via `lcm-agent` (MQTT over WebSocket) on a **separate, dedicated port** (default `9320`, `internal/remote`) - separate from UI/REST. The enrollment token is shown in plaintext only on first display; at rest only its hash is stored. The agent listener uses the same TLS certificate as the UI, whose fingerprint the agent **pins** during enrollment (MitM protection). Commands over the agent transport are subject to the same silence limit as the job watchdog: they are aborted when no output arrives for longer than the permitted time. Details: [LCM Remote](/en/guides/remote/).
+Servers behind NAT connect **outbound** via `lcm-agent` (MQTT over WebSocket) on a **separate, dedicated port** (default `9320`, `internal/remote`) - separate from UI/REST. The enrollment token is shown in plaintext only on first display; at rest only its hash is stored. The agent listener serves the certificate by the requested name (a certificate of your own, otherwise that of LCM's own CA). During enrollment the agent **pins** the fingerprint of the certificate LCM serves for its address, plus the issuing certificate authority if it is a private one (MitM protection). A private certificate authority counts only together with the **name check** against the agent's address. Commands over the agent transport are subject to the same silence limit as the job watchdog: they are aborted when no output arrives for longer than the permitted time. Details: [LCM Remote](/en/guides/remote/).
 
 ## MCP interface (AI agents)
 
-The optional MCP listener (`internal/mcp`, off by default, bind `127.0.0.1:9330`) exposes **read-only** server properties to AI agents. Security-relevant points:
+The optional MCP listener (`internal/mcp`, off by default, port `9330`, bind address like the web UI) exposes **read-only** server properties to AI agents. Security-relevant points:
 
 - **Dedicated scope:** access only with an API key of scope `mcp` (bearer token); such keys work nowhere else.
 - **Whitelist DTO:** only the curated `ServerView` struct is serialized - **never** `domain.Server`. By construction it carries no passwords, login users, private/public keys, host-key fingerprints, or agent tokens.
 - **No write tools:** only `list_servers`, `get_server`, and `fleet_summary` - no configuring actions.
-- **Toggleable at runtime:** via *Settings → MCP*. The endpoint speaks HTTP; for remote access put a TLS-terminating reverse proxy in front. Details: [MCP interface](/en/guides/mcp/).
+- **Always encrypted:** the endpoint speaks HTTPS only (LCM's certificate pool), on existing installations too. A client using `http://` does not get through.
+- **Toggleable at runtime:** with a switch under *Settings → General* and *Settings → MCP*. Details: [MCP interface](/en/guides/mcp/).
 
 ## Further measures
 
@@ -592,8 +599,9 @@ The optional MCP listener (`internal/mcp`, off by default, bind `127.0.0.1:9330`
 - **XSS:** the web interface renders exclusively via Lit templates (automatic escaping), backed by the strict CSP and Trusted Types.
 - **Input validation:** the backend checks every input itself and does not rely on bound parameters alone. A search metric rejects SQL in strings, numbers have fixed limits, and IP addresses, networks, and IPv6 are strictly validated (`internal/inputcheck`, `middlewares.InputGuard`).
 - **Build gates:** `make build` aborts on `npm audit` or `govulncheck` findings.
-- **Default bind:** `127.0.0.1` - anyone exposing it externally deliberately sets `"host": "0.0.0.0"` and should terminate TLS via a reverse proxy (Caddy, nginx).
-- **IP allowlist:** `allowed_ips` in config.json restricts network access to allowed client addresses (keywords `localhost`/`private` or IP/CIDR); non-matching clients get an early **403** (`IPAllowlist` middleware, before auth/logging). Filtering uses the direct TCP connection; behind a reverse proxy set `trust_proxy_header: true` **plus** `trusted_proxies` (`X-Forwarded-For` counts from those peers only). The matcher lives in the `internal/netfilter` package. See [Security & CVE Scans](/en/guides/security-cve/) and [Reverse proxy](/en/guides/reverse-proxy/).
+- **Default bind:** `127.0.0.1` - anyone exposing it externally deliberately sets `"host": "0.0.0.0"` and should serve TLS with a real certificate, either a certificate of your own or Let's Encrypt in LCM itself ([Certificates](/en/guides/zertifikate/)) or through a reverse proxy (Caddy, nginx).
+- **Allowed networks per service:** The web UI, the agent and MCP each have a list of allowed networks (`allowed_ips`, `agent_allowed_ips`, `mcp_allowed_ips` in config.json, otherwise the setting in the interface, which only an admin changes). Empty means all networks, the default. Non-matching clients get an early **403** (`IPAllowlist` middleware, before auth/logging). The lists can be swapped at runtime. If a service is in config.json, only that list applies (read-only in the interface), so a lockout leads back in through the console; `lcm network reset` resets the setting. LCM refuses a web UI list that would lock out the admin making the change, and disconnects agents outside a narrower agent list only after confirmation. The client's address is filtered: that of the direct TCP connection, behind a reverse proxy with `trust_proxy_header: true` **plus** `trusted_proxies` the one from `X-Forwarded-For` (from those peers only). The public agent download and the Let's Encrypt check on port 80 are exempt. The matcher lives in the `internal/netfilter` package. See [Allowed networks](/en/guides/netzbereiche/) and [Reverse proxy](/en/guides/reverse-proxy/).
+- **Certificates are checked before loading:** Every certificate (file, upload, ACME) goes through PEM check, key match, validity and `serverAuth` before it is served. If it fails, the previous state stays active. It is changed, uploaded or obtained through Let's Encrypt only with the right `system:endpoints`, and every change appears in the audit log. The program for the DNS provider `exec` is set by config.json alone (`acme_dns_exec`), by no account in LCM.
 - **Body budget:** 1 MiB per request, checked on the headers before the body is read (`middlewares.BodyBudget`, request streaming). The large 64 MiB limit applies to the backup upload alone. Bodies without a length (chunked) are rejected outside the upload.
 - **Email address only with password:** your own address receives the password reset. Changing it requires the current password - a stolen session alone cannot redirect the account to a foreign address.
 - **Console ticket within scope:** the ticket for the web console is issued only for servers the user may see - the console permission alone is not enough.

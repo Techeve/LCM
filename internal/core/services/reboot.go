@@ -8,7 +8,6 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -181,10 +180,9 @@ func (s *ServerService) Reboot(scope repositories.AccessScope, id uint, actor st
 		return nil, err // u.a. ErrServerBusy → der Controller mappt auf 409
 	}
 	s.audit.Log(actor, "server.reboot", "server", id, server.Name)
-	safego.GoCleanup("job:reboot", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:reboot", job, func() {
 		s.runRebootJob(job, server, actor)
-	})
-	return job, nil
+	}), nil
 }
 
 func (s *ServerService) runRebootJob(job *domain.Job, server *domain.Server, actor string) {

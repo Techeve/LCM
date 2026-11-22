@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -23,12 +24,13 @@ var errUpgradeFailed = apierr.Define(400, "agent.upgrade_failed", "websocket upg
 // und Übergabe der Verbindung an den eingebetteten Broker. Die eigentliche
 // Authentifizierung (AgentID + Token) macht der Broker im CONNECT-Paket -
 // hier gibt es nur ein kleines per-IP-Ratelimit gegen Upgrade-Fluten. trust
-// sagt, wessen X-Forwarded-For dabei zählt (siehe netfilter.ProxyTrust).
+// sagt, wessen X-Forwarded-For dabei zählt (siehe netfilter.ProxyTrust; der
+// Halter wird bei jedem Upgrade neu gelesen).
 //
 // fasthttp/websocket hijackt die Verbindung: der Fiber-Handler kehrt sofort
 // zurück, der Callback läuft anschließend auf der gekaperten Verbindung und
 // blockiert dort bis zum Disconnect des Agents.
-func WSHandler(hub *Hub, trust netfilter.ProxyTrust) fiber.Handler {
+func WSHandler(hub *Hub, trust *netfilter.ProxyTrustHolder) fiber.Handler {
 	upgrader := websocket.FastHTTPUpgrader{
 		Subprotocols: []string{"mqtt"}, // [MQTT-6.0.0-3]
 		// Kein CheckOrigin-Override: Agents senden keinen Origin-Header
@@ -44,12 +46,13 @@ func WSHandler(hub *Hub, trust netfilter.ProxyTrust) fiber.Handler {
 		// dieselbe Adressermittlung wie auf dem UI-Port (trusted_proxies).
 		ip := c.IP()
 		xff := netfilter.JoinForwardedFor(c.Request().Header.PeekAll(fiber.HeaderXForwardedFor))
-		if addr, ok := netfilter.ClientIP(c.IP(), xff, trust); ok {
+		if addr, ok := netfilter.ClientIP(c.IP(), xff, trust.Load()); ok {
 			ip = addr.String()
 		}
 		if !limiter.allow(ip) {
 			return apierr.TooManyRequests
 		}
+		remote := clientAddr(c.RequestCtx().RemoteAddr(), ip)
 		err := upgrader.Upgrade(c.RequestCtx(), func(ws *websocket.Conn) {
 			// Ab hier ist die Verbindung „hijacked": fasthttp führt diesen
 			// Rumpf in einer EIGENEN Goroutine aus, außerhalb der
@@ -59,7 +62,7 @@ func WSHandler(hub *Hub, trust netfilter.ProxyTrust) fiber.Handler {
 			defer ws.Close()
 			ws.SetReadLimit(wire.MaxPacketSize)
 			// Blockiert bis zum Disconnect; Fehler loggt der Broker selbst.
-			_ = hub.HandleConn(&wsNetConn{Conn: ws.NetConn(), ws: ws})
+			_ = hub.HandleConn(&wsNetConn{Conn: ws.NetConn(), ws: ws, remote: remote})
 		})
 		if err != nil {
 			return errUpgradeFailed
@@ -116,10 +119,30 @@ func (l *upgradeLimiter) allow(ip string) bool {
 type wsNetConn struct {
 	net.Conn
 	ws *websocket.Conn
+	// remote ist die Adresse, die der Hub als Gegenstelle kennt.
+	remote net.Addr
 
 	// r ist der Reader der aktuell angebrochenen Message (nil = keine).
 	r io.Reader
 }
+
+// clientAddr ist die Gegenadresse, die der Hub für die Verbindung festhält:
+// die ermittelte Client-Adresse (hinter einem vertrauten Proxy die
+// weitergeleitete) mit dem Port der Verbindung. Lässt sie sich nicht lesen,
+// bleibt es bei der Adresse der Verbindung.
+func clientAddr(peer net.Addr, clientIP string) net.Addr {
+	addr, err := netip.ParseAddr(clientIP)
+	if err != nil {
+		return peer
+	}
+	port := 0
+	if tcp, ok := peer.(*net.TCPAddr); ok {
+		port = tcp.Port
+	}
+	return &net.TCPAddr{IP: addr.Unmap().AsSlice(), Port: port}
+}
+
+func (c *wsNetConn) RemoteAddr() net.Addr { return c.remote }
 
 // errNotBinary: MQTT über WebSocket MUSS Binary-Messages verwenden.
 var errNotBinary = errors.New("websocket: message ist nicht binär")

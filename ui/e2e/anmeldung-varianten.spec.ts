@@ -185,10 +185,10 @@ test.describe('Wahl der Variante', () => {
     await zuAllgemein(page);
 
     const karte = page.locator('main lcm-card', { has: page.getByRole('heading', { level: 2, name: 'Anmeldung im Browser' }) });
-    // Die Karte steht bei der öffentlichen Adresse und trägt auch die Sitzungsdauer.
+    // Die Karte steht direkt hinter dem Block Öffentliche Adressen (Let's Encrypt ist dort eine Unterkarte) und trägt auch die Sitzungsdauer.
     await expect(karte.getByRole('heading', { level: 2 })).toBeVisible();
     const titel = await page.locator('main').getByRole('heading', { level: 2 }).allTextContents();
-    expect(titel.indexOf('Anmeldung im Browser')).toBe(titel.indexOf('Öffentliche Adresse') + 1);
+    expect(titel.indexOf('Anmeldung im Browser')).toBe(titel.indexOf('Öffentliche Adressen') + 1);
     await expect(karte.getByLabel(/Sitzungsdauer/)).toBeVisible();
     const arbeitsspeicher = karte.getByRole('radio', { name: /Nur im Arbeitsspeicher/ });
     const cookie = karte.getByRole('radio', { name: /Sitzungs-Cookie/ });

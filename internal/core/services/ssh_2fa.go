@@ -7,7 +7,6 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -229,10 +228,9 @@ func (s *ServerService) ConfigureSSH2FA(scope repositories.AccessScope, id uint,
 		return nil, err
 	}
 	s.audit.Log(actor, "server.ssh-2fa", "server", id, fmt.Sprintf("%s: enable=%t", server.Name, enable))
-	safego.GoCleanup("job:ssh-2fa", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:ssh-2fa", job, func() {
 		s.runSSH2FAJob(job, server, enable, plan, actor)
-	})
-	return job, nil
+	}), nil
 }
 
 // ssh2faPlan sind die Skripte von ConfigureSSH2FA. Lauf und Befehlsvorschau

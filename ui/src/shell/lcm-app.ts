@@ -13,6 +13,7 @@ import './session-mode-dialog';
 import { SYSTEM_INFO_URL, normaliseSystemInfo, type SystemInfo } from '../api/system';
 import { toast } from '../components/lcm-toaster';
 import { baseStyles } from '../components/shared';
+import { setupPending } from '../lib/address-setup';
 import { auth } from '../lib/auth';
 import { I18nController, SubscribeController } from '../lib/controllers';
 import { loadEntities } from '../lib/entity-search';
@@ -238,7 +239,8 @@ export class LcmApp extends LitElement {
   // ---- Darstellung ----
 
   #renderNav() {
-    const locked = auth.remediation !== null;
+    // Im Pflichtschritt und im offenen Einrichtungsassistenten führt kein Menüpunkt irgendwohin.
+    const locked = auth.remediation !== null || setupPending(auth.user);
     return html`<lcm-main-nav
       .items=${mainNavItems(this.#can, locked)}
       current=${currentNavId(router.state.path)}

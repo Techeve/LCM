@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"LCM/internal/remote/wire"
@@ -47,6 +48,29 @@ type Config struct {
 	// vertrauten Verbindung gelernt (Kette des Servers). Mit ihm nimmt der
 	// Agent jedes Server-Zertifikat dieser CA an, auch mit neuem Schlüssel.
 	CAFingerprint string `json:"ca_fingerprint,omitempty"`
+	// CustomCAFingerprints pinnen die CAs eigener Zertifikate des Betreibers
+	// (Heim-CA, SHA-256 über das CA-Zertifikat, hex). Anders als die LCM-CA
+	// gelten sie nur mit passendem Namen der Server-Adresse. Sie stehen
+	// getrennt von CAFingerprint, damit ein eigenes Zertifikat den Anker der
+	// LCM-CA nicht überschreibt (siehe learnFrom). Höchstens
+	// MaxCustomCAPins, die ältesten fallen heraus.
+	CustomCAFingerprints []string `json:"custom_ca_fingerprints,omitempty"`
+}
+
+// MaxCustomCAPins ist die Obergrenze der gepinnten CAs eigener Zertifikate.
+const MaxCustomCAPins = 4
+
+// rememberCustomCA nimmt die CA in die Liste auf, am Ende; ist sie schon
+// drin, ändert sich nichts. Gemeldet wird, ob sich die Liste geändert hat.
+func (c *Config) rememberCustomCA(fingerprint string) bool {
+	if slices.Contains(c.CustomCAFingerprints, fingerprint) {
+		return false
+	}
+	c.CustomCAFingerprints = append(c.CustomCAFingerprints, fingerprint)
+	if extra := len(c.CustomCAFingerprints) - MaxCustomCAPins; extra > 0 {
+		c.CustomCAFingerprints = c.CustomCAFingerprints[extra:]
+	}
+	return true
 }
 
 // TerminalOffName ist die Datei im Konfigurationsverzeichnis, deren Dasein die

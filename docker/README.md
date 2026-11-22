@@ -32,8 +32,9 @@ docker logs -f lcm   # Erststart: hier steht das generierte Admin-Passwort
 
 Danach: `https://<host>:9310` - LCM spricht standardmäßig **HTTPS** mit einem
 selbstsignierten Zertifikat (die Browser-Warnung beim ersten Aufruf ist
-erwartbar). Für öffentliche Deployments gehört ein Reverse-Proxy mit echtem
-Zertifikat davor.
+erwartbar). Für öffentliche Deployments hinterlegst du ein eigenes Zertifikat
+oder lässt LCM eines bei Let's Encrypt holen (siehe unten), oder du setzt einen
+Reverse-Proxy mit echtem Zertifikat davor.
 
 ## Volumes
 
@@ -41,6 +42,44 @@ Zertifikat davor.
 |---|---|
 | `/data` | Alles Persistente: `config.json`, SQLite-Datenbank, Master-Key (`lcm.key`), TLS-Zertifikat, Backups, Logs, `version.json`. **Ohne diesen Mount ist nach `docker rm` alles weg - inklusive des Schlüssels, mit dem die Server-Zugänge verschlüsselt sind.** |
 | `/tmp` | Zwischendateien (Backup-Wiederherstellung, SBOM für den CVE-Scan). Als `tmpfs` mounten, wenn der Container mit `--read-only` läuft. |
+
+## Eigene Zertifikate und Let's Encrypt
+
+Zertifikat und Schlüssel (PEM, der Schlüssel ohne Passwort) kommen als Volume in
+den Container, und die `config.json` unter `/data` nennt sie. Der Container
+liest als UID 1000, die Dateien müssen dafür lesbar sein.
+
+```sh
+docker run -d --name lcm \
+  -p 9310:9310 -v "$PWD/data:/data" -v "$PWD/tls:/tls:ro" \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+  --restart unless-stopped \
+  techeve/lcm:latest
+```
+
+```json
+{
+  "tls_certificates": [
+    { "cert": "/tls/lcm.pem", "key": "/tls/lcm.key" }
+  ]
+}
+```
+
+Hast du die Dateien erneuert, lädt LCM sie auf Zuruf ohne Neustart neu, Agenten
+bleiben verbunden:
+
+```sh
+docker kill -s HUP lcm                  # lädt die Zertifikate neu
+docker exec lcm /app/lcm tls status     # zeigt, was LCM für welchen Namen ausliefert
+```
+
+Mit `--cap-drop ALL` darf LCM keine Ports unter 1024 öffnen. Lass es im
+Container auf hohen Ports lauschen und veröffentliche sie auf 443 und 80:
+`shared_tls_listen` auf `":8443"` (Weboberfläche, Agent und MCP über einen Port,
+nach dem Namen getrennt) und `acme_http_listen` auf `":8080"` (Let's Encrypt
+mit HTTP-01), dazu `-p 443:8443 -p 80:8080`. Alles Weitere, auch Let's Encrypt
+per DNS-01, steht in der
+[Dokumentation](https://doc.techeve.de/lcm/guides/zertifikate/?mtm_campaign=linking&mtm_kwd=README).
 
 ## Umgebungsvariablen
 

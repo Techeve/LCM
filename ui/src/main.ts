@@ -1,10 +1,10 @@
 import './styles/index.css';
 import './shell/lcm-app';
+import { routeRedirect } from './lib/address-setup';
 import { auth } from './lib/auth';
 import { i18n } from './lib/i18n';
 import { printConsoleWarning } from './lib/console-warning';
 import { connectLiveData } from './lib/live';
-import { remediationRedirect } from './lib/remediation';
 import { router } from './lib/router';
 import { registerServiceWorker } from './lib/sw-register';
 import { initTheme } from './lib/theme';
@@ -21,7 +21,7 @@ async function boot(): Promise<void> {
   router.configure({
     routes,
     isAuthenticated: () => auth.isAuthenticated,
-    guard: (path) => remediationRedirect(auth.user, path),
+    guard: (path) => routeRedirect(auth.user, path),
   });
   await router.start();
   void registerServiceWorker();

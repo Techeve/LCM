@@ -103,7 +103,7 @@ func parsePrefix(entry string) (netip.Prefix, error) {
 		if err != nil {
 			return netip.Prefix{}, err
 		}
-		return p.Masked(), nil
+		return unmapPrefix(p.Masked()), nil
 	}
 	addr, err := netip.ParseAddr(entry)
 	if err != nil {
@@ -111,6 +111,16 @@ func parsePrefix(entry string) (netip.Prefix, error) {
 	}
 	addr = addr.Unmap()
 	return netip.PrefixFrom(addr, addr.BitLen()), nil
+}
+
+// unmapPrefix schreibt ein IPv4-in-IPv6-Netz (::ffff:10.0.0.0/104) als
+// IPv4-Netz. Allows entpackt die Client-Adresse ebenfalls, ein gemapptes Netz
+// träfe sonst nie.
+func unmapPrefix(p netip.Prefix) netip.Prefix {
+	if p.Addr().Is4In6() && p.Bits() >= 96 {
+		return netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+	}
+	return p
 }
 
 // mustPrefixes parst eine feste Liste von CIDRs (nur für Paket-Konstanten).

@@ -28,6 +28,7 @@ func TestValidierungsfehlerSindEineKategorie(t *testing.T) {
 		"ErrPublicAgentURLInvalid": services.ErrPublicAgentURLInvalid,
 		"ErrPublicMCPURLInvalid":   services.ErrPublicMCPURLInvalid,
 		"ErrAptCacheURLInvalid":    services.ErrAptCacheURLInvalid,
+		"ErrPublicHostConflict":    services.ErrPublicHostConflict,
 	}
 	for name, err := range fehler {
 		if !errors.Is(err, services.ErrSettingInvalid) {

@@ -11,7 +11,6 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/portscan"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -81,10 +80,9 @@ func (s *PortScanService) Start(scope repositories.AccessScope, id uint, actor s
 		return nil, err // u.a. ErrServerBusy → 409
 	}
 	s.audit.Log(actor, "server.port-scan", "server", id, "")
-	safego.GoCleanup("job:port-scan", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:port-scan", job, func() {
 		s.run(job, server)
-	})
-	return job, nil
+	}), nil
 }
 
 // portScannable: Agent-Server stehen meist hinter NAT und haben keine

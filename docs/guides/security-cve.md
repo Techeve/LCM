@@ -80,6 +80,12 @@ von LCM bleibt draußen, auch ein dort gesetzter `LCM_ENCRYPTION_KEY`.
 Bubblewrap braucht dafür mindestens Version 0.5, ein älteres fällt auf
 Landlock zurück.
 
+Der Hinweis unterscheidet zwei Fälle: „das Paket bubblewrap fehlt" und
+„bubblewrap ist installiert, startet aber nicht". Im zweiten Fall steht die
+Fehlermeldung von bubblewrap dabei; häufige Ursachen sind abgeschaltete
+unprivilegierte User-Namespaces (Kernel-Schalter, AppArmor-Regel unter Ubuntu,
+verschachtelte Container) oder eine zu strenge Dienst-Härtung.
+
 Fehlt beides, läuft der Scan wie früher ungesperrt - dann aber mit einem
 **sichtbaren Hinweis** an der Scanner-Anzeige. Ein stiller Rückfall wäre die
 schlechteste Variante: Man hielte sich für geschützt, ohne es zu sein.
@@ -336,6 +342,11 @@ lässt sich der **Netzwerk-Zugriff** auf bestimmte Client-Adressen einschränken
 - gesteuert über die `config.json` (nach Änderung Dienst neu starten). Nicht
 zugelassene Clients erhalten **403**, noch bevor Login, Logging oder ein
 Controller laufen.
+
+Das gilt je Dienst für Weboberfläche, Agent und MCP, und ein Admin stellt es
+auch in der Oberfläche ein, wirksam ohne Neustart. Den vollständigen Weg
+beschreibt [Erlaubte Netzbereiche](/guides/netzbereiche/). Hier der Teil für die
+Weboberfläche über die `config.json`:
 
 ```json
 {

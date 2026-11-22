@@ -1,10 +1,12 @@
 #!/bin/sh
 # Schneidet aus dem CHANGELOG je Version eine Datei <version>.md für das Fenster
 # nach einem Update. Vorne steht der handgeschriebene Text der Release-Reihe aus
-# release-info/<x.y.z>.md: Er gilt für die fertige Version und ihre Betas. Danach
-# folgt der Auszug, der Anwender betrifft: Refactoring und Sonstiges bleiben
-# draußen, die Überschriften sind Klartext, Emojis, Bereiche und Commit-Kürzel
-# haben im Fenster nichts zu suchen.
+# release-info/<x.y.0>.md: Er gilt für alle Versionen der Reihe - Betas, die
+# fertige Version und ihre Patch-Versionen (2.2.1 zeigt den Text aus 2.2.0.md).
+# Wer von einer älteren Reihe direkt auf einen Patch springt, hat den Text sonst
+# nie gesehen. Danach folgt der Auszug, der Anwender betrifft: Refactoring und
+# Sonstiges bleiben draußen, die Überschriften sind Klartext, Emojis, Bereiche
+# und Commit-Kürzel haben im Fenster nichts zu suchen.
 #
 # Aufruf: tools/release-notes.sh CHANGELOG.md docs/static/release-notes [release-info]
 set -eu
@@ -20,6 +22,7 @@ awk -v target="$target" -v info="$info" '
     printf "" > file
     series = version
     sub(/-.*$/, "", series)
+    sub(/\.[0-9]+$/, ".0", series)
     text = info "/" series ".md"
     while ((getline line < text) > 0) print line > file
     close(text)

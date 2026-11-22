@@ -14,6 +14,9 @@ LCM_GROUP=lcm
 DATA_DIR=/var/lib/lcm
 CONF_DIR=/etc/lcm
 CONF_FILE="$CONF_DIR/config.json"
+# LCM_PKG_ROOT is for packaging/scripts/scripts-test.sh only: the apt source
+# migration (step 8) reads and writes below it.
+ROOT="${LCM_PKG_ROOT:-}"
 
 # lcm_lang picks the output language: English by default, German only if the
 # system is actually set to German.
@@ -38,6 +41,69 @@ lcm_lang() {
 	de | de_* | De_* | DE_*) echo de ;;
 	*) echo en ;;
 	esac
+}
+
+# migrate_apt_suite moves the apt source of the community channel from the
+# suite "stable" to "community": the repository server renamed the channel and
+# keeps "stable" only for old installations, until it is switched off.
+#
+# Only entries whose URI is exactly https://repo.techeve.de (also http://,
+# trailing slash allowed) are rewritten - never /enterprise..., /internal...,
+# beta lines or foreign repositories. It handles the one-line format
+# (sources.list, *.list, options in [] allowed) and deb822 (*.sources: URIs and
+# Suites in the same stanza). Running it again changes nothing. It never
+# fails the installation: whatever goes wrong, the source stays as it was.
+#
+# Duplicated in postinstall.sh and agent-postinstall.sh - dpkg maintainer
+# scripts run standalone and cannot share a helper file. sed -E and plain
+# POSIX awk only: the scripts run with GNU, BSD and busybox tools.
+migrate_apt_suite() {
+	[ -d "$ROOT/etc/apt" ] || return 0
+	_tmp=$(mktemp 2>/dev/null) || return 0
+	for _f in "$ROOT/etc/apt/sources.list" "$ROOT"/etc/apt/sources.list.d/*.list; do
+		[ -f "$_f" ] || continue
+		sed -E 's#^([[:space:]]*deb(-src)?[[:space:]]+(\[[^]]*\][[:space:]]+)?https?://repo\.techeve\.de/?[[:space:]]+)stable([[:space:]]|$)#\1community\4#' \
+			"$_f" >"$_tmp" 2>/dev/null || continue
+		apt_suite_replace "$_f" "$_tmp"
+	done
+	for _f in "$ROOT"/etc/apt/sources.list.d/*.sources; do
+		[ -f "$_f" ] || continue
+		awk '
+			function flush(   i) {
+				for (i = 1; i <= n; i++) {
+					if (uri_ok && i == suite_line) sub(/stable[ \t]*$/, "community", buf[i])
+					print buf[i]
+				}
+				n = 0; uri_ok = 0; suite_line = 0
+			}
+			/^[ \t]*$/ { flush(); print; next }
+			{
+				buf[++n] = $0
+				if ($0 ~ /^[ \t]/ || index($0, ":") == 0) next
+				key = tolower(substr($0, 1, index($0, ":") - 1))
+				val = substr($0, index($0, ":") + 1)
+				gsub(/^[ \t]+|[ \t]+$/, "", val)
+				if (key == "uris" && val ~ /^https?:\/\/repo\.techeve\.de\/?$/) uri_ok = 1
+				if (key == "suites" && val == "stable") suite_line = n
+			}
+			END { flush() }
+		' "$_f" >"$_tmp" 2>/dev/null || continue
+		apt_suite_replace "$_f" "$_tmp"
+	done
+	rm -f "$_tmp"
+}
+
+# apt_suite_replace overwrites $1 with $2 if they differ and $2 is not empty
+# (cat > keeps owner, mode and symlinks of the original), and says so.
+apt_suite_replace() {
+	[ -s "$2" ] || return 0
+	cmp -s "$1" "$2" 2>/dev/null && return 0
+	cat "$2" >"$1" || return 0
+	if [ "$(lcm_lang)" = "de" ]; then
+		echo "lcm: Paketquelle ${1#"$ROOT"} von Suite stable auf community umgestellt."
+	else
+		echo "lcm: apt source ${1#"$ROOT"} moved from suite stable to community."
+	fi
 }
 
 # 1. Dedicated, unprivileged system user (idempotent).
@@ -330,5 +396,9 @@ EOF
 EOF
 	fi
 fi
+
+# 8. The community channel of the package repository was renamed from the suite
+#    "stable" to "community"; move this host's apt source along.
+migrate_apt_suite || true
 
 exit 0

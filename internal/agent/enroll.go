@@ -107,8 +107,7 @@ func Enroll(serverURL, token, version string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	cfg := &Config{URL: normalized, AgentID: tok.AgentID, Secret: tok.Secret,
-		CertFingerprint: tok.CertFingerprint, CAFingerprint: tok.CAFingerprint}
+	cfg := configFromToken(normalized, tok)
 
 	// Erst verbinden, dann installieren - ein Tippfehler in Adresse oder
 	// Token fällt so sofort auf, nicht erst im Dienst-Log.
@@ -139,6 +138,16 @@ func Enroll(serverURL, token, version string, log *slog.Logger) error {
 		"The server will show up as online in LCM within a few seconds.",
 		"Der Server erscheint in LCM in wenigen Sekunden als online."))
 	return nil
+}
+
+// configFromToken übernimmt Zugang und Pins aus dem Token.
+func configFromToken(serverURL string, tok wire.Token) *Config {
+	cfg := &Config{URL: serverURL, AgentID: tok.AgentID, Secret: tok.Secret,
+		CertFingerprint: tok.CertFingerprint, CAFingerprint: tok.CAFingerprint}
+	if tok.CustomCAFingerprint != "" {
+		cfg.CustomCAFingerprints = []string{tok.CustomCAFingerprint}
+	}
+	return cfg
 }
 
 // ensureInstalled sorgt dafür, dass das Binary an einem festen Pfad liegt

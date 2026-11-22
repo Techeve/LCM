@@ -76,6 +76,11 @@ const (
 	// kennen -, oder die CA von LCM endet binnen eines Jahres (siehe
 	// services.CertRenewal). Selbstbeobachtung, ohne Schwellenwert.
 	AlertTypeTLSCertExpiring = "tls_cert_expiring"
+	// AlertTypeTLSRenewalFailed: Der letzte Lauf, der Zertifikate bei einer
+	// ACME-CA ausstellt oder erneuert, ist fehlgeschlagen. Der Alarm bleibt, bis
+	// ein Lauf gelingt; LCM versucht es stündlich wieder (services.ACMEService).
+	// Selbstbeobachtung, ohne Schwellenwert.
+	AlertTypeTLSRenewalFailed = "tls_renewal_failed"
 	// AlertTypeAdvisory: Die Fruehwarnung (OSV) meldet offene Befunde zum
 	// installierten Paketbestand ab der konfigurierten Mindest-Schwere
 	// (MinSeverity).
@@ -127,7 +132,7 @@ func IsSelfAlert(alertType string) bool {
 	switch alertType {
 	case AlertTypeBackupStale, AlertTypeCVEDBStale,
 		AlertTypeAptCacherDown, AlertTypeCrowdSecLapiDown,
-		AlertTypeTLSCertExpiring:
+		AlertTypeTLSCertExpiring, AlertTypeTLSRenewalFailed:
 		return true
 	default:
 		return false

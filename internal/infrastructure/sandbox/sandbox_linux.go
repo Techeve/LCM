@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -74,21 +75,38 @@ func Recheck() Status {
 // Landlock nicht nur mitbringt, sondern auch AKTIVIERT hat (LSM-Liste; der
 // Proxmox-Kernel etwa tut das ohne `lsm=`-Bootparameter nicht).
 func probe() Status {
-	if bwrapUsable() {
+	bwrapErr := bwrapProbe()
+	if bwrapErr == nil {
 		return Status{Active: true, Backend: "bubblewrap", NetEnforced: true}
 	}
+	missing := errors.Is(bwrapErr, errBwrapMissing)
 	abi, err := llsyscall.LandlockGetABIVersion()
 	switch {
 	case err != nil:
-		return Status{Reason: "weder Bubblewrap noch Landlock verfügbar - Landlock ist in diesem Kernel nicht aktiviert " +
-			"(LSM-Liste, siehe /sys/kernel/security/lsm), und das Paket bubblewrap fehlt"}
+		return Status{Reason: noBackendReason(bwrapErr), BubblewrapMissing: missing}
 	case abi < minABI:
-		return Status{Reason: fmt.Sprintf("kein Bubblewrap, und die Landlock-Stufe %d ist zu alt (nötig: %d)", abi, minABI)}
+		return Status{Reason: fmt.Sprintf("%s, und die Landlock-Stufe %d ist zu alt (nötig: %d)", bwrapReason(bwrapErr), abi, minABI), BubblewrapMissing: missing}
 	}
 	if _, err := os.Executable(); err != nil {
-		return Status{Reason: "der eigene Programmpfad ist nicht ermittelbar: " + err.Error()}
+		return Status{Reason: "der eigene Programmpfad ist nicht ermittelbar: " + err.Error(), BubblewrapMissing: missing}
 	}
-	return Status{Active: true, Backend: "landlock", NetEnforced: abi >= netABI}
+	return Status{Active: true, Backend: "landlock", NetEnforced: abi >= netABI, BubblewrapMissing: missing}
+}
+
+// bwrapReason beschreibt, warum Bubblewrap ausfällt - „Paket fehlt" und
+// „installiert, startet aber nicht" sind verschiedene Befunde mit
+// verschiedenen Abhilfen.
+func bwrapReason(err error) string {
+	if errors.Is(err, errBwrapMissing) {
+		return "das Paket bubblewrap fehlt"
+	}
+	return "bubblewrap ist installiert, startet aber nicht (" + err.Error() + ")"
+}
+
+// noBackendReason: Landlock fehlt ganz, Bubblewrap fehlt oder streikt.
+func noBackendReason(bwrapErr error) string {
+	return "weder Bubblewrap noch Landlock verfügbar - Landlock ist in diesem Kernel nicht aktiviert " +
+		"(LSM-Liste, siehe /sys/kernel/security/lsm); " + bwrapReason(bwrapErr)
 }
 
 // sandboxedCommand wählt anhand des ermittelten Backends.

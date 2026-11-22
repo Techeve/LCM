@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"testing"
 
 	"LCM/internal/core/domain"
@@ -99,5 +100,42 @@ func TestRotationErfasstDenBenutzerBestandDerServer(t *testing.T) {
 		if roh != repositories.BlindIndex(klartext) {
 			t.Errorf("%s: Blindindex passt nach der Rotation nicht zum neuen Schlüssel - die Suche nach %q liefe ins Leere", name, klartext)
 		}
+	}
+}
+
+// TestRotationErfasstDNSZugangsdatenLetsEncrypt: Die DNS-01-Zugangsdaten für
+// Let's Encrypt liegen als verschlüsseltes JSON in global_settings. Nach
+// `lcm rotate-db-key` müssen sie mit dem NEUEN Schlüssel wieder als JSON
+// lesbar sein - sonst findet LCM nach der Rotation keine Zugangsdaten mehr.
+func TestRotationErfasstDNSZugangsdatenLetsEncrypt(t *testing.T) {
+	db, alt := setupEncDB(t)
+
+	enc, err := alt.EncryptString(`{"api_token":"tok-123","zone":"example.de"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := &domain.GlobalSettings{ID: 1}
+	if err := db.FirstOrCreate(settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(settings).Update("acme_dns_config_enc", enc).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	neu, _ := crypto.NewCipher(crypto.GenerateKey())
+	if err := RotateEncryptedFields(db, alt, neu); err != nil {
+		t.Fatalf("Rotation: %v", err)
+	}
+
+	plain, err := neu.DecryptString(rawCol(t, db, "global_settings", "acme_dns_config_enc", 1))
+	if err != nil {
+		t.Fatalf("DNS-Zugangsdaten nach der Rotation nicht entschlüsselbar: %v", err)
+	}
+	var werte map[string]string
+	if err := json.Unmarshal([]byte(plain), &werte); err != nil {
+		t.Fatalf("DNS-Zugangsdaten nach der Rotation kein JSON mehr: %v", err)
+	}
+	if werte["api_token"] != "tok-123" || werte["zone"] != "example.de" {
+		t.Errorf("DNS-Zugangsdaten nach der Rotation verändert: %v", werte)
 	}
 }

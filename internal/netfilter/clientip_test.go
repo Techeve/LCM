@@ -1,6 +1,9 @@
 package netfilter
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestClientIP(t *testing.T) {
 	proxies, err := Parse([]string{"10.0.0.0/8"})
@@ -58,5 +61,52 @@ func TestJoinForwardedFor(t *testing.T) {
 	}
 	if JoinForwardedFor(nil) != "" {
 		t.Error("ohne Kopfzeile erwartet leer")
+	}
+}
+
+// Der Halter liefert „niemandem vertrauen“, solange er leer ist oder fehlt, und
+// die gespeicherte Regel nach jedem Austausch.
+func TestProxyTrustHolder(t *testing.T) {
+	var nilHolder *ProxyTrustHolder
+	if nilHolder.Load().Enabled {
+		t.Error("nil-Halter vertraut")
+	}
+	if (&ProxyTrustHolder{}).Load().Enabled {
+		t.Error("leerer Halter vertraut")
+	}
+
+	proxies, err := Parse([]string{"10.0.0.0/8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := NewProxyTrustHolder(ProxyTrust{Enabled: true, Proxies: proxies})
+	if got, _ := ClientIP("10.0.0.1", "203.0.113.9", holder.Load()); got.String() != "203.0.113.9" {
+		t.Errorf("vertrauter Peer: %s", got)
+	}
+	holder.Store(ProxyTrust{})
+	if got, _ := ClientIP("10.0.0.1", "203.0.113.9", holder.Load()); got.String() != "10.0.0.1" {
+		t.Errorf("nach dem Austausch zählt die Kopfzeile noch: %s", got)
+	}
+}
+
+// trusted_proxies: Normalisieren wie bei den Netzbereichen, aber ohne einen
+// Bereich über alle Adressen - in jeder Schreibweise.
+func TestNormalizeProxies(t *testing.T) {
+	got, err := NormalizeProxies([]string{" 10.0.0.5 ", "192.168.0.0/16", "Private", "10.0.0.5", "::1", "::ffff:10.1.0.0/112"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "10.0.0.5/32,192.168.0.0/16,private,::1/128,10.1.0.0/16"; strings.Join(got, ",") != want {
+		t.Errorf("Liste = %v, erwartet %s", got, want)
+	}
+	for _, bad := range []string{
+		"0.0.0.0/0", "::/0", "::ffff:0.0.0.0/96", "::ffff:0:0/96", "0.0.0.0/00", "1.2.3.4/0", "nicht-ip", "10.0.0.0/33",
+	} {
+		if _, err := NormalizeProxies([]string{"10.0.0.5", bad}); err == nil {
+			t.Errorf("%q wurde akzeptiert", bad)
+		}
+	}
+	if got, err := NormalizeProxies(nil); err != nil || len(got) != 0 {
+		t.Errorf("leere Liste: %v, %v", got, err)
 	}
 }

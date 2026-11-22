@@ -187,6 +187,8 @@ func syncRolesAndPermissions(roleRepo *repositories.RoleRepository) (admin, mana
 		domain.PermAuditRead:       "Audit-Log lesen",
 		domain.PermAPIKeysManage:   "API-Keys / Service-Accounts verwalten",
 
+		domain.PermSystemEndpoints: "Endpunkte verwalten: erlaubte Netzbereiche von Weboberfläche, Agent und MCP",
+
 		domain.PermNotificationsManage: "Benachrichtigungskanäle verwalten",
 		domain.PermAlertsManage:        "Alarmregeln und -historie verwalten",
 	}
@@ -278,6 +280,9 @@ func ensureGlobalSettings(db *gorm.DB, cfg *config.Config) error {
 		BackupEnabled:       true,
 		BackupIntervalHours: 24,
 		BackupRetention:     14,
+		// Agent und MCP-TLS: kein gorm-Default, die Vorgabe steht hier.
+		AgentEnabled: true,
+		MCPTLS:       true,
 		// DNS-Vorgaben sichtbar hinterlegen, damit die Auswahl-Presets und die
 		// Test-Domains von Anfang an in der UI erscheinen und editierbar sind.
 		DNSServerPresets: domain.DefaultDNSServerPresets,
@@ -290,6 +295,9 @@ func ensureGlobalSettings(db *gorm.DB, cfg *config.Config) error {
 		// Ausprobieren ohne Authenticator-App möglich bleiben. Umschaltbar
 		// unter Einstellungen → Allgemein (require_2fa_roles).
 		Require2FARoles: defaultRequire2FARoles(cfg),
+		// Frische Installation: Der Einrichtungsassistent fragt nach der 2FA,
+		// wie LCM erreichbar ist. Demo und Entwicklung bleiben ungestört.
+		SetupStep: defaultSetupStep(cfg),
 	}
 	return db.Create(&settings).Error
 }
@@ -417,6 +425,16 @@ func defaultRequire2FARoles(cfg *config.Config) string {
 		return ""
 	}
 	return domain.RoleAdmin
+}
+
+// defaultSetupStep: Der Einrichtungsassistent beginnt bei „Anmeldung im
+// Browser“, aber nur im regulären Betrieb, nicht im Entwicklungs- und
+// Demo-Modus.
+func defaultSetupStep(cfg *config.Config) string {
+	if cfg != nil && (cfg.DemoMode || cfg.DevMode) {
+		return ""
+	}
+	return domain.SetupStepSession
 }
 
 // ensurePrivilegeProfiles legt die mitgelieferten Berechtigungsprofile an,

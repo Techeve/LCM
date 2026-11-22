@@ -17,6 +17,7 @@ import (
 // RepoBaseURL ist die Wurzel unseres öffentlichen apt-Repos. Community und
 // Beta liegen dort als zwei Suites; der Enterprise-Kanal hat eine eigene,
 // zugangsgeschützte Adresse (aus der Subscription, siehe repoIndexURL).
+// Die Regel: der URL-Pfad bestimmt den Zugang, die Suite den Kanal.
 // Bewusst eine Variable (nicht const): Tests biegen sie auf einen lokalen
 // Test-Server um, statt echten Netzwerkzugriff zu brauchen.
 var RepoBaseURL = "https://repo.techeve.de"
@@ -31,14 +32,16 @@ func repoIndexURL(base, suite string) string {
 }
 
 // aptSuiteForChannel übersetzt den Paketkanal des Hosts in die Suite, unter
-// der seine Pakete liegen. Enterprise liegt unter einem eigenen Prefix, dort
-// heißt die Suite wieder „stable" - die Trennung macht die Adresse, nicht der
-// Suite-Name (siehe packaging/repo-server/ und deploy:apt in .gitlab-ci.yml).
+// der seine Pakete liegen: jeder Kanal hat eine eigene (siehe deploy:apt in
+// .gitlab-ci.yml). Enterprise liegt zusätzlich unter eigener Adresse.
 func aptSuiteForChannel(channel string) string {
-	if channel == domain.AptChannelBeta {
+	switch channel {
+	case domain.AptChannelBeta:
 		return subAptSuiteBeta
+	case domain.AptChannelEnterprise:
+		return subAptSuiteEnterprise
 	}
-	return subAptSuite
+	return subAptSuiteCommunity
 }
 
 // changelogURL ist die "Was gibt's Neues"-Ansicht für die Update-Anzeige (statt

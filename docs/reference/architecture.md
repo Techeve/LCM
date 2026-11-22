@@ -98,12 +98,17 @@ internal/api/              HTTP-Transport (Controller, Middlewares, Router)
 internal/core/domain/      Entitäten (GORM-Structs) + Permission-Codes
 internal/core/services/    Business-Logik
 internal/infrastructure/   Technik-Anbindungen: sshx (SSH), trivy (CVE-Scan),
-                           notify (E-Mail), crypto, totp, tlsx
+                           notify (E-Mail), crypto, totp, tlsx (Zertifikatspool),
+                           acmex (Let's Encrypt, ACME)
 internal/remote/           LCM Remote: eingebetteter MQTT-Broker + AgentHub
                            (dedizierter Agent-Listener für lcm-agent)
 internal/mcp/              MCP-Schnittstelle: eigener Listener + read-only
                            Whitelist-DTO (ServerView) für KI-Agenten
-internal/netfilter/        IP-Allowlist-Matcher (config.json allowed_ips)
+internal/netfilter/        Netzbereiche je Dienst (config.json allowed_ips,
+                           agent_allowed_ips, mcp_allowed_ips)
+internal/sniroute/         Namensweiche des gemeinsamen TLS-Ports
+internal/acmehttp/         Listener für HTTP-01 (Let's Encrypt)
+internal/control/          Steuerbuchse (lcm tls, lcm network)
 internal/storage/          DB-Verbindung, Migration, Seeding, Repositories
 internal/config/           config.json-Management
 ui/src/api/                Abrufe und Typen je Fachbereich
@@ -127,9 +132,21 @@ Eine Installation besteht damit aus vier Dateien im selben Verzeichnis: Binary, 
 
 LCM bindet bis zu **drei** voneinander getrennte Listener - bewusst auf eigenen Ports, damit sich Angriffsfläche und Zugriffswege sauber trennen lassen:
 
-- **Weboberfläche + REST-API** (`host`/`port`, Default `127.0.0.1:9310`): der Fiber-Router aus `internal/api/router` mit eingebettetem Frontend. HTTPS mit self-signed Zertifikat; `--dev` erlaubt HTTP.
-- **Agent-Listener** (`agent_host`/`agent_port`, Default `0.0.0.0:9320`): ein **eigener** Fiber-Gateway (`router.NewAgentGateway`) mit ausschließlich dem `/mqtt`-Endpunkt für LCM Remote (`internal/remote`, eingebetteter MQTT-Broker + AgentHub). Läuft nebenläufig zum UI-Listener und nutzt dasselbe TLS-Zertifikat; `agent_port: 0` schaltet ihn ab.
-- **MCP-Listener** (`internal/mcp`, Default aus, `127.0.0.1:9330`): ein zur Laufzeit über die Einstellungen an-/abschaltbarer, schlanker HTTP-Listener mit nur dem `/mcp`-JSON-RPC-Endpunkt. Authentifizierung per Bearer-API-Key mit MCP-Scope; ausgeliefert wird ausschließlich das read-only Whitelist-DTO.
+- **Weboberfläche + REST-API** (`host`/`port`, Default `127.0.0.1:9310`): der Fiber-Router aus `internal/api/router` mit eingebettetem Frontend. HTTPS mit Zertifikat aus dem Pool (Standard: das LCM-Zertifikat); `--dev` erlaubt HTTP.
+- **Agent-Listener** (`agent_host`/`agent_port`, Default `0.0.0.0:9320`): ein **eigener** Fiber-Gateway (`router.NewAgentGateway`) mit ausschließlich dem `/mqtt`-Endpunkt für LCM Remote (`internal/remote`, eingebetteter MQTT-Broker + AgentHub). Läuft nebenläufig zum UI-Listener und nutzt denselben Zertifikatspool; der Schalter `agent_enabled` schaltet ihn zur Laufzeit ab.
+- **MCP-Listener** (`internal/mcp`, Default aus, Port `9330`, Bind-Adresse wie die Weboberfläche): ein zur Laufzeit über die Einstellungen an-/abschaltbarer, schlanker Listener mit nur dem `/mcp`-JSON-RPC-Endpunkt, immer mit TLS. Authentifizierung per Bearer-API-Key mit MCP-Scope; ausgeliefert wird ausschließlich das read-only Whitelist-DTO.
+
+Dazu kommen **optionale** Listener:
+
+- **Gemeinsamer TLS-Port** (Adressmodus C, Default aus, Vorgabe `:443`; per `shared_tls_listen` in der `config.json` oder in den Einstellungen, zur Laufzeit an- und abschaltbar; `internal/sniroute`): ein TLS-Listener mit dem Zertifikatspool. Nach dem Handshake legt der Router die Verbindung anhand des angefragten Namens (SNI) in einen speicherinternen Listener der Weboberfläche, des Agent-Gateways oder von MCP. Es wird nichts kopiert oder weitergereicht, die Apps bedienen dieselbe Verbindung. Der Name kommt aus den drei öffentlichen Adressen; ohne Namen oder bei unbekanntem Namen geht die Verbindung an die Weboberfläche. Die Einzelports bleiben daneben aktiv. Ports unter 1024 öffnet der Dienst dank `CAP_NET_BIND_SERVICE` in `lcm.service`.
+- **HTTP-01-Listener** (`acme_http_listen`, Default `:80`; `internal/acmehttp`): ist nur offen, solange eine Prüfung läuft. Er beantwortet allein `GET /.well-known/acme-challenge/<Token>` für offene Tokens, alles andere beendet er ohne Antwort. Eine Weiterleitung gibt es nicht.
+- **Steuerbuchse** (`<Datenverzeichnis>/control.sock`, Rechte `0600`, `internal/control`): ein Unix-Socket für `lcm tls reload|status` und `lcm network status|reset`. Er ist kein Netzwerk-Listener und nur für den Dienstbenutzer und root zugänglich.
+
+**Zertifikate:** Der Pool (`internal/infrastructure/tlsx`) wählt bei jedem Handshake das Zertifikat, dessen Namen zum angefragten Namen passen. Ohne Treffer oder ohne Namen gilt das Zertifikat der eigenen CA. Quellen in der Rangfolge: `tls_certificates` in der `config.json`, Uploads, ACME (`internal/infrastructure/acmex`). Neuladen ohne Neustart per `lcm tls reload` oder SIGHUP; ein Zertifikat, das die Prüfung nicht besteht, lässt den bisherigen Stand aktiv.
+
+**Netzbereiche:** Jeder der drei Dienste hat eine eigene Liste erlaubter Netze, die die Middleware `IPAllowlist` bei jeder Anfrage liest und die zur Laufzeit austauschbar ist. Ein Schlüssel in der `config.json` gewinnt gegenüber der Einstellung in der Oberfläche.
+
+Adressmodus, Ports und Adressen: [Öffentliche Adressen & Adressmodus](/guides/adressen/). Zertifikate und Netzbereiche: [Zertifikate, Let's Encrypt & Port 443](/guides/zertifikate/) und [Erlaubte Netzbereiche](/guides/netzbereiche/).
 
 Details zu Ports und Umgebungsvariablen: [Installation](/getting-started/installation/); zu den Features [LCM Remote](/guides/remote/) und [MCP-Schnittstelle](/guides/mcp/).
 

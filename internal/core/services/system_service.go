@@ -15,19 +15,21 @@ import (
 // Nach diesem Muster baut man z.B. auch Report-Generierung, externe
 // API-Aufrufe oder Berechnungs-Endpunkte.
 type SystemService struct {
-	startedAt time.Time
-	agentPort int
-	agentURL  func() string
+	startedAt      time.Time
+	agentPort      func() int
+	agentURL       func() string
+	agentProxyHint func() bool
 }
 
 func NewSystemService() *SystemService {
 	return &SystemService{startedAt: time.Now()}
 }
 
-// WithAgentPort hinterlegt den dedizierten Agent-Port (LCM Remote), damit die
-// UI die Enroll-URL für neue Agent-Server auf diesen Port zeigen lassen kann.
-// 0 = kein dedizierter Agent-Listener aktiv.
-func (s *SystemService) WithAgentPort(port int) *SystemService {
+// WithAgentPort hinterlegt, woher der dedizierte Agent-Port (LCM Remote)
+// kommt, damit die UI die Enroll-URL für neue Agent-Server auf diesen Port
+// zeigen lassen kann. Der Port ändert sich zur Laufzeit (Einstellungen), darum
+// eine Funktion. 0 = kein dedizierter Agent-Listener aktiv.
+func (s *SystemService) WithAgentPort(port func() int) *SystemService {
 	s.agentPort = port
 	return s
 }
@@ -36,6 +38,13 @@ func (s *SystemService) WithAgentPort(port int) *SystemService {
 // (Einstellung public_agent_url). Gesetzt ersetzt sie in der UI Host und Port.
 func (s *SystemService) WithAgentURL(fn func() string) *SystemService {
 	s.agentURL = fn
+	return s
+}
+
+// WithAgentProxyHint hinterlegt, ob die Agent-Adresse ohne Port einen Reverse
+// Proxy auf 443 voraussetzt (SettingsService.AgentURLNeedsProxy).
+func (s *SystemService) WithAgentProxyHint(fn func() bool) *SystemService {
+	s.agentProxyHint = fn
 	return s
 }
 
@@ -61,6 +70,9 @@ type SystemInfo struct {
 	// AgentURL ist die öffentliche Adresse des Agent-Ports, wenn ein Reverse
 	// Proxy ihn unter eigenem Namen veröffentlicht; leer = Host und AgentPort.
 	AgentURL string `json:"agent_url"`
+	// AgentURLNeedsProxy: AgentURL hat keinen Port, LCM lauscht aber nicht
+	// auf 443 - der Enroll-Befehl geht nur mit einem Reverse Proxy davor.
+	AgentURLNeedsProxy bool `json:"agent_url_needs_proxy"`
 }
 
 // Info sammelt Version und Laufzeitdaten der Anwendung.
@@ -74,9 +86,18 @@ func (s *SystemService) Info() SystemInfo {
 		GoVersion:     runtime.Version(),
 		Platform:      runtime.GOOS + "/" + runtime.GOARCH,
 		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
-		AgentPort:     s.agentPort,
+		AgentPort:     s.currentAgentPort(),
 		AgentURL:      s.publicAgentURL(),
+
+		AgentURLNeedsProxy: s.agentProxyHint != nil && s.agentProxyHint(),
 	}
+}
+
+func (s *SystemService) currentAgentPort() int {
+	if s.agentPort == nil {
+		return 0
+	}
+	return s.agentPort()
 }
 
 func (s *SystemService) publicAgentURL() string {

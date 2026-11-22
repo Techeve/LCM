@@ -18,7 +18,7 @@ import { I18nController } from '../../lib/controllers';
 import { formatDateTime } from '../../lib/format';
 import { errorText, t } from '../../lib/i18n';
 import { jobLink } from '../../lib/job-link';
-import { LIMITS, isHttpUrl } from '../../lib/validate';
+import { LIMITS } from '../../lib/validate';
 import { LiveData } from '../../lib/live-data';
 import { saveBarLabels } from '../../lib/save-bar';
 import './system/copy-field';
@@ -35,13 +35,17 @@ const CHANNEL_TEXT: Record<AptChannel, { label: string; hint: string; job: strin
   enterprise: { label: 'settings.subscription.apt.enterprise.label', hint: 'settings.subscription.apt.enterprise.hint', job: 'settings.subscription.apt.enterprise.job', confirm: 'settings.subscription.apt.confirm.enterprise' },
 };
 
-/** Einstellungen → Subscription: Vertragsstand, Aktivierung und Paketkanal des LCM-Hosts. */
+/**
+ * Einstellungen → Subscription: Vertragsstand, Aktivierung und Paketkanal des LCM-Hosts. Mit `embedded` (Einrichtungsassistent)
+ * entfällt die Instanz-Kennung, und die Kanalwahl wählt nur aus: Umgestellt wird erst, wenn der Schritt `applyPicked()` ruft
+ * (sein „Weiter“). Nach der Aktivierung eines Keys empfiehlt die Seite dort den Enterprise-Kanal und wählt ihn vor.
+ */
 export class SettingsSubscription extends LitElement {
   static override properties = {
+    embedded: { type: Boolean },
     _key: { state: true },
-    _url: { state: true },
-    _showUrl: { state: true },
     _picked: { state: true },
+    _recommend: { state: true },
     _busy: { state: true },
     _confirm: { state: true },
     _error: { state: true },
@@ -117,10 +121,11 @@ export class SettingsSubscription extends LitElement {
     `,
   ];
 
+  declare embedded: boolean;
   declare _key: string;
-  declare _url: string;
-  declare _showUrl: boolean;
   declare _picked: AptChannel | undefined;
+  /** Eingebettet: Ein Key wurde gerade aktiviert, die Seite empfiehlt den Enterprise-Kanal. */
+  declare _recommend: boolean;
   declare _busy: boolean;
   declare _confirm: Confirm | undefined;
   declare _error: string;
@@ -132,10 +137,10 @@ export class SettingsSubscription extends LitElement {
 
   constructor() {
     super();
+    this.embedded = false;
     this._key = '';
-    this._url = '';
-    this._showUrl = false;
     this._picked = undefined;
+    this._recommend = false;
     this._busy = false;
     this._confirm = undefined;
     this._error = '';
@@ -168,17 +173,15 @@ export class SettingsSubscription extends LitElement {
     }
   }
 
-  /** Fehlerschlüssel der Dienst-Adresse; leer, solange das Feld fehlt oder passt. */
-  #urlError(): string {
-    const url = this._url.trim();
-    return this._showUrl && url !== '' && !isHttpUrl(url) ? 'check.url' : '';
-  }
-
   async #activate(): Promise<void> {
     await this.#run(async () => {
-      await settingsApi.activateSubscription(this._key.trim(), this._showUrl ? this._url.trim() : '');
+      await settingsApi.activateSubscription(this._key.trim());
       this._key = '';
       toast({ tone: 'ok', title: t('settings.subscription.activated') });
+      if (this.embedded) {
+        this._picked = 'enterprise';
+        this._recommend = true;
+      }
     });
   }
 
@@ -209,22 +212,36 @@ export class SettingsSubscription extends LitElement {
     this._error = '';
   }
 
-  async #switch(channel: AptChannel): Promise<void> {
+  /** Stellt den Kanal um: startet den Job und meldet sein Ende als Toast. Ein Fehler der Anfrage fliegt zum Aufrufer. */
+  async #startSwitch(channel: AptChannel): Promise<void> {
     const label = t(CHANNEL_TEXT[channel].job);
-    const done = await this.#run(async () => {
-      const { jobId } = await settingsApi.switchAptChannel(channel);
-      toast({ tone: 'info', title: t('settings.subscription.apt.started', { what: label }) });
-      this.#stopWatching.push(
-        watchJob(jobId, (status) => {
-          if (status === 'success') toast({ tone: 'ok', title: t('settings.subscription.apt.done', { what: label }), background: true, ...jobLink(jobId) });
-          else toast({ tone: 'crit', title: t('settings.subscription.apt.failed', { what: label }), message: t('settings.subscription.apt.failedHint'), ...jobLink(jobId) });
-          this._picked = undefined;
-          // Der gespeicherte Kanal wechselt erst mit dem fertigen Job, und mit ihm die Sperren.
-          this.#channelData.reload();
-        }),
-      );
+    const { jobId } = await settingsApi.switchAptChannel(channel);
+    toast({ tone: 'info', title: t('settings.subscription.apt.started', { what: label }) });
+    const stop = watchJob(jobId, (status) => {
+      if (status === 'success') toast({ tone: 'ok', title: t('settings.subscription.apt.done', { what: label }), background: true, ...jobLink(jobId) });
+      else toast({ tone: 'crit', title: t('settings.subscription.apt.failed', { what: label }), message: t('settings.subscription.apt.failedHint'), ...jobLink(jobId) });
+      this._picked = undefined;
+      // Der gespeicherte Kanal wechselt erst mit dem fertigen Job, und mit ihm die Sperren.
+      this.#channelData.reload();
     });
+    // Im Assistenten geht der Schritt gleich weiter: Das Ende des Jobs soll trotzdem noch melden.
+    if (!this.embedded) this.#stopWatching.push(stop);
+  }
+
+  async #switch(channel: AptChannel): Promise<void> {
+    const done = await this.#run(() => this.#startSwitch(channel));
     if (done) this._confirm = undefined;
+  }
+
+  /**
+   * Für den Assistenten: wendet den gewählten Kanal an, wenn er vom aktiven abweicht (ohne Bestätigungsfenster, das „Weiter“
+   * des Schritts ist die Bestätigung); sonst geschieht nichts. Ein Fehler fliegt zum Schritt.
+   */
+  async applyPicked(): Promise<void> {
+    const subscription = this.#data.data;
+    const channel = this.#picked;
+    if (!subscription?.aptAvailable || channel === subscription.aptChannel) return;
+    await this.#startSwitch(channel);
   }
 
   #askChannel(channel: AptChannel): void {
@@ -279,25 +296,9 @@ export class SettingsSubscription extends LitElement {
             @lcm-input=${(e: CustomEvent<{ value: string }>) => (this._key = e.detail.value)}
           ></lcm-input>
         </div>
-        ${this._showUrl
-          ? html`<lcm-input
-              label=${t('settings.subscription.activate.url')}
-              width="l"
-              hint=${t('settings.subscription.activate.urlHint')}
-              maxlength=${LIMITS.path}
-              error=${this.#urlError() ? t(this.#urlError()) : ''}
-              placeholder=${'https://repo.techeve.de'}
-              mono
-              .value=${this._url}
-              @lcm-input=${(e: CustomEvent<{ value: string }>) => (this._url = e.detail.value)}
-            ></lcm-input>`
-          : nothing}
-        ${this._showUrl
-          ? nothing
-          : html`<div class="row"><lcm-button variant="ghost" size="small" @click=${() => (this._showUrl = true)}>${t('settings.subscription.activate.advanced')}</lcm-button></div>`}
         <lcm-save-bar
           always
-          ?dirty=${this._key.trim() !== '' && this.#urlError() === ''}
+          ?dirty=${this._key.trim() !== ''}
           ?busy=${this._busy}
           error=${this._confirm ? '' : this._error}
           .labels=${{ ...saveBarLabels(t('settings.subscription.activate.action'), ''), unsaved: '' }}
@@ -364,6 +365,7 @@ export class SettingsSubscription extends LitElement {
     return html`<lcm-card level="2" heading=${t('settings.subscription.apt.title')} subtitle=${t('settings.subscription.apt.subtitle')}>
       ${subscription.aptAvailable
         ? html`<div class="fields">
+            ${this._recommend ? html`<lcm-notice tone="ok" data-field="recommend">${t('settings.subscription.apt.recommend')}</lcm-notice>` : nothing}
             <fieldset class="choices" role="radiogroup" aria-label=${t('settings.subscription.apt.title')}>
               ${APT_CHANNELS.map((channel) => {
                 const locked = channel !== subscription.aptChannel && this.#locked(channel, allowed);
@@ -379,7 +381,9 @@ export class SettingsSubscription extends LitElement {
             </fieldset>
             ${allowed ? nothing : html`<p class="muted">${subscription.configured ? t('settings.subscription.apt.needsActive') : t('settings.subscription.apt.needsContract')}</p>`}
             ${this.#channelData.data ? nothing : html`<p class="muted">${this.#channelData.error ? t('settings.subscription.apt.versionsFailed') : t('settings.subscription.apt.versionsLoading')}</p>`}
-            <div class="row">
+            ${this.embedded
+              ? html`<p class="muted" data-field="apply-hint">${t('settings.subscription.apt.embeddedHint')}</p>`
+              : html`<div class="row">
               <lcm-server-action
                 label=${same ? t('settings.subscription.apt.reapply') : t('settings.subscription.apt.apply', { channel: t(CHANNEL_TEXT[picked].label) })}
                 variant=${same ? 'secondary' : 'primary'}
@@ -391,7 +395,7 @@ export class SettingsSubscription extends LitElement {
                 ?disabled=${pickedLocked}
                 @click=${() => this.#askChannel(picked)}
               ></lcm-server-action>
-            </div>
+            </div>`}
           </div>`
         : html`<lcm-notice>${t('settings.subscription.apt.unavailable')}</lcm-notice>`}
     </lcm-card>`;
@@ -464,7 +468,7 @@ export class SettingsSubscription extends LitElement {
       return html`<lcm-skeleton shape="block" label=${t('settings.form.loading')}></lcm-skeleton>`;
     }
     return html`<div class="stack column">
-      ${subscription.configured ? this.#status(subscription) : this.#activation()} ${this.#channels(subscription)} ${this.#instance(subscription)}
+      ${subscription.configured ? this.#status(subscription) : this.#activation()} ${this.#channels(subscription)} ${this.embedded ? nothing : this.#instance(subscription)}
     </div>
     ${this.#dialog(subscription)}`;
   }

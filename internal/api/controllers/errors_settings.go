@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"errors"
+
 	"LCM/internal/api/apierr"
 	"LCM/internal/core/services"
 )
@@ -11,6 +13,7 @@ var (
 	errSettingInvalid            = apierr.Define(400, "settings.invalid_input", "invalid setting value")
 	errBrowserSessionModeInvalid = apierr.Define(422, "settings.browser_session_mode_invalid", "browser_session_mode must be memory or cookie")
 	errSessionCookieNeedsHTTPS   = apierr.Define(422, "settings.session_cookie_needs_https", "the session cookie option is only available over HTTPS")
+	errPublicHostConflict        = apierr.Define(422, "settings.public_host_conflict", "two services use the same name on the shared port")
 	errMailerIncomplete          = apierr.Define(400, "settings.mailer_incomplete", "SMTP configuration is incomplete, host and sender are required")
 	errMailerDisabled            = apierr.Define(409, "settings.mailer_disabled", "the standard email sending is not enabled")
 	errMailerNoRecipients        = apierr.Define(409, "settings.mailer_no_recipients", "no admin recipients are set for the standard email sending")
@@ -31,6 +34,16 @@ var (
 	errSelfUpdateRejected        = apierr.Define(409, "selfupdate.rejected", "the self-update cannot be started")
 	errSelfUpdateNotCancelable   = apierr.Define(409, "selfupdate.not_cancelable", "the self-update is no longer waiting and cannot be cancelled")
 )
+
+// publicHostConflict macht aus dem Namenskonflikt der öffentlichen Adressen
+// den API-Fehler; nil, wenn err keiner ist.
+func publicHostConflict(err error) *apierr.Error {
+	var conflict *services.PublicHostConflict
+	if !errors.As(err, &conflict) {
+		return nil
+	}
+	return errPublicHostConflict.With("host", conflict.Host).With("first", conflict.First).With("second", conflict.Second)
+}
 
 // mailerErrors ordnet die Konfigurationsfehler des Standard-E-Mail-Versands zu.
 var mailerErrors = []sentinelCode{
@@ -60,7 +73,6 @@ var (
 // Abo und Frühwarnung.
 var (
 	errNoSubscription     = apierr.Define(400, "subscription.none", "no subscription stored")
-	errSubscriptionURL    = apierr.Define(400, "subscription.invalid_service_url", "invalid service address")
 	errActivationFailed   = apierr.Define(400, "subscription.activation_failed", "the subscription could not be activated")
 	errUnknownAptChannel  = apierr.Define(400, "subscription.unknown_channel", "unknown package channel, allowed: community, beta, enterprise")
 	errAptSwitchOff       = apierr.Define(400, "subscription.apt_switch_unavailable", "the apt switch is not available, the LCM host is not registered as an apt server")

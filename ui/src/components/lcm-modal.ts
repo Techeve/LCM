@@ -9,13 +9,16 @@ import { baseStyles, dialogStyles, emit } from './shared.js';
  * Breite fest: s 30rem, m 40rem, ml 42rem (zwei Feldspalten der Breite m oder ein Feld l neben einem Port), l 56rem,
  * xl 72rem. Slots: Standard (Inhalt), `note` (Fehler zur Aktion des Fensters, steht fest über dem Fuß, meist
  * `<lcm-notice variant="line" tone="crit">`), `footer` (Aktionen, entfällt ohne Inhalt).
- * Natives <dialog>: Fokusfalle, Esc, Fokus zurück an den Auslöser. Meldet `lcm-close`.
+ * Natives <dialog>: Fokusfalle, Esc, Fokus zurück an den Auslöser. Meldet `lcm-close`. Mit `non-modal` bleibt die Seite
+ * dahinter bedienbar (keine Fokusfalle, kein Hintergrund, kein Esc): Es steht dann fest am Fenster, unter der Kopfleiste
+ * und mit `--modal-inset-end` Abstand zum rechten Rand, und liegt unter dem Einführungsfenster der Serverseite.
  */
 export class LcmModal extends LitElement {
   static override properties = {
     open: { type: Boolean, reflect: true },
     heading: { type: String },
     size: { type: String, reflect: true },
+    nonModal: { type: Boolean, reflect: true, attribute: 'non-modal' },
     subtitle: { type: String },
     closeLabel: { type: String, attribute: 'close-label' },
     hasFooter: { state: true },
@@ -47,6 +50,20 @@ export class LcmModal extends LitElement {
       }
       dialog:focus {
         outline: none;
+      }
+      dialog[data-non-modal] {
+        position: fixed;
+        z-index: 6;
+        inset: 5rem var(--modal-inset-end, 0) 1rem 0;
+        margin: 0 auto;
+        block-size: fit-content;
+        max-block-size: calc(100dvh - 6rem);
+      }
+      @media (max-width: 40rem) {
+        dialog[data-non-modal] {
+          /* Unten steht das Einführungsfenster (rund 23rem hoch). */
+          max-block-size: calc(100dvh - 5rem - 23rem);
+        }
       }
       dialog[open] {
         display: flex;
@@ -114,6 +131,7 @@ export class LcmModal extends LitElement {
   declare open: boolean;
   declare heading: string;
   declare size: 's' | 'm' | 'ml' | 'l' | 'xl';
+  declare nonModal: boolean;
   declare subtitle: string;
   declare closeLabel: string;
   declare hasFooter: boolean;
@@ -124,6 +142,7 @@ export class LcmModal extends LitElement {
     this.open = false;
     this.heading = '';
     this.size = 'm';
+    this.nonModal = false;
     this.hasFooter = false;
     this.hasNote = false;
     this.subtitle = '';
@@ -139,7 +158,9 @@ export class LcmModal extends LitElement {
   override updated(): void {
     const dialog = this.dialog;
     if (!dialog) return;
-    if (this.open && !dialog.open) {
+    if (this.open && !dialog.open && this.nonModal) {
+      dialog.show();
+    } else if (this.open && !dialog.open) {
       dialog.showModal();
       modalOpened(this);
       // Fokus auf das Fenster selbst statt auf den ersten Knopf (Schließen):
@@ -163,6 +184,7 @@ export class LcmModal extends LitElement {
 
   override render() {
     return html`<dialog
+      ?data-non-modal=${this.nonModal}
       tabindex="-1"
       aria-labelledby="title"
       @pointerdown=${this.backdrop.down}

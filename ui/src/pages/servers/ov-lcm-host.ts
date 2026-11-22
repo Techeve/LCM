@@ -25,6 +25,10 @@ const PREVIEW: Record<'trivy' | 'sandbox' | 'aptCacher' | 'lapi', ConfigPreviewA
   lapi: 'lcm-host-crowdsec-lapi',
 };
 
+type Service = 'trivy' | 'aptCacher' | 'lapi';
+/** `NAME` ist die Überschrift der Karte eines Dienstes, `WHAT` die Kurzbeschreibung. */
+const WHAT: Record<Service, string> = { trivy: 'serverDetail.lcmHost.trivy.what', aptCacher: 'serverDetail.lcmHost.aptCacher.what', lapi: 'serverDetail.lcmHost.lapi.what' };
+const NAME: Record<Service, string> = { trivy: 'serverDetail.lcmHost.trivy.name', aptCacher: 'serverDetail.lcmHost.aptCacher.name', lapi: 'serverDetail.lcmHost.lapi.name' };
 
 const INSTALL = {
   trivy: { label: 'serverDetail.lcmHost.trivy.label', help: 'serverDetail.lcmHost.trivy.help', meaning: 'serverDetail.lcmHost.trivy.meaning' },
@@ -40,7 +44,8 @@ function pill(level: StatusLevel, label: string): TemplateResult {
 /**
  * `<lcm-srv-lcm-host .server can-write>`: Karte für den Server, auf dem LCM selbst läuft. Richtet Trivy (CVE-Scanner,
  * samt Sandbox), apt-cacher-ng und die zentrale CrowdSec-LAPI ein. Im Container und ohne apt steht nur die Erklärung da,
- * weil die Einrichtung dort scheitern müsste.
+ * weil die Einrichtung dort scheitern müsste. Die Knöpfe stehen immer auf den Karten; die Einführung des Einrichtungs-
+ * assistenten (`lcm-srv-intro`) zeigt nur auf sie.
  */
 export class SrvLcmHost extends LitElement {
   static override properties = {
@@ -177,45 +182,42 @@ export class SrvLcmHost extends LitElement {
       ${scanner.sandboxed ? nothing : html`<p class="meta">${t('serverDetail.lcmHost.trivy.sandboxOffHint')}${scanner.sandbox_note ? ` ${scanner.sandbox_note}` : ''}</p>`}`;
   }
 
-  #trivy(status: LcmHostStatus): TemplateResult {
-    const id = this.server.id;
-    return html`<div class="service">
-      <div class="name">${t('serverDetail.lcmHost.trivy.name')} <span class="what">${t('serverDetail.lcmHost.trivy.what')}</span></div>
-      <div class="state">${status.trivy_installed ? pill('ok', t('serverDetail.lcmHost.installed')) : pill('unknown', t('serverDetail.lcmHost.notInstalled'))}</div>
-      ${status.trivy_installed ? this.#scanner(status.scanner) : nothing}
-      <div class="act">
-        ${status.trivy_installed ? nothing : this.#install('trivy', () => detailApi.installTrivy(id))}
-        ${status.scanner?.update_version ? this.#updateTrivy(status.scanner.update_version) : nothing}
-        ${status.trivy_installed && status.sandbox_retrofit ? this.#install('sandbox', () => detailApi.installSandbox(id), 'outline') : nothing}
-      </div>
-    </div>`;
+  /** Trivy ist da und der Scanner läuft nicht in der Sandbox: Nachrüsten, gleich wer Trivy eingerichtet hat. Das Backend meldet es auch, wenn nur Landlock trägt und bubblewrap fehlt. */
+  #sandboxRetrofit(status: LcmHostStatus): boolean {
+    return status.trivy_installed && (status.sandbox_retrofit || status.scanner?.sandboxed === false);
   }
 
-  #aptCacher(status: LcmHostStatus): TemplateResult {
+  /** Die Knöpfe eines Dienstes. */
+  #actions(service: Service, status: LcmHostStatus): TemplateResult | typeof nothing {
     const id = this.server.id;
-    const settings = status.apt_cacher_installed && auth.can('settings:manage');
-    return html`<div class="service">
-      <div class="name">${t('serverDetail.lcmHost.aptCacher.name')} <span class="what">${t('serverDetail.lcmHost.aptCacher.what')}</span></div>
-      <div class="state">${status.apt_cacher_installed ? pill('ok', t('serverDetail.lcmHost.installed')) : pill('unknown', t('serverDetail.lcmHost.notInstalled'))}</div>
-      <div class="act">
-        ${status.apt_cacher_installed ? nothing : this.#install('aptCacher', () => detailApi.installAptCacher(id))}
-        ${settings ? html`<lcm-button size="small" variant="ghost" icon="arrow-right" href="/settings/apt-cache">${t('serverDetail.lcmHost.aptCacher.settings')}</lcm-button>` : nothing}
-      </div>
-    </div>`;
+    if (service === 'trivy') {
+      return html`${status.trivy_installed ? nothing : this.#install('trivy', () => detailApi.installTrivy(id))}
+      ${status.scanner?.update_version ? this.#updateTrivy(status.scanner.update_version) : nothing}
+      ${this.#sandboxRetrofit(status) ? this.#install('sandbox', () => detailApi.installSandbox(id), 'outline') : nothing}`;
+    }
+    if (service === 'aptCacher') {
+      const settings = status.apt_cacher_installed && auth.can('settings:manage');
+      return html`${status.apt_cacher_installed ? nothing : this.#install('aptCacher', () => detailApi.installAptCacher(id))}
+      ${settings ? html`<lcm-button size="small" variant="ghost" icon="arrow-right" href="/settings/apt-cache">${t('serverDetail.lcmHost.aptCacher.settings')}</lcm-button>` : nothing}`;
+    }
+    if (status.crowdsec_lapi_installed || !this.canWrite) return nothing;
+    return html`<lcm-switch label=${t('serverDetail.lcmHost.lapi.bouncer')} .checked=${this._bouncer} @lcm-change=${(e: CustomEvent<{ checked: boolean }>) => (this._bouncer = e.detail.checked)}></lcm-switch>
+      ${this.#install('lapi', () => detailApi.installCrowdSecLapi(id, this._bouncer))}`;
   }
 
-  #lapi(status: LcmHostStatus): TemplateResult {
-    const id = this.server.id;
-    const installable = !status.crowdsec_lapi_installed && this.canWrite;
-    return html`<div class="service">
-      <div class="name">${t('serverDetail.lcmHost.lapi.name')} <span class="what">${t('serverDetail.lcmHost.lapi.what')}</span></div>
-      <div class="state">${status.crowdsec_lapi_installed ? pill('ok', t('serverDetail.lcmHost.installed')) : pill('unknown', t('serverDetail.lcmHost.notInstalled'))}</div>
-      ${installable
-        ? html`<div class="act">
-            <lcm-switch label=${t('serverDetail.lcmHost.lapi.bouncer')} .checked=${this._bouncer} @lcm-change=${(e: CustomEvent<{ checked: boolean }>) => (this._bouncer = e.detail.checked)}></lcm-switch>
-            ${this.#install('lapi', () => detailApi.installCrowdSecLapi(id, this._bouncer))}
-          </div>`
-        : nothing}
+  #cardActions(service: Service, status: LcmHostStatus): TemplateResult | typeof nothing {
+    const actions = this.#actions(service, status);
+    return actions === nothing ? nothing : html`<div class="act">${actions}</div>`;
+  }
+
+  #installed(on: boolean): TemplateResult {
+    return html`<div class="state">${on ? pill('ok', t('serverDetail.lcmHost.installed')) : pill('unknown', t('serverDetail.lcmHost.notInstalled'))}</div>`;
+  }
+
+  #service(service: Service, status: LcmHostStatus, installed: boolean, extra: TemplateResult | typeof nothing = nothing): TemplateResult {
+    return html`<div class="service" data-service=${service}>
+      <div class="name">${t(NAME[service])} <span class="what">${t(WHAT[service])}</span></div>
+      ${this.#installed(installed)} ${extra} ${this.#cardActions(service, status)}
     </div>`;
   }
 
@@ -223,7 +225,10 @@ export class SrvLcmHost extends LitElement {
     const mode = lcmHostMode(status);
     if (mode === 'container') return html`<lcm-notice>${t('serverDetail.lcmHost.inContainer')}</lcm-notice>`;
     if (mode === 'not-apt') return html`<lcm-notice tone="warn">${t('serverDetail.lcmHost.notApt')}</lcm-notice>`;
-    return html`<div class="services">${this.#trivy(status)} ${this.#aptCacher(status)} ${this.#lapi(status)}</div>`;
+    return html`<div class="services">
+      ${this.#service('trivy', status, status.trivy_installed, status.trivy_installed ? this.#scanner(status.scanner) : nothing)}
+      ${this.#service('aptCacher', status, status.apt_cacher_installed)} ${this.#service('lapi', status, status.crowdsec_lapi_installed)}
+    </div>`;
   }
 
   override render() {
@@ -233,7 +238,9 @@ export class SrvLcmHost extends LitElement {
       : error
         ? html`<lcm-notice tone="warn">${error}</lcm-notice>`
         : html`<lcm-skeleton shape="block" lines="3" label=${t('servers.loading')}></lcm-skeleton>`;
-    return html`<lcm-card heading=${t('serverDetail.lcmHost.title')} subtitle=${t('serverDetail.lcmHost.intro')}>${body}</lcm-card>`;
+    return html`<lcm-card data-card="lcm-host" heading=${t('serverDetail.lcmHost.title')} subtitle=${t('serverDetail.lcmHost.intro')}>
+        ${body}
+      </lcm-card>`;
   }
 }
 customElements.define('lcm-srv-lcm-host', SrvLcmHost);

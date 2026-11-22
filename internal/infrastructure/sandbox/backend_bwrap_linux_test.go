@@ -4,6 +4,8 @@ package sandbox
 
 import (
 	"context"
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -136,5 +138,31 @@ func TestBwrapLeertDieUmgebung(t *testing.T) {
 		if strings.Contains(kv, "master-key-geheim") {
 			t.Errorf("der Master-Key steht im Aufruf: %q", kv)
 		}
+	}
+}
+
+// TestBwrapReasonUnterscheidetFehlendVonDefekt: „Paket fehlt" und „installiert,
+// startet aber nicht" brauchen verschiedene Abhilfen. Die Meldung „Paket fehlt"
+// bei installiertem Bubblewrap schickte auf Debian 13 in die Irre.
+func TestBwrapReasonUnterscheidetFehlendVonDefekt(t *testing.T) {
+	if got := bwrapReason(errBwrapMissing); !strings.Contains(got, "fehlt") {
+		t.Errorf("fehlendes Paket: %q", got)
+	}
+	got := bwrapReason(errors.New("bwrap: Can't mkdir parents for /proc"))
+	if strings.Contains(got, "fehlt") || !strings.Contains(got, "installiert, startet aber nicht") ||
+		!strings.Contains(got, "Can't mkdir parents") {
+		t.Errorf("defektes Bubblewrap: %q", got)
+	}
+}
+
+// TestProbeMeldetFehlendesBubblewrap: Die Karte „LCM-Host“ bietet „Sandbox
+// nachrüsten“ an, wenn bubblewrap fehlt - auch dann, wenn Landlock die Sperre
+// trägt. Dafür muss der Befund im Status stehen und zum Host passen.
+func TestProbeMeldetFehlendesBubblewrap(t *testing.T) {
+	st := Recheck()
+	_, err := exec.LookPath(bwrapBinary)
+	want := err != nil && st.Backend != "bubblewrap"
+	if st.BubblewrapMissing != want {
+		t.Errorf("BubblewrapMissing = %v, erwartet %v (Status %+v, LookPath: %v)", st.BubblewrapMissing, want, st, err)
 	}
 }

@@ -7,7 +7,6 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -50,10 +49,9 @@ func (s *ServerService) ConfigureFirewall(scope repositories.AccessScope, id uin
 		verb = "anwenden (Ports: " + strings.TrimSuffix(fmt.Sprintf("%d,", sshPort)+firewallRulesPortsCSV(rules), ",") + ")"
 	}
 	s.audit.Log(actor, "server.firewall", "server", id, server.Name+": "+verb)
-	safego.GoCleanup("job:firewall", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:firewall", job, func() {
 		s.runFirewallJob(job, server, enable, rules, actor)
-	})
-	return job, nil
+	}), nil
 }
 
 // planFirewall prüft die Eingabe der Firewall-Aktion - für den Lauf und die

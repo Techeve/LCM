@@ -553,7 +553,7 @@ func TestAgentGatewayServesOnlyMQTT(t *testing.T) {
 		called = true
 		return c.SendString("ok")
 	}
-	gw := router.NewAgentGateway(ws, nil)
+	gw := router.NewAgentGateway(ws, nil, nil, nil)
 
 	// /mqtt existiert und ruft den Handler auf (kein 404).
 	resp, err := gw.Test(httptest.NewRequest(http.MethodGet, "/mqtt", nil))

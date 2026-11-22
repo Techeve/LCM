@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/cron"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/notify"
 	"LCM/internal/infrastructure/sshx"
+	"LCM/internal/netfilter"
 	"LCM/internal/storage/repositories"
 )
 
@@ -32,16 +34,29 @@ type SettingsService struct {
 	// Firewall-Regeln, Gruppen-Regeln) - Löschsperre R2-072. Optional.
 	ipAllowlistUsage func(id uint) []string
 	updateCache      updateStatusCache // Update-Prüfung: nur im Speicher, siehe update_check.go
-	// mcpApply startet/stoppt den MCP-Listener zur Laufzeit, wenn sich die
-	// MCP-Einstellungen ändern (enabled/host/port). Optional.
-	mcpApply func(enabled bool, host string, port int)
+	// afterAddressSave läuft nach einem Speichern, das Adressen oder die Schalter
+	// von Agent und MCP ändert (ACME prüft dann, ob das Zertifikat alle Namen
+	// deckt). Optional.
+	afterAddressSave func()
+	// addr sagt, was die Umgebung für Ports und Adressen festlegt.
+	addr AddressConfig
+	// proxyTrust ist die Vertrauensregel für X-Forwarded-For, die jede Anfrage
+	// liest; ein Speichern von trust_proxy_header oder trusted_proxies tauscht
+	// sie aus (siehe proxy_trust.go). Optional.
+	proxyTrust *netfilter.ProxyTrustHolder
+	// configSync schreibt die gespiegelten Einstellungen in die config.json
+	// (siehe cmd/app/config_sync.go). Optional.
+	configSync func() error
+	// applier setzt geänderte Ports und Modi zur Laufzeit um. Optional.
+	applier AddressApplier
+	// writeMu hält Lesen, Ändern und Speichern der Einstellungen zusammen
+	// (UpdateGlobal, SetMCP): Zwei gleichzeitige Änderungen überschreiben sich
+	// sonst gegenseitig, und die Listener folgten dem einen, die Datenbank dem anderen.
+	writeMu sync.Mutex
 	// defaultBackupDir ist das effektive Standard-Backup-Verzeichnis
 	// (siehe WithDefaultBackupDir) - Rückfall, wenn das Formularfeld
 	// geleert wird.
 	defaultBackupDir string
-	// fallbackBaseURL ist die aus der lokalen Konfiguration abgeleitete
-	// Basis-Adresse für Mail-Links, wenn keine PublicBaseURL gesetzt ist.
-	fallbackBaseURL string
 	// roles dient der Validierung von require_2fa_roles gegen die real
 	// existierenden Rollen. Optional (nil = keine Prüfung).
 	roles *repositories.RoleRepository
@@ -54,43 +69,66 @@ func (s *SettingsService) WithRoles(repo *repositories.RoleRepository) *Settings
 	return s
 }
 
-// WithMCPToggle verdrahtet die Laufzeit-Steuerung des MCP-Listeners: bei
-// jeder Änderung der MCP-Einstellungen wird sie mit dem neuen Zustand
-// aufgerufen (starten/stoppen/neu binden).
-func (s *SettingsService) WithMCPToggle(apply func(enabled bool, host string, port int)) *SettingsService {
-	s.mcpApply = apply
+// WithAddressesSaved verdrahtet, was nach dem Speichern geänderter Adressen
+// oder Schalter läuft (siehe afterAddressSave).
+func (s *SettingsService) WithAddressesSaved(fn func()) *SettingsService {
+	s.afterAddressSave = fn
 	return s
 }
 
-// SetMCP schaltet die MCP-Schnittstelle ein/aus und setzt Bind-Adresse/Port.
-// Der Listener wird direkt zur Laufzeit entsprechend gestartet/gestoppt.
-func (s *SettingsService) SetMCP(enabled bool, host string, port int, actor string) error {
-	host = strings.TrimSpace(host)
-	if host == "" {
-		host = "127.0.0.1"
+func (s *SettingsService) addressesSaved() {
+	if s.afterAddressSave != nil {
+		s.afterAddressSave()
 	}
-	// Die MCP-Schnittstelle spricht unverschlüsseltes HTTP und trägt den
-	// API-Key als Bearer-Token. Auf einer nicht-lokalen Bind-Adresse liefe er
-	// im Klartext über das Netz - zusammen mit der vollständigen
-	// Flotteninventur (welcher Server ist ungepatcht, hat kritische CVEs,
-	// keine Firewall). Deshalb sind hier ausschließlich Loopback-Adressen
-	// zulässig; für Fernzugriff gehört ein TLS-Reverse-Proxy/Tunnel davor.
-	if !isLoopbackHost(host) {
-		return fmt.Errorf("%w: die MCP-Bind-Adresse muss eine lokale Adresse sein (127.0.0.1, ::1 oder localhost) - für Fernzugriff einen TLS-Reverse-Proxy davorsetzen, da MCP unverschlüsseltes HTTP spricht", ErrSettingInvalid)
-	}
-	if port <= 0 || port > 65535 {
-		return fmt.Errorf("ungültiger MCP-Port: %d", port)
-	}
-	if err := s.settings.UpdateFields(map[string]any{
-		"mcp_enabled": enabled, "mcp_bind_host": host, "mcp_port": port,
-	}); err != nil {
+}
+
+// serviceSwitches sind die Schalter von Agent und MCP, um sie zu vergleichen.
+type serviceSwitches struct{ agent, mcp bool }
+
+// SetMCP schaltet die MCP-Schnittstelle ein oder aus. Port und Namen stehen in
+// den Adressen (UpdateGlobal), MCP spricht immer TLS und bindet an den Host der
+// Oberfläche. Der Listener wird zur Laufzeit gestartet oder gestoppt: Lässt
+// sich der Port nicht binden, bleibt alles beim Alten und nichts wird gespeichert.
+func (s *SettingsService) SetMCP(enabled bool, actor string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	st, err := s.settings.Get()
+	if err != nil {
 		return err
 	}
-	s.audit.Log(actor, "settings.mcp", "settings", 1, fmt.Sprintf("enabled=%v %s:%d", enabled, host, port))
-	if s.mcpApply != nil {
-		s.mcpApply(enabled, host, port)
+	before := s.AddressesOf(st)
+	st.MCPEnabled = enabled
+	if enabled {
+		if err := s.checkMCPCanRun(st); err != nil {
+			return err
+		}
 	}
+	change, err := s.prepareListeners(before, s.AddressesOf(st))
+	if err != nil {
+		return err
+	}
+	if err := s.settings.UpdateFields(map[string]any{"mcp_enabled": enabled}); err != nil {
+		if change != nil {
+			change.Rollback()
+		}
+		return err
+	}
+	if change != nil {
+		change.Commit()
+	}
+	s.audit.Log(actor, "settings.mcp", "settings", 1, fmt.Sprintf("enabled=%v", enabled))
+	s.addressesSaved()
+	s.syncConfig()
 	return nil
+}
+
+// checkMCPCanRun prüft den Stand mit eingeschaltetem MCP: Im Modus C braucht
+// MCP einen eigenen Namen, und kein Name darf doppelt vergeben sein.
+func (s *SettingsService) checkMCPCanRun(st *domain.GlobalSettings) error {
+	if s.AddressesOf(st).SharedPortActive() && sniHost(st.PublicMCPURL) == "" {
+		return errServiceNeedsName("MCP")
+	}
+	return s.checkSharedPortHosts(st)
 }
 
 func NewSettingsService(settings *repositories.SettingsRepository, cipher *crypto.Cipher, audit *AuditService, reload func() error) *SettingsService {
@@ -349,6 +387,17 @@ type GlobalSettingsInput struct {
 	PublicBaseURL               *string
 	PublicAgentURL              *string
 	PublicMCPURL                *string
+	AddressMode                 *string // separate | one_name | shared_port
+	PublicHost                  *string // nur one_name
+	UIPort                      *int
+	AgentPort                   *int
+	MCPPort                     *int
+	SharedTLSPort               *int
+	AgentEnabled                *bool
+	MCPEnabled                  *bool
+	SetupStep                   *string // session bis subscription vor und zurück, aus intro nur leer
+	TrustProxyHeader            *bool
+	TrustedProxies              *[]string
 	CVEHighWeightPackages       *string
 	DNSServerPresets            *string
 	NTPServerPresets            *string
@@ -394,12 +443,17 @@ func clampSessionTTL(minutes int) int {
 // CVE-Scan ab und verwarf die APT-Cache-URL (R2-029). Der Audit-Eintrag
 // nennt jetzt die geänderten Felder (R2-062).
 func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*domain.GlobalSettings, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	// Erst unter der Sperre lesen: Der Stand, den wir speichern, ist der aktuelle.
 	settings, err := s.settings.Get()
 	if err != nil {
 		return nil, err
 	}
 	var changed []string
 	touch := func(name string) { changed = append(changed, name) }
+	addrFieldsBefore := addressFieldsOf(settings)
+	addrBefore := s.AddressesOf(settings)
 
 	if in.DefaultSSHUser != nil {
 		settings.DefaultSSHUser = *in.DefaultSSHUser
@@ -614,6 +668,32 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		settings.PublicMCPURL = mcpURL
 		touch("public_mcp_url")
 	}
+	if err := s.applyAddressInput(in, settings, addrBefore, touch); err != nil {
+		return nil, err
+	}
+	switchesBefore := serviceSwitches{agent: settings.AgentEnabled, mcp: settings.MCPEnabled}
+	if err := s.applyServiceSwitches(in, settings, touch); err != nil {
+		return nil, err
+	}
+	modeSwitched := !addrBefore.SharedPortActive() && s.AddressesOf(settings).SharedPortActive()
+	if err := s.settleServiceNames(in, settings, modeSwitched, touch); err != nil {
+		return nil, err
+	}
+	// Nur prüfen, wenn sich etwas an den Adressen oder Schaltern ändert: Ein
+	// älterer Stand soll das Speichern anderer Einstellungen nicht blockieren.
+	addressChanged := addressFieldsOf(settings) != addrFieldsBefore
+	switchesChanged := serviceSwitches{agent: settings.AgentEnabled, mcp: settings.MCPEnabled} != switchesBefore
+	if addressChanged || switchesChanged {
+		if err := s.validateAddressing(settings); err != nil {
+			return nil, err
+		}
+	}
+	if err := applySetupStep(in.SetupStep, settings, touch); err != nil {
+		return nil, err
+	}
+	if err := applyProxyTrustInput(in, settings, touch); err != nil {
+		return nil, err
+	}
 
 	// System-Mailer: Passwort ist write-only (nil/leer = unverändert).
 	if in.MailEnabled != nil {
@@ -693,8 +773,25 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 		}
 	}
 
-	if err := s.settings.Save(settings); err != nil {
+	// Neue Ports zuerst binden: Gelingt das nicht, bleibt alles, wie es ist, und
+	// nichts wird gespeichert.
+	addrAfter := s.AddressesOf(settings)
+	change, err := s.prepareListeners(addrBefore, addrAfter)
+	if err != nil {
 		return nil, err
+	}
+	if err := s.settings.Save(settings); err != nil {
+		if change != nil {
+			change.Rollback()
+		}
+		return nil, err
+	}
+	if change != nil {
+		change.Commit()
+	}
+	s.publishProxyTrust(settings)
+	if addressChanged || switchesChanged {
+		s.addressesSaved()
 	}
 	// Der Audit-Eintrag benennt, WAS sich geändert hat - „settings.update"
 	// ohne Details war für einen Prüfer wertlos (R2-062). Werte stehen
@@ -703,7 +800,48 @@ func (s *SettingsService) UpdateGlobal(in GlobalSettingsInput, actor string) (*d
 	if s.reload != nil {
 		_ = s.reload()
 	}
+	settings.ConfigSyncError = s.syncConfig()
 	return settings, nil
+}
+
+// applyAddressInput übernimmt Adressmodus, Namen und Ports aus dem PATCH.
+func (s *SettingsService) applyAddressInput(in GlobalSettingsInput, st *domain.GlobalSettings, before Addresses, touch func(string)) error {
+	if in.AddressMode != nil {
+		if err := s.applyAddressMode(*in.AddressMode, st); err != nil {
+			return err
+		}
+		touch("address_mode")
+	}
+	if in.PublicHost != nil {
+		host, err := normalizePublicHost(*in.PublicHost)
+		if err != nil {
+			return err
+		}
+		st.PublicHost = host
+		touch("public_host")
+	}
+	ports := []struct {
+		in        *int
+		locked    bool
+		effective int
+		field     string
+		target    *int
+	}{
+		{in.UIPort, before.Locks.UIPort, before.UIPort, "ui_port", &st.UIPort},
+		{in.AgentPort, before.Locks.AgentPort, before.AgentPort, "agent_port", &st.AgentPort},
+		{in.MCPPort, before.Locks.MCPPort, before.MCPPort, "mcp_port", &st.MCPPort},
+		{in.SharedTLSPort, before.Locks.SharedTLSPort, before.SharedTLSPort, "shared_tls_port", &st.SharedTLSPort},
+	}
+	for _, p := range ports {
+		changed, err := applyPortInput(p.in, p.locked, p.effective, p.field, p.target)
+		if err != nil {
+			return err
+		}
+		if changed {
+			touch(p.field)
+		}
+	}
+	return nil
 }
 
 // BackupSettingsInput sind AUSSCHLIESSLICH die Felder des Backup-Formulars.

@@ -86,7 +86,7 @@ func DefaultKnownRepos() []KnownRepo {
 			Description:    "Techeve-Paketrepository (u. a. LCM) - https://repo.techeve.de",
 			KeyURL:         "https://repo.techeve.de/repo-key.gpg",
 			PackageManager: "apt",
-			Line:           "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.techeve.de stable main",
+			Line:           "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.techeve.de community main",
 		},
 	}
 }
