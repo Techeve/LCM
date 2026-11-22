@@ -19,6 +19,9 @@
 #                   "enterprise/lcm/dists/enterprise/..."; nur die aptly-API
 #                   kodiert den Prefix um (siehe API_PREFIX).
 #   GPG_KEY    signing key            (default: repo@techeve.de)
+#   REPO_PUBLIC_URL  öffentliche Adresse der Kanäle für die Gegenprobe
+#                   (Default: https://repo.techeve.de). Die Upload-Adresse
+#                   REPO_URL liefert seit dem Umzug auf RSM keine Indizes aus.
 #
 # Die Kanal-Zuordnung (Branch → REPO_NAME/DISTRO/PUBLISH_PREFIX) trifft die CI
 # (.gitlab-ci.yml, Job deploy:apt); das Kanal-Layout auf dem Server beschreibt
@@ -32,6 +35,7 @@ REPO_NAME="${REPO_NAME:-techeve}"
 DISTRO="${DISTRO:-community}"
 PUBLISH_PREFIX="${PUBLISH_PREFIX:-:.}"
 GPG_KEY="${GPG_KEY:-repo@techeve.de}"
+REPO_PUBLIC_URL="${REPO_PUBLIC_URL:-https://repo.techeve.de}"
 
 # Die aptly-API kodiert den Prefix in der URL: "_" wird "__", "/" wird "_"
 # ("enterprise/lcm" -> "enterprise_lcm"). Die Wurzel ":." bleibt, wie sie ist.
@@ -107,8 +111,8 @@ VERSION_FILE="${VERSION_FILE:-VERSION}"
 if [ -f "$VERSION_FILE" ]; then
   WANT="$(tr -d ' \n' < "$VERSION_FILE" | tr '-' '~')"   # 1.16.1-beta.1 -> 1.16.1~beta.1
   case "${PUBLISH_PREFIX}" in
-    ":.") IDX="${REPO_URL}/dists/${DISTRO}/main/binary-amd64/Packages" ;;
-    *)    IDX="${REPO_URL}/${PUBLISH_PREFIX}/dists/${DISTRO}/main/binary-amd64/Packages" ;;
+    ":.") IDX="${REPO_PUBLIC_URL}/dists/${DISTRO}/main/binary-amd64/Packages" ;;
+    *)    IDX="${REPO_PUBLIC_URL}/${PUBLISH_PREFIX}/dists/${DISTRO}/main/binary-amd64/Packages" ;;
   esac
   if is_enterprise; then
     # Der Enterprise-Kanal ist zugangsgeschützt - ein Abruf des Index ohne
@@ -156,7 +160,9 @@ if [ -f "$VERSION_FILE" ]; then
     # Treffer, curl kann den Rest nicht mehr in die Pipe schreiben und meldet
     # exit 23 - der erste Beta-Lauf dieser Prüfung schlug genau daran fehl,
     # obwohl die Version längst im Index stand.
-    INDEX_CONTENT="$(${CURL} "${IDX}")"
+    # Ohne Zugangsdaten: Der öffentliche Index braucht keine, und die des
+    # Upload-Zugangs gehören nicht an die öffentliche Adresse.
+    INDEX_CONTENT="$(curl -fsS --retry 3 --retry-delay 2 "${IDX}")"
     if ! grep -qx "Version: ${WANT}" <<<"${INDEX_CONTENT}"; then
       echo "FEHLER: lcm ${WANT} steht NICHT im veröffentlichten Index."
       echo "  Die Pakete liegen im Repository '${REPO_NAME}', werden aber nicht ausgeliefert."
