@@ -1559,14 +1559,13 @@ func (e *Executor) startAdvisoryJob(actor, name string, fn func() (string, error
 	if err != nil {
 		return nil, err
 	}
-	safego.GoCleanup("job:advisory", jobPanicCleanup(e.jobs, job), func() {
+	return startJob(e.jobs, "job:advisory", job, func() {
 		out, runErr := fn()
 		e.jobs.Complete(job, out, ptrInt(0), runErr)
 		if runErr != nil {
 			slog.Warn("advisory job failed", "job", name, "error", runErr)
 		}
-	})
-	return job, nil
+	}), nil
 }
 
 // RunAdvisoryMirror spiegelt die OSV-Datenbank fuer die lokale Kopie.

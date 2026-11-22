@@ -11,7 +11,7 @@ describe('normaliseServerSecurity', () => {
       firewall_backend: 'nftables',
       firewall_rules: '[{"port":80,"proto":"tcp"}]',
       firewall_ssh_sources: '{"allowlist_ids":[3],"source_ips":["10.0.0.0/24"]}',
-      listening_ports: '[{"port":9100,"proto":"tcp","bind":"10.0.0.1","ip_version":"v4","process":"node_exporter"}]',
+      listening_ports: '[{"port":9100,"proto":"tcp","bind":"10.0.0.1","ip_version":"v4","process":"node_exporter"},{"port":9310,"proto":"tcp","bind":"0.0.0.0","ip_version":"v4","process":"lcm","lcm_roles":["ui","mcp",7]}]',
       lcm_source_ip: '10.10.0.2',
       fail2ban_installed: true,
       crowdsec_active: true,
@@ -20,7 +20,10 @@ describe('normaliseServerSecurity', () => {
     });
     expect(s).toMatchObject({ sshPort: 2222, firewallActive: true, firewallBackend: 'nftables', twoFactor: true, hasAcl: true, aclUsable: false, lcmSourceIp: '10.10.0.2' });
     expect(s.sshSources).toEqual({ allowlist_ids: [3], source_ips: ['10.0.0.0/24'] });
-    expect(s.listening).toEqual([{ port: 9100, proto: 'tcp', bind: '10.0.0.1', ip_version: 'v4', process: 'node_exporter' }]);
+    expect(s.listening).toEqual([
+      { port: 9100, proto: 'tcp', bind: '10.0.0.1', ip_version: 'v4', process: 'node_exporter', lcm_roles: [] },
+      { port: 9310, proto: 'tcp', bind: '0.0.0.0', ip_version: 'v4', process: 'lcm', lcm_roles: ['ui', 'mcp'] },
+    ]);
     expect(s.installed).toEqual({ fail2ban: true, crowdsec: false });
     expect(s.active).toEqual({ fail2ban: false, crowdsec: true });
   });

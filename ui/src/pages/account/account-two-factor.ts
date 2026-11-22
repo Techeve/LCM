@@ -172,7 +172,13 @@ export class LcmAccountTwoFactor extends LitElement {
 
   #onCode(event: CustomEvent<{ value: string }>): void {
     this._code = cleanTotpCode(event.detail.value);
-    if (this._code.length === 6) void this.#enable();
+  }
+
+  /** Abgeschickt wird nur mit dem Knopf oder Enter, nie von selbst bei sechs Ziffern. */
+  #onCodeKey(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' || this._code.length !== 6) return;
+    event.preventDefault();
+    void this.#enable();
   }
 
   #disableImpacts(): Impact[] {
@@ -255,6 +261,7 @@ export class LcmAccountTwoFactor extends LitElement {
           placeholder="000000"
           .value=${live(this._code)}
           @lcm-input=${this.#onCode}
+          @keydown=${this.#onCodeKey}
         ></lcm-input>
         <div class="actions">
           <lcm-button variant="primary" ?disabled=${this._code.length !== 6} ?busy=${this._busy} @click=${() => void this.#enable()}

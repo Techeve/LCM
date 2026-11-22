@@ -40,7 +40,7 @@ von der Weboberfläche und der REST-API:
 
 | Einstellung | Bedeutung | Default |
 | --- | --- | --- |
-| `agent_port` | Port des Agent-Listeners; `0` schaltet ihn ab | `9320` |
+| `agent_port` | Port des Agent-Listeners; ein altes `0` liest LCM als „Agent aus“ (`agent_enabled: false`) | `9320` |
 | `agent_host` | Bind-Adresse des Agent-Listeners | `0.0.0.0` |
 
 Beides steht in der `config.json` und lässt sich per Umgebungsvariable
@@ -49,6 +49,13 @@ den Agent-Listener ganz. Der Agent-Port bindet standardmäßig an **alle
 Interfaces** (`0.0.0.0`), weil sich die Agents von außen verbinden; die UI bleibt
 auf ihrer eigenen Bind-Adresse (Default `127.0.0.1`, üblicherweise hinter einem
 Reverse-Proxy).
+
+**Agent an und aus.** Unter *Einstellungen → Allgemein* hat der Agent einen
+Schalter, in der Karte *Onboarding* und unter seiner Adresse im Block *Öffentliche
+Adressen* (ab Werk an). Ist er aus, nimmt der Agent-Port keine Verbindung an,
+verbundene Agenten trennen sich, und der Assistent *Server hinzufügen* erzeugt
+keinen Enroll-Befehl. Vor dem Ausschalten nennt die Seite, wie viele Server den
+Agenten nutzen ([Öffentliche Adressen & Adressmodus](/guides/adressen/#agent-und-mcp-an--und-ausschalten)).
 
 `config.json` (Ausschnitt):
 
@@ -65,13 +72,49 @@ Der Agent-Port **darf nicht** mit dem UI/REST-Port übereinstimmen - LCM lehnt
 eine solche Config beim Start ab (jeder Listener braucht einen eigenen Port).
 
 :::note[TLS & Firewall]
-Der Agent-Listener nutzt **dasselbe TLS-Zertifikat** wie die UI. Beim Enrollment
-wird der **SHA-256-Fingerprint** des aktiven Zertifikats ins Token eingebettet;
-der Agent pinnt ihn beim Erstkontakt (MitM-Schutz, analog zur SSH-Fingerprint-
-Bestätigung). Öffne den Agent-Port (Default **9320**) in der Firewall, damit die
-Agents ihn erreichen. Im `--dev`-Modus läuft der Listener ohne TLS (HTTP) und
-ohne Pin - nur für lokale Tests.
+Der Agent-Listener liefert das Zertifikat nach dem Namen aus, unter dem der
+Agent ihn aufruft: ein eigenes Zertifikat, das diesen Namen nennt, sonst das
+LCM-Zertifikat (siehe
+[Zertifikate, Let's Encrypt & Port 443](/guides/zertifikate/)). Beim Enrollment
+wird der **SHA-256-Fingerprint** des Zertifikats, das LCM für den Namen der
+Agent-Adresse ausliefert, ins Token eingebettet; der Agent pinnt ihn beim
+Erstkontakt (MitM-Schutz, analog zur SSH-Fingerprint-Bestätigung). Öffne den
+Agent-Port (Default **9320**) in der Firewall, damit die Agents ihn erreichen.
+Im `--dev`-Modus läuft der Listener ohne TLS (HTTP) und ohne Pin - nur für
+lokale Tests.
 :::
+
+## Ohne Reverse-Proxy: Agent über Port 443
+
+Der Agent braucht keinen Proxy davor. Im Adressmodus C (oder mit
+`shared_tls_listen: ":443"` in der `config.json`) nimmt LCM Weboberfläche, Agent
+und MCP auf einem Port an und unterscheidet sie am Namen
+([Öffentliche Adressen & Adressmodus](/guides/adressen/)). Trägst du unter
+*Einstellungen → Allgemein* als Namen für Agenten `agent.example.com` ein,
+richtest du den Agent so ein:
+
+```sh
+sudo lcm-agent enroll https://agent.example.com <token>
+```
+
+Wem der Agent dabei vertraut:
+
+- **Zertifikat einer öffentlichen Zertifizierungsstelle (Let's Encrypt):** Der
+  Agent prüft es mit den Zertifikaten seines Systems und dem Namen seiner
+  Adresse. Das geht mit jedem Agent.
+- **Zertifikat einer eigenen (privaten) Zertifizierungsstelle:** Das Token trägt
+  die Stelle mit. Ein Agent, den du mit einem solchen Token einrichtest, pinnt
+  sie und vertraut jedem Zertifikat von ihr, das den Namen seiner Adresse trägt,
+  auch nach einer Erneuerung. Ältere Agenten folgen nur dem Fingerprint des
+  Zertifikats, ihrem gemerkten Schlüssel oder dem LCM-Zertifikat.
+- **Aufruf per IP oder unter einem unbekannten Namen:** LCM liefert das
+  LCM-Zertifikat aus, dem Agenten ab 2.1 über die gemerkte LCM-Zertifizierungsstelle
+  vertrauen. Ein Wechsel auf ein eigenes Zertifikat und zurück trennt keinen
+  Agenten.
+
+Alles Weitere steht unter [Zertifikate, Let's Encrypt & Port 443](/guides/zertifikate/#agenten-und-zertifikate).
+Wer einschränken will, woher sich Agenten verbinden dürfen, setzt
+[Erlaubte Netzbereiche](/guides/netzbereiche/) für den Agent.
 
 ## Hinter einem Reverse-Proxy
 
@@ -244,7 +287,8 @@ WebSocket-Weiterleitung: für die Web-Konsole (`/api/v1/servers/<id>/terminal`)
 und den Ereigniskanal (`/api/v1/events`), über den die Oberfläche live bleibt.
 Ohne die Weiterleitung fehlen Konsole und Live-Anzeige (die nginx-Beispiele
 stehen unter [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/#nginx)).
-Diese Dinge gehören eingestellt:
+Diese Dinge gehören eingestellt (Adressmodus A,
+[Öffentliche Adressen & Adressmodus](/guides/adressen/#modus-a-hinter-einem-reverse-proxy)):
 
 - **`public_base_url`** unter *Einstellungen → Allgemein*. Aktivierungs- und
   Rücksetz-Links werden daraus gebaut - ohne die Angabe zeigen sie auf die

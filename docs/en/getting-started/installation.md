@@ -50,6 +50,11 @@ sudo apt update && sudo apt upgrade
 `lcm` is then a normal apt package, so updates arrive automatically with the
 system.
 
+The source points at the community channel (`https://repo.techeve.de community main`).
+Older installations using the suite `stable` keep working, and the package moves
+them to `community` on update. You pick the other channels (beta, enterprise) in
+LCM under Settings, Subscription; see [Package channels](/en/reference/repo-channels/).
+
 **Alternatively, without the repository** - download a single package from the
 [releases](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=doc)
 (`lcm_<version>_amd64.deb` or `..._arm64.deb`; check the architecture with
@@ -131,18 +136,25 @@ vendor's repository - LCM runs fine without Trivy, but the CVE scan stays
 disabled:
 
 ```sh
-# Prerequisite - gnupg is missing on minimal/cloud images
-sudo apt-get install -y gnupg
+# Prerequisites - wget and gnupg are missing on minimal/cloud images;
+# bubblewrap is the sandbox LCM starts the scanner in
+sudo apt-get install -y wget gnupg ca-certificates bubblewrap
 
 wget -qO- https://get.trivy.dev/deb/public.key \
-  | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+  | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/trivy.gpg
 echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://get.trivy.dev/deb generic main" \
   | sudo tee /etc/apt/sources.list.d/trivy.list
 sudo apt update && sudo apt install trivy
 ```
 
+The steps are the same for Debian and Ubuntu; tested on Debian 12 and 13 and
+Ubuntu 22.04, 24.04 and 26.04. **Debian 11** is no longer supported: the
+distribution is out of support, its package sources no longer serve everything,
+and `apt` already fails on `gnupg` or `sudo`.
+
 If LCM runs on the same host you can also do it with one click: *server detail
-of the LCM host → set up Trivy*.
+of the LCM host → set up Trivy*. If Trivy was set up without bubblewrap,
+*Add sandbox* adds it.
 
 | Path | Contents |
 |------|----------|
@@ -279,7 +291,7 @@ Handy in container/service operation to override values without touching the
 | `LCM_HOST` | Bind address of the web UI / REST API (overrides `host`). |
 | `LCM_PORT` | Port of the web UI / REST API (overrides `port`). |
 | `LCM_AGENT_HOST` | Bind address of the agent listener (overrides `agent_host`). |
-| `LCM_AGENT_PORT` | Port of the agent listener (overrides `agent_port`); `0` disables it. |
+| `LCM_AGENT_PORT` | Port of the agent listener (overrides `agent_port`); `0` disables it. A set environment variable locks the field in the interface. |
 | `LCM_BACKUP_PASSPHRASE` | Passphrase for **automatic** backups (see [Backups](/en/guides/backups/)). |
 | `LCM_RESTORE_AUTO_RESTART` | `1`/`true` = restart automatically after a staged restore. |
 | `TZ` | Time zone, e.g. `Europe/Berlin` - tzdata is embedded in the binary, so it works even in minimal containers. |
@@ -289,19 +301,31 @@ LCM_HOST=0.0.0.0 LCM_PORT=443 ./lcm            # UI/REST on all interfaces, port
 LCM_AGENT_PORT=0 ./lcm                          # disable LCM Remote (agent listener)
 ```
 
+The service of the package installation may open ports below 1024 such as
+`443`: the service file shipped with LCM grants it the capability
+`CAP_NET_BIND_SERVICE` for that, so no drop-in is needed. See
+[Certificates, Let's Encrypt & port 443](/en/guides/zertifikate/#freeing-port-80-and-443).
+
 ## Network ports
 
-LCM binds up to **three** separate listeners - deliberately on their own ports:
+LCM binds up to **three** separate listeners - deliberately on their own ports.
+Two **optional** ports come on top (see below):
 
 | Port (default) | Listener | Bind (default) | Protocol |
 |---|---|---|---|
-| `9310` | **Web UI + REST API** (`host`/`port`) | `127.0.0.1` | HTTPS (self-signed; `--dev` = HTTP) |
-| `9320` | **Agent listener** - LCM Remote, `/mqtt` only (`agent_host`/`agent_port`); `agent_port: 0` disables it | `0.0.0.0` | HTTPS (same certificate as the UI) |
-| `9330` | **MCP listener** - optional, **off** by default; toggle under *Settings → MCP* | `127.0.0.1` | HTTP |
+| `9310` | **Web UI + REST API** (`host`/`port`) | `127.0.0.1` | HTTPS (LCM certificate, self-signed, or one of your own; `--dev` = HTTP) |
+| `9320` | **Agent listener** - LCM Remote, `/mqtt` only (`agent_host`/`agent_port`); the switch for the agent disables it | `0.0.0.0` | HTTPS (certificate by the requested name, otherwise the LCM certificate) |
+| `9330` | **MCP listener** - optional, **off** by default; switch under *Settings → General* and *Settings → MCP* (`mcp_port`) | like the web UI | always HTTPS (certificate by the requested name) |
+| `443` (freely selectable) | **Shared port** - optional, address mode C (in the interface or via `shared_tls_listen`): web UI, agent and MCP by the requested name | off | HTTPS |
+| `80` (`acme_http_listen`) | **Let's Encrypt, HTTP-01** - optional, open only during a check, closed otherwise | off | HTTP |
 
 The agent port carries **only** the agent interface, the UI/REST port carries
 **none** - and vice versa. Details: [LCM Remote](/en/guides/remote/) and
-[MCP interface](/en/guides/mcp/).
+[MCP interface](/en/guides/mcp/). You can change the ports under
+*Settings → General* ([Public addresses & address mode](/en/guides/adressen/)).
+The two optional ports, certificates of your own and Let's Encrypt are described in
+[Certificates, Let's Encrypt & port 443](/en/guides/zertifikate/). Which networks
+may reach the services is set by the [Allowed networks](/en/guides/netzbereiche/).
 
 :::note[Every restart ends all sessions]
 Browser sessions and the signing material of the 2FA challenge live only in
@@ -328,5 +352,23 @@ again) or as a session cookie (more convenient, HTTPS only). You can change this
 any time under *Settings → General → Sign-in in the browser*, right next to the
 *Session length in minutes*; switching signs all users out. Scripts use an
 API key, independent of this.
+
+After the password and two-factor sign-in, the **setup assistant** leads you
+through the first settings. It exists on a fresh installation only. It asks in six
+steps:
+
+1. **How is LCM reached?** Address mode, addresses and ports. This step cannot be
+   skipped.
+2. **Which services should run?** Agent and MCP.
+3. **Who may reach LCM?** Allowed networks per service.
+4. **Certificate:** Let's Encrypt or a reverse proxy in front. Then the assistant
+   redirects to the new address; with a new name you sign in again.
+5. **Adding new servers:** the onboarding key (can be skipped).
+6. **Automatic backup** (can be skipped).
+
+At the end LCM opens the page of the LCM host with an introduction to Trivy,
+apt-cacher-ng and CrowdSec LAPI. The steps in detail:
+[Public addresses & address mode](/en/guides/adressen/#setup-assistant). Later you
+change everything under *Settings → General*.
 
 Continue with the [Quickstart](/en/getting-started/quickstart/).

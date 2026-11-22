@@ -2,11 +2,16 @@ import { LitElement, css, html, nothing } from 'lit';
 import { icon } from './icons.js';
 import { baseStyles, emit, safeStorage, uid } from './shared.js';
 
+/** Dieselbe Grenze wie die Seitenspalten (`layout-styles`). */
+const STACKED_QUERY = '(max-width: 75rem)';
+
 /**
  * <lcm-explainer topic="group-rules" heading="Wozu Regeln?" docs-href="…"> – zusammenklappbare Erklärspalte.
  * Der Text steht im Slot. Der Zustand wird je `topic` im Browser gemerkt (localStorage, mit try/catch).
  * Eingeklappt bleibt eine schmale Leiste mit der Überschrift. Meldet `lcm-explainer-toggle` mit { collapsed }.
  * Der gemerkte Zustand gilt schon beim ersten Zeichnen; die Breite wandert nur, wenn der Benutzer umschaltet.
+ * Auf schmalen Bildschirmen (bis 75rem, wie die Seitenspalten) steht die Spalte unter oder über dem Inhalt und
+ * klappt nach oben ein, bis nur ihre Überschrift steht (`stacked`); das Symbol zeigt dann diese Richtung.
  */
 export class LcmExplainer extends LitElement {
   static override properties = {
@@ -17,6 +22,7 @@ export class LcmExplainer extends LitElement {
     collapseLabel: { type: String, attribute: 'collapse-label' },
     expandLabel: { type: String, attribute: 'expand-label' },
     collapsed: { type: Boolean, reflect: true },
+    stacked: { type: Boolean, reflect: true },
   };
   static override styles = [
     baseStyles,
@@ -33,6 +39,15 @@ export class LcmExplainer extends LitElement {
       }
       :host([collapsed]) {
         inline-size: 3rem;
+      }
+      /* Gestapelt: volle Breite, eingeklappt bleibt die Kopfzeile. */
+      :host([stacked]),
+      :host([stacked][collapsed]) {
+        inline-size: auto;
+        position: static;
+      }
+      :host([stacked][collapsed]) .head {
+        padding-block-end: var(--space-3);
       }
       aside {
         position: relative;
@@ -123,6 +138,8 @@ export class LcmExplainer extends LitElement {
   declare collapseLabel: string;
   declare expandLabel: string;
   declare collapsed: boolean;
+  declare stacked: boolean;
+  readonly #narrow = typeof window.matchMedia === 'function' ? window.matchMedia(STACKED_QUERY) : undefined;
   private readonly bodyId = uid('explainer');
 
   constructor() {
@@ -134,6 +151,7 @@ export class LcmExplainer extends LitElement {
     this.collapseLabel = '';
     this.expandLabel = '';
     this.collapsed = false;
+    this.stacked = false;
   }
 
   private get storageKey(): string {
@@ -146,12 +164,19 @@ export class LcmExplainer extends LitElement {
     this.restore();
     this.toggleAttribute('collapsed', this.collapsed);
     this.addEventListener('transitionend', this.#settled);
+    this.stacked = this.#narrow?.matches === true;
+    this.#narrow?.addEventListener('change', this.#resized);
   }
 
   override disconnectedCallback(): void {
     this.removeEventListener('transitionend', this.#settled);
+    this.#narrow?.removeEventListener('change', this.#resized);
     super.disconnectedCallback();
   }
+
+  readonly #resized = (event: MediaQueryListEvent): void => {
+    this.stacked = event.matches;
+  };
 
   /** Nach dem Umschalten ruht die Breite: `animated` soll nicht stehen bleiben (etwa beim Wechsel der Fenstergröße). */
   readonly #settled = (event: TransitionEvent): void => {
@@ -175,7 +200,25 @@ export class LcmExplainer extends LitElement {
     emit(this, 'lcm-explainer-toggle', { collapsed: this.collapsed });
   }
 
+  private renderStacked() {
+    const collapsed = this.collapsed;
+    const label = collapsed ? this.expandLabel : this.collapseLabel;
+    return html`<aside>
+      <div class="head">
+        <h2>${icon('info')}${this.heading}</h2>
+        <button class="toggle" type="button" aria-expanded=${String(!collapsed)} aria-controls=${this.bodyId} aria-label=${label} title=${label} @click=${this.toggle}>
+          ${icon(collapsed ? 'chevron-down' : 'chevron-up')}
+        </button>
+      </div>
+      <div id=${this.bodyId} class="body" ?hidden=${collapsed}>
+        <slot></slot>
+        ${this.docsHref ? html`<a href=${this.docsHref}>${this.docsLabel}${icon('arrow-right')}</a>` : nothing}
+      </div>
+    </aside>`;
+  }
+
   override render() {
+    if (this.stacked) return this.renderStacked();
     if (this.collapsed) {
       return html`<aside>
         <div class="rail">

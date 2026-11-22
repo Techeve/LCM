@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"LCM/internal/infrastructure/tlsx"
+	"LCM/internal/runtimeport"
 )
 
 // fetchTimeout: Antwortet LCM nicht binnen zehn Sekunden, gilt es für diese
@@ -34,9 +35,19 @@ type lcmClient struct {
 func newLCMClient(cfg runConfig) *lcmClient {
 	base := cfg.url
 	if base == "" {
-		base = fmt.Sprintf("https://127.0.0.1:%d", lcmPort(cfg.lcmConfig))
+		base = fmt.Sprintf("https://127.0.0.1:%d", uiPort(cfg))
 	}
 	return &lcmClient{base: strings.TrimSuffix(base, "/"), keyFile: cfg.keyFile, dataDir: cfg.lcmData}
+}
+
+// uiPort ist der Port der Oberfläche: der, den der laufende LCM im
+// Datenverzeichnis vermerkt hat (die Einstellungen können ihn ändern), sonst
+// der aus der Konfiguration.
+func uiPort(cfg runConfig) int {
+	if port, ok := runtimeport.Read(cfg.lcmData); ok {
+		return port
+	}
+	return lcmPort(cfg.lcmConfig)
 }
 
 // lcmPort liest den Port aus der Konfiguration von LCM, Vorgabe 9310.

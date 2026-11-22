@@ -24,6 +24,8 @@ export interface CurrentUser {
   totp_enabled: boolean;
   must_change_password: boolean;
   must_setup_2fa: boolean;
+  /** Stand des Einrichtungsassistenten (`addresses` … `backup`, `intro`); nur für Konten mit Recht auf die Einstellungen, fehlt oder leer, wenn erledigt. */
+  setup_step?: string;
   /** Wie der Browser die Sitzung trägt; fehlt bei einem Zugriff ohne Sitzung. */
   session_mode?: SessionMode;
   /** Nur bei der Cookie-Variante. */

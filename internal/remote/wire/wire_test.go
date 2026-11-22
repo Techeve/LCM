@@ -2,6 +2,7 @@ package wire_test
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -15,6 +16,8 @@ func TestTokenRoundtrip(t *testing.T) {
 	}{
 		{"mit fingerprint und ca", wire.Token{AgentID: "0b39a4f2-1111-2222-3333-444455556666", Secret: "s3cr3t-abcdef",
 			CertFingerprint: "aa11bb22", CAFingerprint: "cc33dd44"}},
+		{"mit eigener ca (eigenes Zertifikat)", wire.Token{AgentID: "agent-3", Secret: "geheim",
+			CertFingerprint: "aa11", CAFingerprint: "cc33", CustomCAFingerprint: "ee55"}},
 		{"ohne ca (älteres LCM)", wire.Token{AgentID: "agent-2", Secret: "geheim", CertFingerprint: "aa11"}},
 		{"ohne fingerprint (dev)", wire.Token{AgentID: "agent-1", Secret: "geheim"}},
 	}
@@ -43,8 +46,40 @@ func TestParseTokenAltesFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CertFingerprint != "ff00" || got.CAFingerprint != "" {
+	if got.CertFingerprint != "ff00" || got.CAFingerprint != "" || got.CustomCAFingerprint != "" {
 		t.Errorf("altes Token gelesen als %+v", got)
+	}
+}
+
+// TestTokenMitEigenerCAFuerAelterenAgent: Ein Agent vor den eigenen
+// Zertifikaten kennt das Feld h nicht. Er liest das Token wie bisher
+// (encoding/json überliest unbekannte Felder), nimmt u, k, f und c und
+// ignoriert h. Ohne h bleibt das Feld aus dem Token.
+func TestTokenMitEigenerCAFuerAelterenAgent(t *testing.T) {
+	token := wire.EncodeToken(wire.Token{AgentID: "id", Secret: "geheim", CertFingerprint: "ff00",
+		CAFingerprint: "cc33", CustomCAFingerprint: "ee55"})
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, wire.TokenPrefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Die Nutzlast, wie sie ein Agent mit dem alten Token-Format liest.
+	var legacy struct {
+		AgentID     string `json:"u"`
+		Secret      string `json:"k"`
+		Fingerprint string `json:"f"`
+		CA          string `json:"c,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatalf("älterer Agent liest das Token nicht: %v", err)
+	}
+	if legacy.AgentID != "id" || legacy.Secret != "geheim" || legacy.Fingerprint != "ff00" || legacy.CA != "cc33" {
+		t.Errorf("älterer Agent liest %+v", legacy)
+	}
+
+	without := wire.EncodeToken(wire.Token{AgentID: "id", Secret: "geheim"})
+	rawWithout, _ := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(without, wire.TokenPrefix))
+	if strings.Contains(string(rawWithout), `"h"`) {
+		t.Errorf("leeres h im Token: %s", rawWithout)
 	}
 }
 

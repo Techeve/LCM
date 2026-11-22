@@ -12,7 +12,6 @@ import (
 	"LCM/internal/core/events"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/sshx"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -106,6 +105,11 @@ type ServerService struct {
 	// settings sind die globalen Einstellungen (nur für den Konsolen-Schalter
 	// gebraucht; optional verdrahtet, siehe WithSettings).
 	settings *repositories.SettingsRepository
+	// agentURL liefert die Adresse des Agent-Ports (leer = keine bekannt).
+	agentURL func() string
+	// lcmListeners liefert die eigenen Ports von LCM für die Firewall-Vorschläge
+	// des LCM-Hosts (siehe lcm_listeners.go). Optional.
+	lcmListeners func() ([]domain.ListeningPort, error)
 	// capabilities hält die Betriebsfähigkeit je Server (Ampel, Handlungs-
 	// unfähigkeit). Optional - ohne sie gelten alle Fähigkeiten als in
 	// Ordnung (schlanke Tests).
@@ -181,14 +185,9 @@ type ServerService struct {
 	// agents ist der MQTT-AgentHub für Server mit Transport=agent (LCM
 	// Remote). Optional; ohne ihn sind Agent-Server nicht erreichbar.
 	agents AgentConnector
-	// agentCertFP liefert den SHA-256-Fingerprint des aktiven HTTPS-
-	// Zertifikats (fürs Cert-Pinning im Enrollment-Token). Optional.
-	agentCertFP func() (string, error)
-	// agentCAFP liefert den Fingerprint der LCM-CA fürs Token. Optional.
-	agentCAFP func() (string, error)
-	// agentDownloadPin liefert den Schlüssel-Pin desselben Zertifikats für
-	// den Download-Befehl (curl --pinnedpubkey). Optional.
-	agentDownloadPin func() (string, error)
+	// agentTrust liefert zu einem Namen die Pins des Zertifikats, das LCM
+	// dafür ausliefert (Enrollment-Token, Download-Befehl). Optional.
+	agentTrust func(host string) AgentTrust
 	// containerCheck überschreibt die Betriebsart-Erkennung in Tests;
 	// nil = die echte aus runtimeenv (siehe inContainer).
 	containerCheck func() bool
@@ -300,6 +299,13 @@ func (s *ServerService) WithSettings(settings *repositories.SettingsRepository) 
 	return s
 }
 
+// WithAgentURL hinterlegt, woher die Adresse des Agent-Ports kommt (siehe
+// SettingsService.PublicAgentURL); ihr Name steht im Enrollment-Befehl.
+func (s *ServerService) WithAgentURL(fn func() string) *ServerService {
+	s.agentURL = fn
+	return s
+}
+
 // WithScanner verdrahtet den CVE-Scanner (Trivy), damit die Detailansicht die
 // Verfügbarkeit melden kann. Optional (graceful degrade).
 func (s *ServerService) WithScanner(scanner VulnScanner) *ServerService {
@@ -362,7 +368,7 @@ func (s *ServerService) UpdateCVEDB(actor string) (*domain.Job, error) {
 		return nil, err
 	}
 	s.audit.Log(actor, "system.cve-db-update", "system", 0, "CVE-Datenbank aktualisieren")
-	safego.GoCleanup("job:cve-db-update", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:cve-db-update", job, func() {
 		update, err := s.scanner.UpdateDB(context.Background())
 		out := update.Output
 		if err != nil {
@@ -376,8 +382,7 @@ func (s *ServerService) UpdateCVEDB(actor string) (*domain.Job, error) {
 			out += "\n\nDatenbank-Stand: " + st.UpdatedAt.Format(time.RFC3339) + " (" + st.AgeDescription() + ")"
 		}
 		s.jobs.Complete(job, out, ptrInt(0), nil)
-	})
-	return job, nil
+	}), nil
 }
 
 // cveRescanEnabled meldet, ob die automatische CVE-Neubewertung nach einem
@@ -1355,12 +1360,12 @@ func detectRootEscalation(conn sshx.Conn, loginUser, password string, log *strin
 	// den prompt-losen Fall UND ein leeres root-Passwort ab.
 	if probe("su ohne Passwort", "su root -c true", "\n") {
 		return &rootEscalation{method: "su", wrap: func(cmd string) (string, string) {
-			return "su root -c " + shellQuote(cmd), "\n"
+			return suCommand(cmd), "\n"
 		}}
 	}
 	if password != "" && probe("su mit Login-Passwort", "su root -c true", password+"\n") {
 		return &rootEscalation{method: "su", wrap: func(cmd string) (string, string) {
-			return "su root -c " + shellQuote(cmd), password + "\n"
+			return suCommand(cmd), password + "\n"
 		}}
 	}
 	// login kennt kein "-c <kommando>" wie su - es startet nach erfolgreicher
@@ -1375,6 +1380,17 @@ func detectRootEscalation(conn sshx.Conn, loginUser, password string, log *strin
 		return &rootEscalation{method: "login", wrap: loginWrap}
 	}
 	return nil
+}
+
+// suRootPath ergänzt den Suchpfad für Befehle, die per su laufen. su ohne "-"
+// behält den Pfad des aufrufenden Benutzers - und der enthält bei einem
+// SSH-Login auf Debian kein sbin. useradd und usermod wurden deshalb nicht
+// gefunden (nachgestellt auf Debian 11 und 12).
+const suRootPath = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH; export PATH; "
+
+// suCommand verpackt ein Kommando für die Ausführung als root per su.
+func suCommand(cmd string) string {
+	return "su root -c " + shellQuote(suRootPath+cmd)
 }
 
 // provisionSudoError reichert einen Provisionierungsfehler beim Nicht-root-Login
@@ -2092,6 +2108,7 @@ func (s *ServerService) List(scope repositories.AccessScope) ([]domain.Server, e
 	}
 	for i := range servers {
 		s.fillAgentState(&servers[i])
+		s.fillLcmListeners(&servers[i])
 	}
 	return servers, nil
 }
@@ -2107,6 +2124,7 @@ func (s *ServerService) Get(scope repositories.AccessScope, id uint) (*domain.Se
 		return nil, err
 	}
 	s.fillAgentState(server)
+	s.fillLcmListeners(server)
 	return server, nil
 }
 

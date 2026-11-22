@@ -71,6 +71,12 @@ func (l *localRunner) command(ctx context.Context, allowNet bool, readFiles []st
 	var read []string
 	var write []string
 	if l.cacheDir != "" {
+		// Der Cache muss VOR dem Start existieren: Bubblewrap übergeht einen
+		// fehlenden Pfad (--bind-try), Trivy schriebe die Datenbank dann in
+		// das flüchtige Dateisystem der Sandbox, und der Download sähe
+		// erfolgreich aus, ohne dass je eine Datei ankäme. Auf einer
+		// frischen Installation gibt es das Verzeichnis noch nicht.
+		_ = os.MkdirAll(l.cacheDir, 0o700)
 		write = append(write, l.cacheDir)
 	}
 	// Absoluter Binärpfad: liegt Trivy außerhalb der Standardverzeichnisse,

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -195,7 +196,8 @@ func (c *Client) verifyPeer(hostname string) func(rawCerts [][]byte, _ [][]*x509
 func (c *Client) pins() pins {
 	c.pinMu.Lock()
 	defer c.pinMu.Unlock()
-	return pins{cert: c.cfg.CertFingerprint, key: c.cfg.KeyPin, ca: c.cfg.CAFingerprint}
+	return pins{cert: c.cfg.CertFingerprint, key: c.cfg.KeyPin, ca: c.cfg.CAFingerprint,
+		customCAs: slices.Clone(c.cfg.CustomCAFingerprints)}
 }
 
 // learn übernimmt neue Pins und schreibt sie in die Konfiguration. Scheitert
@@ -210,6 +212,11 @@ func (c *Client) learn(learned pins) {
 	}
 	if learned.ca != "" && learned.ca != c.cfg.CAFingerprint {
 		c.cfg.CAFingerprint, changed = learned.ca, true
+	}
+	for _, fp := range learned.customCAs {
+		if c.cfg.rememberCustomCA(fp) {
+			changed = true
+		}
 	}
 	if !changed || c.configPath == "" {
 		return

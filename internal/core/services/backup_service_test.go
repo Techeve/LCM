@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"LCM/internal/core/domain"
+	"LCM/internal/infrastructure/acmex"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/tlsx"
 	"LCM/internal/infrastructure/tlsx/tlsxtest"
@@ -30,6 +31,16 @@ func TestBackupCreateBundlesAndEncrypts(t *testing.T) {
 	// CA und Server-Zertifikat gehören dazu: Ohne die CA vertrauten die
 	// Agenten einem zurückgespielten LCM nach der nächsten Erneuerung nicht.
 	tlsxtest.ServerCert(t, dataDir, time.Now().Add(-time.Hour))
+	uploadID := saveTestUpload(t, dataDir)
+	acmeDir := filepath.Join(dataDir, "tls", "acme")
+	if err := os.MkdirAll(filepath.Join(acmeDir, "certs", "0a1b2c3d"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"account.key", "certs/0a1b2c3d/cert.pem", "certs/0a1b2c3d/key.pem"} {
+		if err := os.WriteFile(filepath.Join(acmeDir, f), []byte("acme"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	dbFile := filepath.Join(dataDir, "app.db")
 	db, err := gorm.Open(sqlite.Open(dbFile), &gorm.Config{})
 	if err != nil {
@@ -70,11 +81,33 @@ func TestBackupCreateBundlesAndEncrypts(t *testing.T) {
 		names[f.Name] = true
 	}
 	for _, want := range []string{"app.db", crypto.KeyFileName, "config.json",
-		tlsx.CertFileName, tlsx.KeyFileName, tlsx.CAFileName, tlsx.CAKeyFileName} {
+		tlsx.CertFileName, tlsx.KeyFileName, tlsx.CAFileName, tlsx.CAKeyFileName,
+		tlsx.UploadBackupPrefix + uploadID + "-cert.pem", tlsx.UploadBackupPrefix + uploadID + "-key.pem",
+		acmex.BackupPrefix + "account.key", acmex.BackupPrefix + "cert-0a1b2c3d-cert.pem", acmex.BackupPrefix + "cert-0a1b2c3d-key.pem"} {
 		if !names[want] {
 			t.Errorf("Archiv fehlt %q (enthält: %v)", want, names)
 		}
 	}
+}
+
+// saveTestUpload legt ein hochgeladenes Zertifikat im Datenverzeichnis ab.
+func saveTestUpload(t *testing.T, dataDir string) string {
+	t.Helper()
+	pairDir := t.TempDir()
+	tlsxtest.ForeignCert(t, pairDir, time.Now().AddDate(0, 1, 0))
+	certPEM, err := os.ReadFile(filepath.Join(pairDir, tlsx.CertFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile(filepath.Join(pairDir, tlsx.KeyFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := tlsx.SaveUpload(dataDir, certPEM, keyPEM, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // TestBackupDelete prüft das Löschen: Datei + Metadaten weg, unbekannte Namen

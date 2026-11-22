@@ -185,6 +185,12 @@ type Token struct {
 	// Server-Zertifikat ausstellt. Tokens älterer LCM tragen ihn nicht, ältere
 	// Agenten überlesen ihn.
 	CAFingerprint string
+	// CustomCAFingerprint ist der SHA-256 (hex) der CA, die ein eigenes
+	// Zertifikat des Betreibers ausgestellt hat (Heim-CA). Das Token trägt
+	// ihn nur, wenn LCM für die Adresse des Agents ein solches ausliefert.
+	// Ältere Agenten überlesen das Feld: Sie halten sich dann an den
+	// Fingerprint des Zertifikats und die LCM-CA.
+	CustomCAFingerprint string
 }
 
 // tokenPayload ist der base64url-kodierte JSON-Inhalt des Tokens.
@@ -194,12 +200,14 @@ type tokenPayload struct {
 	Secret      string `json:"k"`
 	Fingerprint string `json:"f"`
 	CA          string `json:"c,omitempty"`
+	CustomCA    string `json:"h,omitempty"`
 }
 
 // EncodeToken baut das Klartext-Token für die einmalige Anzeige (Server)
 // bzw. fürs Enrollment (Agent).
 func EncodeToken(t Token) string {
-	raw, _ := json.Marshal(tokenPayload{AgentID: t.AgentID, Secret: t.Secret, Fingerprint: t.CertFingerprint, CA: t.CAFingerprint})
+	raw, _ := json.Marshal(tokenPayload{AgentID: t.AgentID, Secret: t.Secret, Fingerprint: t.CertFingerprint,
+		CA: t.CAFingerprint, CustomCA: t.CustomCAFingerprint})
 	return TokenPrefix + base64.RawURLEncoding.EncodeToString(raw)
 }
 
@@ -219,5 +227,6 @@ func ParseToken(token string) (Token, error) {
 	if p.AgentID == "" || p.Secret == "" {
 		return Token{}, errors.New("unvollständiges Token")
 	}
-	return Token{AgentID: p.AgentID, Secret: p.Secret, CertFingerprint: p.Fingerprint, CAFingerprint: p.CA}, nil
+	return Token{AgentID: p.AgentID, Secret: p.Secret, CertFingerprint: p.Fingerprint,
+		CAFingerprint: p.CA, CustomCAFingerprint: p.CustomCA}, nil
 }

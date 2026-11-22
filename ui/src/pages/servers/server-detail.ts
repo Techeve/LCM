@@ -44,6 +44,7 @@ import { actionFor } from '../dashboard/attention-actions';
 import { openJobOnClick } from '../../lib/job-window';
 import { kindLabel } from '../jobs/job-labels';
 import { auth } from '../../lib/auth';
+import { setupStepOf } from '../../lib/address-setup';
 import { I18nController, SubscribeController } from '../../lib/controllers';
 import { formatDateTime, formatRelative } from '../../lib/format';
 import { errorText, t } from '../../lib/i18n';
@@ -55,6 +56,7 @@ import { router } from '../../lib/router';
 import { STATUS_LEVEL, statusLabel } from './servers-list';
 import './set-action';
 import './srv-action';
+import './srv-intro';
 import './srv-more';
 import './srv-settings';
 
@@ -427,6 +429,7 @@ export class ServerDetail extends LitElement {
         : nothing}
       ${write && ssh
         ? html`<lcm-set-action
+            data-tour="harden"
             quiet
             icon=${server.ssh_hardened ? 'undo' : 'shield'}
             ?disabled=${busy}
@@ -442,6 +445,7 @@ export class ServerDetail extends LitElement {
         : nothing}
       ${write && !device
         ? html`<lcm-button
+            data-tour="firewall"
             icon="firewall"
             @click=${() => (server.proxmox_type ? void router.navigate(serverPath(server.id, 'security')) : router.setQuery({ modal: 'firewall' }))}
             >${t('servers.bar.firewall.label')}${server.firewall_active ? ' ✓' : ''}</lcm-button
@@ -599,13 +603,25 @@ export class ServerDetail extends LitElement {
 
   #renderOverlays(server: ServerItem): TemplateResult {
     const query = router.state.query;
+    // Die Einführung des LCM-Hosts läuft über die Serverseite: Sie wechselt Reiter und öffnet die Einstellungen.
+    const intro = server.is_lcm_host && setupStepOf(auth.user) === 'intro';
     const terminal = query.get('terminal') === '1' && auth.can('servers:console') && hasConsole(server);
     if (terminal) void import('./srv-terminal');
     const firewall = query.get('modal') === 'firewall' && auth.can('servers:write') && !isApiDevice(server);
     if (firewall) void import('./sec-firewall');
     return html`${terminal ? html`<lcm-srv-terminal open server-id=${server.id} server-name=${server.name} @lcm-close=${() => router.setQuery({ terminal: null }, { replace: true })}></lcm-srv-terminal>` : nothing}
       ${firewall ? html`<lcm-srv-firewall open server-id=${server.id} server-name=${server.name} @lcm-close=${() => router.setQuery({ modal: null }, { replace: true })}></lcm-srv-firewall>` : nothing}
-      ${auth.can('servers:write') ? html`<lcm-srv-settings ?open=${query.get('modal') === 'settings'} server-id=${server.id} @lcm-close=${() => router.setQuery({ modal: null }, { replace: true })}></lcm-srv-settings>` : nothing}`;
+      ${auth.can('servers:write')
+        ? html`<lcm-srv-settings
+            ?open=${query.get('modal') === 'settings'}
+            ?tour=${intro}
+            section=${query.get('section') ?? ''}
+            server-id=${server.id}
+            @lcm-section=${(e: CustomEvent<{ section: string }>) => router.setQuery({ section: e.detail.section }, { replace: true })}
+            @lcm-close=${() => router.setQuery({ modal: null, section: null }, { replace: true })}
+          ></lcm-srv-settings>`
+        : nothing}
+      ${intro ? html`<lcm-srv-intro .server=${server}></lcm-srv-intro>` : nothing}`;
   }
 
   override render() {
@@ -618,7 +634,7 @@ export class ServerDetail extends LitElement {
     }
     const tab = this.#currentTab;
     return html`${this.#renderHeader(server)} ${this.#renderStates(server)}
-      <lcm-tabs label=${t('servers.tabs.label')} .tabs=${this.#tabItems(server)} value=${tab} @lcm-tab-change=${(e: CustomEvent<{ id: string }>) => this.#gotoTab(e.detail.id)}>
+      <lcm-tabs data-tour="server-tabs" label=${t('servers.tabs.label')} .tabs=${this.#tabItems(server)} value=${tab} @lcm-tab-change=${(e: CustomEvent<{ id: string }>) => this.#gotoTab(e.detail.id)}>
         <div class="tab-body">${this.#renderTabBody(server, tab)}</div>
       </lcm-tabs>
       ${auth.can('servers:write') ? this.#renderRemoveDialog(server) : nothing} ${this.#renderOverlays(server)}`;

@@ -50,6 +50,30 @@ Every endpoint checks a fixed permission scope (e.g. `servers:write`,
 groups (managers only see their assigned groups, admins see everything).
 Details on roles and scopes: [Security Model](/en/reference/security-model/).
 
+## Certificates, allowed networks and Let's Encrypt
+
+These endpoints require the right `system:endpoints`, which only `admin` has
+([Certificates](/en/guides/zertifikate/), [Allowed networks](/en/guides/netzbereiche/)):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /system/tls` | certificates in the pool and what each service serves for its public address |
+| `POST /system/tls/certificates` | upload a certificate (multipart, fields `certificate` and `key`) |
+| `DELETE /system/tls/certificates/{id}` | remove an uploaded certificate |
+| `POST /system/tls/reload` | reload certificates, like `lcm tls reload` |
+| `GET /system/tls/certificates/{id}/download` | the certificate chain as a PEM file, never the private key |
+| `GET /system/network` | allowed networks per service (`ui`, `agent`, `mcp`), their source and whether `config.json` locks them |
+| `PUT /system/network/{endpoint}` | set the allowed networks of a service |
+| `GET /system/acme`, `PUT /system/acme` | settings and state of Let's Encrypt |
+| `POST /system/acme/names-notice/ack` | dismiss the notice about the switch to the names from the addresses |
+| `POST /system/acme/issue` | start a run immediately |
+| `POST /system/acme/dns-test` | test the DNS provider for DNS-01 |
+
+Address mode and ports are part of `GET` and `PATCH /settings/global`
+([Public addresses & address mode](/en/guides/adressen/#through-the-api)). In addition `GET /system/tls/ca.pem` (right `settings:manage`) returns the public
+part of LCM's own certificate authority, and `PUT /settings/mcp` takes only `enabled`
+(MCP always speaks TLS; the port is `mcp_port` in `PATCH /settings/global`). Requests and responses are in the OpenAPI specification below.
+
 ## Example workflow
 
 ```sh
@@ -77,7 +101,7 @@ available at `GET /jobs/:id/ssh-output` and in the job history.
 
 ## Full reference (OpenAPI)
 
-All **290 endpoints** (combinations of method and path, spread over 258 paths) with required permission and (where
+All **311 endpoints** (combinations of method and path, spread over 276 paths) with required permission and (where
 evident from the source) request body are available machine-readably as an
 OpenAPI 3.0 specification, ready to download:
 

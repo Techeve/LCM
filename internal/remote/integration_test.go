@@ -177,6 +177,14 @@ func closeInTime(t *testing.T, hub *remote.Hub) {
 // echten Agent und wartet, bis er online ist. Den Hub schließt der Aufrufer.
 func connectedAgent(t *testing.T) (*remote.Hub, *repositories.ServerRepository, *domain.Server, *fiber.App) {
 	t.Helper()
+	return connectedAgentVia(t, nil, "")
+}
+
+// connectedAgentVia ist connectedAgent hinter einem Proxy: forwardedFor wird
+// dem Upgrade-Request als X-Forwarded-For vorgesetzt (leer = keine Kopfzeile),
+// trust sagt, ob LCM sie glaubt.
+func connectedAgentVia(t *testing.T, trust *netfilter.ProxyTrustHolder, forwardedFor string) (*remote.Hub, *repositories.ServerRepository, *domain.Server, *fiber.App) {
+	t.Helper()
 	db, err := storage.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +208,13 @@ func connectedAgent(t *testing.T) (*remote.Hub, *repositories.ServerRepository, 
 	}
 
 	app := fiber.New()
-	app.Get("/mqtt", remote.WSHandler(hub, netfilter.ProxyTrust{}))
+	if forwardedFor != "" {
+		app.Use(func(c fiber.Ctx) error {
+			c.Request().Header.Set(fiber.HeaderXForwardedFor, forwardedFor)
+			return c.Next()
+		})
+	}
+	app.Get("/mqtt", remote.WSHandler(hub, trust))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -280,4 +294,50 @@ func TestAgentTerminalEndToEnd(t *testing.T) {
 	if _, err := term.Read(buf); err != io.EOF {
 		t.Fatalf("nach close erwartet EOF, bekam %v", err)
 	}
+}
+
+// TestHubKnowsPeerAddress: Der Hub kennt die Gegenadresse eines verbundenen
+// Agents - hinter einem vertrauten Proxy die weitergeleitete, sonst die der
+// Verbindung.
+func TestHubKnowsPeerAddress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integrationstest (echter broker + websocket)")
+	}
+	loopback, err := netfilter.Parse([]string{"127.0.0.1/32"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		trust *netfilter.ProxyTrustHolder
+		want  string
+	}{
+		"vertrauter Proxy":     {netfilter.NewProxyTrustHolder(netfilter.ProxyTrust{Enabled: true, Proxies: loopback}), "203.0.113.9"},
+		"ohne Vertrauen":       {nil, "127.0.0.1"},
+		"Proxy nicht vertraut": {netfilter.NewProxyTrustHolder(netfilter.ProxyTrust{Enabled: true, Proxies: mustParse(t, "192.0.2.1/32")}), "127.0.0.1"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			hub, _, server, app := connectedAgentVia(t, tc.trust, "203.0.113.9")
+			t.Cleanup(func() {
+				_ = app.Shutdown()
+				hub.Close()
+			})
+			peers := hub.ConnectedPeers()
+			if len(peers) != 1 || peers[0].AgentID != server.AgentID || peers[0].Name != "roadwarrior" {
+				t.Fatalf("Agenten: %+v", peers)
+			}
+			if got := peers[0].Addr.String(); got != tc.want {
+				t.Errorf("Adresse = %s, erwartet %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func mustParse(t *testing.T, entries ...string) netfilter.Allowlist {
+	t.Helper()
+	list, err := netfilter.Parse(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list
 }

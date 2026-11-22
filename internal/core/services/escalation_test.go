@@ -149,3 +149,15 @@ func TestDetectRootEscalationNone(t *testing.T) {
 		t.Errorf("erwartete 5 Proben (2× sudo, 2× su, 1× login), bekam %d: %v", len(conn.calls), conn.calls)
 	}
 }
+
+// TestSuCommandSetztSbinPfad: su ohne "-" behält den Pfad des SSH-Logins, der
+// auf Debian kein sbin enthält. Ohne den Zusatz fand die Provisionierung auf
+// Debian 12 weder useradd noch adduser.
+func TestSuCommandSetztSbinPfad(t *testing.T) {
+	cmd := suCommand("useradd lcm-svc")
+	for _, want := range []string{"su root -c ", "/usr/sbin", "/sbin", "useradd lcm-svc"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("su-Kommando enthält %q nicht: %s", want, cmd)
+		}
+	}
+}

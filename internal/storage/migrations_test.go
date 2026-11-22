@@ -227,6 +227,51 @@ func TestKnownRepoTecheveMigration(t *testing.T) {
 	}
 }
 
+// TestKnownRepoTecheveCommunityMigration: die 2.2.2-Migration stellt nur die
+// unveränderte Auslieferungszeile auf „community" um; eine vom Betreiber
+// angepasste Zeile bleibt, und ein zweiter Lauf ändert nichts.
+func TestKnownRepoTecheveCommunityMigration(t *testing.T) {
+	const oldLine = "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.techeve.de stable main"
+	const newLine = "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.techeve.de community main"
+	const customLine = "deb [signed-by=/etc/apt/keyrings/techeve.asc] https://repo.techeve.de beta main"
+
+	var mig *migrations.Migration
+	for i := range migrations.Registry {
+		if migrations.Registry[i].Name == "2.2.2-known-repo-techeve-community" {
+			mig = &migrations.Registry[i]
+		}
+	}
+	if mig == nil {
+		t.Fatal("Migration 2.2.2-known-repo-techeve-community nicht registriert")
+	}
+
+	for _, tc := range []struct{ name, line, want string }{
+		{"Auslieferungszeile", oldLine, newLine},
+		{"angepasste Zeile", customLine, customLine},
+		{"schon umgestellt", newLine, newLine},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newMigrationTestDB(t)
+			if err := db.Exec(
+				`INSERT INTO known_repos (created_at, updated_at, "key", name, description, key_url, line)`+
+					` VALUES (datetime('now'), datetime('now'), 'techeve', 'Techeve', '', '', ?)`, tc.line,
+			).Error; err != nil {
+				t.Fatal(err)
+			}
+			for run := 1; run <= 2; run++ {
+				if err := mig.Run(db); err != nil {
+					t.Fatalf("Lauf %d: %v", run, err)
+				}
+			}
+			var line string
+			db.Table("known_repos").Where(`"key" = ?`, "techeve").Select("line").Scan(&line)
+			if line != tc.want {
+				t.Errorf("Zeile = %q, erwartet %q", line, tc.want)
+			}
+		})
+	}
+}
+
 func TestSemverCompare(t *testing.T) {
 	cases := []struct {
 		a, b string

@@ -1,27 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { clientConfig, curlExample, isLoopbackHost, mcpUrl } from './mcp-model';
+import { readGlobal } from '../../../api/settings';
+import { clientConfig, curlExample, mcpNeedsDomain, mcpUrl } from './mcp-model';
 
-describe('MCP-Bind-Adresse', () => {
-  it('lässt nur lokale Adressen zu, wie der Server', () => {
-    for (const host of ['127.0.0.1', '127.1.2.3', 'localhost', 'LOCALHOST', '::1', '[::1]', ' 127.0.0.1 ']) expect(isLoopbackHost(host)).toBe(true);
-    for (const host of ['0.0.0.0', '192.168.1.5', '128.0.0.1', '127.0.0.256', 'lcm.example.com', '::', '']) expect(isLoopbackHost(host)).toBe(false);
+describe('MCP braucht eine Domain', () => {
+  it('nur in Modus C ohne Namen für MCP', () => {
+    expect(mcpNeedsDomain(readGlobal({ address_mode: 'shared_port', public_mcp_url: '' }))).toBe(true);
+    expect(mcpNeedsDomain(readGlobal({ address_mode: 'shared_port' }))).toBe(true);
+    expect(mcpNeedsDomain(readGlobal({ address_mode: 'shared_port', public_mcp_url: 'https://mcp.example.com' }))).toBe(false);
+    expect(mcpNeedsDomain(readGlobal({ address_mode: 'separate', public_mcp_url: '' }))).toBe(false);
+    expect(mcpNeedsDomain(readGlobal({ address_mode: 'one_name' }))).toBe(false);
   });
 });
 
 describe('Anbindungsbeispiel', () => {
-  it('baut die Adresse mit eckigen Klammern für IPv6 und Vorgaben für leere Felder', () => {
-    expect(mcpUrl('127.0.0.1', '9330')).toBe('http://127.0.0.1:9330/mcp');
-    expect(mcpUrl('::1', '9400')).toBe('http://[::1]:9400/mcp');
-    expect(mcpUrl('127.0.0.1', '9330', 'https://mcp.example.com/')).toBe('https://mcp.example.com/mcp');
-    expect(mcpUrl('[::1]', '9400')).toBe('http://[::1]:9400/mcp');
-    expect(mcpUrl('', '')).toBe('http://127.0.0.1:9330/mcp');
+  it('hängt an die wirksame Adresse den Pfad /mcp', () => {
+    expect(mcpUrl('https://mcp.example.com', '9330')).toBe('https://mcp.example.com/mcp');
+    expect(mcpUrl('https://lcm.example.com:9330/', '9330')).toBe('https://lcm.example.com:9330/mcp');
+  });
+
+  it('fällt ohne wirksame Adresse auf den LCM-Host zurück, immer mit https', () => {
+    expect(mcpUrl('', '9400')).toBe('https://127.0.0.1:9400/mcp');
+    expect(mcpUrl('', '')).toBe('https://127.0.0.1:9330/mcp');
   });
 
   it('setzt Adresse und Platzhalter in Konfiguration und curl-Aufruf', () => {
-    const config = JSON.parse(clientConfig('http://127.0.0.1:9330/mcp', 'KEY'));
-    expect(config.mcpServers.lcm).toEqual({ type: 'http', url: 'http://127.0.0.1:9330/mcp', headers: { Authorization: 'Bearer KEY' } });
-    const curl = curlExample('http://127.0.0.1:9330/mcp', 'KEY');
-    expect(curl).toContain('curl -s http://127.0.0.1:9330/mcp');
+    const config = JSON.parse(clientConfig('https://127.0.0.1:9330/mcp', 'KEY'));
+    expect(config.mcpServers.lcm).toEqual({ type: 'http', url: 'https://127.0.0.1:9330/mcp', headers: { Authorization: 'Bearer KEY' } });
+    const curl = curlExample('https://127.0.0.1:9330/mcp', 'KEY');
+    expect(curl).toContain('curl -s https://127.0.0.1:9330/mcp');
     expect(curl).toContain('Bearer KEY');
     expect(curl).toContain('"name":"list_servers"');
   });

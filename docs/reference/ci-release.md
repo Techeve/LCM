@@ -294,7 +294,7 @@ git push origin develop
 
 Nach einem Update zeigt LCM jedem Administrator einmal, was die Version mitbringt. Der Text liegt auf dem Doku-Server unter `https://doc.techeve.de/lcm/static/release-notes/<version>.md`. Der Job `docs-build` schneidet die Dateien mit `tools/release-notes.sh` aus `CHANGELOG.md`, sie erscheinen also mit dem Doku-Rollout. Fehlt die Datei oder ist der Server nicht erreichbar, bleibt das Fenster zu und LCM versucht es später erneut.
 
-Jede Datei beginnt mit dem handgeschriebenen Text aus `release-info/<x.y.z>.md`, falls es ihn gibt. Er gehört zur Release-Reihe: `release-info/2.0.0.md` steht über `2.0.0` und allen Betas davon. Danach folgt der Auszug aus dem Changelog mit neuen Funktionen und Korrekturen, ohne Refactoring und Sonstiges. Den Text legt der letzte Commit vor dem Release an (`docs(release): …`). `prepare-release.sh` weist darauf hin, wenn er bei einem Release `x.y.0` fehlt.
+Jede Datei beginnt mit dem handgeschriebenen Text aus `release-info/<x.y.0>.md`, falls es ihn gibt. Er gehört zur Release-Reihe: `release-info/2.0.0.md` steht über `2.0.0`, allen Betas davon und allen Patch-Versionen (`2.0.1`, `2.0.2` …). Wer direkt auf einen Patch springt, sieht so alles, was die Reihe mitbringt, und nicht nur die Korrektur. Danach folgt der Auszug aus dem Changelog mit neuen Funktionen und Korrekturen, ohne Refactoring und Sonstiges. Den Text legt der letzte Commit vor dem Release an (`docs(release): …`). `prepare-release.sh` weist darauf hin, wenn er bei einem Release `x.y.0` fehlt.
 
 ### apt-Repository-Rollout (deploy)
 
@@ -308,7 +308,15 @@ Benötigte CI-Variablen (als **maskiert** hinterlegen):
 | `REPO_USER` | `gitlab-ci` | Basic-Auth-Benutzer |
 | `REPO_PASS` | *(geheim)* | Basic-Auth-Passwort |
 
-Optional: `REPO_NAME` (Default `techeve`), `DISTRO` (Default `stable`), `GPG_KEY` (Default `repo@techeve.de`). Ablauf und Skript: `packaging/publish-deb.sh`. Fehlen die Pflicht-Variablen, bricht der Job mit einer klaren Meldung ab. SemVer-Prereleases (`-beta.1`) schreibt nfpm für das Debian-Paket selbst als `~beta.1`, damit die Beta laut apt korrekt **vor** dem späteren Finale sortiert. Für die Agent-Pakete in apk und Arch rechnet `packaging/pkg-version.sh` die Version um (`2.0.0_beta1` und `2.0.0beta.1`), weil nfpm dort keine gültige Beta-Version erzeugt.
+Optional: `REPO_NAME` (Default `techeve`), `DISTRO` (Default `community`), `PUBLISH_PREFIX` (Default `:.`, die Wurzel), `GPG_KEY` (Default `repo@techeve.de`). Die Kanäle:
+
+| Branch | `REPO_NAME` | `DISTRO` (Suite) | `PUBLISH_PREFIX` |
+|---|---|---|---|
+| `community` | `techeve` | `community` | `:.` |
+| `beta` | `lcm-beta` | `beta` | `:.` |
+| `enterprise` | `lcm-enterprise` | `enterprise` | `enterprise/lcm` |
+
+Auf dem Server gilt: der URL-Pfad bestimmt den Zugang, die Suite den Kanal. Community publiziert nach `community`; der Server spiegelt das selbständig in die alte Suite `stable`, die er für ältere Installationen vorhält. Der Enterprise-Index liegt öffentlich unter `enterprise/lcm/dists/enterprise/…`. Nur die aptly-API kodiert den Prefix mit `_` statt `/` (`/api/publish/enterprise_lcm/enterprise`); das erledigen `publish-deb.sh` und `remove-deb.sh`. Ablauf und Skript: `packaging/publish-deb.sh`. Fehlen die Pflicht-Variablen, bricht der Job mit einer klaren Meldung ab. SemVer-Prereleases (`-beta.1`) schreibt nfpm für das Debian-Paket selbst als `~beta.1`, damit die Beta laut apt korrekt **vor** dem späteren Finale sortiert. Für die Agent-Pakete in apk und Arch rechnet `packaging/pkg-version.sh` die Version um (`2.0.0_beta1` und `2.0.0beta.1`), weil nfpm dort keine gültige Beta-Version erzeugt.
 
 ### Container-Images (deploy)
 

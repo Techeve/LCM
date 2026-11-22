@@ -116,6 +116,7 @@ export const PAGES: PageEntry[] = [
     menu: true,
   },
   { id: 'account', path: '/account', labelKey: 'nav.account', icon: 'user', hotkey: 'a', menu: false },
+  { id: 'setup', path: '/setup', labelKey: 'setup.title', icon: 'settings', menu: false },
   { id: 'docs', path: '/docs', labelKey: 'nav.docs', icon: 'book', hotkey: 'h', menu: false },
   { id: 'login', path: '/login', labelKey: 'login.title', icon: 'lock', menu: false },
 ];

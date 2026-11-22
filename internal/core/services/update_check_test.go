@@ -135,7 +135,7 @@ func TestCheckForUpdateHandlesHTTPError(t *testing.T) {
 // dem der Host tatsächlich steht - nicht immer in den Community-Kanal.
 //
 // Genau das war der Fehler: Wer auf Beta stand, bekam die Version aus
-// „stable" gemeldet. Da die stabile Version einer Vorabversion typischerweise
+// „community" gemeldet. Da die stabile Version einer Vorabversion typischerweise
 // hinterherhinkt, sah es dort dauerhaft nach „alles aktuell" aus, obwohl im
 // eigenen Kanal längst eine neuere Vorabversion lag.
 func TestCheckForUpdateFolgtDemPaketkanal(t *testing.T) {
@@ -143,7 +143,7 @@ func TestCheckForUpdateFolgtDemPaketkanal(t *testing.T) {
 		channel  string
 		wantPath string
 	}{
-		{domain.AptChannelCommunity, "/dists/stable/main/binary-amd64/Packages"},
+		{domain.AptChannelCommunity, "/dists/community/main/binary-amd64/Packages"},
 		{domain.AptChannelBeta, "/dists/beta/main/binary-amd64/Packages"},
 	}
 	for _, c := range cases {

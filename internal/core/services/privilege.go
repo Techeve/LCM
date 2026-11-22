@@ -265,6 +265,21 @@ func restrictedProvisionScript(svcUser string) []string {
 	return steps
 }
 
+// realBinaryExists baut den Shell-Test „das ECHTE Binary <name> ist
+// installiert". Im eingeschränkten Modus liegt für jedes Whitelist-Binary ein
+// Shim im PATH (sudoShimDir), egal ob das Programm da ist: ein bloßes
+// `command -v ufw` trifft dort immer, und erst `sudo -n ufw` scheitert mit
+// „a password is required". Der Test sucht deshalb mit eigenem PATH ohne das
+// Shim-Verzeichnis (die Zuweisung gilt nur für diesen einen Aufruf) - im
+// Voll-Modus liefert er dasselbe wie das bloße command -v. restrictedSecurePath
+// enthält /usr/local, wo lynis und der LCM-Helper liegen.
+//
+// Nur für Namen aus allowedSudoBinaries nötig; für alle anderen genügt command -v.
+// name wird unverändert eingesetzt (auch "$c" in Schleifen), nicht quoten.
+func realBinaryExists(name string) string {
+	return "PATH=" + restrictedSecurePath + " command -v " + name + " >/dev/null 2>&1"
+}
+
 // restrictedSelfTestScript prüft ALS SERVICE-USER, ob der eingeschränkte Modus
 // tatsächlich trägt: kommt der LCM-Helper über sudo an, und lässt sich die
 // Paketverwaltung des Systems aufrufen? Genau das war der blinde Fleck - LCM

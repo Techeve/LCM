@@ -141,6 +141,12 @@ export class LcmJoinAgent extends LitElement {
     return html`<div class="stack">
       <h2>${t('joinWizard.agent.readyTitle', { name: result.server.name })}</h2>
       <lcm-notice tone="warn">${t('joinWizard.agent.once')}</lcm-notice>
+      ${this._listener.needsProxy
+        ? html`<lcm-notice tone="warn" heading=${t('joinWizard.agent.proxyTitle')}>
+            ${t('joinWizard.agent.proxyText', { url: this._listener.url, port: this._listener.port })}
+            <a href="/settings/general">${t('joinWizard.agent.proxyLink')}</a>
+          </lcm-notice>`
+        : nothing}
       <div class="commands">
         ${this.#command(t('joinWizard.agent.repo'), commands.repo, t('joinWizard.agent.repoHint'))}
         ${this.#command(t('joinWizard.agent.install'), commands.install)}
@@ -161,11 +167,23 @@ export class LcmJoinAgent extends LitElement {
     </div>`;
   }
 
+  /** Der Agent ist aus: Neue Agenten kämen nicht an, deshalb gibt es keinen Befehl, sondern den Weg zum Schalter. */
+  #off() {
+    return html`<lcm-notice tone="warn" heading=${t('joinWizard.agent.off.title')} data-field="agent-off">
+      ${t('joinWizard.agent.off.text')} <a href="/settings/general">${t('joinWizard.agent.off.link')}</a>
+    </lcm-notice>`;
+  }
+
+  #body() {
+    if (this._result) return this.#ready(this._result);
+    return this._listener.enabled === false ? this.#off() : this.#form();
+  }
+
   override render() {
     const steps = [t('joinWizard.step.name'), t('joinWizard.step.install')];
     return html`<div class="panel">
       <lcm-join-steps .steps=${steps} current=${this._result ? 1 : 0}></lcm-join-steps>
-      ${this._result ? this.#ready(this._result) : this.#form()}
+      ${this.#body()}
     </div>`;
   }
 }

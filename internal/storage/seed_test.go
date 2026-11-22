@@ -268,3 +268,34 @@ func TestSeedKnownReposRespectsUserChanges(t *testing.T) {
 		t.Error("gelöschter katalog-eintrag wurde wieder angelegt")
 	}
 }
+
+// Nur eine frische Installation im regulären Betrieb beginnt den Assistenten
+// bei der Anmeldung im Browser; Demo und Entwicklung bleiben ungestört.
+func TestSeedSetupStepOffenNurImRegulaerenBetrieb(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cfg  config.Config
+		want string
+	}{
+		"regulär":     {config.Config{AdminInitialPassword: "x"}, domain.SetupStepSession},
+		"Demo":        {config.Config{AdminInitialPassword: "x", DemoMode: true}, ""},
+		"Entwicklung": {config.Config{AdminInitialPassword: "x", DevMode: true}, ""},
+	} {
+		db, err := Open(":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Migrate(db); err != nil {
+			t.Fatal(err)
+		}
+		if err := Seed(db, &tc.cfg); err != nil {
+			t.Fatalf("%s: seed: %v", name, err)
+		}
+		st, err := repositories.NewSettingsRepository(db).Get()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.SetupStep != tc.want {
+			t.Errorf("%s: setup_step = %q, erwartet %q", name, st.SetupStep, tc.want)
+		}
+	}
+}

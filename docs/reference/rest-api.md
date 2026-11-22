@@ -52,6 +52,30 @@ Servergruppen des jeweiligen Benutzers eingeschränkt (Manager sehen nur ihre
 zugewiesenen Gruppen, Admins alles). Details zu Rollen und Scopes:
 [Sicherheitsmodell](/reference/security-model/).
 
+## Zertifikate, Netzbereiche und Let's Encrypt
+
+Diese Endpunkte verlangen das Recht `system:endpoints`, das allein `admin` hat
+([Zertifikate](/guides/zertifikate/), [Erlaubte Netzbereiche](/guides/netzbereiche/)):
+
+| Endpunkt | Zweck |
+|---|---|
+| `GET /system/tls` | Zertifikate im Pool und was jeder Dienst für seine öffentliche Adresse ausliefert |
+| `POST /system/tls/certificates` | Zertifikat hochladen (multipart, Felder `certificate` und `key`) |
+| `DELETE /system/tls/certificates/{id}` | ein hochgeladenes Zertifikat entfernen |
+| `POST /system/tls/reload` | Zertifikate neu laden, wie `lcm tls reload` |
+| `GET /system/tls/certificates/{id}/download` | die Zertifikatskette als PEM-Datei, nie der private Schlüssel |
+| `GET /system/network` | erlaubte Netzbereiche je Dienst (`ui`, `agent`, `mcp`), ihre Quelle und ob die `config.json` sie sperrt |
+| `PUT /system/network/{endpoint}` | Netzbereiche eines Dienstes setzen |
+| `GET /system/acme`, `PUT /system/acme` | Einstellungen und Stand von Let's Encrypt |
+| `POST /system/acme/names-notice/ack` | den Hinweis zum Umstieg auf die Namen aus den Adressen bestätigen |
+| `POST /system/acme/issue` | einen Lauf sofort starten |
+| `POST /system/acme/dns-test` | DNS-Anbieter für DNS-01 prüfen |
+
+Adressmodus und Ports stehen in `GET` und `PATCH /settings/global`
+([Öffentliche Adressen & Adressmodus](/guides/adressen/#über-die-api)). Dazu liefert `GET /system/tls/ca.pem` (Recht `settings:manage`) den öffentlichen
+Teil der LCM-eigenen Zertifizierungsstelle, und `PUT /settings/mcp` nimmt nur `enabled`
+(MCP spricht immer TLS, der Port ist `mcp_port` in `PATCH /settings/global`). Die Anfragen und Antworten stehen in der OpenAPI-Spezifikation unten.
+
 ## Beispiel-Workflow
 
 ```sh
@@ -80,7 +104,7 @@ Job-Historie.
 
 ## Vollständige Referenz (OpenAPI)
 
-Alle **290 Endpunkte** (Kombinationen aus Methode und Pfad, verteilt auf 258 Pfade) mit benötigter Berechtigung und (soweit
+Alle **311 Endpunkte** (Kombinationen aus Methode und Pfad, verteilt auf 276 Pfade) mit benötigter Berechtigung und (soweit
 im Quellcode ersichtlich) Request-Body stehen maschinenlesbar als
 OpenAPI-3.0-Spezifikation zum Download bereit:
 

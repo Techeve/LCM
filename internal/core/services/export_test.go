@@ -72,3 +72,6 @@ func (p *ActionPreview) ExpectedCommandsForTest(server *domain.Server) []string 
 func (e *Executor) RunSpreadForTest(rules []domain.Rule, window time.Duration) {
 	e.runSpread(rules, window, ActorScheduler)
 }
+
+// RunNamesForTest macht die Namen eines Laufs für Black-Box-Tests lesbar.
+func (s *ACMEService) RunNamesForTest(st *domain.GlobalSettings) []string { return s.runNames(st) }

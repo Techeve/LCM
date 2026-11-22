@@ -58,6 +58,10 @@ type Status struct {
 	NetEnforced bool
 	// Reason: bei Active=false die Ursache, für die Anzeige im Klartext.
 	Reason string
+	// BubblewrapMissing: das Paket bubblewrap fehlt. Landlock kann trotzdem
+	// tragen (Active=true, Backend "landlock"); bubblewrap wäre dann die
+	// stärkere Sperre, und nur sie lässt sich nachrüsten.
+	BubblewrapMissing bool
 }
 
 // Command baut den Aufruf eines externen Programms so, dass es unter den

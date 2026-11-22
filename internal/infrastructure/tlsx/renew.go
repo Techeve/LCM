@@ -98,8 +98,8 @@ func issuedBy(cert *x509.Certificate, ca *CA) bool {
 	return ca != nil && bytes.Equal(cert.RawIssuer, ca.Cert.RawSubject) && cert.CheckSignatureFrom(ca.Cert) == nil
 }
 
-// replaceFile schreibt data unter path, über eine Zwischendatei daneben.
-func replaceFile(path string, data []byte, mode os.FileMode) error {
+// ReplaceFile schreibt data unter path, über eine Zwischendatei daneben.
+func ReplaceFile(path string, data []byte, mode os.FileMode) error {
 	tmp := path + ".new"
 	if err := os.WriteFile(tmp, data, mode); err != nil {
 		return fmt.Errorf("zertifikat speichern: %w", err)

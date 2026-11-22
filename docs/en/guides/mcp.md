@@ -2,7 +2,7 @@
 sidebar:
   order: 23
 title: MCP interface (AI agents)
-description: Expose read-only server properties to AI agents - over a separate, authenticated port.
+description: Expose read-only server properties to AI agents - over a separate, encrypted and authenticated port.
 ---
 
 The **MCP interface** (Model Context Protocol) exposes **read-only** properties
@@ -13,26 +13,49 @@ of the servers managed by LCM to AI agents. It is deliberately narrow:
   whitelist DTO.
 - **Read-only.** There are no write or configuration tools.
 - **Own port + mandatory authentication** via an MCP API key (bearer token).
-- **Fully toggleable** under *Settings → MCP*.
+- **Always encrypted.** MCP speaks HTTPS only.
+- **Fully toggleable** with one switch.
 
 ## Enabling
 
-*Settings → MCP*:
+The *Settings → MCP* page shows the **MCP interface** switch, the state, the
+effective address with a copy button, the MCP keys and a ready-made example.
 
-1. Turn on **Enable MCP interface**. The separate listener starts immediately
-   (no restart); turning it off stops it just as immediately. Changing the bind
-   address/port also takes effect at runtime (the old listener is shut down
-   cleanly).
-2. Set **bind address** and **port** (default `127.0.0.1:9330`). Binding to
-   `127.0.0.1` means local access only.
+1. Turn on **MCP interface**. The separate listener starts immediately (no
+   restart); turning it off stops it just as immediately. The same setting is in
+   *Settings → General* below the MCP address
+   ([Public addresses & address mode](/en/guides/adressen/#switching-agent-and-mcp-on-and-off)).
+2. You set **address and port** in *Settings → General* in the **Public
+   addresses** block, not on this page (default port `9330`). The page only shows
+   what follows from it.
 3. Create an **MCP API key** (its own separate list on the same page). The
    plaintext is shown **once**.
 
-:::caution[Plain HTTP - secure remote access]
-The MCP endpoint speaks plain **HTTP** (no TLS), matching the local default
-bind. If a remote agent needs access, put a **TLS-terminating reverse proxy** or
-an SSH tunnel in front - otherwise the bearer token would travel in cleartext.
+In address mode C, MCP has a name of its own on the shared port. If the name is
+missing, MCP is off and the switch stays locked until you enter a name under
+*Settings → General*.
+
+## Encryption and address
+
+MCP **always speaks HTTPS**, there is no switch for it any more. LCM picks the
+certificate from the pool by the name under which the client calls MCP. The
+listener binds to the same address as the web UI (`host` in the `config.json`),
+there is no field of its own for that. Clients call `https://<name>:9330/mcp`,
+over the shared port (mode C) without a port.
+
+:::caution[`http://` becomes `https://`]
+Up to 2.2, MCP spoke plain HTTP without TLS and listened locally only. From 2.3
+that is gone, on existing installations too. An MCP client or reverse proxy that
+still calls `http://` has to switch to `https://`. The proxy then has to speak
+HTTPS to MCP as well.
 :::
+
+Which certificate applies to the name you set at the gear of the MCP address
+under *Settings → General*. With Let's Encrypt the certificate carries the MCP
+name as soon as MCP is on. Everything about it is under
+[Certificates, Let's Encrypt & port 443](/en/guides/zertifikate/#mcp-with-tls).
+Who may connect to MCP is limited by the
+[Allowed networks](/en/guides/netzbereiche/).
 
 ## Security: isolated scope
 
@@ -102,15 +125,15 @@ critical CVE.
 
 ## Connecting
 
-The settings page shows a ready-made example. For an MCP client with HTTP
-transport (e.g. Claude Desktop / VS Code MCP clients):
+The settings page shows a ready-made example with your effective address. For an
+MCP client with HTTP transport (e.g. Claude Desktop / VS Code MCP clients):
 
 ```json
 {
   "mcpServers": {
     "lcm": {
       "type": "http",
-      "url": "http://127.0.0.1:9330/mcp",
+      "url": "https://lcm.example.com:9330/mcp",
       "headers": { "Authorization": "Bearer <YOUR_MCP_KEY>" }
     }
   }
@@ -124,38 +147,41 @@ Several instances can be registered in parallel - each with its own key:
   "mcpServers": {
     "lcm-prod": {
       "type": "http",
-      "url": "https://lcm.example.com/mcp",
+      "url": "https://mcp.example.com/mcp",
       "headers": { "Authorization": "Bearer <PROD_KEY>" }
     },
     "lcm-lab": {
       "type": "http",
-      "url": "http://127.0.0.1:9330/mcp",
+      "url": "https://lab.example.com:9330/mcp",
       "headers": { "Authorization": "Bearer <LAB_KEY>" }
     }
   }
 }
 ```
 
-(The `lcm-prod` URL here points at a TLS-terminating reverse proxy.)
+(The `lcm-prod` URL here stands for mode C on the shared port 443, `lcm-lab` for
+own ports.)
 
-Test directly (JSON-RPC 2.0 via curl):
+Test directly (JSON-RPC 2.0 via curl). If the name carries no certificate from a
+public authority, curl trusts the LCM certificate only with `--cacert`. As an
+admin you download the file from `GET /api/v1/system/tls/ca.pem`:
 
 ```bash
 # 1) list available tools
-curl -s http://127.0.0.1:9330/mcp \
+curl -s --cacert lcm-ca.pem https://lcm.example.com:9330/mcp \
   -H "Authorization: Bearer <YOUR_MCP_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 
 # 2) fetch one server by name
-curl -s http://127.0.0.1:9330/mcp \
+curl -s --cacert lcm-ca.pem https://lcm.example.com:9330/mcp \
   -H "Authorization: Bearer <YOUR_MCP_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call",
        "params":{"name":"get_server","arguments":{"server":"web01"}}}'
 
 # 3) fleet aggregate
-curl -s http://127.0.0.1:9330/mcp \
+curl -s --cacert lcm-ca.pem https://lcm.example.com:9330/mcp \
   -H "Authorization: Bearer <YOUR_MCP_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call",
@@ -172,5 +198,7 @@ curl -s http://127.0.0.1:9330/mcp \
   the server mirrors it in `initialize`.
 - `GET /mcp` is not used (no server-initiated SSE) and answers with **405 Method
   Not Allowed**.
-- Enable state, bind address and port can be switched at runtime via *Settings →
-  MCP* at any time - without restarting the application.
+- The switch and the port can be changed at runtime at any time, without
+  restarting the application. The port is in *Settings → General*.
+- Through the API (`PUT /api/v1/settings/mcp`) LCM accepts only `enabled` now. It
+  ignores `bind_host`, `port` and `tls` from older clients.

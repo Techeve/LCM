@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 )
@@ -86,8 +87,20 @@ func bwrapCommand(ctx context.Context, spec Spec, name string, args ...string) *
 // verschachtelte Container). Dann ist das Binary zwar da, aber wirkungslos -
 // das muss vor dem ersten Scan auffallen, nicht mittendrin.
 func bwrapUsable() bool {
+	return bwrapProbe() == nil
+}
+
+// errBwrapMissing: das Programm bwrap ist nicht installiert.
+var errBwrapMissing = errors.New("bwrap nicht installiert")
+
+// bwrapProbe liefert nil, wenn Bubblewrap benutzbar ist. errBwrapMissing heißt
+// „Paket fehlt"; jeder andere Fehler heißt „installiert, aber startet nicht"
+// und trägt Bubblewrap's eigene Meldung. Die Unterscheidung ist für die
+// Oberfläche wichtig: wer das Paket längst installiert hat, dem hilft der
+// Hinweis „Paket fehlt" nicht.
+func bwrapProbe() error {
 	if _, err := exec.LookPath(bwrapBinary); err != nil {
-		return false
+		return errBwrapMissing
 	}
 	// Geprobt wird mit GENAU der Aufrufzeile, die später auch benutzt wird.
 	// Eine vereinfachte Probe (nur /usr eingebunden) scheitert am fehlenden
@@ -95,5 +108,13 @@ func bwrapUsable() bool {
 	// die Sandbox wäre dann stillschweigend nie zum Einsatz gekommen.
 	spec := BaseSystemSpec().WithNet(false)
 	spec.ScratchTmp = true
-	return exec.Command(bwrapBinary, bwrapArgs(spec, "/usr/bin/env", []string{"true"})...).Run() == nil
+	out, err := exec.Command(bwrapBinary, bwrapArgs(spec, "/usr/bin/env", []string{"true"})...).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return errors.New(msg)
+	}
+	return nil
 }

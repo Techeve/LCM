@@ -142,7 +142,7 @@ func FirewallBackendFor(server *domain.Server) string {
 // nftables gilt nur als Firewall, wenn die LCM-Tabelle existiert oder der
 // nftables-Dienst aktiviert ist (systemd oder OpenRC). Braucht für den
 // nft-Zweig root (privRun); ufw/firewalld werden auch ohne erkannt.
-const firewallDetectCmd = `if command -v ufw >/dev/null 2>&1; then echo ufw; ` +
+var firewallDetectCmd = `if ` + realBinaryExists("ufw") + `; then echo ufw; ` +
 	`elif command -v firewall-cmd >/dev/null 2>&1; then echo firewalld; ` +
 	`elif command -v nft >/dev/null 2>&1 && { nft list table inet lcm >/dev/null 2>&1 || ` +
 	`systemctl is-enabled nftables >/dev/null 2>&1 || rc-update show 2>/dev/null | grep -q nftables; }; then echo nftables; ` +
@@ -178,6 +178,6 @@ func resolveFirewallBackend(server *domain.Server, detected string) (backend, in
 		domain.FirewallToolNftables:  "nft",
 	}[designated]
 	install := pkgInstallScript(server.PackageManager, []string{designated}) +
-		fmt.Sprintf("; command -v %s >/dev/null 2>&1 || { echo '%s'; exit 1; }", verifyBin, firewallInstallFailedMarker)
+		fmt.Sprintf("; %s || { echo '%s'; exit 1; }", realBinaryExists(verifyBin), firewallInstallFailedMarker)
 	return designated, install
 }

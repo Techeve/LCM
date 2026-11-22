@@ -16,7 +16,6 @@ import (
 	"LCM/internal/core/services"
 	"LCM/internal/infrastructure/tlsx"
 	"LCM/internal/infrastructure/tlsx/tlsxtest"
-	"LCM/internal/netfilter"
 	"LCM/internal/remote"
 	"LCM/internal/remote/wire"
 	"LCM/internal/storage"
@@ -106,7 +105,7 @@ func tlsBroker(t *testing.T, store *tlsx.CertStore) (*remote.Hub, *repositories.
 		t.Fatal(err)
 	}
 	app := fiber.New()
-	app.Get("/mqtt", remote.WSHandler(hub, netfilter.ProxyTrust{}))
+	app.Get("/mqtt", remote.WSHandler(hub, nil))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

@@ -7,7 +7,7 @@
 #   - develop     Integration; Feature-Branches mergen hierher
 #   - beta        Release-Zug/Stabilisierung; Releases (x.y.z-beta.N)
 #                 → apt-Kanal "beta"
-#   - community   stabile Releases → apt-Kanal "stable"; wird zusammen mit
+#   - community   stabile Releases → apt-Kanal "community"; wird zusammen mit
 #                 beta ins öffentliche Repo gespiegelt (Job mirror:public)
 #   - enterprise  Wartungszweig (voriges Feature-Release + Fixes) → apt-Kanal
 #                 "enterprise" (Subscription-Key); bleibt privat
@@ -796,6 +796,37 @@ upgrade-test:
   script:
     - bash packaging/upgrade-test/upgrade-test.sh
 
+# Trivy-Anleitung auf JEDER unterstuetzten Distribution: fuehrt den Befehlsblock
+# aus docs/getting-started/installation.md woertlich aus (testing/install-doc-test.sh).
+#
+# Warum es ihn gibt: Die Anleitung war nur auf Ubuntu erprobt. Auf Debian fehlten
+# Voraussetzungen (wget, bubblewrap), und der zweite Lauf brach am gpg-Rueckfrage-
+# Prompt ab. Debian 12 und 13 stehen deshalb gleichberechtigt neben Ubuntu.
+# Debian 11 fehlt bewusst: die Distribution ist aus dem Support gelaufen.
+#
+# Nicht abgedeckt: die Sandbox unter der systemd-Haertung des Dienstes - ein
+# Docker-Container hat kein systemd. Diesen Teil prueft dasselbe Skript auf den
+# Proxmox-Testcontainern (pve-test), siehe Kopf von testing/install-doc-test.sh.
+install-doc-test:
+  stage: test
+  image: $INSTALL_IMAGE
+  needs: []
+  parallel:
+    matrix:
+      - INSTALL_IMAGE: ["debian:12-slim", "debian:13-slim", "ubuntu:22.04", "ubuntu:24.04", "ubuntu:26.04"]
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $GITHUB_ISSUE_SYNC == "true"
+      when: never
+    - changes:
+        - docs/getting-started/installation.md
+        - testing/install-doc-test.sh
+        - packaging/lcm.service
+        - internal/core/services/lcm_host.go
+  script:
+    - sh testing/install-doc-test.sh
+
 ## ---- release -------------------------------------------------------------------
 
 # Läuft nach jedem Merge in einen Release-Branch (beta/community/enterprise).
@@ -860,10 +891,16 @@ release:
 
 # Rollt die gebauten .deb-Pakete (amd64 + arm64) beim Release auf den TechEve-
 # Repository-Server (aptly) aus - in den apt-Kanal des jeweiligen Branches:
-#   community  → aptly-Repo "techeve",        Suite "stable" (Wurzel, offen)
+#   community  → aptly-Repo "techeve",        Suite "community" (Wurzel, offen)
 #   beta       → aptly-Repo "lcm-beta",       Suite "beta"   (Wurzel, offen)
-#   enterprise → aptly-Repo "lcm-enterprise", Prefix "enterprise", Suite
-#                "stable" (Subscription-Key; Kanal-Layout s. packaging/repo-server/)
+#   enterprise → aptly-Repo "lcm-enterprise", Prefix "enterprise/lcm", Suite
+#                "enterprise" (Subscription-Key; öffentlicher Pfad
+#                enterprise/lcm/dists/enterprise/...; Kanal-Layout s.
+#                packaging/repo-server/)
+# Regel auf dem Server: URL-Pfad = Zugang, Suite = Kanal, Komponente immer "main".
+# Der Job publiziert nach "community". Der Server spiegelt das selbständig in
+# die alte Suite "stable", die er für ältere Installationen vorhält, bis sie
+# abgeschaltet wird; die CI muss dafür nichts tun.
 # Läuft nur, wenn tatsächlich ein Release ansteht (RELEASE_NEEDED=true, aus dem
 # version-Job). Sequenziert nach dem release-Job, damit erst nach erfolgreichem
 # GitLab-Release publiziert wird.
@@ -886,7 +923,7 @@ deploy:apt:
     - if: $CI_COMMIT_BRANCH == "community"
       variables:
         REPO_NAME: techeve
-        DISTRO: stable
+        DISTRO: community
         PUBLISH_PREFIX: ":."
     - if: $CI_COMMIT_BRANCH == "beta"
       variables:
@@ -896,8 +933,8 @@ deploy:apt:
     - if: $CI_COMMIT_BRANCH == "enterprise"
       variables:
         REPO_NAME: lcm-enterprise
-        DISTRO: stable
-        PUBLISH_PREFIX: enterprise
+        DISTRO: enterprise
+        PUBLISH_PREFIX: enterprise/lcm
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates jq
   script:

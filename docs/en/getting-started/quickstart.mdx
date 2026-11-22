@@ -16,9 +16,10 @@ import { Steps } from '@astrojs/starlight/components';
 1. **Add the onboarding SSH key (recommended).**
 
    LCM generated its own key pair on first start. Copy the **public key** from
-   *Settings → General* and add it to the new server's
-   `~/.ssh/authorized_keys` for `root`. This lets you onboard without a
-   password. (Onboarding via password works too.)
+   *Settings → General* (**Onboarding** card, *Onboarding key* sub-card, with a
+   guide for Debian, Ubuntu, RHEL and other systems) and add it to the default
+   user's `~/.ssh/authorized_keys` on the new server, usually `root`. This lets you
+   onboard without a password. (Onboarding via password works too.)
 
 2. **Onboard the server (join).**
 

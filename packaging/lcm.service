@@ -32,6 +32,11 @@ Group=lcm
 # /var/lib/lcm. The service runs unprivileged - LCM manages OTHER servers over
 # SSH and needs no root rights on its own host.
 ExecStart=/usr/bin/lcm -config /etc/lcm/config.json -data /var/lib/lcm
+# `systemctl reload lcm` (SIGHUP) reloads the TLS certificates from config.json
+# and the uploads without a restart - the hook a certificate renewal calls.
+# Open connections keep their certificate, agents stay connected. The same
+# works as `lcm tls reload`, which also reports the result.
+ExecReload=/bin/kill -HUP $MAINPID
 
 # --- Self-healing -------------------------------------------------------------
 # Restart=always instead of on-failure: even an exit with code 0 should bring
@@ -110,14 +115,26 @@ ProtectControlGroups=true
 # The list currently covers every namespace type bubblewrap needs - and thus
 # effectively all of them. It is spelled out anyway so the REASON stays visible.
 RestrictNamespaces=user mnt pid net ipc uts cgroup
-RestrictSUIDSGID=true
+# RestrictSUIDSGID is deliberately NOT set: its seccomp filter makes bubblewrap
+# 0.12 on Debian 13 (systemd 257) fail with "Can't mkdir parents for /proc:
+# Function not implemented". The sandbox probe then fails and the CVE scanner
+# runs unconfined. Debian 12 and Ubuntu 22.04-26.04 are unaffected, which is
+# why it went unnoticed. NoNewPrivileges and the empty capability set already
+# prevent anything setuid from gaining rights.
 LockPersonality=true
 MemoryDenyWriteExecute=true
 # Only these paths are writable (everything else is read-only via ProtectSystem).
 ReadWritePaths=/var/lib/lcm /etc/lcm
-# No elevated capabilities - the service binds port 9310 (>1024).
-CapabilityBoundingSet=
-AmbientCapabilities=
+# The only capability is CAP_NET_BIND_SERVICE: it lets the unprivileged service
+# open ports below 1024. LCM needs it for exactly two things:
+#   - port 443, when the address mode "one port" (shared TLS port) is chosen in
+#     Settings, so that browsers and agents need no port in the address;
+#   - port 80, only while an HTTP-01 challenge of Let's Encrypt is running (the
+#     listener is open just for that time and closed again afterwards).
+# The default ports (9310, 9320, 9330) are above 1023 and need nothing. Nothing
+# else is granted; all other hardening below stays in place.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 # AF_NETLINK belongs here since the CVE scanner runs sandboxed: when
 # bubblewrap detaches the network it brings up the loopback interface through a
 # NETLINK_ROUTE socket. Without the family it aborts with "Failed to create

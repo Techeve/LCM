@@ -26,6 +26,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	"LCM/internal/api/middlewares"
 	"LCM/internal/api/router"
 	"LCM/internal/config"
 	"LCM/internal/core/domain"
@@ -45,6 +46,7 @@ import (
 	"LCM/internal/infrastructure/trivy"
 	"LCM/internal/logging"
 	"LCM/internal/mcp"
+	"LCM/internal/netfilter"
 	"LCM/internal/perms"
 	"LCM/internal/remote"
 	"LCM/internal/safego"
@@ -60,6 +62,10 @@ import (
 const restoreRestartExitCode = 42
 
 func main() {
+	// Vor jedem Kindprozess: Kein Programm, das LCM startet, erbt die
+	// Port-Capability des Dienstes (siehe caps_linux.go).
+	dropAmbientCaps()
+
 	// Sandbox-Starter: LCM ruft sich selbst so auf, um ein externes Programm
 	// (Trivy) unter Landlock-Regeln zu starten. Muss VOR flag.Parse() und vor
 	// jeder Initialisierung stehen - dieser Prozess ist kein Server, er setzt
@@ -111,6 +117,16 @@ func main() {
 		}
 		fmt.Print(script)
 		return
+	}
+	// Subcommand: lcm tls reload|status - Zertifikate des laufenden Dienstes
+	// über die Steuerbuchse neu laden bzw. anzeigen.
+	if flag.Arg(0) == "tls" {
+		os.Exit(runTLSCommand(*dataDir, flag.Args()[1:], os.Stdout, os.Stderr))
+	}
+	// Subcommand: lcm network status|reset - die erlaubten Netzbereiche des
+	// laufenden Dienstes anzeigen bzw. nach einer Aussperrung zurücksetzen.
+	if flag.Arg(0) == "network" {
+		os.Exit(runNetworkCommand(*dataDir, flag.Args()[1:], os.Stdout, os.Stderr))
 	}
 	// Subcommand: lcm credentials init - Master-Key in ein systemd-Credential
 	// überführen (kein Klartext-Schlüssel mehr auf der Platte).
@@ -419,7 +435,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		})
 	userService := services.NewUserService(userRepo, roleRepo)
 	apiKeyService := services.NewAPIKeyService(apiKeyRepo)
-	systemService := services.NewSystemService().WithAgentPort(cfg.AgentPort)
+	systemService := services.NewSystemService()
 	// Ereignisbus: Die Dienste melden darauf, was sich ändert; der WebSocket
 	// GET /api/v1/events reicht es an die Tabs weiter.
 	eventBus := events.NewBus()
@@ -537,15 +553,6 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	}
 	defer agentHub.Close()
 	serverService.WithAgentHub(agentHub)
-	// Zertifikats-Fingerprint fürs Enrollment-Token (lazy - liest das aktive
-	// Zertifikat; im --dev-Modus existiert keins => Token ohne Pin).
-	serverService.WithCertFingerprint(func() (string, error) {
-		return tlsx.Fingerprint(filepath.Join(dataDir, tlsx.CertFileName))
-	})
-	// Derselbe Schlüssel als Pin für den Download-Befehl im Join-Assistenten.
-	serverService.WithAgentDownloadPin(func() (string, error) {
-		return tlsx.PublicKeyPin(filepath.Join(dataDir, tlsx.CertFileName))
-	})
 	packageService := services.NewPackageService(serverRepo)
 	backupService := services.NewBackupService(repositories.NewDatabaseRepository(db), settingsRepo, dataDir, dbPath, configPath).
 		WithConfigDir(cfg.BackupDir).WithCipher(cipher).WithMasterKey(masterKey)
@@ -647,8 +654,18 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		WithAptCaches(repositories.NewAptCacheRepository(db)).
 		WithDefaultBackupDir(defaultBackupDir).
 		WithRoles(roleRepo).
-		WithFallbackBaseURL(fallbackBaseURL(cfg, dev))
-	systemService.WithAgentURL(settingsService.PublicAgentURL)
+		WithAddressConfig(addressConfig(cfg, dev))
+	// config.json und Einstellungen führen Adressen, Ports, Proxys und Netzbereiche
+	// gemeinsam: Was von Hand in der Datei geändert wurde, geht in die Einstellungen,
+	// danach folgt die Datei der Datenbank. Auch im Entwicklungsmodus: Die
+	// E2E-Tests legen ihre Ports in der config.json fest.
+	mirror := newConfigSync(configPath, settingsRepo, settingsService, envLocksOf(addressConfig(cfg, dev)))
+	mirror.Start()
+	settingsService.WithConfigSync(mirror.Sync)
+	configSyncFn := mirror.Sync
+	systemService.WithAgentPort(settingsService.AgentPort).WithAgentURL(settingsService.PublicAgentURL).
+		WithAgentProxyHint(settingsService.AgentURLNeedsProxy)
+	serverService.WithAgentURL(settingsService.PublicAgentURL).WithLcmListeners(settingsService.LcmListeners)
 
 	// Wird der LCM-Host aus der Verwaltung entfernt, darf er sich nicht beim
 	// nächsten Paket-Update erneut selbst aufnehmen. Erst hier verdrahtbar:
@@ -675,9 +692,18 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		}
 		return certStore.Reload()
 	}).WithOnline(agentHub.Online)
-	// CA-Pin fürs Enrollment-Token: Neue Agenten folgen damit von Anfang an
-	// den monatlich neuen Schlüsseln.
-	serverService.WithCAFingerprint(certRenewal.TokenCAFingerprint)
+	// Pins fürs Enrollment-Token und den Download-Befehl: die des Zertifikats,
+	// das der Pool für den Namen der Adresse ausliefert. Neue Agenten folgen
+	// damit von Anfang an den Erneuerungen (CA-Pin). Der Pool entsteht erst mit
+	// den Listenern, im --dev-Modus nie - dann bleiben Token und Befehl ohne Pins.
+	var certPool *tlsx.Pool
+	serverService.WithAgentTrust(func(host string) services.AgentTrust {
+		if certPool == nil {
+			return services.AgentTrust{}
+		}
+		lcmCA, _ := certRenewal.TokenCAFingerprint()
+		return services.AgentTrustFor(certPool, lcmCA, host)
+	})
 	alertService.WithCertWarning(func() string {
 		st, err := certRenewal.State()
 		if err != nil {
@@ -782,6 +808,38 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Maschinen-Zugangsdaten in die CrowdSec-Einstellungen eintragen.
 	serverService.WithCrowdSecLapiSetter(settingsService.AdoptHostCrowdSecLapi)
 
+	// Client-Adresse und Netzbereiche: wessen X-Forwarded-For gilt, und welche
+	// Netze je Endpunkt (Weboberfläche, Agent, MCP) zugelassen sind. Beides
+	// steht in den Einstellungen (die config.json spiegelt es) und ändert sich
+	// zur Laufzeit über die Oberfläche (services.SettingsService,
+	// services.NetworkAccessService).
+	proxyTrust := netfilter.NewProxyTrustHolder(netfilter.ProxyTrust{})
+	if _, err := settingsService.WithProxyTrust(proxyTrust); err != nil {
+		return err
+	}
+	networkAccess, err := services.NewNetworkAccessService(settingsRepo, auditService)
+	if err != nil {
+		return err
+	}
+	networkAccess.WithConfigSync(configSyncFn).WithAgentPeers(agentHub)
+	logActiveNetworkLists(networkAccess)
+
+	// Zertifikate von einer ACME-CA. Den Pool gibt es erst mit den Listenern;
+	// bis dahin (und im --dev-Modus) lädt ein neues Zertifikat nirgends hin.
+	var reloader *certReloader
+	acmeService := newACMEService(cfg, dataDir, settingsRepo, auditService, settingsService, cipher,
+		func() {
+			if reloader != nil {
+				reloader.Reload("")
+			}
+		})
+	alertService.WithRenewalFailure(acmeService.RenewalFailure)
+	if !dev {
+		// Fehlt ein Zertifikat für alle Namen, stellt LCM nach dem Speichern selbst aus.
+		acmeService.WithAutoIssue()
+		settingsService.WithAddressesSaved(acmeService.EnsureCoverage)
+	}
+
 	// MCP-Schnittstelle: separater HTTP-Listener, über den KI-Agenten read-only
 	// Server-Eigenschaften abrufen. Authentifizierung per Bearer-API-Key mit
 	// MCP-Scope; komplett über die LCM-Einstellungen an-/abschaltbar (der
@@ -794,10 +852,17 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		},
 		"LCM", version.String(),
 	)
-	mcpServer := mcp.NewServer(mcpHandler, slog.Default())
-	settingsService.WithMCPToggle(mcpServer.Apply)
-	if st, err := settingsRepo.Get(); err == nil && st.MCPEnabled {
-		mcpServer.Apply(true, st.MCPBindHost, st.MCPPort)
+	mcpServer := mcp.NewServer(mcpHandler, slog.Default()).WithGuards(
+		middlewares.ResolveClientIP(proxyTrust),
+		middlewares.IPAllowlist(networkAccess.Holder(netfilter.EndpointMCP), netfilter.EndpointMCP, slog.Default()),
+	)
+	// Gestartet wird MCP erst, wenn die Listener der übrigen Dienste vorbereitet
+	// sind (startMCP): Mit TLS braucht es den Zertifikatspool. Es bindet immer mit
+	// TLS und an den Host der Oberfläche.
+	startMCP := func() {
+		if addr, err := settingsService.Addresses(); err == nil && addr.MCPEnabled {
+			_ = mcpServer.Apply(true, mcpBindHost(cfg.Host), addr.MCPPort, true) // Apply meldet Fehler selbst im Log
+		}
 	}
 
 	// Update-Prüfung: Scheduler-Callback verdrahten (fragt periodisch die
@@ -935,25 +1000,12 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	restart := func() {
 		slog.Warn("restore prepared - restart LCM to apply it")
 		if app != nil {
-			_ = app.Shutdown()
+			_ = app.ShutdownWithTimeout(shutdownTimeout)
 		}
 		os.Exit(restoreRestartExitCode)
 	}
 
-	// IP-Allowlist aus der Config bauen (bereits bei LoadFrom validiert).
-	ipAllowlist, err := cfg.IPAllowlist()
-	if err != nil {
-		return fmt.Errorf("allowed_ips: %w", err)
-	}
-	if !ipAllowlist.IsEmpty() {
-		slog.Info("access restriction active (allowed_ips)",
-			"entries", len(cfg.AllowedIPs), "trust_proxy_header", cfg.TrustProxyHeader)
-	}
-	proxyTrust, err := cfg.ProxyTrust()
-	if err != nil {
-		return err
-	}
-	if proxyTrust.Enabled && proxyTrust.Proxies.IsEmpty() {
+	if trust := proxyTrust.Load(); trust.Enabled && trust.Proxies.IsEmpty() {
 		// Ohne Liste vertraut LCM niemandem (netfilter.ProxyTrust). Wer das
 		// früher als „jeder Peer" eingerichtet hat, sieht sonst nur, dass
 		// hinter dem Proxy plötzlich alle Clients dieselbe Adresse haben.
@@ -1011,7 +1063,10 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		Restart:                  restart,
 		Health:                   healthMonitor,
 		DemoPublic:               cfg.DemoPublic,
-		IPAllowlist:              ipAllowlist,
+		UIAccess:                 networkAccess.Holder(netfilter.EndpointUI),
+		Network:                  networkAccess,
+		ACME:                     acmeService,
+		TLS:                      tlsAPI{reloader: func() *certReloader { return reloader }},
 		ProxyTrust:               proxyTrust,
 		Auth:                     authService,
 		APIKeys:                  apiKeyService,
@@ -1054,15 +1109,22 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	})
 
 	// LCM Remote: Der Agent-WebSocket (MQTT) läuft auf einem EIGENEN,
-	// dedizierten Listener - nicht auf dem UI/REST-Port. Nur wenn ein
-	// Agent-Port konfiguriert ist (agent_port != 0) und der Hub existiert.
+	// dedizierten Listener - nicht auf dem UI/REST-Port. Das Gateway gibt es,
+	// sobald der Hub existiert; ob es auf einem Port lauscht (agent_port != 0)
+	// oder am gemeinsamen TLS-Port, entscheiden die Einstellungen zur Laufzeit.
 	var agentApp *fiber.App
-	if agentHub != nil && cfg.AgentListenerEnabled() {
-		agentApp = router.NewAgentGateway(remote.WSHandler(agentHub, proxyTrust), slog.Default())
+	if agentHub != nil {
+		agentApp = router.NewAgentGateway(remote.WSHandler(agentHub, proxyTrust), proxyTrust,
+			networkAccess.Holder(netfilter.EndpointAgent), slog.Default())
 	}
 
-	// Graceful Shutdown bei SIGINT/SIGTERM (wichtig für Service-Betrieb).
+	// Graceful Shutdown bei SIGINT/SIGTERM (wichtig für Service-Betrieb). Der
+	// Hauptstrang wartet auf shutdownDone: Die Listener laufen in eigenen
+	// Goroutinen, weil ihre Ports zur Laufzeit wechseln.
+	shutdownDone := make(chan struct{})
+	var portsToClose portCloser
 	safego.Go("signal-handler", func() {
+		defer close(shutdownDone)
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-quit
@@ -1070,11 +1132,12 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		// diese Zeile. Ein Absturz tut das NICHT - daran erkennt man ihn.
 		slog.Info("=== LCM service stopping ===", "signal", sig.String())
 		health.NotifyStopping()
-		if agentApp != nil {
-			_ = agentApp.Shutdown()
-		}
+		// Erst die Ports freigeben, dann die Apps mit Frist herunterfahren: Ein
+		// hängender Client hält den Stopp nicht bis zum Timeout von systemd auf.
+		portsToClose.CloseAll()
 		mcpServer.Shutdown()
-		_ = app.Shutdown()
+		acmeService.Stop()
+		shutdownApps(shutdownTimeout, agentApp, app)
 	})
 
 	// Selbstüberwachung starten: meldet systemd die Betriebsbereitschaft
@@ -1083,22 +1146,30 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	// Prozess dauerhaft gestört oder durch gehäufte Panics instabil ist.
 	healthMonitor.Start("LCM v" + version.String())
 
-	// HTTPS by default: Beim ersten Start wird ein Self-Signed-Zertifikat
-	// erzeugt; unverschlüsseltes HTTP ist nur im Entwicklungsmodus (--dev)
-	// erlaubt. Ein eigenes Zertifikat kann über die globalen Einstellungen
-	// hinterlegt werden (dann liegen die PEM-Dateien ebenfalls im Datenverz.).
+	// HTTPS by default: Beim ersten Start entsteht eine eigene CA, die das
+	// Server-Zertifikat ausstellt. Eigene Zertifikate (tls_certificates in der
+	// config.json, Uploads) kommen über den Pool dazu. Unverschlüsseltes HTTP
+	// ist nur im Entwicklungsmodus (--dev) erlaubt.
 	if dev {
 		slog.Warn("DEVELOPMENT MODE: unencrypted HTTP active (--dev)",
 			"version", version.String(), "address", "http://"+cfg.Address())
-		if agentApp != nil {
-			slog.Info("LCM remote: agent listener (HTTP, --dev)", "address", "http://"+cfg.AgentAddress())
-			safego.Go("agent-listener", func() {
-				if err := agentApp.Listen(cfg.AgentAddress()); err != nil {
-					slog.Error("agent listener terminated", "error", err)
-				}
-			})
+		if cfg.SharedTLSListen != "" {
+			slog.Warn("shared_tls_listen is ignored in development mode (--dev): there is no TLS")
 		}
-		return app.Listen(cfg.Address())
+		closeControl := startControlSocket(dataDir, nil, networkAccess)
+		defer closeControl()
+		startMCP()
+		listeners, err := startListeners(listenerSetup{
+			cfg: cfg, dataDir: dataDir, settings: settingsService, app: app, agentApp: agentApp, mcp: mcpServer,
+			agentGate: agentHub.SetAccepting,
+		})
+		if err != nil {
+			return err
+		}
+		defer listeners.Close()
+		portsToClose.Add(listeners.Close)
+		<-shutdownDone
+		return nil
 	}
 
 	// Die CA stellt das Server-Zertifikat aus: die des Betreibers
@@ -1112,64 +1183,62 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	if err != nil {
 		return fmt.Errorf("tls-zertifikat vorbereiten: %w", err)
 	}
-	// Beide Listener holen das Zertifikat bei jedem Handshake aus dem
-	// Speicher - so nimmt die Erneuerung es ohne Neustart in Betrieb.
+	// Das Zertifikat der CA ist der Rückfall im Pool. Beide Listener holen
+	// ihr Zertifikat bei jedem Handshake aus dem Pool - so nimmt die
+	// Erneuerung ein neues ohne Neustart in Betrieb, ebenso ein Neuladen
+	// (`lcm tls reload`, SIGHUP).
 	certStore, err = tlsx.NewCertStore(certPath, keyPath)
 	if err != nil {
 		return fmt.Errorf("tls-zertifikat laden: %w", err)
 	}
+	certPool = tlsx.NewPool(certStore)
+	publicAddrs := func() publicAddresses { return storedPublicAddresses(settingsService) }
+	reloader = newCertReloader(certPool, cfg, configPath, dataDir, func(actor, action, details string) {
+		auditService.Log(actor, action, "settings", 1, details)
+	}, publicAddrs)
+	mcpServer.WithTLS(certPool.TLSConfig)
+	sharedPort := newSharedPort(certPool, publicAddrs)
+	sharedPort.AttachMCP(mcpServer)
+	reloader.shared = sharedPort.Status
+	defer sharedPort.Close()
+	portsToClose.Add(sharedPort.Close)
+	reloader.Reload("")
+	closeControl := startControlSocket(dataDir, reloader, networkAccess)
+	defer closeControl()
+	reloadOnSIGHUP(reloader)
+	startMCP()
+	acmeService.MigrateNames()
+	acmeService.EnsureCoverage()
+	safego.Go("acme-renewal", acmeService.RunDaily)
 	// Erste Prüfung vor den Listenern: Steht der Umstieg auf die CA an,
 	// verbinden sich die Agenten nach dem Neustart gleich mit dem neuen
 	// Zertifikat und lernen die CA (services.CertRenewal).
 	certRenewal.Run()
 	safego.Go("tls-cert-renewal", certRenewal.RunDaily)
-	// LCM Remote: den dedizierten Agent-Listener mit DEMSELBEN TLS-Zertifikat
-	// wie die UI starten - der Agent pinnt die CA, die es ausstellt. Läuft nebenläufig
-	// zum UI/REST-Listener; ein Fehler dort beendet nicht den Hauptdienst.
-	if agentApp != nil {
-		slog.Info("LCM remote: agent listener (HTTPS)", "address", "https://"+cfg.AgentAddress())
-		safego.Go("agent-listener-tls", func() {
-			if err := agentApp.Listen(cfg.AgentAddress(), fiber.ListenConfig{
-				TLSConfig: certStore.TLSConfig(),
-			}); err != nil {
-				slog.Error("agent listener terminated", "error", err)
-			}
-		})
+	// LCM Remote: der dedizierte Agent-Listener nutzt DEMSELBEN Zertifikatspool
+	// wie die UI - ohne passenden Namen liefert er das Zertifikat der CA, die
+	// der Agent pinnt. Er läuft nebenläufig zum UI/REST-Listener; ein Fehler
+	// dort beendet nicht den Hauptdienst.
+	listeners, err := startListeners(listenerSetup{
+		cfg: cfg, dataDir: dataDir, settings: settingsService, app: app, agentApp: agentApp,
+		mcp: mcpServer, shared: sharedPort, tlsConfig: certPool.TLSConfig, agentGate: agentHub.SetAccepting,
+	})
+	if err != nil {
+		return err
 	}
+	defer listeners.Close()
+	portsToClose.Add(listeners.Close)
 	slog.Info("LCM started (HTTPS)",
 		"version", version.String(),
-		"address", "https://"+cfg.Address(),
+		"address", "https://"+listeners.ui.current(),
 		"log_level", cfg.LogLevel,
 	)
-	return app.Listen(cfg.Address(), fiber.ListenConfig{
-		TLSConfig: certStore.TLSConfig(),
-	})
+	<-shutdownDone
+	return nil
 }
 
-// buildTime liefert einen stabilen NotBefore-Zeitpunkt für das
-// Self-Signed-Zertifikat (aktuelle Zeit, minus Puffer gegen Uhr-Skew).
+// buildTime liefert einen stabilen NotBefore-Zeitpunkt für CA und
+// Server-Zertifikat (aktuelle Zeit, minus Puffer gegen Uhr-Skew).
 func buildTime() time.Time {
 	return time.Now().Add(-1 * time.Hour)
-}
-
-// fallbackBaseURL leitet die Basis-Adresse für Mail-Links aus der lokalen
-// Konfiguration ab - der Rückfall, solange kein public_base_url gesetzt ist.
-//
-// BEWUSST NICHT aus dem Request: der Host-Header ist frei fälschbar, und ein
-// Angreifer könnte damit einen echten Passwort-Reset-Link mit gültigem Token
-// auf seine eigene Domain ausstellen lassen (Kontoübernahme per Klick).
-// Bindet LCM auf eine Wildcard-Adresse, ist von außen kein Name bekannt -
-// dann wird localhost verwendet: der Link ist dann ggf. nicht aus der Ferne
-// nutzbar, aber niemals irreführend. Der Betreiber setzt public_base_url.
-func fallbackBaseURL(cfg *config.Config, dev bool) string {
-	scheme := "https"
-	if dev {
-		scheme = "http"
-	}
-	host := cfg.Host
-	switch host {
-	case "", "0.0.0.0", "::", "[::]":
-		host = "localhost"
-	}
-	return fmt.Sprintf("%s://%s:%d", scheme, host, cfg.Port)
 }

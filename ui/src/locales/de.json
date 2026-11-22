@@ -383,19 +383,111 @@
       "key": {
         "title": "Onboarding-Schlüssel",
         "subtitle": "LCM hat ihn beim ersten Start erzeugt. Der private Teil bleibt verschlüsselt in LCM.",
-        "how": "Trage den öffentlichen Schlüssel auf dem neuen Server in ~/.ssh/authorized_keys von root ein. Danach nimmst du den Server beim Hinzufügen und Wiederverbinden per „System-SSH-Schlüssel“ auf, ganz ohne Passwort.",
-        "none": "Es gibt noch keinen Schlüssel. LCM erzeugt ihn beim nächsten Start."
+        "none": "Es gibt noch keinen Schlüssel. LCM erzeugt ihn beim nächsten Start.",
+        "guide": {
+          "intro": "LCM meldet sich mit diesem Schlüssel als Benutzer {user} an (Vorgabe für neue Server). Lege ihn auf dem neuen Server für diesen Benutzer ab. Bist du dort als anderer Benutzer angemeldet, wechselst du zuerst:",
+          "switchUser": "Zum Benutzer wechseln",
+          "debian": {
+            "title": "Debian, Ubuntu und Linux Mint",
+            "text": "Der SSH-Dienst muss laufen. Linux Mint bringt ihn nicht mit: sudo apt install openssh-server. Ist der Root-Login gesperrt, trage oben einen Benutzer mit sudo als Vorgabe ein."
+          },
+          "rhel": {
+            "title": "RHEL-Familie (Rocky, Alma, Fedora)",
+            "text": "Der Dienst heißt sshd. SELinux ist aktiv: Der letzte Befehl setzt den Kontext, sonst lehnt sshd die Datei ab."
+          },
+          "other": {
+            "title": "Andere Systeme",
+            "text": "Jedes System mit OpenSSH nimmt dieselben Befehle wie Debian. Verzeichnis 700 und Datei 600, beide gehören dem Benutzer, sonst lehnt sshd den Schlüssel ab."
+          }
+        }
       },
       "address": {
-        "title": "Öffentliche Adresse",
-        "subtitle": "Unter diesen Adressen ist LCM von außen erreichbar. Aus der ersten baut LCM die Links in E-Mails.",
-        "label": "Adresse der Oberfläche",
-        "hint": "Nur Schema, Host und Port, ohne Pfad.",
+        "title": "Öffentliche Adressen",
+        "subtitle": "Wie LCM von außen erreichbar ist. Aus der Adresse der Oberfläche baut LCM die Links in E-Mails.",
+        "hint": "Nur der Name, ohne https://. Läuft ein Proxy auf einem anderen Port, hänge :Port an.",
         "warning": "Nicht gesetzt: Links in E-Mails entstehen aus der lokalen Konfiguration und sind von außen womöglich nicht erreichbar. LCM leitet die Adresse bewusst nicht aus der Anfrage ab, sonst ließe sich ein Passwort-Reset-Link auf eine fremde Domain lenken.",
-        "agentLabel": "Adresse für Agenten",
-        "agentHint": "Nur nötig, wenn ein Reverse Proxy den Agent-Port unter eigenem Namen veröffentlicht. Leer: Host der Oberfläche mit dem Agent-Port.",
-        "mcpLabel": "Adresse der MCP-Schnittstelle",
-        "mcpHint": "Nur nötig, wenn ein Reverse Proxy die MCP-Schnittstelle unter eigenem Namen veröffentlicht. Leer: Bind-Adresse und Port aus den MCP-Einstellungen."
+        "agentHint": "Nur nötig, wenn ein Reverse Proxy die Agenten-Schnittstelle unter eigenem Namen veröffentlicht, auf anderem Port mit :Port. Leer: Name der Weboberfläche mit dem Agent-Port.",
+        "mcpHint": "Nur nötig, wenn ein Reverse Proxy die MCP-Schnittstelle unter eigenem Namen veröffentlicht, auf anderem Port mit :Port. Leer: Name der Weboberfläche mit dem MCP-Port.",
+        "configure": "Zertifikat & Sicherheit für {name}",
+        "modeLabel": "Adressmodus",
+        "mode": {
+          "separate": {
+            "title": "Eigene Ports, eigene Namen",
+            "text": "Jede Schnittstelle hat einen eigenen Port und einen eigenen Namen. Passt hinter einen Reverse Proxy."
+          },
+          "one_name": {
+            "title": "Eigene Ports, ein Name",
+            "text": "Ein Name für alle Schnittstellen, jede auf ihrem Port. Passt ohne Proxy."
+          },
+          "shared_port": {
+            "title": "Ein Port, eigene Namen",
+            "text": "Alle Schnittstellen auf einem Port, getrennt nach Namen. Im Browser steht kein Port."
+          }
+        },
+        "portLabel": "Port",
+        "portOf": {
+          "ui": "Port der Weboberfläche",
+          "agent": "Port der Agenten-Schnittstelle",
+          "mcp": "Port der MCP-Schnittstelle"
+        },
+        "hostLabel": "Name",
+        "hostHint": "Nur der Name, ohne https://, Port und Pfad. Er gilt für alle drei Schnittstellen.",
+        "derived": "Adressen",
+        "derivedNone": "Trage einen Namen ein.",
+        "sharedPort": "Gemeinsamer Port",
+        "sharedPortHint": "Vorgabe 443. Die Adressen lauten https://<Name>:<Port>, bei 443 ohne Port.",
+        "locked": "festgelegt durch eine Umgebungsvariable",
+        "portChange": {
+          "title": "Neue Adresse der Oberfläche",
+          "text": "Nach dem Speichern startet LCM den Listener neu, und du landest unter {address}. Klappt der Start nicht, geht LCM auf den alten Port zurück."
+        },
+        "errors": {
+          "port": "Trage einen Port von 1 bis 65535 ein.",
+          "portsDiffer": "Jede Schnittstelle braucht einen eigenen Port.",
+          "hostRequired": "Trage einen Namen ein.",
+          "hostFormat": "Nur der Name, ohne https://, Port und Pfad.",
+          "nameRequired": "Trage einen Namen ein.",
+          "nameInvalid": "Das ist kein gültiger Name.",
+          "namesDiffer": "Jede Schnittstelle braucht einen eigenen Namen.",
+          "entryPort": "Der Port hinter dem Namen muss eine Zahl von 1 bis 65535 sein."
+        },
+        "help": {
+          "title": "Hilfe zu den Adressen",
+          "fits": "Wann passt das?",
+          "proxy": "Reverse Proxy.",
+          "firewall": "Firewall.",
+          "acme": "Let's Encrypt.",
+          "separate": {
+            "fits": "Du setzt einen Reverse Proxy davor, oder jede Schnittstelle soll unter einem eigenen Namen laufen. LCM lauscht auf drei Ports, die Namen trägst du oben ein.",
+            "proxy": "Er reicht je Name an den passenden Port von LCM weiter: Oberfläche an {ui}, Agent an {agent}, MCP an {mcp}. Er spricht HTTPS mit LCM, lässt den Host-Namen unverändert und bricht Server-Sent Events und WebSockets nicht vorzeitig ab.",
+            "firewall": "Auf dem LCM-Server die Ports {ui}, {agent} und {mcp} nur für den Proxy und für Agenten öffnen. Nach außen braucht nur der Proxy Port 443.",
+            "acme": "Hat der Proxy ein eigenes Zertifikat, brauchst du Let's Encrypt in LCM nicht. Willst du es trotzdem, nimm DNS-01, denn HTTP-01 liefe am Proxy vorbei."
+          },
+          "one_name": {
+            "fits": "Du betreibst LCM ohne Proxy. Ein Name und ein Zertifikat gelten für alle drei Schnittstellen, jede hat ihren Port. LCM rechnet die drei Adressen daraus aus.",
+            "proxy": "Hier ist meist keiner nötig. Setzt du doch einen davor, reiche TLS je Port unverändert durch, oder wähle Modus A mit je einem Namen.",
+            "firewall": "Gib {ui}, {agent} und {mcp} frei. Für HTTP-01 von Let's Encrypt kommt kurz Port 80 dazu.",
+            "acme": "Let's Encrypt stellt ein Zertifikat für den Namen aus und erneuert es selbst. HTTP-01 genügt, wenn Port 80 aus dem Internet erreichbar ist, sonst nimm DNS-01."
+          },
+          "shared_port": {
+            "fits": "Der Browser soll keinen Port zeigen, etwa weil nur 443 offen ist. Alle Schnittstellen lauschen auf einem Port, und LCM trennt sie nach dem Namen (SNI). Jede Schnittstelle braucht dafür einen eigenen Namen, der auf diesen Server zeigt.",
+            "proxy": "Ein Proxy davor muss nach dem Namen trennen: TLS nach SNI durchreichen, oder HTTPS mit unverändertem Host-Namen an denselben Port weiterleiten.",
+            "firewall": "Gib den Port {shared} frei, mehr nicht. Für HTTP-01 von Let's Encrypt kommt kurz Port 80 dazu.",
+            "acme": "Let's Encrypt stellt ein Zertifikat für alle drei Namen aus und erneuert es selbst. HTTP-01 genügt, wenn Port 80 aus dem Internet erreichbar ist, sonst nimm DNS-01."
+          }
+        },
+        "noDomain": "Für diese Schnittstelle ist keine Domain eingerichtet.",
+        "inactive": "(nicht aktiv)",
+        "interface": {
+          "ui": "Weboberfläche",
+          "agent": "Agenten-Schnittstelle",
+          "mcp": "MCP-Schnittstelle"
+        },
+        "name": {
+          "ui": "Name der Weboberfläche",
+          "agent": "Name der Agenten-Schnittstelle",
+          "mcp": "Name der MCP-Schnittstelle"
+        }
       },
       "jobs": {
         "title": "Überwachung",
@@ -442,6 +534,38 @@
         "routineHint": "Health-Checks und Alarm-Auswertungen laufen alle paar Minuten. Ihre Ausgaben verschwinden nach dieser Frist, dass der Lauf stattfand, bleibt bis zur allgemeinen Aufbewahrung sichtbar.",
         "storage": "Speicherverlauf (Tage)",
         "storageHint": "Tageswerte der Festplattenbelegung. Erlaubt sind 90 bis 365 Tage."
+      },
+      "onboarding": {
+        "title": "Onboarding",
+        "subtitle": "Wie neue Server zu LCM kommen: Vorgaben, SSH-Schlüssel oder Agent."
+      },
+      "agent": {
+        "title": "Mit Agent verwenden",
+        "subtitle": "Der Server verbindet sich selbst mit LCM, ohne SSH-Zugang von LCM aus.",
+        "text": "Der Agent ist ein kleines Programm auf dem Server. Er baut die Verbindung zu LCM von dort aus auf. Das passt für Server hinter NAT oder Firewall, die LCM nicht per SSH erreichen kann.",
+        "noDomain": "Für die Agenten-Schnittstelle ist keine Domain eingerichtet.",
+        "address": "Adresse für Agenten",
+        "join": "Agent-Server hinzufügen",
+        "off": "Die Agenten-Schnittstelle ist ausgeschaltet.",
+        "toAddresses": "Einschalten unter Öffentliche Adressen",
+        "statusOn": "An",
+        "statusOff": "Aus"
+      }
+    },
+    "service": {
+      "agent": {
+        "label": "Agenten-Schnittstelle",
+        "on": "LCM nimmt Verbindungen von Agenten an der Agent-Adresse an.",
+        "off": "Der Agent-Port nimmt keine Verbindung an. Verbundene Agenten trennen sich.",
+        "offline": {
+          "one": "{count} Server nutzt den Agenten. Er geht beim Speichern offline.",
+          "other": "{count} Server nutzen den Agenten. Sie gehen beim Speichern offline."
+        }
+      },
+      "mcp": {
+        "label": "MCP-Schnittstelle",
+        "on": "LCM nimmt MCP-Anfragen an der MCP-Adresse an. Ein Assistent braucht dafür einen MCP-Schlüssel.",
+        "off": "Kein MCP-Zugang. Bestehende MCP-Schlüssel bleiben, sind aber wirkungslos."
       }
     },
     "session": {
@@ -473,23 +597,19 @@
       "noneWarning": "Passwort und Inhalte gehen im Klartext durchs Netz. Nur in vertrauenswürdigen Netzen nutzen."
     },
     "mcp": {
-      "hostLocal": "Nur eine lokale Adresse: 127.0.0.1, ::1 oder localhost.",
       "interface": {
         "title": "Schnittstelle",
         "subtitle": "KI-Assistenten lesen über MCP den Zustand deiner Flotte",
         "on": "läuft",
         "off": "aus",
-        "enable": "MCP-Schnittstelle",
-        "enableOn": "LCM nimmt MCP-Anfragen an der Adresse unten an. Ein Assistent braucht dafür einen MCP-Schlüssel.",
-        "enableOff": "Kein MCP-Zugang. Bestehende MCP-Schlüssel bleiben, sind aber wirkungslos.",
-        "host": "Bind-Adresse",
-        "hostHint": "MCP spricht unverschlüsseltes HTTP. Für Zugriff von außen gehört ein TLS-Proxy oder Tunnel davor.",
-        "port": "Port"
+        "address": "Adresse der MCP-Schnittstelle",
+        "noDomain": "Für MCP ist keine Domain eingerichtet. Trage sie unter Einstellungen → Allgemein ein.",
+        "noDomainLink": "Zu Einstellungen → Allgemein"
       },
       "example": {
         "title": "Anbindung",
         "subtitle": "So trägst du LCM in einem MCP-Client ein, mit der gespeicherten Adresse",
-        "url": "Adresse",
+        "url": "Endpunkt",
         "config": "Eintrag für den Client (mcpServers)",
         "curl": "Probeaufruf",
         "keyPlaceholder": "DEIN-MCP-SCHLÜSSEL"
@@ -497,7 +617,7 @@
       "explainer": {
         "title": "Was ist MCP?",
         "what": "Das Model Context Protocol verbindet KI-Assistenten mit Werkzeugen. Über die Schnittstelle fragt ein Assistent etwa, welche Server Updates oder einen Neustart brauchen. Ändern kann er dort nichts.",
-        "local": "Die Schnittstelle lauscht nur lokal, weil Schlüssel und Flottendaten sonst im Klartext durchs Netz gingen.",
+        "local": "MCP spricht immer TLS: Schlüssel und Flottendaten gehen nie im Klartext durchs Netz. Adresse und Port stehen unter Einstellungen → Allgemein.",
         "keys": "MCP-Schlüssel gelten nur hier und handeln mit den Rechten des Kontos, das sie erzeugt hat."
       }
     },
@@ -574,10 +694,7 @@
         "title": "Subscription aktivieren",
         "subtitle": "Die Subscription bringt Support und den Enterprise-Paketkanal. Community und Enterprise sind funktional gleich, ohne Server-Limit.",
         "key": "Subscription-Key",
-        "action": "Aktivieren",
-        "advanced": "Eigene Dienst-Adresse",
-        "url": "Adresse des Subscription-Dienstes",
-        "urlHint": "Leer lassen nutzt repo.techeve.de. Ändere das nur, wenn du einen eigenen Repository-Server betreibst."
+        "action": "Aktivieren"
       },
       "activated": "Subscription aktiviert. Der Repository-Zugang ist eingerichtet.",
       "status": {
@@ -663,7 +780,9 @@
         },
         "versionsLoading": "Die neuesten Versionen der Kanäle werden abgefragt …",
         "versionsFailed": "Die Versionen der Kanäle sind nicht abrufbar. Wechsel bleiben gesperrt, bis sie es wieder sind.",
-        "impactOneWay": "Erst wieder, wenn der {channel} {feature} erreicht hat"
+        "impactOneWay": "Erst wieder, wenn der {channel} {feature} erreicht hat",
+        "recommend": "Subscription aktiv. Wähle unten den Enterprise-Kanal; mit „Weiter“ stellt LCM um.",
+        "embeddedHint": "Die Wahl gilt erst mit „Weiter“: Dann stellt LCM den Kanal um."
       },
       "instance": {
         "title": "Instanz-Kennung",
@@ -1527,6 +1646,7 @@
         "cveDbStale": "CVE-Datenbank veraltet",
         "backupStale": "System-Backup überfällig",
         "tlsCertExpiring": "TLS-Zertifikat läuft bald ab",
+        "tlsRenewalFailed": "Zertifikat-Erneuerung fehlgeschlagen",
         "advisory": "Frühwarnung: neue Befunde"
       },
       "hints": {
@@ -1543,6 +1663,7 @@
         "cveDbStale": "Löst aus, wenn die Schwachstellen-Datenbank älter als 48 Stunden ist. Eine alte Datenbank meldet keinen Fehler, sie findet nur Neues nicht: Das sieht aus wie „alles sicher“.",
         "backupStale": "Löst aus, wenn automatische Backups an sind, das jüngste aber älter als zwei Intervalle ist oder es noch keines gibt. Gemessen wird das Ergebnis, nicht einzelne Fehlversuche.",
         "tlsCertExpiring": "Löst ab 60 Tagen vor Ablauf des LCM-Zertifikats aus, wenn LCM es nicht selbst erneuert: bei einem eigenen Zertifikat oder solange Agenten nur das alte Zertifikat kennen. Die Meldung nennt diese Agenten. Ein Jahr vor dem Ende der LCM-CA löst er ebenfalls aus.",
+        "tlsRenewalFailed": "Löst aus, wenn LCM ein Zertifikat bei einer ACME-CA (etwa Let's Encrypt) nicht ausstellen oder erneuern konnte, und bleibt, bis ein Lauf gelingt. Die Meldung nennt den Grund. LCM versucht es stündlich wieder.",
         "advisory": "Meldet offene Frühwarn-Befunde ab der gewählten Schwere. Bösartige Pakete lösen immer aus. Befunde, die du unter Sicherheit zur Kenntnis nimmst, lösen danach nicht mehr aus."
       },
       "severity": {
@@ -1672,6 +1793,352 @@
         "stopped": "Debug-Protokollierung beendet",
         "failed": "Umschalten hat nicht geklappt"
       }
+    },
+    "endpoint": {
+      "name": {
+        "ui": "Weboberfläche",
+        "agent": "Agenten-Schnittstelle",
+        "mcp": "MCP-Schnittstelle"
+      },
+      "heading": "{name}: Zertifikat & Sicherheit",
+      "noAddress": "Keine Adresse eingetragen",
+      "loading": "Wird geladen",
+      "draftDiffers": "Du hast die Adresse geändert, aber noch nicht gespeichert. Dieses Fenster zeigt den Stand der gespeicherten Adresse.",
+      "cert": {
+        "title": "Zertifikat",
+        "noAddress": "Für diesen Dienst ist keine Adresse eingetragen. Ohne Namen liefert LCM sein eigenes Zertifikat aus (LCM-Zertifikat). Trage die Adresse ein und speichere sie, dann kannst du hier ein Zertifikat für den Namen hinterlegen.",
+        "unavailable": "LCM läuft im Entwicklungsmodus ohne TLS. Zertifikate gibt es hier nicht.",
+        "servedFor": "Für {host} liefert LCM dieses Zertifikat aus:",
+        "noOwn": "Für {host} gibt es kein eigenes Zertifikat. LCM liefert sein LCM-Zertifikat aus, und Browser warnen davor. Lade ein Zertifikat hoch oder richte Let's Encrypt ein.",
+        "sourceLabel": "Quelle",
+        "source": {
+          "config": "config.json",
+          "upload": "Hochgeladen",
+          "acme": "Let's Encrypt (ACME)",
+          "lcmCa": "LCM-Zertifikat"
+        },
+        "names": "Namen",
+        "issuer": "Aussteller",
+        "validUntil": "Gültig bis",
+        "expiredOn": "Abgelaufen am {date}",
+        "expiresToday": "läuft heute ab",
+        "expiresIn": {
+          "one": "noch 1 Tag",
+          "other": "noch {count} Tage"
+        },
+        "soonNote": "Das Zertifikat läuft bald ab. Erneuere es rechtzeitig, sonst warnen Browser.",
+        "fingerprint": "Fingerabdruck (SHA-256)",
+        "copy": "Kopieren",
+        "copyLabel": "Fingerabdruck kopieren",
+        "copied": "Fingerabdruck kopiert",
+        "copyFailed": "Kopieren hat nicht geklappt",
+        "alsoServes": "Gilt auch für",
+        "warning": {
+          "chain": "Die Kette ist unvollständig: Das Zertifikat des Ausstellers fehlt in der Datei. Manche Clients lehnen das Zertifikat dann ab. Lade die Datei mit der vollständigen Kette hoch, meist fullchain.pem."
+        },
+        "fixedByConfig": "Dieses Zertifikat steht in der config.json und lässt sich hier nicht ändern. Passe es dort an und lade es mit „lcm tls reload“ neu.",
+        "fixedByAcme": "Dieses Zertifikat holt und erneuert LCM selbst über ACME. Einstellen kannst du es im Abschnitt „Let's Encrypt“ im Block Öffentliche Adressen.",
+        "upload": "Zertifikat hochladen",
+        "remove": "Hochgeladenes entfernen",
+        "others": "Weitere Zertifikate in LCM"
+      },
+      "upload": {
+        "certFile": "Zertifikat (PEM, mit Kette)",
+        "keyFile": "Privater Schlüssel (PEM)",
+        "choose": "Datei wählen",
+        "none": "Keine Datei gewählt",
+        "hint": "Wähle die PEM-Datei mit dem Zertifikat und seiner Kette, meist fullchain.pem, und die Schlüsseldatei ohne Passwort. LCM prüft beides, bevor es etwas speichert, und lädt das Zertifikat ohne Neustart.",
+        "agentName": "Agenten prüfen den Namen ihrer Adresse ({host}). Deckt das Zertifikat ihn nicht ab, behalten Agenten das LCM-Zertifikat.",
+        "submit": "Hochladen",
+        "cancel": "Abbrechen",
+        "done": "Zertifikat hochgeladen",
+        "served": "LCM liefert es jetzt für {host} aus.",
+        "precedence": "Es nennt {host}, aber für diese Adresse gilt weiter das Zertifikat aus „{source}“, weil es in der Rangfolge vorgeht.",
+        "notServed": "Es nennt {host} nicht (Namen: {names}) und wird für diese Adresse nicht ausgeliefert.",
+        "agentKeeps": "Für die Agent-Adresse {host} liefert LCM weiter das LCM-Zertifikat aus, weil das hochgeladene den Namen nicht abdeckt. Verbundene Agenten bleiben verbunden."
+      },
+      "remove": {
+        "label": "Zertifikat für {names} entfernen",
+        "heading": "Zertifikat entfernen?",
+        "message": "LCM löscht das hochgeladene Zertifikat samt Schlüssel. Danach liefert es für diese Namen ein anderes passendes Zertifikat oder das LCM-Zertifikat aus.",
+        "confirm": "Entfernen",
+        "keep": "Behalten",
+        "undo": "Umkehrbar",
+        "undoNo": "Nein, du müsstest es erneut hochladen",
+        "serves": "Liefert auch aus für",
+        "done": "Zertifikat entfernt"
+      },
+      "net": {
+        "intro": {
+          "ui": "Von welchen Netzen aus sich Browser und API-Clients mit LCM verbinden dürfen.",
+          "agent": "Von welchen Netzen aus sich Agenten mit LCM verbinden dürfen.",
+          "mcp": "Von welchen Netzen aus sich MCP-Clients mit LCM verbinden dürfen."
+        },
+        "all": "Alle Netze erlaubt",
+        "restricted": {
+          "one": "1 Eintrag",
+          "other": "{count} Einträge"
+        },
+        "field": "Erlaubte Netze",
+        "hint": "Ein Eintrag je Zeile: eine IP-Adresse, ein Netz wie 10.0.0.0/8 oder eines der Wörter localhost und private. Leer erlaubt alle Netze.",
+        "invalid": "Kein gültiger Eintrag: {list}. Erlaubt sind IP-Adressen, Netze wie 10.0.0.0/8 und die Wörter localhost und private.",
+        "tooMany": "Höchstens {max} Einträge.",
+        "yourAddress": "Deine Adresse",
+        "yourAddressUi": "LCM lehnt eine Liste ab, in der deine Adresse fehlt, damit du dich nicht aussperrst.",
+        "save": "Netzbereiche speichern",
+        "saved": "Netzbereiche gespeichert",
+        "savedDisconnected": {
+          "one": "Netzbereiche gespeichert, 1 Agent getrennt",
+          "other": "Netzbereiche gespeichert, {count} Agenten getrennt"
+        },
+        "lockoutHelp": "Trage deine Adresse oder das Netz, in dem sie liegt, in die Liste ein.",
+        "agentsDialog": {
+          "heading": "Verbundene Agenten werden getrennt",
+          "message": {
+            "one": "1 verbundener Agent liegt außerhalb des neuen Bereichs. Speicherst du ihn, trennt LCM den Agenten. Er kann sich erst wieder verbinden, wenn seine Adresse erlaubt ist.",
+            "other": "{count} verbundene Agenten liegen außerhalb des neuen Bereichs. Speicherst du ihn, trennt LCM sie. Sie können sich erst wieder verbinden, wenn ihre Adresse erlaubt ist."
+          },
+          "confirm": "Speichern und trennen",
+          "cancel": "Zurück",
+          "unknownAddress": "Adresse unbekannt"
+        },
+        "saveFor": "Netzbereiche speichern: {name}"
+      }
+    },
+    "acme": {
+      "title": "Let's Encrypt",
+      "subtitle": "LCM holt ein Zertifikat für alle Namen der öffentlichen Adressen selbst bei einer ACME-Zertifizierungsstelle und erneuert es rechtzeitig.",
+      "status": {
+        "off": "Aus",
+        "running": "Läuft gerade",
+        "failed": "Letzter Lauf fehlgeschlagen",
+        "waiting": "Noch kein Zertifikat",
+        "active": "Zertifikat aktiv"
+      },
+      "enable": "Zertifikate automatisch beziehen",
+      "enableOn": "LCM holt und erneuert das Zertifikat für die Namen unten.",
+      "enableOff": "LCM holt keine Zertifikate. Schon ausgestellte entfernt es beim Speichern.",
+      "names": "Namen",
+      "namesHint": "Die Namen kommen aus den Adressen oben, höchstens drei. Let's Encrypt stellt ein Zertifikat für alle aus.",
+      "email": "Kontakt-E-Mail (optional)",
+      "emailHint": "Die Zertifizierungsstelle schreibt hierhin, bevor ein Zertifikat abläuft.",
+      "ca": "Zertifizierungsstelle",
+      "caLetsEncrypt": "Let's Encrypt",
+      "caStaging": "Let's Encrypt Staging (zum Testen)",
+      "caStagingHint": "Staging stellt Testzertifikate aus, denen Browser nicht vertrauen. Nur zum Ausprobieren.",
+      "caCustom": "Eigene Adresse",
+      "directory": "Adresse des ACME-Verzeichnisses",
+      "directoryHint": "Muss mit https:// beginnen, etwa die einer eigenen CA wie step-ca.",
+      "challenge": "Prüfung",
+      "challengeHttp": "HTTP-01",
+      "challengeText": "Die Zertifizierungsstelle ruft eine Datei unter http://<Name>/.well-known/acme-challenge/ ab. Port 80 muss dafür aus dem Internet auf LCM zeigen. Hinter einem Reverse Proxy geht das meist nicht, nimm dann DNS-01.",
+      "listener": {
+        "onDemand": "Port 80 ({address}) öffnet LCM nur, solange die Zertifizierungsstelle prüft, und beantwortet dort nichts außer der Prüfung. Sonst ist er geschlossen.",
+        "error": "Der Listener für die Prüfung ({address}) lässt sich nicht öffnen: {error}.",
+        "capability": "Für Ports unter 1024 braucht LCM die Capability CAP_NET_BIND_SERVICE. Das mitgelieferte lcm.service gibt sie dem Dienst. Fehlt sie, übernimm die Zeilen CapabilityBoundingSet und AmbientCapabilities aus packaging/lcm.service in die eigene Unit, oder setze acme_http_listen in der config.json auf einen hohen Port hinter einer Weiterleitung."
+      },
+      "terms": "Ich nehme die Nutzungsbedingungen von {host} an",
+      "termsHint": "Ohne deine Zustimmung legt LCM kein Konto bei der Zertifizierungsstelle an.",
+      "save": "Speichern",
+      "discard": "Verwerfen",
+      "saved": "Einstellungen gespeichert",
+      "problem": {
+        "namesRequired": "Trage oben mindestens eine Adresse mit einem Namen ein und speichere die Seite.",
+        "directoryRequired": "Trage die Adresse des Verzeichnisses ein.",
+        "termsRequired": "Nimm die Nutzungsbedingungen an, um ACME einzuschalten.",
+        "nameserversTooMany": "Höchstens {max} Prüf-Nameserver.",
+        "providerRequired": "Wähle einen DNS-Anbieter.",
+        "fieldMissing": "Trage beim DNS-Anbieter ein: {field}."
+      },
+      "state": "Zustand",
+      "lastRun": "Letzter Lauf",
+      "never": "Noch kein Lauf",
+      "lastError": "Fehler beim letzten Lauf",
+      "noCertificates": "Noch kein Zertifikat ausgestellt.",
+      "renewAt": "Erneuerung ab",
+      "issue": "Jetzt ausstellen",
+      "issueStarted": "Lauf gestartet",
+      "challengeDns": "DNS-01",
+      "challengeDnsText": "LCM setzt einen TXT-Eintrag bei deinem DNS-Anbieter. Dafür muss kein Port offen sein. Hinter einem Reverse Proxy ist das meist der einzige Weg.",
+      "dns": {
+        "provider": "DNS-Anbieter",
+        "providerChoose": "Anbieter wählen",
+        "providerHint": "Bei diesem Anbieter legt LCM den TXT-Eintrag _acme-challenge an.",
+        "providers": {
+          "rfc2136": "RFC2136 (BIND, PowerDNS, Knot …)",
+          "acmedns": "acme-dns",
+          "httpreq": "Eigener HTTP-Endpunkt",
+          "exec": "Eigenes Skript (aus der config.json)",
+          "cloudflare": "Cloudflare",
+          "hetzner": "Hetzner",
+          "pdns": "PowerDNS-API",
+          "inwx": "INWX",
+          "ionos": "IONOS"
+        },
+        "optional": "{label} (optional)",
+        "missing": "Diese Angabe fehlt.",
+        "secretPlaceholder": "gespeichert",
+        "secretStored": "Gespeichert. Leer lassen, um es zu behalten.",
+        "secretCleared": "Wird beim Speichern gelöscht.",
+        "secretDelete": "Löschen",
+        "secretKeep": "Doch behalten",
+        "option": {
+          "standard": "Standard",
+          "raw": "Roh"
+        },
+        "nameservers": "Prüf-Nameserver (optional)",
+        "nameserversHint": "Ein Server je Zeile (Host oder Host:Port), höchstens {max}. Leer: LCM nutzt die Resolver des Systems.",
+        "test": "DNS testen",
+        "testHint": "Legt kurz einen TXT-Eintrag für den ersten Namen an und entfernt ihn wieder.",
+        "testRunning": "Wird geprüft … (bis zu einer Minute)",
+        "testOk": "Der DNS-Anbieter hat den Eintrag gesetzt, LCM hat ihn gesehen und wieder entfernt.",
+        "note": {
+          "acmedns": "Der erste Lauf legt ein Konto bei acme-dns an und endet mit einer Meldung, welchen CNAME-Eintrag du für _acme-challenge setzen musst. Danach klappt es.",
+          "exec": "Das Programm steht in der config.json (acme_dns_exec) und lässt sich hier nicht ändern. LCM ruft es mit der Aktion und den Angaben zum TXT-Eintrag auf.",
+          "slow": "Bei mehreren Namen braucht dieser Anbieter je Name einen eigenen Durchgang. Ein Lauf kann einige Minuten dauern."
+        },
+        "field": {
+          "common": {
+            "propagation_timeout": {
+              "label": "Wartezeit auf den Eintrag in Sekunden",
+              "hint": "Wie lange LCM wartet, bis der TXT-Eintrag sichtbar ist. Leer: Standard des Anbieters."
+            },
+            "polling_interval": {
+              "label": "Prüfabstand in Sekunden",
+              "hint": "Wie oft LCM nachsieht, ob der Eintrag da ist. Leer: Standard des Anbieters."
+            }
+          },
+          "rfc2136": {
+            "nameserver": {
+              "label": "Nameserver",
+              "hint": "Host oder Host:Port des Servers, der dynamische Updates annimmt."
+            },
+            "tsig_key": {
+              "label": "TSIG-Schlüsselname",
+              "hint": "Name des Schlüssels in der Konfiguration des Nameservers. Gehört zusammen mit dem TSIG-Secret."
+            },
+            "tsig_algorithm": {
+              "label": "TSIG-Algorithmus",
+              "hint": "Muss zum Schlüssel im Nameserver passen."
+            },
+            "tsig_secret": {
+              "label": "TSIG-Secret",
+              "hint": "base64, wie in der Konfiguration des Nameservers."
+            }
+          },
+          "acmedns": {
+            "api_base": {
+              "label": "Adresse des acme-dns-Servers",
+              "hint": "Zum Beispiel https://auth.acme-dns.io. Das Konto dort legt LCM beim ersten Lauf selbst an."
+            }
+          },
+          "httpreq": {
+            "endpoint": {
+              "label": "Adresse des Endpunkts",
+              "hint": "LCM schickt POST-Anfragen an /present und /cleanup unter dieser Adresse."
+            },
+            "mode": {
+              "label": "Format der Anfrage",
+              "hint": "Standard: Name und Wert des TXT-Eintrags. Roh: Domain, Token und Schlüsselautorisierung unverändert."
+            },
+            "username": {
+              "label": "Benutzername",
+              "hint": "Nur nötig, wenn der Endpunkt eine Anmeldung (HTTP Basic) verlangt."
+            },
+            "password": {
+              "label": "Passwort",
+              "hint": "Gehört zum Benutzernamen."
+            }
+          },
+          "exec": {
+            "mode": {
+              "label": "Format des Aufrufs",
+              "hint": "Standard: Aktion, Name und Wert des TXT-Eintrags. Roh: Aktion, Domain, Token und Schlüsselautorisierung unverändert."
+            }
+          },
+          "cloudflare": {
+            "api_token": {
+              "label": "API-Token",
+              "hint": "Token mit den Rechten „Zone lesen“ und „DNS bearbeiten“ für die Zone der Namen."
+            }
+          },
+          "hetzner": {
+            "api_token": {
+              "label": "API-Token",
+              "hint": "Token der Hetzner Console mit Schreibrecht für das Projekt der DNS-Zone."
+            }
+          },
+          "pdns": {
+            "api_url": {
+              "label": "Adresse der API",
+              "hint": "Zum Beispiel http://pdns.example.com:8081. Die Adresse muss die PowerDNS-API erreichen."
+            },
+            "api_key": {
+              "label": "API-Schlüssel",
+              "hint": "Der Wert api-key aus der Konfiguration von PowerDNS."
+            },
+            "server_name": {
+              "label": "Servername",
+              "hint": "Name des Servers in der API, meist localhost."
+            }
+          },
+          "inwx": {
+            "username": {
+              "label": "Benutzername",
+              "hint": "Benutzername des INWX-Kontos."
+            },
+            "password": {
+              "label": "Passwort",
+              "hint": "Passwort des INWX-Kontos."
+            },
+            "totp_secret": {
+              "label": "TOTP-Geheimnis",
+              "hint": "Nur bei eingeschalteter Zwei-Faktor-Anmeldung: das Geheimnis, aus dem die Codes entstehen, nicht ein einzelner Code."
+            },
+            "sandbox": {
+              "label": "Testumgebung von INWX",
+              "hint": "Spricht die Testumgebung (OTE) von INWX an statt der echten."
+            }
+          },
+          "ionos": {
+            "api_key": {
+              "label": "API-Schlüssel",
+              "hint": "Format Präfix.Geheimnis, so wie das IONOS-Entwicklerportal ihn anzeigt."
+            }
+          }
+        },
+        "more": "Weitere Einstellungen"
+      },
+      "namesNone": "Trage oben mindestens eine Adresse mit einem Namen ein. Let's Encrypt stellt kein Zertifikat für IP-Adressen aus.",
+      "namesPending": "Du hast die Adressen geändert, aber noch nicht gespeichert. Let's Encrypt nutzt die neuen Namen nach dem Speichern der Seite.",
+      "namesNotice": {
+        "title": "Die Namen im Zertifikat kommen jetzt aus den Adressen",
+        "text": "Bisher stellte Let's Encrypt für {old} aus. Künftig gelten die Namen der öffentlichen Adressen: {new}. Bis du das bestätigst (Hinweis schließen oder die Seite speichern), nimmt LCM die alten Namen weiterhin ins Zertifikat auf, damit die Erneuerung nicht ausfällt. Beim nächsten Lauf (oder mit „Jetzt ausstellen“) holt LCM ein neues Zertifikat; das alte bleibt bis dahin im Einsatz.",
+        "none": "noch keiner",
+        "perName": "Außerdem gibt es nicht mehr je Name ein Zertifikat, sondern eines für alle Namen.",
+        "dismiss": "Hinweis schließen"
+      },
+      "download": "Zertifikatskette herunterladen (PEM)",
+      "downloadHint": "Lädt nur die Zertifikatskette als PEM-Datei, nie den privaten Schlüssel.",
+      "termsLink": "Nutzungsbedingungen von {host} lesen",
+      "wizard": {
+        "request": "Zertifikat anfordern",
+        "running": "LCM fordert das Zertifikat an. Das dauert meist eine Minute.",
+        "done": "Das Zertifikat für {names} ist da und gilt bis {date}."
+      }
+    },
+    "access": {
+      "title": "Zugriff (Netzbereiche)",
+      "subtitle": "Aus welchen Netzen sich Browser, Agenten und MCP-Clients mit LCM verbinden dürfen."
+    },
+    "proxy": {
+      "title": "Reverse-Proxy",
+      "subtitle": "Ein Proxy vor LCM nimmt die Verbindungen mit seinem Zertifikat an, statt Let's Encrypt in LCM.",
+      "help": "LCM glaubt die Client-Adresse aus dem Header X-Forwarded-For nur von den Adressen unten. Trage dort die Adressen des Proxys ein, nicht die der Clients.",
+      "enable": "Reverse-Proxy davor",
+      "enableOn": "LCM glaubt der Client-Adresse aus X-Forwarded-For, aber nur von den Adressen des Proxys.",
+      "enableOff": "LCM nutzt die Adresse der Verbindung und ignoriert X-Forwarded-For.",
+      "saved": "Einstellungen gespeichert"
     }
   },
   "login": {
@@ -1702,6 +2169,14 @@
   "errors": {
     "access": {
       "ip_denied": "Zugriff von dieser Adresse nicht erlaubt"
+    },
+    "acme": {
+      "dns_test_failed": "Die Probe beim DNS-Anbieter ist gescheitert: {detail}",
+      "field_missing": "Eine Pflichtangabe bei ACME fehlt ({field})",
+      "invalid": "Ungültige Angabe bei ACME ({field}): {detail}",
+      "not_enabled": "ACME ist nicht eingeschaltet",
+      "running": "Ein ACME-Lauf ist bereits aktiv",
+      "terms_required": "Die Nutzungsbedingungen der CA müssen angenommen werden"
     },
     "advisory": {
       "disabled": "Die Frühwarnung ist nicht eingeschaltet",
@@ -1849,6 +2324,12 @@
     },
     "docs": {
       "not_found": "Seite nicht gefunden"
+    },
+    "endpoint": {
+      "agents_outside": "{count} verbundene Agenten liegen außerhalb der neuen Liste und würden getrennt",
+      "invalid_networks": "Ungültige Netzliste: {detail}",
+      "unknown": "Unbekannter Endpunkt. Erlaubt sind ui, agent und mcp",
+      "would_lock_out": "Deine eigene Adresse {address} liegt nicht in der neuen Liste, du würdest dich aussperren"
     },
     "events": {
       "bad_message": "Ungültige Nachricht an den Ereigniskanal",
@@ -2047,6 +2528,7 @@
       "mailer_disabled": "Der Standard-E-Mail-Versand ist nicht aktiviert",
       "mailer_incomplete": "Die SMTP-Konfiguration ist unvollständig – Host und Absender sind erforderlich",
       "mailer_no_recipients": "Für den Standard-E-Mail-Versand sind keine Admin-Empfänger hinterlegt",
+      "public_host_conflict": "Auf dem gemeinsamen Port braucht jeder Dienst einen eigenen Namen: {host} ist für {first} und {second} eingetragen",
       "session_cookie_needs_https": "Das Sitzungs-Cookie gibt es nur, wenn LCM über HTTPS aufgerufen wird"
     },
     "snap": {
@@ -2062,7 +2544,6 @@
       "activation_failed": "Die Subscription konnte nicht aktiviert werden: {detail}",
       "apt_switch_unavailable": "Die apt-Umstellung ist nicht verfügbar – der LCM-Host ist nicht als apt-Server in der Verwaltung",
       "channel_switch_failed": "Der Paketkanal ließ sich nicht umstellen: {detail}",
-      "invalid_service_url": "Ungültige Dienst-Adresse: {detail}",
       "none": "Es ist keine Subscription hinterlegt",
       "unknown_channel": "Unbekannter Paketkanal – erlaubt sind community, beta und enterprise",
       "channel_behind": "Der Paketkanal liegt hinter der installierten Version, ein Wechsel dorthin ist gesperrt",
@@ -2084,6 +2565,14 @@
       "invalid_timezone": "Ungültige Zeitzone",
       "ntp_not_synced": "Die Zeitserver sind eingetragen, aber die Synchronisierung ließ sich nicht nachweisen",
       "too_many_ntp_servers": "Höchstens {limit} NTP-Server erlaubt"
+    },
+    "tls": {
+      "file_too_large": "Die Datei ist zu groß: Zertifikat und Schlüssel dürfen je höchstens 64 KiB haben",
+      "invalid_certificate": "Das Zertifikat lässt sich nicht verwenden: {detail}",
+      "not_found": "Dieses Zertifikat gibt es nicht (mehr)",
+      "not_removable": "Entfernen lassen sich nur hochgeladene Zertifikate. Dieses steht in der config.json oder kommt von ACME",
+      "unavailable": "LCM läuft ohne TLS (Entwicklungsmodus), deshalb gibt es keine Zertifikate",
+      "upload_missing": "Es fehlt eine Datei: Wähle ein Zertifikat und einen Schlüssel"
     },
     "user": {
       "email_taken": "Diese E-Mail-Adresse gehört schon einem anderen Benutzer",
@@ -2277,6 +2766,163 @@
     "dsmDiskSmart": "Laufwerk {name}: SMART meldet ein Problem - Austausch vorbereiten (Speicher-Manager → HDD/SSD)",
     "dsmDiskBadSectors": "Laufwerk {name}: defekte Sektoren über der Warnschwelle - Austausch vorbereiten",
     "dsmDiskWearOut": "Laufwerk {name}: Restlebensdauer unter der Warnschwelle - Austausch vorbereiten"
+  },
+  "setup": {
+    "title": "Einrichtung",
+    "progress": "Schritt {number} von {total}",
+    "save": "Speichern und weiter",
+    "skip": "Überspringen",
+    "skipHint": "Das kannst du später in den Einstellungen einrichten.",
+    "continueAnyway": "Ohne diese Änderungen weiter",
+    "unsaved": "Du hast Änderungen, die noch nicht gespeichert sind. Speichere sie mit dem Knopf direkt dort, oder gehe ohne sie weiter.",
+    "loadFailed": "Die Einstellungen ließen sich nicht laden",
+    "steps": {
+      "addresses": {
+        "title": "Wie ist LCM erreichbar?",
+        "lead": "Lege fest, unter welchen Adressen Browser, Agenten und MCP-Clients LCM erreichen. Du kannst das später in Einstellungen → Allgemein ändern."
+      },
+      "services": {
+        "title": "Welche Schnittstellen von LCM willst du verwenden?",
+        "lead": "LCM kann Server über die Agenten-Schnittstelle und KI-Assistenten über die MCP-Schnittstelle anbinden. Schalte nur ein, was du brauchst; beides lässt sich später in den Einstellungen ändern."
+      },
+      "access": {
+        "title": "Wer darf LCM erreichen?",
+        "lead": "Lege fest, aus welchen Netzen die Weboberfläche und die eingeschalteten Schnittstellen erreichbar sind. „Alle Netze“ ist die Vorgabe. Jede Gruppe speicherst du für sich."
+      },
+      "certificate": {
+        "title": "Zertifikat",
+        "lead": "LCM hat für eigene Namen ohne Hilfe kein gültiges Zertifikat. Entweder stellt Let's Encrypt eines aus, oder ein Reverse-Proxy vor LCM übernimmt das."
+      },
+      "onboarding": {
+        "title": "Neue Server aufnehmen",
+        "lead": "LCM meldet sich mit einem eigenen Schlüssel auf neuen Servern an. Hinterlege den Schlüssel gleich dort, wo du Server anlegst, dann sind neue Server sofort bereit. Du kannst das später in den Einstellungen ändern."
+      },
+      "mail": {
+        "title": "E-Mail-Versand",
+        "lead": "LCM kann Mails senden, etwa Warnungen an die Admins. Du kannst das später unter Einstellungen → Allgemein einrichten oder ändern."
+      },
+      "retention": {
+        "title": "Aufbewahrung",
+        "lead": "Jeder Job ist eine Verbindung von LCM zu einem Server, mit genauem Protokoll, was LCM getan hat und was zurückkam, verschlüsselt in der Datenbank. Lege fest, wie viele Tage LCM Jobs und weitere Verläufe aufhebt."
+      },
+      "backup": {
+        "title": "Automatisches Backup",
+        "lead": "LCM kann Datenbank, Master-Key und Konfiguration regelmäßig sichern."
+      },
+      "subscription": {
+        "title": "Subscription und Paketkanal",
+        "lead": "Mit einem Subscription-Key wechselst du in den Enterprise-Kanal, im Beta-Kanal bekommst du neue Versionen früher. Sonst bleibst du im Community-Kanal; das lässt sich später unter Einstellungen → Subscription ändern."
+      },
+      "session": {
+        "title": "Anmeldung im Browser",
+        "lead": "Wähle, wie der Browser die Anmeldung trägt. Das gilt für diese Installation, und du kannst es später unter Einstellungen → Allgemein ändern."
+      }
+    },
+    "services": {
+      "agent": "Über die Agenten-Schnittstelle melden sich Agenten auf deinen Servern bei LCM an. Das passt für Server hinter NAT oder Firewall.",
+      "mcp": "Über die MCP-Schnittstelle bindest du KI-Assistenten an LCM an. Ein Assistent braucht dafür einen MCP-Schlüssel.",
+      "noDomain": "Für diese Schnittstelle ist keine Domain eingerichtet."
+    },
+    "certificate": {
+      "choice": "So bekommt LCM ein Zertifikat",
+      "letsencrypt": {
+        "title": "Let's Encrypt",
+        "text": "LCM holt und erneuert das Zertifikat selbst, immer eines für alle Namen.",
+        "needsName": "Für Let's Encrypt braucht LCM einen Namen. Trag ihn in Schritt 2 (Wie ist LCM erreichbar?) ein.",
+        "toAddresses": "Zu Schritt 2"
+      },
+      "proxy": {
+        "title": "Reverse-Proxy davor",
+        "text": "Ein Proxy vor LCM nimmt die Verbindungen mit seinem Zertifikat an.",
+        "label": "Adressen des Proxys",
+        "hint": "Eine Adresse oder ein Netzbereich je Zeile. Nur von diesen Adressen glaubt LCM die Client-Adresse aus dem Header X-Forwarded-For.",
+        "empty": "Trage mindestens eine Adresse ein.",
+        "invalid": "Keine gültige Adresse oder kein gültiger Netzbereich: {list}",
+        "wide": "Ein Netzbereich über alle Adressen ist nicht erlaubt: {list}"
+      },
+      "fallback": "Ohne Let's Encrypt und ohne hochgeladenes Zertifikat liefert LCM sein eigenes, selbst ausgestelltes Zertifikat aus.",
+      "redirect": {
+        "title": "LCM wechselt auf die neue Adresse",
+        "text": "Die Oberfläche ist jetzt unter {address} erreichbar, dorthin leitet dich der Assistent gleich weiter. Ändert sich dabei der Name, ist eine neue Anmeldung nötig. Danach geht es beim Schritt „Neue Server aufnehmen“ weiter.",
+        "now": "Jetzt wechseln"
+      }
+    },
+    "onboarding": {
+      "userHint": "Mit diesem Benutzer meldet sich LCM auf neuen Servern an.",
+      "guide": "Anleitung: Schlüssel auf dem Server ablegen",
+      "where": "Wo der Schlüssel hinkommt",
+      "hetzner": "Hetzner Cloud: Lege ihn im Projekt als SSH-Key an, dann bekommen neue Server ihn beim Erstellen.",
+      "proxmox": "Proxmox: Trage ihn im Cloud-Init der Vorlage oder des Containers als SSH-Key ein.",
+      "other": "Alle anderen Server: Lege ihn in ~/.ssh/authorized_keys des Benutzers ab. Die Anleitung oben zeigt, wie."
+    },
+    "mail": {
+      "testHint": "Speichert die Angaben und schickt eine Test-Mail an die Empfänger der Admin-Mails."
+    },
+    "backup": {
+      "passphraseRequired": "Vergib eine Passphrase: Ein geplantes Backup ist verschlüsselt.",
+      "passphraseHint": "Verschlüsselt die Backups. Ohne sie lässt sich ein Backup nicht wiederherstellen, bewahre sie sicher auf.",
+      "updateHint": "Bei jedem Update, das du über LCM startest, legt LCM vorher automatisch ein Backup an."
+    },
+    "intro": {
+      "recommended": "Empfohlen",
+      "trivy": "Trivy ist der CVE-Scanner: Er prüft die Pakete deiner Server auf bekannte Sicherheitslücken und läuft in einer Sandbox, getrennt von den Daten von LCM. Die Knöpfe dazu stehen auf der markierten Karte.",
+      "aptCacher": "apt-cacher-ng merkt sich die Debian- und Ubuntu-Pakete, die deine Server laden. Jedes Paket kommt nur einmal aus dem Internet: Updates gehen schneller und sparen Bandbreite. Einrichten kannst du es auf der markierten Karte.",
+      "close": "Einführung schließen",
+      "closeHint": "Sie kommt nicht wieder. Die Dienste bleiben in der Karte „LCM-Host“ erreichbar.",
+      "region": "Einführung in den LCM-Host",
+      "progress": "{number} von {total}",
+      "next": "Weiter",
+      "back": "Zurück",
+      "finish": "Fertig",
+      "host": {
+        "title": "Das ist dein LCM-Host",
+        "text": "Auf diesem Server läuft LCM selbst. Er steht deshalb wie jeder andere Server in der Liste. Der Rundgang zeigt dir, was du hier und bei deinen Servern einrichtest."
+      },
+      "hardening": {
+        "title": "SSH härten und Firewall",
+        "text": "Beides erreichst du oben auf der Seite jedes Servers. „SSH härten“ schaltet Passwort-Login und Root-Login per Passwort ab, die Firewall blockt alles, was du nicht freigibst."
+      },
+      "settings": {
+        "operation": {
+          "title": "Einstellungen: Betrieb",
+          "text": "Über das Zahnrad öffnest du die Einstellungen des Servers. Unter „Betrieb“ legst du fest, wie LCM mit Systemen umgeht, die nicht rund um die Uhr laufen müssen: „In Wartung“ lässt den Server in Ruhe, „Nichterreichbarkeit unkritisch“ färbt ihn erst nach einer Frist rot."
+        },
+        "userSync": {
+          "text": "Mit „Keine Linux-Benutzer abgleichen“ schaltest du den Benutzerabgleich für diesen Server ab. LCM legt dort dann keine Benutzer an und verteilt keine SSH-Schlüssel."
+        },
+        "access": {
+          "title": "Einstellungen: Zugang",
+          "text": "Unter „Zugang“ sperrst du den Root-Login über SSH und schaltest mit „Konsole abschalten“ den Zugriff über die Konsole von LCM ab."
+        },
+        "dns": {
+          "title": "Einstellungen: DNS",
+          "text": "Unter „DNS“ trägst du die Nameserver des Servers ein. LCM setzt sie dort für dich."
+        },
+        "time": {
+          "title": "Einstellungen: Zeit",
+          "text": "Unter „Zeit“ stellst du Zeitzone und Zeitserver ein und prüfst, ob die Uhr des Servers richtig geht."
+        }
+      },
+      "tabs": {
+        "packages": "Hier siehst du veraltete Pakete und spielst sie ein, alle auf einmal oder einzeln. Du kannst die Paketlisten aktualisieren und Pakete anpinnen, damit sie auf ihrer Version bleiben.",
+        "apps": "LCM erkennt Anwendungen auf dem Server, etwa WordPress oder Nextcloud. Hier siehst du, welche es sind, und kannst sie aktualisieren.",
+        "users": "Hier stehen die Konten, die sich auf dem Server anmelden können.",
+        "security": "Hier stehen die CVE-Funde des Servers und weitere Sicherheitswerkzeuge, die du installieren kannst.",
+        "deepScan": "Der Deep-Scan ist ein intensiver Scanner. Er läuft lokal auf dem Server selbst und prüft Kernel-Lücken, offene Neustarts und die Härtung.",
+        "storage": "Das Speicher-Monitoring zeigt die Laufwerke des Servers. Hake weitere Laufwerke an, damit LCM auch sie überwacht.",
+        "jobs": "Hier steht, was LCM auf diesem Server getan hat: jede Aktion als Job mit Protokoll."
+      },
+      "groups": {
+        "title": "Gruppen",
+        "text": "Jeder Server gehört zur Systemgruppe; dort laufen Routine-Operationen und Automationen. Mit eigenen Gruppen bekommt jeder Server andere Automationen: wann, wie und welche Updates eingespielt werden."
+      },
+      "done": {
+        "title": "Einrichtung abgeschlossen",
+        "text": "Das war der Rundgang. Die Einführung kommt nicht wieder; alles hier erreichst du weiter über die Seite des Servers."
+      }
+    },
+    "back": "Zurück",
+    "next": "Weiter"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -3825,7 +4471,7 @@
       },
       "sandboxOn": "Sandbox aktiv ({backend})",
       "sandboxOff": "Ohne Sandbox",
-      "sandboxHelp": "Der Scanner läuft mit denselben Rechten wie LCM und käme damit an das LCM-Datenverzeichnis. Es fehlt nur das Paket bubblewrap: Trivy selbst bleibt unverändert, LCM sperrt es beim Aufruf ein.",
+      "sandboxHelp": "Der Scanner läuft mit denselben Rechten wie LCM und käme damit an das LCM-Datenverzeichnis. Es fehlt nur die Sandbox (meist das Paket bubblewrap, der genaue Grund steht darunter): Trivy selbst bleibt unverändert, LCM sperrt es beim Aufruf ein.",
       "freshness": {
         "fresh": "Datenbank aktuell",
         "stale": "Datenbank veraltet",
@@ -4838,11 +5484,19 @@
       "enroll": "3. Mit LCM verbinden und als Dienst starten",
       "enrollHint": "Das Token gilt nur für diesen Server.",
       "portHint": "Das Token gilt nur für diesen Server. Der Agent verbindet sich auf Port {port}; der muss vom Server aus erreichbar sein.",
+      "proxyTitle": "Agent-Adresse ohne Port",
+      "proxyText": "Der Enroll-Befehl nutzt {url} und damit Port 443. LCM lauscht dort nicht, der Agent-Port ist {port}. Das klappt nur, wenn ein Reverse Proxy auf 443 an Port {port} weiterreicht. Sonst die Adresse mit Port eintragen oder den Adressmodus „Ein Port“ wählen.",
+      "proxyLink": "Öffentliche Adressen öffnen",
       "manual": "Ohne Paketquelle",
       "manualLabel": "Agent direkt von LCM laden und verbinden",
       "manualHint": "Lädt das Programm von diesem LCM. Das selbstsignierte Zertifikat nimmt curl nur mit dem Schlüssel dieses LCM an. Hinter einem Reverse-Proxy prüft der zweite Versuch ganz normal. Für ARM64-Server amd64 durch arm64 ersetzen.",
       "after": "Nach dem Verbinden geht der Server online und der erste Scan startet von selbst.",
-      "urlHint": "Das Token gilt nur für diesen Server. Der Agent verbindet sich über {url}; die Adresse muss vom Server aus erreichbar sein."
+      "urlHint": "Das Token gilt nur für diesen Server. Der Agent verbindet sich über {url}; die Adresse muss vom Server aus erreichbar sein.",
+      "off": {
+        "title": "Der Agent ist ausgeschaltet",
+        "text": "LCM nimmt keine Agent-Verbindungen an, ein neuer Agent käme nicht an. Schalte den Agenten ein, dann erzeugt dieser Assistent den Befehl.",
+        "link": "Zu Einstellungen → Allgemein"
+      }
     },
     "routeros": {
       "userHint": "Ein möglichst nur lesender RouterOS-Benutzer mit SSH-Zugang, etwa admin.",
@@ -5958,10 +6612,10 @@
         "dbNever": "Datenbank nie geladen",
         "sandboxOn": "Sandbox aktiv ({backend})",
         "sandboxOff": "ohne Sandbox",
-        "sandboxOffHint": "Der Scanner läuft mit den Rechten von LCM und käme an dessen Datenverzeichnis. Es fehlt nur das Paket bubblewrap.",
-        "label": "Trivy einrichten",
-        "help": "Bindet das Paketarchiv von Aqua Security ein, installiert Trivy und schaltet danach den CVE-Scan ein. Läuft als Job auf diesem Server.",
-        "meaning": "Danach scannt LCM alle Server auf bekannte Sicherheitslücken.",
+        "sandboxOffHint": "Der Scanner läuft mit den Rechten von LCM und käme an dessen Datenverzeichnis. Es fehlt nur die Sandbox, meist das Paket bubblewrap.",
+        "label": "Trivy mit Sandbox installieren",
+        "help": "Bindet das Paketarchiv von Aqua Security ein, installiert Trivy samt Sandbox (bubblewrap) und schaltet danach den CVE-Scan ein. Läuft als Job auf diesem Server.",
+        "meaning": "Danach scannt LCM alle Server auf bekannte Sicherheitslücken. Der Scanner läuft in der Sandbox und kommt nicht an die Daten von LCM.",
         "name": "Trivy",
         "version": "Trivy {version}",
         "updateAvailable": "Version {version} verfügbar",
@@ -6134,7 +6788,18 @@
         "title": "Lauschende Dienste",
         "none": "Noch keine lauschenden Dienste bekannt. Frag sie vom Server ab.",
         "covered": "Alle lauschenden Dienste sind freigegeben oder laufen über SSH oder Docker.",
-        "add": "Freigabe {port}/{proto} hinzufügen"
+        "add": "Freigabe {port}/{proto} hinzufügen",
+        "role": {
+          "ui": "GUI",
+          "agent": "Agent",
+          "mcp": "MCP",
+          "acme": "Let's Encrypt (HTTP-01)"
+        },
+        "acme": {
+          "title": "Let's Encrypt braucht Port {port}",
+          "hint": "Let's Encrypt prüft über Port 80 per HTTP-01. LCM öffnet den Port nur während der Prüfung, die Firewall muss ihn aber durchlassen, sonst scheitern Ausstellung und Erneuerung des Zertifikats.",
+          "add": "Port {port} freigeben"
+        }
       },
       "rescan": {
         "label": "Dienste abfragen",

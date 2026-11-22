@@ -2,15 +2,17 @@ package netfilter
 
 import (
 	"bytes"
+	"fmt"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 )
 
 // ProxyTrust legt fest, wessen X-Forwarded-For-Kopfzeile geglaubt wird.
 //
-// Enabled schaltet die Auswertung überhaupt ein (config.json
+// Enabled schaltet die Auswertung überhaupt ein (Einstellung
 // trust_proxy_header). Proxies nennt die Gegenstellen, die tatsächlich der
-// Reverse-Proxy sind (trusted_proxies): Nur wenn die direkte TCP-Verbindung
+// Reverse-Proxy sind (Einstellung trusted_proxies): Nur wenn die direkte TCP-Verbindung
 // von einer dieser Adressen kommt, zählt die Kopfzeile - und auch dann nur
 // bis zum ersten Eintrag von rechts, der selbst kein vertrauter Proxy ist
 // (siehe ClientIP).
@@ -82,4 +84,55 @@ func forwardedClient(peer netip.Addr, xff string, proxies Allowlist) netip.Addr 
 // liest, sähe dann ausgerechnet die des Clients.
 func JoinForwardedFor(values [][]byte) string {
 	return string(bytes.Join(values, []byte(",")))
+}
+
+// ProxyTrustHolder hält die Vertrauensregel austauschbar zur Laufzeit. Jede
+// Anfrage liest sie neu; ein Austausch wirkt sofort und ohne Neustart. Der
+// Nullwert und nil vertrauen niemandem (nil für Apps ohne Proxy, etwa Tests).
+type ProxyTrustHolder struct {
+	trust atomic.Pointer[ProxyTrust]
+}
+
+// NewProxyTrustHolder legt einen Halter mit der Regel trust an.
+func NewProxyTrustHolder(trust ProxyTrust) *ProxyTrustHolder {
+	h := &ProxyTrustHolder{}
+	h.Store(trust)
+	return h
+}
+
+// Load liefert die aktuelle Regel; ohne Halter oder Regel gilt „niemandem
+// vertrauen".
+func (h *ProxyTrustHolder) Load() ProxyTrust {
+	if h == nil {
+		return ProxyTrust{}
+	}
+	if trust := h.trust.Load(); trust != nil {
+		return *trust
+	}
+	return ProxyTrust{}
+}
+
+// Store ersetzt die Regel.
+func (h *ProxyTrustHolder) Store(trust ProxyTrust) { h.trust.Store(&trust) }
+
+// NormalizeProxies prüft die Einträge von trusted_proxies und liefert sie in
+// einheitlicher Schreibweise (siehe Normalize). Zusätzlich abgelehnt wird jeder
+// Bereich, der alle Adressen umfasst (0.0.0.0/0, ::/0, auch als
+// IPv4-in-IPv6 geschrieben): Damit glaubte LCM jedem Peer die Kopfzeile, und
+// jeder Client im Netz gäbe sich mit einem gefälschten X-Forwarded-For jede
+// Adresse - in die IP-Allowlist hinein und aus der Anmeldesperre heraus.
+func NormalizeProxies(entries []string) ([]string, error) {
+	normalized, err := Normalize(entries)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range normalized {
+		if isKeyword(entry) {
+			continue
+		}
+		if prefix, err := parsePrefix(entry); err == nil && prefix.Bits() == 0 {
+			return nil, fmt.Errorf("eintrag %q umfasst alle Adressen - ein Proxy muss eine bestimmte Adresse oder ein bestimmtes Netz sein", entry)
+		}
+	}
+	return normalized, nil
 }

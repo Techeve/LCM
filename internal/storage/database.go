@@ -140,8 +140,74 @@ func Migrate(db *gorm.DB) error {
 	if err := migrateBlockParamsToEnglish(db); err != nil {
 		return err
 	}
+	// Agent-Schalter und MCP-TLS der Adressen nachziehen.
+	if err := migrateServiceSwitches(db); err != nil {
+		return err
+	}
+	// Der Schritt des Einrichtungsassistenten löst address_setup ab.
+	if err := migrateSetupStep(db); err != nil {
+		return err
+	}
+	// Die eigene Dienst-Adresse der Subscription gibt es nicht mehr.
+	if err := clearSubscriptionServiceURL(db); err != nil {
+		return err
+	}
 	// Fremdschlüssel CVE/Paket→Server tokenisieren (server_id → server_ref).
 	return migrateTokenizeServerRefs(db)
+}
+
+// clearSubscriptionServiceURL leert die frühere eigene Dienst-Adresse der
+// Subscription. Der Code liest die Spalte nicht mehr (die Adresse des Dienstes
+// ist fest); geleert wird sie, damit kein Wert in der Datenbank oder im Backup
+// bleibt, der nach Eigenwahl aussieht. Die Spalte selbst bleibt wie
+// address_setup stehen. Idempotent, läuft bei jedem Start.
+func clearSubscriptionServiceURL(db *gorm.DB) error {
+	if !db.Migrator().HasColumn(&domain.GlobalSettings{}, "subscription_service_url") {
+		return nil
+	}
+	err := db.Exec("UPDATE global_settings SET subscription_service_url = '' WHERE subscription_service_url IS NOT NULL AND subscription_service_url <> ''").Error
+	if err != nil {
+		return fmt.Errorf("subscription_service_url leeren: %w", err)
+	}
+	return nil
+}
+
+// migrateServiceSwitches zieht die Schalter der Dienste nach: Der Agent ist an
+// (die Spalte agent_enabled ist nach dem Anlegen NULL, und nur dann wird sie
+// belegt - ein ausgeschalteter Agent bleibt aus), und MCP spricht immer TLS.
+// Idempotent, läuft bei jedem Start. Ein gorm-Default auf den bool-Feldern ginge
+// dafür nicht: Er überschriebe ein ausdrückliches false beim Anlegen.
+func migrateServiceSwitches(db *gorm.DB) error {
+	if err := db.Model(&domain.GlobalSettings{}).Where("agent_enabled IS NULL").
+		Update("agent_enabled", true).Error; err != nil {
+		return fmt.Errorf("agent_enabled belegen: %w", err)
+	}
+	if err := db.Model(&domain.GlobalSettings{}).Where("mcp_tls IS NULL OR mcp_tls = ?", false).
+		Update("mcp_tls", true).Error; err != nil {
+		return fmt.Errorf("mcp_tls einschalten: %w", err)
+	}
+	return nil
+}
+
+// migrateSetupStep übernimmt den alten Stand des Adress-Schritts in den
+// Schritt des Assistenten: address_setup "open" wird setup_step "addresses",
+// alles andere (skipped, leer) heißt erledigt. Danach ist address_setup leer,
+// damit die Zeile bei keinem weiteren Start erneut übernommen wird. Die Spalte
+// selbst bleibt unbenutzt in der Tabelle: Eine ältere Fassung von LCM, die nach
+// einem Zurückspielen wieder auf ihr zugreift, findet sie vor. Auf einer frischen
+// Installation gibt es sie nicht.
+func migrateSetupStep(db *gorm.DB) error {
+	if !db.Migrator().HasColumn(&domain.GlobalSettings{}, "address_setup") {
+		return nil
+	}
+	if err := db.Exec("UPDATE global_settings SET setup_step = ? WHERE address_setup = ? AND (setup_step IS NULL OR setup_step = '')",
+		domain.SetupStepAddresses, "open").Error; err != nil {
+		return fmt.Errorf("setup_step aus address_setup übernehmen: %w", err)
+	}
+	if err := db.Exec("UPDATE global_settings SET address_setup = '' WHERE address_setup IS NOT NULL AND address_setup <> ''").Error; err != nil {
+		return fmt.Errorf("address_setup leeren: %w", err)
+	}
+	return nil
 }
 
 // encField verschlüsselt einen Wert mit dem At-Rest-Cipher (leer bleibt leer,

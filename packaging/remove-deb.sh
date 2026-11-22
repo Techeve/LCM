@@ -4,7 +4,10 @@
 # published version.
 #
 #   REPO_URL, REPO_USER, REPO_PASS erforderlich (wie beim Deploy).
-#   Optional: REPO_NAME (techeve), DISTRO (stable), GPG_KEY (repo@techeve.de).
+#   Optional: REPO_NAME (techeve), DISTRO (community), GPG_KEY (repo@techeve.de),
+#   PUBLISH_PREFIX (":." = Wurzel; Enterprise: "enterprise/lcm" mit DISTRO
+#   "enterprise" und REPO_NAME "lcm-enterprise"). Der Server spiegelt die
+#   Änderung an "community" selbständig in die alte Suite "stable".
 #   Usage:   REPO_URL=... REPO_USER=... REPO_PASS=... ./packaging/remove-deb.sh 1.0.0
 set -euo pipefail
 
@@ -12,9 +15,15 @@ set -euo pipefail
 : "${REPO_USER:?REPO_USER erforderlich}"
 : "${REPO_PASS:?REPO_PASS erforderlich}"
 REPO_NAME="${REPO_NAME:-techeve}"
-DISTRO="${DISTRO:-stable}"
+DISTRO="${DISTRO:-community}"
+PUBLISH_PREFIX="${PUBLISH_PREFIX:-:.}"
 GPG_KEY="${GPG_KEY:-repo@techeve.de}"
 VER="${1:?Version als Argument angeben, z.B. 1.0.0}"
+
+# Die aptly-API kodiert den Prefix in der URL: "_" wird "__", "/" wird "_"
+# ("enterprise/lcm" -> "enterprise_lcm"). Die Wurzel ":." bleibt, wie sie ist.
+API_PREFIX="${PUBLISH_PREFIX//_/__}"
+API_PREFIX="${API_PREFIX//\//_}"
 
 CURL="curl -fsS -u ${REPO_USER}:${REPO_PASS}"
 
@@ -41,6 +50,6 @@ ${CURL} -X DELETE -H "Content-Type: application/json" \
 echo ">> Suite '${DISTRO}' neu publizieren und signieren"
 ${CURL} -X PUT -H "Content-Type: application/json" \
   --data "{\"Signing\":{\"Batch\":true,\"GpgKey\":\"${GPG_KEY}\"}}" \
-  "${REPO_URL}/api/publish/:./${DISTRO}" >/dev/null
+  "${REPO_URL}/api/publish/${API_PREFIX}/${DISTRO}" >/dev/null
 
 echo ">> Done - version ${VER} removed from ${REPO_URL}."

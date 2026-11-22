@@ -26,6 +26,8 @@ import { addressSuggestions, settingsErrors, type SettingsErrors, type SettingsF
 import { settingsStyles } from './set-styles';
 
 type Section = 'general' | 'operation' | 'access' | 'dns' | 'time';
+const SECTIONS: readonly Section[] = ['general', 'operation', 'access', 'dns', 'time'];
+const isSection = (value: string): value is Section => (SECTIONS as readonly string[]).includes(value);
 type Flag = 'maintenance' | 'user_sync_disabled' | 'unreachable_uncritical' | 'docker_updates_disabled' | 'docker_cves_ignored' | 'console_disabled';
 
 const SECTION_LABEL: Record<Section, string> = {
@@ -55,6 +57,8 @@ const FLAG_TEXT: Record<Flag, { label: string; short: string; on: string; off: s
 export class SrvSettings extends LitElement {
   static override properties = {
     open: { type: Boolean, reflect: true },
+    tour: { type: Boolean, reflect: true },
+    section: { type: String },
     serverId: { type: Number, attribute: 'server-id' },
     _form: { state: true },
     _section: { state: true },
@@ -63,6 +67,12 @@ export class SrvSettings extends LitElement {
     _touched: { state: true },
   };
   static override styles = [baseStyles, formLayoutStyles, settingsStyles, css`
+    /* Während der Einführung steht das Fenster links vom Einführungsfenster, soweit der Platz reicht. */
+    @media (min-width: 64rem) {
+      :host([tour]) {
+        --modal-inset-end: 25rem;
+      }
+    }
     lcm-tabs {
       display: block;
       min-block-size: 24rem;
@@ -82,6 +92,10 @@ export class SrvSettings extends LitElement {
   `];
 
   declare open: boolean;
+  /** Läuft die Einführung des LCM-Hosts? Dann ist das Fenster nicht modal: Die Seite dahinter und das Einführungsfenster bleiben bedienbar. */
+  declare tour: boolean;
+  /** Die Seite, die offen sein soll (`operation`, `access`, `dns`, `time`); die Einführung stellt sie über die Adresse ein. */
+  declare section: string;
   declare serverId: number;
   declare _form: SettingsForm | undefined;
   declare _section: Section;
@@ -100,6 +114,8 @@ export class SrvSettings extends LitElement {
   constructor() {
     super();
     this.open = false;
+    this.tour = false;
+    this.section = '';
     this.serverId = 0;
     this._form = undefined;
     this._section = 'general';
@@ -114,7 +130,8 @@ export class SrvSettings extends LitElement {
     unsaved.set(this, false);
   }
 
-  override willUpdate(): void {
+  override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('section') && isSection(this.section)) this._section = this.section;
     if (!this.open) {
       this.#base = this._form = this.#seen = undefined;
       this._section = 'general';
@@ -148,6 +165,12 @@ export class SrvSettings extends LitElement {
   #close(): void {
     unsaved.set(this, false);
     this.dispatchEvent(new CustomEvent('lcm-close', { bubbles: true, composed: true }));
+  }
+
+  /** Die Seite wechseln; die Adresse folgt (`lcm-section`), damit die Einführung weiß, wo das Fenster steht. */
+  #select(section: Section): void {
+    this._section = section;
+    this.dispatchEvent(new CustomEvent('lcm-section', { detail: { section }, bubbles: true, composed: true }));
   }
 
   async #save(): Promise<void> {
@@ -199,7 +222,7 @@ export class SrvSettings extends LitElement {
   #flag(key: Flag, form: SettingsForm): TemplateResult {
     const text = FLAG_TEXT[key];
     const label = t(text.label);
-    return html`<div class="flag">
+    return html`<div class="flag" data-tour=${`flag-${key}`}>
       <div class="flag-head">
         <lcm-switch label=${label} .checked=${form[key]} @lcm-change=${(e: CustomEvent<{ checked: boolean }>) => this.#patch({ [key]: e.detail.checked })}></lcm-switch>
         <lcm-hover-tip icon="info" tone="plain" label=${t('serverPackages.settings.more', { label })}><p>${t(text.on)}</p><p>${t(text.off)}</p></lcm-hover-tip>
@@ -293,7 +316,7 @@ export class SrvSettings extends LitElement {
   }
 
   #renderAccess(form: SettingsForm, state: ServerState): TemplateResult {
-    return html`<div class="form-stack">
+    return html`<div class="form-stack" data-tour="access">
       ${auth.can('servers:console') ? html`<h3>${t('serverPackages.settings.console')}</h3>${this.#flag('console_disabled', form)}` : nothing}
       <lcm-set-access server-id=${this.serverId} server-name=${form.name} .state=${state}></lcm-set-access>
     </div>`;
@@ -306,9 +329,9 @@ export class SrvSettings extends LitElement {
       case 'access':
         return this.#renderAccess(form, state);
       case 'dns':
-        return html`<lcm-set-dns server-id=${this.serverId} server-name=${form.name} .state=${state}></lcm-set-dns>`;
+        return html`<lcm-set-dns data-tour="dns" server-id=${this.serverId} server-name=${form.name} .state=${state}></lcm-set-dns>`;
       case 'time':
-        return html`<lcm-set-time server-id=${this.serverId} server-name=${form.name} .state=${state}></lcm-set-time>`;
+        return html`<lcm-set-time data-tour="time" server-id=${this.serverId} server-name=${form.name} .state=${state}></lcm-set-time>`;
       default:
         return this.#renderGeneral(form, state);
     }
@@ -318,9 +341,9 @@ export class SrvSettings extends LitElement {
     const form = this._form;
     const state = this.#server.data;
     const invalid = !!form && this._touched && Object.keys(this.#errors(form)).length > 0;
-    return html`<lcm-modal ?open=${this.open} size="ml" heading=${t('serverPackages.settings.title')} subtitle=${this.#base?.name ?? ''} close-label=${t('servers.confirm.cancel')} @lcm-close=${() => this.#close()}>
+    return html`<lcm-modal ?open=${this.open} ?non-modal=${this.tour} size="ml" heading=${t('serverPackages.settings.title')} subtitle=${this.#base?.name ?? ''} close-label=${t('servers.confirm.cancel')} @lcm-close=${() => this.#close()}>
       ${form && state
-        ? html`<lcm-tabs label=${t('serverPackages.settings.title')} .tabs=${this.#sections(state)} value=${this._section} @lcm-tab-change=${(e: CustomEvent<{ id: Section }>) => (this._section = e.detail.id)}>
+        ? html`<lcm-tabs label=${t('serverPackages.settings.title')} .tabs=${this.#sections(state)} value=${this._section} @lcm-tab-change=${(e: CustomEvent<{ id: Section }>) => this.#select(e.detail.id)}>
             <div class="panel">${this.#renderSection(form, state)}</div>
           </lcm-tabs>`
         : nothing}

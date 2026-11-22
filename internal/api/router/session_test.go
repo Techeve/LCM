@@ -137,7 +137,9 @@ func trustAllProxies(t *testing.T) func(*router.Deps) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return func(d *router.Deps) { d.ProxyTrust = netfilter.ProxyTrust{Enabled: true, Proxies: all} }
+	return func(d *router.Deps) {
+		d.ProxyTrust = netfilter.NewProxyTrustHolder(netfilter.ProxyTrust{Enabled: true, Proxies: all})
+	}
 }
 
 // cookieApp ist eine App, deren Betreiber die Cookie-Variante gewählt hat. Die

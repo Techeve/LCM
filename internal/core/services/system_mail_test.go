@@ -160,8 +160,9 @@ func newSettingsServiceWithCipher(t *testing.T) (*services.SettingsService, *rep
 	}
 	audit := services.NewAuditService(repositories.NewAuditRepository(db))
 	repo := repositories.NewSettingsRepository(db)
-	// Die Einstellungs-Zeile (ID 1) legt in Produktion das Seeding an.
-	if err := repo.Save(&domain.GlobalSettings{}); err != nil {
+	// Die Einstellungs-Zeile (ID 1) legt in Produktion das Seeding an, mit Agent
+	// an und MCP-TLS (ohne gorm-Default).
+	if err := repo.Save(&domain.GlobalSettings{AgentEnabled: true, MCPTLS: true}); err != nil {
 		t.Fatal(err)
 	}
 	svc := services.NewSettingsService(repo, cipher, audit, nil).

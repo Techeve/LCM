@@ -52,6 +52,12 @@ sudo apt update && sudo apt upgrade
 arm64); danach ist `lcm` ein normales apt-Paket. So kommen Updates automatisch
 mit dem System.
 
+Die Quelle zeigt auf den Community-Kanal (`https://repo.techeve.de community main`).
+Ältere Installationen mit der Suite `stable` laufen weiter, das Paket stellt sie
+beim Update selbst auf `community` um. Die anderen Kanäle (Beta, Enterprise)
+wählst du in LCM unter Einstellungen, Subscription; siehe
+[Paketkanäle](/reference/repo-channels/).
+
 **Alternativ ohne Repository** - ein einzelnes Paket aus den
 [Releases](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=doc) laden
 (`lcm_<version>_amd64.deb` bzw. `..._arm64.deb`, Architektur via
@@ -135,18 +141,25 @@ Hersteller-Quelle eingerichtet werden - LCM läuft ohne Trivy normal weiter,
 der CVE-Scan bleibt dann aber deaktiviert:
 
 ```sh
-# Voraussetzung - gnupg fehlt auf Minimal-/Cloud-Images
-sudo apt-get install -y gnupg
+# Voraussetzungen - wget und gnupg fehlen auf Minimal-/Cloud-Images;
+# bubblewrap ist die Sandbox, in der LCM den Scanner startet
+sudo apt-get install -y wget gnupg ca-certificates bubblewrap
 
 wget -qO- https://get.trivy.dev/deb/public.key \
-  | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+  | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/trivy.gpg
 echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://get.trivy.dev/deb generic main" \
   | sudo tee /etc/apt/sources.list.d/trivy.list
 sudo apt update && sudo apt install trivy
 ```
 
+Die Schritte gelten unverändert für Debian und Ubuntu; getestet auf Debian 12
+und 13 sowie Ubuntu 22.04, 24.04 und 26.04. **Debian 11** wird nicht mehr
+unterstützt: Die Distribution ist aus dem Support gelaufen, ihre Paketquellen
+liefern nicht mehr alles aus, und `apt` scheitert schon an `gnupg` oder `sudo`.
+
 Läuft LCM auf demselben Host, geht es auch per Klick: *Server-Detail des
-LCM-Hosts → Trivy einrichten*.
+LCM-Hosts → Trivy einrichten*. Wurde Trivy ohne bubblewrap eingerichtet, rüstet
+*Sandbox nachrüsten* es nach.
 
 | Pfad | Inhalt |
 |------|--------|
@@ -217,9 +230,11 @@ docker compose logs -f     # Erststart: hier steht das generierte Admin-Passwort
 Beim ersten Start entstehen im Host-Ordner `./data` die Konfiguration, die
 SQLite-Datenbank und `version.json`. Das Runtime-Image ist minimal gehärtet
 (Alpine, non-root, `read-only`, `cap_drop: ALL`). Der Container spricht standardmäßig
-HTTPS mit selbstsigniertem Zertifikat - für öffentliche Deployments einen
-Reverse-Proxy mit echtem Zertifikat davorschalten (Beispiele und was dabei
-in LCM einzustellen ist: [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/)).
+HTTPS mit selbstsigniertem Zertifikat. Für öffentliche Deployments hinterlegst du
+ein eigenes Zertifikat (Volume plus `tls_certificates`, Neuladen mit
+`docker kill -s HUP lcm`) oder schaltest einen Reverse-Proxy mit echtem
+Zertifikat davor (Beispiele und was dabei in LCM einzustellen ist:
+[Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/)).
 
 Details und alle Härtungs-Flags: [Docker-Betrieb](/guides/docker/) und
 [Paketierung](/reference/packaging/).
@@ -284,7 +299,7 @@ Praktisch im Container-/Dienst-Betrieb, um Werte zu übersteuern, ohne die
 | `LCM_HOST` | Bind-Adresse der Weboberfläche/REST-API (überschreibt `host`). |
 | `LCM_PORT` | Port der Weboberfläche/REST-API (überschreibt `port`). |
 | `LCM_AGENT_HOST` | Bind-Adresse des Agent-Listeners (überschreibt `agent_host`). |
-| `LCM_AGENT_PORT` | Port des Agent-Listeners (überschreibt `agent_port`); `0` schaltet ihn ab. |
+| `LCM_AGENT_PORT` | Port des Agent-Listeners (überschreibt `agent_port`); `0` schaltet ihn ab. Eine gesetzte Umgebungsvariable sperrt das Feld in der Oberfläche. |
 | `LCM_BACKUP_PASSPHRASE` | Passphrase für **automatische** Backups (siehe [Backups](/guides/backups/)). |
 | `LCM_RESTORE_AUTO_RESTART` | `1`/`true` = nach einem vorbereiteten Restore automatisch neu starten. |
 | `TZ` | Zeitzone, z.&nbsp;B. `Europe/Berlin` - die tzdata sind ins Binary eingebettet, funktioniert also auch in minimalen Containern. |
@@ -294,19 +309,32 @@ LCM_HOST=0.0.0.0 LCM_PORT=443 ./lcm            # UI/REST an alle Interfaces, Por
 LCM_AGENT_PORT=0 ./lcm                          # LCM Remote (Agent-Listener) abschalten
 ```
 
+Ports unter 1024 wie `443` darf der Dienst der Paketinstallation öffnen: Die
+mitgelieferte Dienstdatei gibt ihm dafür die Berechtigung `CAP_NET_BIND_SERVICE`,
+ein Drop-in ist nicht nötig. Siehe
+[Zertifikate, Let's Encrypt & Port 443](/guides/zertifikate/#port-80-und-443-freigeben).
+
 ## Netzwerk-Ports
 
-LCM bindet bis zu **drei** getrennte Listener - bewusst auf eigenen Ports:
+LCM bindet bis zu **drei** getrennte Listener - bewusst auf eigenen Ports. Dazu
+kommen zwei **optionale** Ports (siehe unten):
 
 | Port (Default) | Listener | Bind (Default) | Protokoll |
 |---|---|---|---|
-| `9310` | **Weboberfläche + REST-API** (`host`/`port`) | `127.0.0.1` | HTTPS (self-signed; `--dev` = HTTP) |
-| `9320` | **Agent-Listener** - LCM Remote, ausschließlich `/mqtt` (`agent_host`/`agent_port`); `agent_port: 0` schaltet ihn ab | `0.0.0.0` | HTTPS (dasselbe Zertifikat wie die UI) |
-| `9330` | **MCP-Listener** - optional, standardmäßig **aus**; an-/abschaltbar unter *Einstellungen → MCP* | `127.0.0.1` | HTTP |
+| `9310` | **Weboberfläche + REST-API** (`host`/`port`) | `127.0.0.1` | HTTPS (LCM-Zertifikat, selbstsigniert, oder ein eigenes; `--dev` = HTTP) |
+| `9320` | **Agent-Listener** - LCM Remote, ausschließlich `/mqtt` (`agent_host`/`agent_port`); der Schalter für den Agenten schaltet ihn ab | `0.0.0.0` | HTTPS (Zertifikat nach dem angefragten Namen, sonst das LCM-Zertifikat) |
+| `9330` | **MCP-Listener** - optional, standardmäßig **aus**; Schalter unter *Einstellungen → Allgemein* und *Einstellungen → MCP* (`mcp_port`) | wie die Weboberfläche | immer HTTPS (Zertifikat nach dem angefragten Namen) |
+| `443` (frei wählbar) | **Gemeinsamer Port** - optional, Adressmodus C (in der Oberfläche oder per `shared_tls_listen`): Weboberfläche, Agent und MCP nach dem angefragten Namen | aus | HTTPS |
+| `80` (`acme_http_listen`) | **Let's Encrypt, HTTP-01** - optional, nur während einer Prüfung offen, sonst geschlossen | aus | HTTP |
 
 Auf dem Agent-Port liegt **nur** die Agent-Schnittstelle, auf dem UI/REST-Port
 **keine** - und umgekehrt. Details: [LCM Remote](/guides/remote/) und
-[MCP-Schnittstelle](/guides/mcp/).
+[MCP-Schnittstelle](/guides/mcp/). Die Ports lassen sich in *Einstellungen → Allgemein* ändern
+([Öffentliche Adressen & Adressmodus](/guides/adressen/)). Die beiden
+optionalen Ports, eigene Zertifikate und Let's Encrypt beschreibt
+[Zertifikate, Let's Encrypt & Port 443](/guides/zertifikate/). Welche Netze die
+Dienste erreichen dürfen, legen die [Erlaubten Netzbereiche](/guides/netzbereiche/)
+fest.
 
 :::note[Jeder Neustart beendet alle Sitzungen]
 Browser-Sitzungen und das Signaturmaterial der 2FA-Challenge leben nur im
@@ -335,5 +363,24 @@ Sitzungs-Cookie (bequemer, nur über HTTPS). Das lässt sich jederzeit unter
 *Einstellungen → Allgemein → Anmeldung im Browser* ändern, direkt neben der
 *Sitzungsdauer in Minuten*; ein Wechsel meldet alle Benutzer ab. Skripte
 nutzen davon unabhängig einen API-Schlüssel.
+
+Nach dem Passwort und der Zwei-Faktor-Anmeldung führt der **Einrichtungsassistent**
+durch die ersten Einstellungen. Das gibt es nur auf einer frischen Installation. Er
+fragt in sechs Schritten:
+
+1. **Wie ist LCM erreichbar?** Adressmodus, Adressen und Ports. Dieser Schritt lässt
+   sich nicht überspringen.
+2. **Welche Dienste sollen laufen?** Agent und MCP.
+3. **Wer darf LCM erreichen?** Erlaubte Netzbereiche je Dienst.
+4. **Zertifikat:** Let's Encrypt oder ein Reverse-Proxy davor. Danach leitet der
+   Assistent auf die neue Adresse weiter, bei einem neuen Namen meldest du dich neu
+   an.
+5. **Neue Server aufnehmen:** der Onboarding-Schlüssel (überspringbar).
+6. **Automatisches Backup** (überspringbar).
+
+Zum Schluss öffnet LCM die Seite des LCM-Hosts mit einer Einführung in Trivy,
+apt-cacher-ng und CrowdSec LAPI. Die Schritte im Einzelnen:
+[Öffentliche Adressen & Adressmodus](/guides/adressen/#einrichtungsassistent).
+Später änderst du alles unter *Einstellungen → Allgemein*.
 
 Weiter mit dem [Schnellstart](/getting-started/quickstart/).

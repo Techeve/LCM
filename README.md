@@ -195,10 +195,11 @@ theme. Taken from the built-in demo mode (`lcm --demo`).
 - **Security by design** - AES-256-GCM encryption of sensitive data at rest
   (master key in `lcm.key` or `LCM_ENCRYPTION_KEY`), key rotation
   (`rotate-db-key`, SSH certificate rotation), TOTP 2FA with enforcement, HTTPS
-  by default (self-signed out of the box, custom certificates configurable),
-  rate limiting, strict security headers, optional **IP allowlist**
-  (`allowed_ips` in config.json: localhost only, private networks, or selected
-  addresses/CIDRs)
+  by default (self-signed out of the box; **your own certificates or Let's
+  Encrypt** without a reverse proxy, picked by name, also all on port 443),
+  rate limiting, strict security headers, optional **allowed networks** per
+  service (web UI, agent, MCP: localhost only, private networks, or selected
+  addresses/CIDRs, set in the interface or with `allowed_ips` in config.json)
 - **Dark mode** - switchable colour scheme (system/dark/light) in the
   navigation bar; follows the operating system by default and remembers the
   choice in the browser

@@ -33,8 +33,13 @@ func runUfwScript(t *testing.T, script, ipv6 string) (string, int, string) {
 	defaults := filepath.Join(dir, "ufw.default")
 	writeSandboxFile(t, defaults, "# /etc/default/ufw\nIPV6="+ipv6+"\nDEFAULT_INPUT_POLICY=\"DROP\"\n", 0o644)
 	writeSandboxFile(t, filepath.Join(dir, "bin", "ufw"), ufwStub, 0o755)
-	cmd := exec.Command("sh", "-c", strings.ReplaceAll(script, "/etc/default/ufw", defaults))
-	cmd.Env = []string{"PATH=" + filepath.Join(dir, "bin") + ":/usr/bin:/bin", "UFW_LOG=" + dir + "/log", "UFW_DEFAULT=" + defaults}
+	bin := filepath.Join(dir, "bin")
+	script = strings.ReplaceAll(script, "/etc/default/ufw", defaults)
+	// Der Werkzeug-Test sucht mit festem System-PATH (realBinaryExists); die
+	// Attrappe liegt im Testverzeichnis, also dorthin umlenken.
+	script = strings.ReplaceAll(script, "PATH="+restrictedSecurePath, "PATH="+bin)
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", "UFW_LOG=" + dir + "/log", "UFW_DEFAULT=" + defaults}
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if exit, ok := err.(*exec.ExitError); ok {

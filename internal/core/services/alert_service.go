@@ -67,6 +67,9 @@ type AlertService struct {
 	// certWarning liefert den Hinweis zum TLS-Zertifikat (CertRenewal) -
 	// leer, solange nichts zu tun ist; nil = Prüfung entfällt.
 	certWarning func() string
+	// renewalFailure liefert den Fehler des letzten ACME-Laufs - leer, solange
+	// alles gelingt; nil = Prüfung entfällt.
+	renewalFailure func() string
 	// advisoryFindings liefert die offenen Fruehwarn-Befunde eines Servers.
 	advisoryFindings func(serverID uint) ([]domain.AdvisoryFinding, error)
 	// capabilities liefert die Betriebsfähigkeit der Server für die Erinnerung
@@ -137,6 +140,13 @@ func (s *AlertService) WithCertWarning(fn func() string) *AlertService {
 	return s
 }
 
+// WithRenewalFailure verdrahtet den Fehler des letzten ACME-Laufs (optional) -
+// Grundlage des tls_renewal_failed-Alarms.
+func (s *AlertService) WithRenewalFailure(fn func() string) *AlertService {
+	s.renewalFailure = fn
+	return s
+}
+
 func (s *AlertService) cveWeightList() []string {
 	if s.weightList != nil {
 		return s.weightList()
@@ -188,7 +198,7 @@ func validAlertType(t string) bool {
 		domain.AlertTypeCrowdSecLapiDown, domain.AlertTypeDeepScan,
 		domain.AlertTypeCVEDBStale, domain.AlertTypeBackupStale,
 		domain.AlertTypeAdvisory, domain.AlertTypeActionFailed,
-		domain.AlertTypeTLSCertExpiring:
+		domain.AlertTypeTLSCertExpiring, domain.AlertTypeTLSRenewalFailed:
 		return true
 	default:
 		return false
@@ -430,6 +440,8 @@ func (s *AlertService) evaluateSelf(rule *domain.AlertRule) finding {
 		return s.evalBackupStale()
 	case domain.AlertTypeTLSCertExpiring:
 		return s.evalCertExpiring()
+	case domain.AlertTypeTLSRenewalFailed:
+		return s.evalRenewalFailed()
 	default:
 		return finding{}
 	}
@@ -599,6 +611,18 @@ func (s *AlertService) evalCertExpiring() finding {
 		return finding{}
 	}
 	return finding{fired: true, description: "TLS-Zertifikat läuft bald ab", details: msg}
+}
+
+// evalRenewalFailed feuert, solange der letzte ACME-Lauf einen Fehler hat.
+func (s *AlertService) evalRenewalFailed() finding {
+	if s.renewalFailure == nil {
+		return finding{}
+	}
+	msg := s.renewalFailure()
+	if msg == "" {
+		return finding{}
+	}
+	return finding{fired: true, description: "Zertifikat-Erneuerung fehlgeschlagen", details: msg}
 }
 
 // evalDeepScan feuert, wenn der letzte Deep Scan Warnungen/kritische Befunde

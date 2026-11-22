@@ -33,23 +33,18 @@ func (ctrl *SubscriptionController) Status(c fiber.Ctx) error {
 // Activate - POST /api/v1/subscription/activate (settings:manage)
 // Tauscht den Subscription-Key gegen den instanzgebundenen Zugangsschlüssel.
 // Fehlermeldungen des Dienstes (an andere Instanz gebunden, abgelaufen,
-// widerrufen) gehen als 400 mit Klartext an die Oberfläche.
+// widerrufen) gehen als 400 mit Klartext an die Oberfläche. Ein Feld
+// service_url im Body (frühere eigene Dienst-Adresse) wird ignoriert: Die
+// Adresse des Dienstes ist fest.
 func (ctrl *SubscriptionController) Activate(c fiber.Ctx) error {
 	var in struct {
 		SubscriptionKey string `json:"subscription_key"`
-		ServiceURL      string `json:"service_url"`
 	}
 	if err := bindBody(c, &in); err != nil {
 		return err
 	}
-	if err := checkLines(lineField{"subscription_key", in.SubscriptionKey, maxTokenLen}, lineField{"service_url", in.ServiceURL, maxPathLen}); err != nil {
+	if err := checkLines(lineField{"subscription_key", in.SubscriptionKey, maxTokenLen}); err != nil {
 		return err
-	}
-	// Optional zuerst die Dienst-Adresse übernehmen (ein Formular, ein Klick).
-	if in.ServiceURL != "" {
-		if err := ctrl.subs.SetServiceURL(in.ServiceURL, actor(c)); err != nil {
-			return errSubscriptionURL.With("detail", err.Error())
-		}
 	}
 	if _, err := ctrl.subs.Activate(in.SubscriptionKey, actor(c)); err != nil {
 		return errActivationFailed.With("detail", err.Error())

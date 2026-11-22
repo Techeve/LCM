@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +78,9 @@ type Hub struct {
 	conns map[string]map[*agentConn]struct{}
 	// sockets hält die Verbindungen in HandleConn, auch solche ohne CONNECT.
 	sockets map[net.Conn]struct{}
+	// off: Der Agent-Zugang ist ausgeschaltet (SetAccepting); neue Verbindungen
+	// werden abgewiesen. Der Nullwert heißt: an.
+	off bool
 	// ttys hält die offenen Web-Konsolen je Sitzungsname (tty.go).
 	ttys map[string]*agentTerminal
 }
@@ -167,10 +172,39 @@ func (h *Hub) Close() {
 	_ = h.broker.Close()
 }
 
+// errAgentAccessOff: Der Agent-Zugang ist ausgeschaltet.
+var errAgentAccessOff = errors.New("agent access is switched off")
+
+// SetAccepting schaltet den Agent-Zugang (Einstellung agent_enabled). Aus
+// trennt alle verbundenen Agenten und weist neue Verbindungen ab, auf welchem
+// Weg sie auch kommen (eigener Port oder gemeinsamer Port). Für nil ein No-op.
+func (h *Hub) SetAccepting(on bool) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.off = !on
+	var open []net.Conn
+	if !on {
+		for c := range h.sockets {
+			open = append(open, c)
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range open {
+		_ = c.Close()
+	}
+}
+
 // HandleConn reicht eine (bereits als WebSocket-net.Conn adaptierte)
 // Verbindung in den Broker - blockiert bis zum Disconnect des Clients.
 func (h *Hub) HandleConn(c net.Conn) error {
 	h.mu.Lock()
+	if h.off {
+		h.mu.Unlock()
+		_ = c.Close()
+		return errAgentAccessOff
+	}
 	h.sockets[c] = struct{}{}
 	h.mu.Unlock()
 	defer func() {
@@ -188,6 +222,32 @@ func (h *Hub) Online(agentID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.online[agentID] != nil
+}
+
+// ConnectedPeers liefert die verbundenen Agenten mit ihrer Gegenadresse, wie
+// der WebSocket-Handler sie ermittelt hat (hinter einem vertrauten Proxy die
+// weitergeleitete). Für die Prüfung, wen eine engere Netzliste aussperrt.
+func (h *Hub) ConnectedPeers() []domain.AgentPeer {
+	h.mu.Lock()
+	clients := make(map[string]*mqtt.Client, len(h.online))
+	for agentID, cl := range h.online {
+		clients[agentID] = cl
+	}
+	h.mu.Unlock()
+
+	peers := make([]domain.AgentPeer, 0, len(clients))
+	for agentID, cl := range clients {
+		peer := domain.AgentPeer{AgentID: agentID, Name: agentID}
+		if server, err := h.servers.FindByAgentID(agentID); err == nil {
+			peer.Name = server.Name
+		}
+		if remote, err := netip.ParseAddrPort(cl.Net.Remote); err == nil {
+			peer.Addr = remote.Addr().Unmap()
+		}
+		peers = append(peers, peer)
+	}
+	slices.SortFunc(peers, func(a, b domain.AgentPeer) int { return strings.Compare(a.Name, b.Name) })
+	return peers
 }
 
 // Disconnect trennt eine aktive Agent-Session (Token-Revocation,

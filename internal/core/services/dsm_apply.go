@@ -8,7 +8,6 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/synology"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -45,10 +44,9 @@ func (s *ServerService) ApplyDSMTargets(scope repositories.AccessScope, id uint,
 		return nil, err // u.a. ErrServerBusy → 409
 	}
 	s.audit.Log(actor, "server.dsm-apply", "server", id, server.Name+": "+strings.Join(keys, ", "))
-	safego.GoCleanup("job:dsm-apply", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:dsm-apply", job, func() {
 		s.runDSMApply(job, server, keys)
-	})
-	return job, nil
+	}), nil
 }
 
 // dsmTargetKeys prüft die Schlüssel gegen die setzbaren und ordnet sie wie

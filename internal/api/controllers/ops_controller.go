@@ -3,6 +3,8 @@ package controllers
 import (
 	"errors"
 	"io"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"LCM/internal/core/domain"
 	"LCM/internal/core/events"
 	"LCM/internal/core/services"
+	"LCM/internal/inputcheck"
 	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
@@ -629,6 +632,11 @@ func (ctrl *OpsController) GetSettings(c fiber.Ctx) error {
 		return err
 	}
 	settings.NTPServerPresets = settings.NTPServerPresetsOrDefault()
+	settings, addr := ctrl.showEffectiveAddresses(settings)
+	agentServers, err := ctrl.countAgentServers()
+	if err != nil {
+		return err
+	}
 	// Geheimnisse bleiben verborgen (json:"-"); für die UI zusätzlich abgeleitete
 	// „konfiguriert?"-Flags mitgeben, ohne die Werte preiszugeben.
 	return c.JSON(struct {
@@ -639,42 +647,97 @@ func (ctrl *OpsController) GetSettings(c fiber.Ctx) error {
 		// BrowserSessionCookieAvailable: Diese Anfrage kam über HTTPS, die
 		// Cookie-Variante ist also wählbar.
 		BrowserSessionCookieAvailable bool `json:"browser_session_cookie_available"`
+		// AddressLocks: Eine Umgebungsvariable legt den Wert fest.
+		AddressLocks services.AddressLocks `json:"address_locks"`
+		// EffectiveURLs sind die Adressen, die LCM in Befehle schreibt.
+		EffectiveURLs services.EffectiveURLs `json:"effective_urls"`
+		// AgentServers ist die Zahl der Server mit Transport Agent: Die
+		// Oberfläche nennt sie vor dem Ausschalten des Agenten.
+		AgentServers int `json:"agent_servers"`
 	}{settings, settings.CrowdSecConsoleConfigured(),
 		services.BackupPassphraseSet() || ctrl.settings.BackupPassphraseStored(),
 		strings.TrimSpace(settings.BackupRecipients) != "",
-		middlewares.RequestIsHTTPS(c)})
+		middlewares.RequestIsHTTPS(c), addr.Locks, addr.URLs, agentServers})
+}
+
+// countAgentServers zählt die Server mit Transport Agent; 0 ohne Serverdienst.
+func (ctrl *OpsController) countAgentServers() (int, error) {
+	if ctrl.servers == nil {
+		return 0, nil
+	}
+	return ctrl.servers.CountAgentServers()
+}
+
+// showEffectiveAddresses liefert eine Kopie der Einstellungen, deren Modus und
+// Ports der wirksame Stand sind (ein Wert aus der config.json gilt statt dem
+// der Datenbank, damit die Oberfläche zeigt, was läuft), dazu den wirksamen
+// Stand selbst. Die Vorlage bleibt unberührt, gespeichert wird die Kopie nie.
+func (ctrl *OpsController) showEffectiveAddresses(st *domain.GlobalSettings) (*domain.GlobalSettings, services.Addresses) {
+	a := ctrl.settings.AddressesOf(st)
+	shown := *st
+	shown.AddressMode, shown.UIPort, shown.AgentPort, shown.MCPPort, shown.SharedTLSPort =
+		a.Mode, a.UIPort, a.AgentPort, a.MCPPort, a.SharedTLSPort
+	shown.AgentEnabled, shown.MCPTLS = a.AgentEnabled, true
+	if shown.TrustedProxies == nil {
+		shown.TrustedProxies = []string{} // [] statt null
+	}
+	return &shown, a
+}
+
+// configuredUIURL ist die Adresse der Oberfläche, wenn eine Einstellung sie
+// festlegt: der Name im Modus B und C, die öffentliche Adresse im Modus A. Leer,
+// wo nur der Rückfall auf den lokalen Host bleibt.
+func configuredUIURL(st *domain.GlobalSettings, a services.Addresses) string {
+	if a.Mode == domain.AddressModeSeparate && st.PublicBaseURL == "" {
+		return ""
+	}
+	return a.URLs.UI
+}
+
+// browserUIURL ist die Adresse der Oberfläche unter dem Namen, mit dem der
+// Browser diese Anfrage gestellt hat, auf einem neuen Port: das Ziel der
+// Weiterleitung nach einem Portwechsel, wenn keine Einstellung die Adresse
+// festlegt. Der Name wird geprüft; ist er keine gültige Adresse, gilt der
+// Rückfall fallback. Die Adresse geht nur in die Antwort an diesen Browser und
+// nirgends in Mails oder Befehle (siehe LinkBaseURL).
+func browserUIURL(c fiber.Ctx, port int, fallback string) string {
+	host := strings.Trim(c.Hostname(), "[]")
+	if host == "" || strings.Contains(host, "%") || inputcheck.HostProblem(host) != "" {
+		return fallback
+	}
+	scheme := "http"
+	if middlewares.RequestIsHTTPS(c) {
+		scheme = "https"
+	}
+	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // SetMCP - PUT /api/v1/settings/mcp (settings:manage)
-// Schaltet die MCP-Schnittstelle ein/aus und setzt Bind-Adresse/Port. Der
-// separate MCP-Listener wird direkt zur Laufzeit gestartet/gestoppt.
+// Schaltet die MCP-Schnittstelle ein oder aus. Der Listener wird zur Laufzeit
+// gestartet oder gestoppt. MCP spricht immer TLS und bindet an den Host der
+// Oberfläche; Port und Namen stehen in den Adressen (PATCH /settings/global).
+// bind_host, port und tls im Body älterer Clients werden überlesen.
 func (ctrl *OpsController) SetMCP(c fiber.Ctx) error {
 	var req struct {
-		Enabled  bool   `json:"enabled"`
-		BindHost string `json:"bind_host"`
-		Port     int    `json:"port"`
+		Enabled bool `json:"enabled"`
 	}
 	if err := bindBody(c, &req); err != nil {
 		return err
 	}
-	if err := checkHost("bind_host", req.BindHost); err != nil {
-		return err
-	}
-	if err := checkPort("port", req.Port); err != nil {
-		return err
-	}
-	if req.Port == 0 {
-		req.Port = 9330
-	}
-	if err := ctrl.settings.SetMCP(req.Enabled, req.BindHost, req.Port, actor(c)); err != nil {
+	if err := ctrl.settings.SetMCP(req.Enabled, actor(c)); err != nil {
+		if conflict := publicHostConflict(err); conflict != nil {
+			return conflict
+		}
 		return errSettingInvalid.With("detail", err.Error())
 	}
 	settings, err := ctrl.settings.Get()
 	if err != nil {
 		return err
 	}
+	shown, _ := ctrl.showEffectiveAddresses(settings)
 	return c.JSON(fiber.Map{
-		"mcp_enabled": settings.MCPEnabled, "mcp_bind_host": settings.MCPBindHost, "mcp_port": settings.MCPPort,
+		"mcp_enabled": shown.MCPEnabled, "mcp_bind_host": shown.MCPBindHost,
+		"mcp_port": shown.MCPPort, "mcp_tls": shown.MCPTLS,
 	})
 }
 
@@ -794,40 +857,51 @@ func (ctrl *OpsController) Maintenance(c fiber.Ctx) error {
 // Feld nullte zehn unbeteiligte Einstellungen (Backup aus, CVE-Scan aus,
 // APT-Cache-URL weg), still und mit 200 (R2-029).
 type globalSettingsRequest struct {
-	DefaultSSHUser              *string `json:"default_ssh_user"`
-	DefaultSSHPassword          *string `json:"default_ssh_password"`
-	DefaultSSHPort              *int    `json:"default_ssh_port"`
-	LogRetentionDays            *int    `json:"log_retention_days"`
-	RoutineLogRetentionDays     *int    `json:"routine_log_retention_days"`
-	StorageHistoryRetentionDays *int    `json:"storage_history_retention_days"`
-	BackupEnabled               *bool   `json:"backup_enabled"`
-	BackupIntervalHours         *int    `json:"backup_interval_hours"`
-	BackupRetention             *int    `json:"backup_retention"`
-	BackupTime                  *string `json:"backup_time"`
-	BackupDir                   *string `json:"backup_dir"`
-	RestoreAutoRestart          *bool   `json:"restore_auto_restart"`
-	CVEScanEnabled              *bool   `json:"cve_scan_enabled"`
-	AptIncludePhased            *bool   `json:"apt_include_phased"`
-	CVEScanCron                 *string `json:"cve_scan_cron"`
-	AdvisoryPollingEnabled      *bool   `json:"advisory_polling_enabled"`
-	AdvisoryLocalCopy           *bool   `json:"advisory_local_copy"`
-	AdvisoryCacheTTLMinutes     *int    `json:"advisory_cache_ttl_minutes"`
-	CVEHighWeightPackages       *string `json:"cve_high_weight_packages"`
-	SessionTTLMinutes           *int    `json:"session_ttl_minutes"`
-	BrowserSessionMode          *string `json:"browser_session_mode"` // memory | cookie
-	BrowserSessionModeConfirmed *bool   `json:"browser_session_mode_confirmed"`
-	JobIdleTimeoutMinutes       *int    `json:"job_idle_timeout_minutes"`
-	JobIdleTimeoutSlowMinutes   *int    `json:"job_idle_timeout_slow_minutes"`
-	PackagesStaleWarnHours      *int    `json:"packages_stale_warn_hours"`
-	PackagesStaleCriticalDays   *int    `json:"packages_stale_critical_days"`
-	Require2FARoles             *string `json:"require_2fa_roles"`
-	PublicBaseURL               *string `json:"public_base_url"`
-	PublicAgentURL              *string `json:"public_agent_url"`
-	PublicMCPURL                *string `json:"public_mcp_url"`
-	DNSServerPresets            *string `json:"dns_server_presets"`
-	DNSTestDomains              *string `json:"dns_test_domains"`
-	NTPServerPresets            *string `json:"ntp_server_presets"`
-	DefaultTimezone             *string `json:"default_timezone"`
+	DefaultSSHUser              *string   `json:"default_ssh_user"`
+	DefaultSSHPassword          *string   `json:"default_ssh_password"`
+	DefaultSSHPort              *int      `json:"default_ssh_port"`
+	LogRetentionDays            *int      `json:"log_retention_days"`
+	RoutineLogRetentionDays     *int      `json:"routine_log_retention_days"`
+	StorageHistoryRetentionDays *int      `json:"storage_history_retention_days"`
+	BackupEnabled               *bool     `json:"backup_enabled"`
+	BackupIntervalHours         *int      `json:"backup_interval_hours"`
+	BackupRetention             *int      `json:"backup_retention"`
+	BackupTime                  *string   `json:"backup_time"`
+	BackupDir                   *string   `json:"backup_dir"`
+	RestoreAutoRestart          *bool     `json:"restore_auto_restart"`
+	CVEScanEnabled              *bool     `json:"cve_scan_enabled"`
+	AptIncludePhased            *bool     `json:"apt_include_phased"`
+	CVEScanCron                 *string   `json:"cve_scan_cron"`
+	AdvisoryPollingEnabled      *bool     `json:"advisory_polling_enabled"`
+	AdvisoryLocalCopy           *bool     `json:"advisory_local_copy"`
+	AdvisoryCacheTTLMinutes     *int      `json:"advisory_cache_ttl_minutes"`
+	CVEHighWeightPackages       *string   `json:"cve_high_weight_packages"`
+	SessionTTLMinutes           *int      `json:"session_ttl_minutes"`
+	BrowserSessionMode          *string   `json:"browser_session_mode"` // memory | cookie
+	BrowserSessionModeConfirmed *bool     `json:"browser_session_mode_confirmed"`
+	JobIdleTimeoutMinutes       *int      `json:"job_idle_timeout_minutes"`
+	JobIdleTimeoutSlowMinutes   *int      `json:"job_idle_timeout_slow_minutes"`
+	PackagesStaleWarnHours      *int      `json:"packages_stale_warn_hours"`
+	PackagesStaleCriticalDays   *int      `json:"packages_stale_critical_days"`
+	Require2FARoles             *string   `json:"require_2fa_roles"`
+	PublicBaseURL               *string   `json:"public_base_url"`
+	PublicAgentURL              *string   `json:"public_agent_url"`
+	PublicMCPURL                *string   `json:"public_mcp_url"`
+	AddressMode                 *string   `json:"address_mode"` // separate | one_name | shared_port
+	PublicHost                  *string   `json:"public_host"`  // nur one_name
+	UIPort                      *int      `json:"ui_port"`
+	AgentPort                   *int      `json:"agent_port"`
+	MCPPort                     *int      `json:"mcp_port"`
+	SharedTLSPort               *int      `json:"shared_tls_port"`
+	AgentEnabled                *bool     `json:"agent_enabled"`
+	MCPEnabled                  *bool     `json:"mcp_enabled"`
+	SetupStep                   *string   `json:"setup_step"` // session bis subscription vor und zurück, aus intro nur leer
+	TrustProxyHeader            *bool     `json:"trust_proxy_header"`
+	TrustedProxies              *[]string `json:"trusted_proxies"`
+	DNSServerPresets            *string   `json:"dns_server_presets"`
+	DNSTestDomains              *string   `json:"dns_test_domains"`
+	NTPServerPresets            *string   `json:"ntp_server_presets"`
+	DefaultTimezone             *string   `json:"default_timezone"`
 	// CrowdSec-Console-Key, write-only (leer = unverändert). Die LAPIs
 	// haben eigene Endpunkte (/settings/crowdsec/lapis).
 	CrowdSecConsoleKey *string `json:"crowdsec_console_key"`
@@ -882,6 +956,17 @@ func (req globalSettingsRequest) toInput() services.GlobalSettingsInput {
 		PublicBaseURL:               req.PublicBaseURL,
 		PublicAgentURL:              req.PublicAgentURL,
 		PublicMCPURL:                req.PublicMCPURL,
+		AddressMode:                 req.AddressMode,
+		PublicHost:                  req.PublicHost,
+		UIPort:                      req.UIPort,
+		AgentPort:                   req.AgentPort,
+		MCPPort:                     req.MCPPort,
+		SharedTLSPort:               req.SharedTLSPort,
+		AgentEnabled:                req.AgentEnabled,
+		MCPEnabled:                  req.MCPEnabled,
+		SetupStep:                   req.SetupStep,
+		TrustProxyHeader:            req.TrustProxyHeader,
+		TrustedProxies:              req.TrustedProxies,
 		DNSServerPresets:            req.DNSServerPresets,
 		DNSTestDomains:              req.DNSTestDomains,
 		NTPServerPresets:            req.NTPServerPresets,
@@ -916,6 +1001,7 @@ func (ctrl *OpsController) UpdateSettings(c fiber.Ctx) error {
 		return err
 	}
 	modeBefore := before.SessionMode()
+	addrBefore := ctrl.settings.AddressesOf(before)
 	updated, err := ctrl.settings.UpdateGlobal(req.toInput(), actor(c))
 	if err != nil {
 		// Eingabevalidierung gehört als 4xx beantwortet - eine unbekannte
@@ -929,6 +1015,9 @@ func (ctrl *OpsController) UpdateSettings(c fiber.Ctx) error {
 		if errors.Is(err, services.ErrMailerIncomplete) {
 			return errMailerIncomplete
 		}
+		if conflict := publicHostConflict(err); conflict != nil {
+			return conflict
+		}
 		if errors.Is(err, services.ErrSettingInvalid) {
 			return errSettingInvalid.With("detail", err.Error())
 		}
@@ -936,7 +1025,28 @@ func (ctrl *OpsController) UpdateSettings(c fiber.Ctx) error {
 	}
 	ctrl.endSessionsOnModeChange(c, modeBefore, updated.SessionMode())
 	updated.NTPServerPresets = updated.NTPServerPresetsOrDefault()
-	return c.JSON(updated)
+	shown, addr := ctrl.showEffectiveAddresses(updated)
+	return c.JSON(struct {
+		*domain.GlobalSettings
+		AddressLocks  services.AddressLocks  `json:"address_locks"`
+		EffectiveURLs services.EffectiveURLs `json:"effective_urls"`
+		// UIURL steht nur, wenn dieser PATCH den Port der Oberfläche geändert
+		// hat: die Adresse, zu der der Browser jetzt wechseln soll.
+		UIURL string `json:"ui_url,omitempty"`
+	}{shown, addr.Locks, addr.URLs, ctrl.uiURLAfterPortChange(c, updated, addrBefore, addr)})
+}
+
+// uiURLAfterPortChange nennt die neue Adresse der Oberfläche, wenn sich ihr
+// Port geändert hat; sonst leer. Legt eine Einstellung die Adresse fest, gilt
+// sie (hinter einem Proxy bleibt der Browser dann auf seinem Ursprung stehen).
+func (ctrl *OpsController) uiURLAfterPortChange(c fiber.Ctx, st *domain.GlobalSettings, before, after services.Addresses) string {
+	if before.UIPort == after.UIPort {
+		return ""
+	}
+	if url := configuredUIURL(st, after); url != "" {
+		return url
+	}
+	return browserUIURL(c, after.UIPort, ctrl.settings.LinkBaseURL())
 }
 
 // checkBrowserSessionMode prüft den Wunsch nach einem Sitzungsweg: nur die zwei
@@ -1158,6 +1268,9 @@ func checkGlobalSettings(req globalSettingsRequest) error {
 		lineField{"public_base_url", deref(req.PublicBaseURL), maxPathLen},
 		lineField{"public_agent_url", deref(req.PublicAgentURL), maxPathLen},
 		lineField{"public_mcp_url", deref(req.PublicMCPURL), maxPathLen},
+		lineField{"address_mode", deref(req.AddressMode), maxNameLen},
+		lineField{"public_host", deref(req.PublicHost), maxHostLen},
+		lineField{"setup_step", deref(req.SetupStep), maxNameLen},
 		lineField{"default_timezone", deref(req.DefaultTimezone), maxNameLen},
 		lineField{"crowdsec_console_key", deref(req.CrowdSecConsoleKey), maxPasswordLen},
 		lineField{"mail_username", deref(req.MailUsername), maxLoginUserLen},
@@ -1180,6 +1293,14 @@ func checkGlobalSettings(req globalSettingsRequest) error {
 	}
 	if err := checkPort("mail_port", derefInt(req.MailPort)); err != nil {
 		return err
+	}
+	for _, p := range []struct {
+		field string
+		value *int
+	}{{"ui_port", req.UIPort}, {"agent_port", req.AgentPort}, {"mcp_port", req.MCPPort}, {"shared_tls_port", req.SharedTLSPort}} {
+		if err := checkPort(p.field, derefInt(p.value)); err != nil {
+			return err
+		}
 	}
 	if err := checkPort("default_ssh_port", derefInt(req.DefaultSSHPort)); err != nil {
 		return err

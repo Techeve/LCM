@@ -147,7 +147,7 @@ func randomSerial() (*big.Int, error) {
 // beim nächsten Start auf.
 func writePair(certPath, keyPath string, certPEM, keyPEM []byte) error {
 	if keyPEM == nil {
-		return replaceFile(certPath, certPEM, 0o644)
+		return ReplaceFile(certPath, certPEM, 0o644)
 	}
 	if err := writeFresh(keyPath+".new", keyPEM, 0o600); err != nil {
 		return fmt.Errorf("tls-key speichern: %w", err)

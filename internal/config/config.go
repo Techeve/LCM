@@ -9,7 +9,6 @@
 package config
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -20,7 +19,6 @@ import (
 	"time"
 
 	"LCM/internal/i18n"
-	"LCM/internal/netfilter"
 )
 
 // Config enthält alle Laufzeit-Einstellungen der Anwendung.
@@ -95,6 +93,22 @@ type Config struct {
 	// nicht für Browser-Sessions.
 	APIKeyRateLimitPerMinute int `json:"api_key_rate_limit_per_minute"`
 
+	// ACMEHTTPListen ist die Adresse des Listeners für die Prüfung HTTP-01
+	// einer ACME-CA, Standard ":80". Er ist nur offen, solange eine Prüfung
+	// läuft, und beantwortet dort allein das Token der Prüfung. Ports unter
+	// 1024 braucht die Capability CAP_NET_BIND_SERVICE (die mitgelieferte
+	// lcm.service setzt sie); alternativ ein hoher Port hinter einer
+	// Portweiterleitung.
+	ACMEHTTPListen string `json:"acme_http_listen"`
+
+	// ACMEDNSExec ist das Programm für den DNS-Anbieter "exec" bei DNS-01:
+	// ein absoluter Pfad. LCM ruft es mit present oder cleanup auf, dazu der
+	// Name des TXT-Eintrags und sein Wert. Der Anbieter ist nur wählbar, wenn
+	// der Pfad hier steht, und über die API nicht änderbar: Ein Konto in der
+	// Oberfläche darf keinen Befehl auf dem LCM-Host festlegen. Ob die Datei
+	// da ist, prüft LCM beim Auswählen, nicht beim Start.
+	ACMEDNSExec string `json:"acme_dns_exec"`
+
 	// TrivyPath ist das Trivy-Binary für den CVE-Scan (Name via PATH oder
 	// absoluter Pfad). Fehlt Trivy, deaktiviert sich der CVE-Scan sauber.
 	TrivyPath string `json:"trivy_path"`
@@ -117,6 +131,11 @@ type Config struct {
 	// ohne die DB-Einstellung zu setzen.
 	BackupDir string `json:"backup_dir"`
 
+	// Die Netzbereiche, Proxys, Ports und Adressen der Einstellungen
+	// (Mirror) stehen hier und in der Datenbank zugleich: Speichern in der
+	// Oberfläche schreibt sie in die Datei, eine von Hand geänderte Datei
+	// übernimmt LCM beim Start (cmd/app/config_sync.go).
+	//
 	// AllowedIPs schränkt den Netzwerkzugriff auf Weboberfläche und API auf
 	// bestimmte Client-Adressen ein. Leere Liste (Default) = keine
 	// Einschränkung (jede IP darf zugreifen - bisheriges Verhalten). Einträge
@@ -126,6 +145,12 @@ type Config struct {
 	// direkten TCP-Verbindung; hinter einem Reverse-Proxy siehe
 	// TrustProxyHeader.
 	AllowedIPs []string `json:"allowed_ips"`
+
+	// AgentAllowedIPs und MCPAllowedIPs sind dasselbe für den Agent-Endpunkt
+	// und die MCP-Schnittstelle. Leer = alle Netze. Wer sich ausgesperrt hat,
+	// leert die Liste hier und startet LCM neu.
+	AgentAllowedIPs []string `json:"agent_allowed_ips"`
+	MCPAllowedIPs   []string `json:"mcp_allowed_ips"`
 
 	// TrustProxyHeader steuert, woher IP-Filter (AllowedIPs), Anmeldesperre
 	// und Protokolle die Client-IP nehmen: false (Default) = die direkte
@@ -141,10 +166,11 @@ type Config struct {
 	// dieser Adressen kommt, gilt X-Forwarded-For (und X-Forwarded-Proto);
 	// maßgeblich ist der rechteste Eintrag, der selbst kein vertrauter Proxy
 	// ist. Leer = niemandem vertrauen: Der Header wird ignoriert, auch wenn
-	// TrustProxyHeader an ist (LCM warnt beim Start). Früher hieß leer „jeder
-	// Peer" - ein Client, der den Port direkt erreichte, gab sich mit einer
-	// gefälschten Kopfzeile jede beliebige Adresse: in die IP-Allowlist hinein
-	// und aus der Anmeldesperre heraus.
+	// TrustProxyHeader an ist. Früher hieß leer „jeder Peer" - ein Client, der
+	// den Port direkt erreichte, gab sich mit einer gefälschten Kopfzeile jede
+	// beliebige Adresse: in die IP-Allowlist hinein und aus der Anmeldesperre
+	// heraus. Ein Bereich über alle Adressen (0.0.0.0/0, ::/0) wird nicht
+	// übernommen.
 	TrustedProxies []string `json:"trusted_proxies"`
 
 	// TLSCACert/TLSCAKey nennen eine CA des Betreibers (PEM-Dateien,
@@ -156,6 +182,30 @@ type Config struct {
 	// zum System-Backup.
 	TLSCACert string `json:"tls_ca_cert"`
 	TLSCAKey  string `json:"tls_ca_key"`
+
+	// TLSCertificates sind eigene Zertifikate des Betreibers (PEM-Dateien,
+	// absolute Pfade). UI- und Agent-Listener liefern das Zertifikat aus,
+	// dessen Namen zum angefragten Namen passen; ohne Treffer und bei
+	// Aufruf per IP bleibt es beim Zertifikat der LCM-CA. Ein Zertifikat,
+	// das beim Start nicht lädt, hindert LCM nicht am Start (Warnung im Log).
+	TLSCertificates []TLSCertificateFile `json:"tls_certificates"`
+
+	// SharedTLSListen ist die Adresse (z.B. ":443") eines gemeinsamen
+	// TLS-Listeners für Weboberfläche, Agent und MCP. Welcher Dienst die
+	// Verbindung bekommt, entscheidet der angefragte Name (SNI): die Namen der
+	// öffentlichen Adressen aus den Einstellungen. Die Einzelports bleiben
+	// daneben aktiv. Leer (Default) = kein gemeinsamer Port. Gesetzt ist der
+	// Adressmodus „ein Port"; der Host-Teil legt fest, an welche Adresse LCM
+	// bindet, der Port gilt in den Einstellungen. Unter 1024 braucht der Dienst
+	// die Capability CAP_NET_BIND_SERVICE (die mitgelieferte lcm.service setzt
+	// sie).
+	SharedTLSListen string `json:"shared_tls_listen"`
+}
+
+// TLSCertificateFile ist ein Zertifikat samt Schlüssel in der config.json.
+type TLSCertificateFile struct {
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
 }
 
 // AccessTokenTTL liefert die Leerlauf-Frist einer Browser-Sitzung als time.Duration.
@@ -219,35 +269,77 @@ func LoadFrom(path string) (*Config, error) {
 	// Die Werte stehen bereits richtig im Struct (die Datei wird über die
 	// Defaults gelegt), aber Schlüssel, die es beim Anlegen noch nicht gab,
 	// fehlen in der DATEI - der Anwender muss ihren Namen dann aus der Doku
-	// raten, statt ihn beim Öffnen zu sehen (BUG-003). Geschrieben wird nur,
-	// wenn sich dadurch wirklich etwas ändert; bestehende Werte bleiben
-	// unangetastet, da sie zuvor eingelesen wurden.
-	if merged, err := json.MarshalIndent(cfg, "", "  "); err == nil && !bytes.Equal(bytes.TrimSpace(data), merged) {
-		if err := cfg.save(path); err != nil {
-			// Nicht schreibbar (read-only Mount, fremder Eigentümer) ist kein
-			// Grund, den Start abzubrechen - die Konfiguration ist ja gültig.
-			fmt.Println(i18n.Tf(
-				"config: could not add new options to %s: %v",
-				"config: %s konnte nicht um neue Optionen ergänzt werden: %v",
-				path, err))
-		}
+	// raten, statt ihn beim Öffnen zu sehen (BUG-003). Es kommen nur fehlende
+	// Schlüssel dazu; bestehende Werte und unbekannte Schlüssel (etwa die
+	// gespiegelten Einstellungen, siehe Mirror) bleiben, wie sie sind.
+	if err := cfg.addNewOptions(path, data); err != nil {
+		// Nicht schreibbar (read-only Mount, fremder Eigentümer) ist kein
+		// Grund, den Start abzubrechen - die Konfiguration ist ja gültig.
+		fmt.Println(i18n.Tf(
+			"config: could not add new options to %s: %v",
+			"config: %s konnte nicht um neue Optionen ergänzt werden: %v",
+			path, err))
 	}
 	return cfg, nil
+}
+
+// retiredKeys sind Schlüssel früherer Fassungen ohne Funktion: Sie stehen nicht
+// mehr in Config und werden beim Nachtragen aus der Datei genommen. Alle
+// anderen unbekannten Schlüssel bleiben.
+var retiredKeys = map[string]bool{"jwt_secret": true}
+
+// addNewOptions trägt die Schlüssel in die Datei data ein, die ihr fehlen,
+// mit dem Wert, der jetzt gilt, und nimmt die stillgelegten heraus. Ohne beides
+// bleibt die Datei unberührt.
+func (c *Config) addNewOptions(path string, data []byte) error {
+	all, err := readMembers(data)
+	if err != nil {
+		return err
+	}
+	var existing []member
+	for _, m := range all {
+		if !retiredKeys[m.key] {
+			existing = append(existing, m)
+		}
+	}
+	full, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	wanted, err := readMembers(full)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for _, m := range existing {
+		have[m.key] = true
+	}
+	missing := map[string]json.RawMessage{}
+	var order []string
+	for _, m := range wanted {
+		if !have[m.key] {
+			missing[m.key] = m.value
+			order = append(order, m.key)
+		}
+	}
+	if len(missing) == 0 && len(existing) == len(all) {
+		return nil
+	}
+	merged, err := mergeMembers(existing, missing, order)
+	if err != nil {
+		return err
+	}
+	return replaceFile(path, merged)
 }
 
 func (c *Config) validate() error {
 	if c.Port <= 0 || c.Port > 65535 {
 		return fmt.Errorf("ungültiger Port: %d", c.Port)
 	}
-	// AgentPort = 0 ist erlaubt (Listener aus); ansonsten gültiger Port und
-	// nicht identisch mit dem UI/REST-Port (sonst kollidieren die Listener).
-	if c.AgentPort != 0 {
-		if c.AgentPort < 0 || c.AgentPort > 65535 {
-			return fmt.Errorf("ungültiger agent_port: %d", c.AgentPort)
-		}
-		if c.AgentPort == c.Port {
-			return fmt.Errorf("agent_port darf nicht mit port übereinstimmen (%d) - der Agent-Listener braucht einen eigenen Port", c.Port)
-		}
+	// AgentPort = 0 ist erlaubt: In alten Dateien hieß das „Agent aus", LCM
+	// übernimmt es als agent_enabled=false (siehe cmd/app/config_sync.go).
+	if c.AgentPort < 0 || c.AgentPort > 65535 {
+		return fmt.Errorf("ungültiger agent_port: %d", c.AgentPort)
 	}
 	if c.AccessTokenTTLMinutes <= 0 {
 		return fmt.Errorf("access_token_ttl_minutes muss > 0 sein")
@@ -263,15 +355,23 @@ func (c *Config) validate() error {
 	if c.APIKeyRateLimitPerMinute < 0 {
 		return fmt.Errorf("api_key_rate_limit_per_minute darf nicht negativ sein")
 	}
-	// Die IP-Allowlist bereits beim Laden validieren (Fail-Fast bei Tippfehlern
-	// wie einem ungültigen CIDR), damit ein Fehler nicht erst zur Laufzeit auffällt.
-	if _, err := netfilter.Parse(c.AllowedIPs); err != nil {
-		return fmt.Errorf("allowed_ips: %w", err)
+	if err := validateListenAddress("acme_http_listen", c.ACMEHTTPListen); err != nil {
+		return err
 	}
-	if _, err := netfilter.Parse(c.TrustedProxies); err != nil {
-		return fmt.Errorf("trusted_proxies: %w", err)
+	if c.ACMEDNSExec != "" && !filepath.IsAbs(c.ACMEDNSExec) {
+		return fmt.Errorf("acme_dns_exec: %q ist kein absoluter Pfad", c.ACMEDNSExec)
 	}
-	return c.validateTLSCA()
+	// Die gespiegelten Werte (Netzbereiche, Proxys, Ports, Modus) prüft LCM erst
+	// beim Übernehmen in die Einstellungen, wie bei einem PATCH: Ein Tippfehler
+	// in einer von Hand geänderten Datei hält LCM nicht vom Start ab, der Wert
+	// aus der Datenbank gilt weiter, und das Log nennt den Fehler.
+	if err := c.validateTLSCA(); err != nil {
+		return err
+	}
+	if err := validateTLSCertificates(c.TLSCertificates); err != nil {
+		return err
+	}
+	return nil
 }
 
 // validateTLSCA: tls_ca_cert und tls_ca_key nur zusammen und als absolute
@@ -288,21 +388,47 @@ func (c *Config) validateTLSCA() error {
 	return nil
 }
 
-// IPAllowlist baut den Matcher für die konfigurierte Allowlist. Wurde die
-// Config über LoadFrom geladen, ist sie bereits validiert; der Fehler kann
-// hier nur bei programmatisch erzeugten Configs auftreten.
-func (c *Config) IPAllowlist() (netfilter.Allowlist, error) {
-	return netfilter.Parse(c.AllowedIPs)
+// validateTLSCertificates: Zertifikat und Schlüssel je Eintrag, absolute
+// Pfade, kein Zertifikat doppelt.
+func validateTLSCertificates(files []TLSCertificateFile) error {
+	seen := map[string]bool{}
+	for i, f := range files {
+		if f.Cert == "" || f.Key == "" {
+			return fmt.Errorf("tls_certificates[%d]: cert und key gehören zusammen", i)
+		}
+		for _, p := range []string{f.Cert, f.Key} {
+			if !filepath.IsAbs(p) {
+				return fmt.Errorf("tls_certificates[%d]: %q ist kein absoluter Pfad", i, p)
+			}
+		}
+		cert := filepath.Clean(f.Cert)
+		if seen[cert] {
+			return fmt.Errorf("tls_certificates[%d]: %q kommt doppelt vor", i, f.Cert)
+		}
+		seen[cert] = true
+	}
+	return nil
 }
 
-// ProxyTrust baut aus trust_proxy_header und trusted_proxies die Regel, wessen
-// X-Forwarded-For geglaubt wird.
-func (c *Config) ProxyTrust() (netfilter.ProxyTrust, error) {
-	proxies, err := netfilter.Parse(c.TrustedProxies)
+// LoadTLSCertificates liest nur tls_certificates aus der config.json, ohne
+// den Rest zu prüfen und ohne die Datei je zu schreiben. Für das Neuladen der
+// Zertifikate zur Laufzeit: Ein Fehler in einem anderen Abschnitt soll es
+// nicht blockieren, und der Dienst darf die Datei nicht anfassen.
+func LoadTLSCertificates(path string) ([]TLSCertificateFile, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return netfilter.ProxyTrust{}, fmt.Errorf("trusted_proxies: %w", err)
+		return nil, fmt.Errorf("config.json lesen: %w", err)
 	}
-	return netfilter.ProxyTrust{Enabled: c.TrustProxyHeader, Proxies: proxies}, nil
+	var section struct {
+		TLSCertificates []TLSCertificateFile `json:"tls_certificates"`
+	}
+	if err := json.Unmarshal(data, &section); err != nil {
+		return nil, fmt.Errorf("config.json parsen: %w", err)
+	}
+	if err := validateTLSCertificates(section.TLSCertificates); err != nil {
+		return nil, err
+	}
+	return section.TLSCertificates, nil
 }
 
 func (c *Config) save(path string) error {
@@ -329,14 +455,19 @@ func generateDefault() *Config {
 		LogLevel:                 "info",
 		AccessLog:                true,
 		APIKeyRateLimitPerMinute: 120,
+		ACMEHTTPListen:           ":80",
 		TrivyPath:                "trivy",
 		// Leere Allowlist = keine Netzwerk-Einschränkung. Als [] statt nil,
 		// damit das Feld in einer neu erzeugten config.json sichtbar auftaucht
 		// (Auffindbarkeit des Sicherheits-Schalters).
-		AllowedIPs: []string{},
+		AllowedIPs:      []string{},
+		AgentAllowedIPs: []string{},
+		MCPAllowedIPs:   []string{},
 		// Ebenfalls sichtbar leer: Wer trust_proxy_header einschaltet, soll
 		// den Schlüssel daneben stehen sehen.
 		TrustedProxies: []string{},
+		// Sichtbar leer, damit der Schlüssel in der config.json zu finden ist.
+		TLSCertificates: []TLSCertificateFile{},
 	}
 }
 

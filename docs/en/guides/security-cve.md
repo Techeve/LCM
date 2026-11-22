@@ -78,6 +78,12 @@ Both ways give the process its own minimal environment: `PATH`, an empty
 out, including an `LCM_ENCRYPTION_KEY` set there. Bubblewrap needs version 0.5
 or newer for this; an older one falls back to Landlock.
 
+The notice tells two cases apart: "the bubblewrap package is missing" and
+"bubblewrap is installed but does not start". In the second case bubblewrap's
+own error message is included; common causes are disabled unprivileged user
+namespaces (kernel switch, AppArmor rule on Ubuntu, nested containers) or
+service hardening that is too strict.
+
 If neither is available, the scan runs unsandboxed as before - but with a
 **visible notice** on the scanner display. A silent fallback would be the worst
 option: you would believe yourself protected without being so.
@@ -323,6 +329,11 @@ By default, any IP that can reach the LCM port may call the web UI and API
 **network access** to specific client addresses - configured in `config.json`
 (restart the service after changes). Clients that are not allowed receive a
 **403** before login, logging or any controller runs.
+
+This applies per service to the web UI, the agent and MCP, and an admin also sets
+it in the interface, effective without a restart. The full route is described in
+[Allowed networks](/en/guides/netzbereiche/). Here the part for the web UI
+through `config.json`:
 
 ```json
 {

@@ -2,7 +2,6 @@ package services
 
 import (
 	"LCM/internal/core/domain"
-	"LCM/internal/safego"
 )
 
 // Einzelläufe für „Erneut versuchen" (Betriebsfähigkeit). Anders als RunRule,
@@ -32,10 +31,9 @@ func (e *Executor) RunRuleOnServer(rule *domain.Rule, server *domain.Server, act
 	if err != nil {
 		return nil, err
 	}
-	safego.GoCleanup("job:retry", jobPanicCleanup(e.jobs, job), func() {
+	return startJob(e.jobs, "job:retry", job, func() {
 		e.runStarted(job, server, rule, actor, nil)
-	})
-	return job, nil
+	}), nil
 }
 
 // CheckConnection prüft die Verbindung zum Server wie der Health-Ping, auch
@@ -53,8 +51,7 @@ func (e *Executor) StartCVEScanServer(server *domain.Server, actor string) (*dom
 	if err != nil {
 		return nil, err
 	}
-	safego.GoCleanup("job:cve-scan", jobPanicCleanup(e.jobs, job), func() {
+	return startJob(e.jobs, "job:cve-scan", job, func() {
 		e.runCVEScanJob(job, server)
-	})
-	return job, nil
+	}), nil
 }

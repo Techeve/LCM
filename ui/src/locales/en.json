@@ -383,19 +383,111 @@
       "key": {
         "title": "Onboarding key",
         "subtitle": "LCM created it on first start. The private part stays encrypted inside LCM.",
-        "how": "Add the public key to ~/.ssh/authorized_keys of root on the new server. Then add or reconnect the server with \"system SSH key\", no password needed.",
-        "none": "There is no key yet. LCM creates it on the next start."
+        "none": "There is no key yet. LCM creates it on the next start.",
+        "guide": {
+          "intro": "LCM signs in with this key as user {user} (default for new servers). Put it on the new server for that user. If you are signed in there as another user, switch first:",
+          "switchUser": "Switch to the user",
+          "debian": {
+            "title": "Debian, Ubuntu and Linux Mint",
+            "text": "The SSH service must be running. Linux Mint does not ship it: sudo apt install openssh-server. If root login is blocked, enter a user with sudo as the default above."
+          },
+          "rhel": {
+            "title": "RHEL family (Rocky, Alma, Fedora)",
+            "text": "The service is called sshd. SELinux is active: the last command sets the context, otherwise sshd rejects the file."
+          },
+          "other": {
+            "title": "Other systems",
+            "text": "Any system with OpenSSH takes the same commands as Debian. Directory 700 and file 600, both owned by the user, otherwise sshd rejects the key."
+          }
+        }
       },
       "address": {
-        "title": "Public address",
-        "subtitle": "LCM is reachable from outside under these addresses. LCM builds the links in emails from the first one.",
-        "label": "Address of the interface",
-        "hint": "Scheme, host and port only, no path.",
+        "title": "Public addresses",
+        "subtitle": "How LCM is reachable from outside. LCM builds the links in emails from the address of the interface.",
+        "hint": "The name only, without https://. If a proxy runs on another port, add :port.",
         "warning": "Not set: links in emails come from the local configuration and may not be reachable from outside. LCM deliberately does not derive the address from the request, otherwise a password reset link could be steered to a foreign domain.",
-        "agentLabel": "Address for agents",
-        "agentHint": "Only needed if a reverse proxy publishes the agent port under its own name. Empty: host of the interface with the agent port.",
-        "mcpLabel": "Address of the MCP interface",
-        "mcpHint": "Only needed if a reverse proxy publishes the MCP interface under its own name. Empty: bind address and port from the MCP settings."
+        "agentHint": "Only needed if a reverse proxy publishes the agent interface under its own name, on another port with :port. Empty: name of the web interface with the agent port.",
+        "mcpHint": "Only needed if a reverse proxy publishes the MCP interface under its own name, on another port with :port. Empty: name of the web interface with the MCP port.",
+        "configure": "Certificate & security for {name}",
+        "modeLabel": "Address mode",
+        "mode": {
+          "separate": {
+            "title": "Own ports, own names",
+            "text": "Each interface has its own port and its own name. Fits behind a reverse proxy."
+          },
+          "one_name": {
+            "title": "Own ports, one name",
+            "text": "One name for all interfaces, each on its own port. Fits without a proxy."
+          },
+          "shared_port": {
+            "title": "One port, own names",
+            "text": "All interfaces on one port, told apart by name. No port in the browser."
+          }
+        },
+        "portLabel": "Port",
+        "portOf": {
+          "ui": "Port of the web interface",
+          "agent": "Port of the agent interface",
+          "mcp": "Port of the MCP interface"
+        },
+        "hostLabel": "Name",
+        "hostHint": "The name only, without https://, port and path. It applies to all three interfaces.",
+        "derived": "Addresses",
+        "derivedNone": "Enter a name.",
+        "sharedPort": "Shared port",
+        "sharedPortHint": "Default 443. The addresses are https://<name>:<port>, without the port at 443.",
+        "locked": "set by an environment variable",
+        "portChange": {
+          "title": "New address of the interface",
+          "text": "After saving, LCM restarts the listener and you land at {address}. If the start fails, LCM goes back to the old port."
+        },
+        "errors": {
+          "port": "Enter a port from 1 to 65535.",
+          "portsDiffer": "Each interface needs its own port.",
+          "hostRequired": "Enter a name.",
+          "hostFormat": "The name only, without https://, port and path.",
+          "nameRequired": "Enter a name.",
+          "nameInvalid": "That is not a valid name.",
+          "namesDiffer": "Each interface needs its own name.",
+          "entryPort": "The port after the name must be a number from 1 to 65535."
+        },
+        "help": {
+          "title": "About public addresses",
+          "fits": "When does it fit?",
+          "proxy": "Reverse proxy.",
+          "firewall": "Firewall.",
+          "acme": "Let's Encrypt.",
+          "separate": {
+            "fits": "You put a reverse proxy in front, or each interface should run under its own name. LCM listens on three ports, you enter the names above.",
+            "proxy": "It forwards each name to the matching LCM port: interface to {ui}, agent to {agent}, MCP to {mcp}. It speaks HTTPS to LCM, keeps the host name unchanged and does not cut off server-sent events and WebSockets early.",
+            "firewall": "On the LCM server, open ports {ui}, {agent} and {mcp} only for the proxy and for agents. Towards the outside only the proxy needs port 443.",
+            "acme": "If the proxy has its own certificate, you do not need Let's Encrypt in LCM. If you want it anyway, use DNS-01, because HTTP-01 would bypass the proxy."
+          },
+          "one_name": {
+            "fits": "You run LCM without a proxy. One name and one certificate apply to all three interfaces, each with its own port. LCM works out the three addresses from them.",
+            "proxy": "Usually none is needed. If you put one in front anyway, pass TLS through unchanged per port, or choose mode A with a name per service.",
+            "firewall": "Open {ui}, {agent} and {mcp}. For HTTP-01 from Let's Encrypt, port 80 is briefly added.",
+            "acme": "Let's Encrypt issues a certificate for the name and renews it itself. HTTP-01 is enough if port 80 is reachable from the internet, otherwise use DNS-01."
+          },
+          "shared_port": {
+            "fits": "The browser should show no port, for example because only 443 is open. All interfaces listen on one port and LCM tells them apart by name (SNI). Each interface needs its own name pointing to this server.",
+            "proxy": "A proxy in front has to separate by name: pass TLS through by SNI, or forward HTTPS to the same port with the host name unchanged.",
+            "firewall": "Open port {shared}, nothing more. For HTTP-01 from Let's Encrypt, port 80 is briefly added.",
+            "acme": "Let's Encrypt issues one certificate for all three names and renews it itself. HTTP-01 is enough if port 80 is reachable from the internet, otherwise use DNS-01."
+          }
+        },
+        "noDomain": "No domain is set up for this interface.",
+        "inactive": "(not active)",
+        "interface": {
+          "ui": "Web interface",
+          "agent": "Agent interface",
+          "mcp": "MCP interface"
+        },
+        "name": {
+          "ui": "Name of the web interface",
+          "agent": "Name of the agent interface",
+          "mcp": "Name of the MCP interface"
+        }
       },
       "jobs": {
         "title": "Monitoring",
@@ -442,6 +534,38 @@
         "routineHint": "Health checks and alert evaluations run every few minutes. Their output disappears after this period; that the run happened stays visible until the general retention ends.",
         "storage": "Storage history (days)",
         "storageHint": "Daily values of disk usage. Allowed: 90 to 365 days."
+      },
+      "onboarding": {
+        "title": "Onboarding",
+        "subtitle": "How new servers reach LCM: defaults, SSH key or agent."
+      },
+      "agent": {
+        "title": "Use with agent",
+        "subtitle": "The server connects to LCM itself, without SSH access from LCM.",
+        "text": "The agent is a small program on the server. It opens the connection to LCM from there. It suits servers behind NAT or a firewall that LCM cannot reach over SSH.",
+        "noDomain": "No domain is set up for the agent interface.",
+        "address": "Address for agents",
+        "join": "Add agent server",
+        "off": "The agent interface is turned off.",
+        "toAddresses": "Turn it on under Public addresses",
+        "statusOn": "On",
+        "statusOff": "Off"
+      }
+    },
+    "service": {
+      "agent": {
+        "label": "Agent interface",
+        "on": "LCM accepts agent connections at the agent address.",
+        "off": "The agent port accepts no connection. Connected agents disconnect.",
+        "offline": {
+          "one": "{count} server uses the agent. It goes offline when you save.",
+          "other": "{count} servers use the agent. They go offline when you save."
+        }
+      },
+      "mcp": {
+        "label": "MCP interface",
+        "on": "LCM accepts MCP requests at the MCP address. An assistant needs an MCP key for that.",
+        "off": "No MCP access. Existing MCP keys stay but have no effect."
       }
     },
     "session": {
@@ -473,23 +597,19 @@
       "noneWarning": "The password and the content cross the network in plain text. Only use this in trusted networks."
     },
     "mcp": {
-      "hostLocal": "Only a local address: 127.0.0.1, ::1 or localhost.",
       "interface": {
         "title": "Interface",
         "subtitle": "AI assistants read the state of your fleet via MCP",
         "on": "running",
         "off": "off",
-        "enable": "MCP interface",
-        "enableOn": "LCM accepts MCP requests at the address below. An assistant needs an MCP key for that.",
-        "enableOff": "No MCP access. Existing MCP keys stay but have no effect.",
-        "host": "Bind address",
-        "hostHint": "MCP speaks unencrypted HTTP. For access from outside, put a TLS proxy or tunnel in front.",
-        "port": "Port"
+        "address": "Address of the MCP interface",
+        "noDomain": "No domain is set up for MCP. Enter it under Settings → General.",
+        "noDomainLink": "Go to Settings → General"
       },
       "example": {
         "title": "Connecting",
         "subtitle": "How to add LCM to an MCP client, using the saved address",
-        "url": "Address",
+        "url": "Endpoint",
         "config": "Client entry (mcpServers)",
         "curl": "Test call",
         "keyPlaceholder": "YOUR-MCP-KEY"
@@ -497,7 +617,7 @@
       "explainer": {
         "title": "What is MCP?",
         "what": "The Model Context Protocol connects AI assistants to tools. Through the interface an assistant asks, for example, which servers need updates or a reboot. It cannot change anything there.",
-        "local": "The interface only listens locally, because keys and fleet data would otherwise travel the network in plain text.",
+        "local": "MCP always speaks TLS: keys and fleet data never cross the network in plain text. Address and port are under Settings → General.",
         "keys": "MCP keys only work here and act with the rights of the account that created them."
       }
     },
@@ -574,10 +694,7 @@
         "title": "Activate subscription",
         "subtitle": "The subscription brings support and the enterprise package channel. Community and enterprise are functionally the same, with no server limit.",
         "key": "Subscription key",
-        "action": "Activate",
-        "advanced": "Own service address",
-        "url": "Subscription service address",
-        "urlHint": "Empty uses repo.techeve.de. Change it only if you run your own repository server."
+        "action": "Activate"
       },
       "activated": "Subscription activated. The repository access is set up.",
       "status": {
@@ -663,7 +780,9 @@
         },
         "versionsLoading": "Fetching the latest versions of the channels …",
         "versionsFailed": "The channel versions cannot be retrieved. Switching stays locked until they can.",
-        "impactOneWay": "Only once the {channel} reaches {feature}"
+        "impactOneWay": "Only once the {channel} reaches {feature}",
+        "recommend": "Subscription active. Pick the Enterprise channel below; LCM switches when you press Continue.",
+        "embeddedHint": "The choice only takes effect with Continue: LCM then switches the channel."
       },
       "instance": {
         "title": "Instance ID",
@@ -1527,6 +1646,7 @@
         "cveDbStale": "CVE database outdated",
         "backupStale": "System backup overdue",
         "tlsCertExpiring": "TLS certificate expires soon",
+        "tlsRenewalFailed": "Certificate renewal failed",
         "advisory": "Early warning: new findings"
       },
       "hints": {
@@ -1543,6 +1663,7 @@
         "cveDbStale": "Fires when the vulnerability database is older than 48 hours. An old database reports no error, it simply does not find new issues: that looks like “all safe”.",
         "backupStale": "Fires when automatic backups are on but the latest one is older than two intervals or there is none yet. It measures the result, not single failed attempts.",
         "tlsCertExpiring": "Fires from 60 days before the LCM certificate expires if LCM does not renew it itself: for a certificate of your own, or while agents still only know the old certificate. The message names those agents. It also fires one year before the LCM CA expires.",
+        "tlsRenewalFailed": "Fires when LCM could not issue or renew a certificate at an ACME CA (such as Let's Encrypt), and stays until a run succeeds. The message gives the reason. LCM retries every hour.",
         "advisory": "Reports open early-warning findings from the chosen severity upwards. Malicious packages always fire. Findings you acknowledge under Security no longer fire."
       },
       "severity": {
@@ -1672,6 +1793,352 @@
         "stopped": "Debug logging ended",
         "failed": "Switching failed"
       }
+    },
+    "endpoint": {
+      "name": {
+        "ui": "Web interface",
+        "agent": "Agent interface",
+        "mcp": "MCP interface"
+      },
+      "heading": "{name}: certificate & security",
+      "noAddress": "No address set",
+      "loading": "Loading",
+      "draftDiffers": "You changed the address but have not saved it yet. This window shows the state of the saved address.",
+      "cert": {
+        "title": "Certificate",
+        "noAddress": "No address is set for this service. Without a name LCM serves its own certificate (LCM certificate). Enter the address and save it, then you can set a certificate for the name here.",
+        "unavailable": "LCM runs in development mode without TLS. There are no certificates here.",
+        "servedFor": "For {host} LCM serves this certificate:",
+        "noOwn": "There is no certificate of its own for {host}. LCM serves its LCM certificate, and browsers warn about it. Upload a certificate or set up Let's Encrypt.",
+        "sourceLabel": "Source",
+        "source": {
+          "config": "config.json",
+          "upload": "Uploaded",
+          "acme": "Let's Encrypt (ACME)",
+          "lcmCa": "LCM certificate"
+        },
+        "names": "Names",
+        "issuer": "Issuer",
+        "validUntil": "Valid until",
+        "expiredOn": "Expired on {date}",
+        "expiresToday": "expires today",
+        "expiresIn": {
+          "one": "1 day left",
+          "other": "{count} days left"
+        },
+        "soonNote": "The certificate expires soon. Renew it in time, or browsers will warn.",
+        "fingerprint": "Fingerprint (SHA-256)",
+        "copy": "Copy",
+        "copyLabel": "Copy fingerprint",
+        "copied": "Fingerprint copied",
+        "copyFailed": "Copying did not work",
+        "alsoServes": "Also serves",
+        "warning": {
+          "chain": "The chain is incomplete: the issuer's certificate is missing from the file. Some clients then reject the certificate. Upload the file with the full chain, usually fullchain.pem."
+        },
+        "fixedByConfig": "This certificate is set in config.json and cannot be changed here. Change it there and reload with “lcm tls reload”.",
+        "fixedByAcme": "LCM fetches and renews this certificate itself through ACME. You can set it up in the Let's Encrypt section of the Public addresses block.",
+        "upload": "Upload certificate",
+        "remove": "Remove uploaded",
+        "others": "Other certificates in LCM"
+      },
+      "upload": {
+        "certFile": "Certificate (PEM, with chain)",
+        "keyFile": "Private key (PEM)",
+        "choose": "Choose file",
+        "none": "No file chosen",
+        "hint": "Choose the PEM file with the certificate and its chain, usually fullchain.pem, and the key file without a password. LCM checks both before it saves anything and loads the certificate without a restart.",
+        "agentName": "Agents check the name of their address ({host}). If the certificate does not cover it, agents keep the LCM certificate.",
+        "submit": "Upload",
+        "cancel": "Cancel",
+        "done": "Certificate uploaded",
+        "served": "LCM now serves it for {host}.",
+        "precedence": "It names {host}, but the certificate from “{source}” still applies to this address because it ranks higher.",
+        "notServed": "It does not name {host} (names: {names}) and is not served for this address.",
+        "agentKeeps": "For the agent address {host} LCM keeps serving the LCM certificate, because the uploaded one does not cover the name. Connected agents stay connected."
+      },
+      "remove": {
+        "label": "Remove certificate for {names}",
+        "heading": "Remove certificate?",
+        "message": "LCM deletes the uploaded certificate together with its key. Afterwards it serves another matching certificate or the LCM certificate for these names.",
+        "confirm": "Remove",
+        "keep": "Keep",
+        "undo": "Reversible",
+        "undoNo": "No, you would have to upload it again",
+        "serves": "Also serves",
+        "done": "Certificate removed"
+      },
+      "net": {
+        "intro": {
+          "ui": "From which networks browsers and API clients may connect to LCM.",
+          "agent": "From which networks agents may connect to LCM.",
+          "mcp": "From which networks MCP clients may connect to LCM."
+        },
+        "all": "All networks allowed",
+        "restricted": {
+          "one": "1 entry",
+          "other": "{count} entries"
+        },
+        "field": "Allowed networks",
+        "hint": "One entry per line: an IP address, a network such as 10.0.0.0/8, or one of the words localhost and private. Empty allows all networks.",
+        "invalid": "Not a valid entry: {list}. Allowed are IP addresses, networks such as 10.0.0.0/8 and the words localhost and private.",
+        "tooMany": "At most {max} entries.",
+        "yourAddress": "Your address",
+        "yourAddressUi": "LCM rejects a list that does not contain your address, so you cannot lock yourself out.",
+        "save": "Save networks",
+        "saved": "Networks saved",
+        "savedDisconnected": {
+          "one": "Networks saved, 1 agent disconnected",
+          "other": "Networks saved, {count} agents disconnected"
+        },
+        "lockoutHelp": "Add your address or the network it is in to the list.",
+        "agentsDialog": {
+          "heading": "Connected agents will be disconnected",
+          "message": {
+            "one": "1 connected agent is outside the new range. If you save it, LCM disconnects the agent. It can only reconnect once its address is allowed.",
+            "other": "{count} connected agents are outside the new range. If you save it, LCM disconnects them. They can only reconnect once their address is allowed."
+          },
+          "confirm": "Save and disconnect",
+          "cancel": "Back",
+          "unknownAddress": "Address unknown"
+        },
+        "saveFor": "Save networks: {name}"
+      }
+    },
+    "acme": {
+      "title": "Let's Encrypt",
+      "subtitle": "LCM fetches one certificate for all names of the public addresses from an ACME certificate authority itself and renews it in time.",
+      "status": {
+        "off": "Off",
+        "running": "Running",
+        "failed": "Last run failed",
+        "waiting": "No certificate yet",
+        "active": "Certificate active"
+      },
+      "enable": "Obtain certificates automatically",
+      "enableOn": "LCM fetches and renews the certificate for the names below.",
+      "enableOff": "LCM obtains no certificates. It removes ones already issued when you save.",
+      "names": "Names",
+      "namesHint": "The names come from the addresses above, at most three. Let's Encrypt issues one certificate for all of them.",
+      "email": "Contact email (optional)",
+      "emailHint": "The certificate authority writes here before a certificate expires.",
+      "ca": "Certificate authority",
+      "caLetsEncrypt": "Let's Encrypt",
+      "caStaging": "Let's Encrypt Staging (for testing)",
+      "caStagingHint": "Staging issues test certificates that browsers do not trust. For trying things out only.",
+      "caCustom": "Custom address",
+      "directory": "Address of the ACME directory",
+      "directoryHint": "Must start with https://, for example that of your own CA such as step-ca.",
+      "challenge": "Validation",
+      "challengeHttp": "HTTP-01",
+      "challengeText": "The certificate authority fetches a file at http://<name>/.well-known/acme-challenge/. Port 80 must reach LCM from the internet for that. Behind a reverse proxy this usually does not work, use DNS-01 then.",
+      "listener": {
+        "onDemand": "LCM opens port 80 ({address}) only while the certificate authority is checking, and answers nothing there but the validation. Otherwise it is closed.",
+        "error": "The listener for the validation ({address}) cannot be opened: {error}.",
+        "capability": "For ports below 1024 LCM needs the capability CAP_NET_BIND_SERVICE. The packaged lcm.service grants it. If it is missing, copy the CapabilityBoundingSet and AmbientCapabilities lines from packaging/lcm.service into your own unit, or set acme_http_listen in config.json to a high port behind a port forward."
+      },
+      "terms": "I accept the terms of service of {host}",
+      "termsHint": "Without your consent LCM does not create an account at the certificate authority.",
+      "save": "Save",
+      "discard": "Discard",
+      "saved": "Settings saved",
+      "problem": {
+        "namesRequired": "Enter at least one address with a name above and save the page.",
+        "directoryRequired": "Enter the address of the directory.",
+        "termsRequired": "Accept the terms of service to turn ACME on.",
+        "nameserversTooMany": "At most {max} check name servers.",
+        "providerRequired": "Choose a DNS provider.",
+        "fieldMissing": "Fill in for the DNS provider: {field}."
+      },
+      "state": "State",
+      "lastRun": "Last run",
+      "never": "No run yet",
+      "lastError": "Error in the last run",
+      "noCertificates": "No certificate issued yet.",
+      "renewAt": "Renewal from",
+      "issue": "Issue now",
+      "issueStarted": "Run started",
+      "challengeDns": "DNS-01",
+      "challengeDnsText": "LCM sets a TXT record at your DNS provider. No port has to be open for that. Behind a reverse proxy this is usually the only way.",
+      "dns": {
+        "provider": "DNS provider",
+        "providerChoose": "Choose a provider",
+        "providerHint": "LCM creates the TXT record _acme-challenge at this provider.",
+        "providers": {
+          "rfc2136": "RFC2136 (BIND, PowerDNS, Knot …)",
+          "acmedns": "acme-dns",
+          "httpreq": "Own HTTP endpoint",
+          "exec": "Own script (from config.json)",
+          "cloudflare": "Cloudflare",
+          "hetzner": "Hetzner",
+          "pdns": "PowerDNS API",
+          "inwx": "INWX",
+          "ionos": "IONOS"
+        },
+        "optional": "{label} (optional)",
+        "missing": "This entry is missing.",
+        "secretPlaceholder": "stored",
+        "secretStored": "Stored. Leave empty to keep it.",
+        "secretCleared": "Deleted when you save.",
+        "secretDelete": "Delete",
+        "secretKeep": "Keep it after all",
+        "option": {
+          "standard": "Standard",
+          "raw": "Raw"
+        },
+        "nameservers": "Check name servers (optional)",
+        "nameserversHint": "One server per line (host or host:port), at most {max}. Empty: LCM uses the system's resolvers.",
+        "test": "Test DNS",
+        "testHint": "Briefly creates a TXT record for the first name and removes it again.",
+        "testRunning": "Checking … (up to a minute)",
+        "testOk": "The DNS provider set the record, LCM saw it and removed it again.",
+        "note": {
+          "acmedns": "The first run creates an account at acme-dns and ends with a message naming the CNAME record you must set for _acme-challenge. After that it works.",
+          "exec": "The program is set in config.json (acme_dns_exec) and cannot be changed here. LCM calls it with the action and the details of the TXT record.",
+          "slow": "With several names this provider needs a separate pass per name. A run can take a few minutes."
+        },
+        "field": {
+          "common": {
+            "propagation_timeout": {
+              "label": "Wait for the record in seconds",
+              "hint": "How long LCM waits until the TXT record is visible. Empty: the provider's default."
+            },
+            "polling_interval": {
+              "label": "Check interval in seconds",
+              "hint": "How often LCM looks whether the record is there. Empty: the provider's default."
+            }
+          },
+          "rfc2136": {
+            "nameserver": {
+              "label": "Name server",
+              "hint": "Host or host:port of the server that accepts dynamic updates."
+            },
+            "tsig_key": {
+              "label": "TSIG key name",
+              "hint": "Name of the key in the name server's configuration. Goes together with the TSIG secret."
+            },
+            "tsig_algorithm": {
+              "label": "TSIG algorithm",
+              "hint": "Must match the key in the name server."
+            },
+            "tsig_secret": {
+              "label": "TSIG secret",
+              "hint": "base64, as in the name server's configuration."
+            }
+          },
+          "acmedns": {
+            "api_base": {
+              "label": "Address of the acme-dns server",
+              "hint": "For example https://auth.acme-dns.io. LCM creates the account there itself on the first run."
+            }
+          },
+          "httpreq": {
+            "endpoint": {
+              "label": "Address of the endpoint",
+              "hint": "LCM sends POST requests to /present and /cleanup below this address."
+            },
+            "mode": {
+              "label": "Request format",
+              "hint": "Standard: name and value of the TXT record. Raw: domain, token and key authorization unchanged."
+            },
+            "username": {
+              "label": "Username",
+              "hint": "Only needed if the endpoint asks for a login (HTTP Basic)."
+            },
+            "password": {
+              "label": "Password",
+              "hint": "Belongs to the username."
+            }
+          },
+          "exec": {
+            "mode": {
+              "label": "Call format",
+              "hint": "Standard: action, name and value of the TXT record. Raw: action, domain, token and key authorization unchanged."
+            }
+          },
+          "cloudflare": {
+            "api_token": {
+              "label": "API token",
+              "hint": "Token with the permissions \"Zone read\" and \"DNS edit\" for the zone of the names."
+            }
+          },
+          "hetzner": {
+            "api_token": {
+              "label": "API token",
+              "hint": "Token from the Hetzner Console with write access to the project of the DNS zone."
+            }
+          },
+          "pdns": {
+            "api_url": {
+              "label": "API address",
+              "hint": "For example http://pdns.example.com:8081. The address must reach the PowerDNS API."
+            },
+            "api_key": {
+              "label": "API key",
+              "hint": "The api-key value from the PowerDNS configuration."
+            },
+            "server_name": {
+              "label": "Server name",
+              "hint": "Name of the server in the API, usually localhost."
+            }
+          },
+          "inwx": {
+            "username": {
+              "label": "Username",
+              "hint": "Username of the INWX account."
+            },
+            "password": {
+              "label": "Password",
+              "hint": "Password of the INWX account."
+            },
+            "totp_secret": {
+              "label": "TOTP secret",
+              "hint": "Only with two-factor sign-in turned on: the secret the codes are made from, not a single code."
+            },
+            "sandbox": {
+              "label": "INWX test environment",
+              "hint": "Talks to the INWX test environment (OTE) instead of the real one."
+            }
+          },
+          "ionos": {
+            "api_key": {
+              "label": "API key",
+              "hint": "Format prefix.secret, as the IONOS developer portal shows it."
+            }
+          }
+        },
+        "more": "More settings"
+      },
+      "namesNone": "Enter at least one address with a name above. Let's Encrypt does not issue certificates for IP addresses.",
+      "namesPending": "You changed the addresses but have not saved yet. Let's Encrypt uses the new names after you save the page.",
+      "namesNotice": {
+        "title": "The names in the certificate now come from the addresses",
+        "text": "So far Let's Encrypt issued for {old}. In future the names of the public addresses apply: {new}. Until you confirm (dismiss this notice or save the page), LCM keeps adding the old names to the certificate so renewal does not fail. On the next run (or with \"Issue now\") LCM gets a new certificate; the old one stays in use until then.",
+        "none": "none yet",
+        "perName": "Also, there is no longer one certificate per name but one for all names.",
+        "dismiss": "Dismiss notice"
+      },
+      "download": "Download certificate chain (PEM)",
+      "downloadHint": "Downloads only the certificate chain as a PEM file, never the private key.",
+      "termsLink": "Read the terms of service of {host}",
+      "wizard": {
+        "request": "Request certificate",
+        "running": "LCM is requesting the certificate. This usually takes a minute.",
+        "done": "The certificate for {names} is ready and valid until {date}."
+      }
+    },
+    "access": {
+      "title": "Access (networks)",
+      "subtitle": "From which networks browsers, agents and MCP clients may connect to LCM."
+    },
+    "proxy": {
+      "title": "Reverse proxy",
+      "subtitle": "A proxy in front of LCM accepts the connections with its own certificate, instead of Let's Encrypt in LCM.",
+      "help": "LCM trusts the client address from the X-Forwarded-For header only from the addresses below. Enter the addresses of the proxy there, not those of the clients.",
+      "enable": "Reverse proxy in front",
+      "enableOn": "LCM trusts the client address from X-Forwarded-For, but only from the proxy addresses.",
+      "enableOff": "LCM uses the address of the connection and ignores X-Forwarded-For.",
+      "saved": "Settings saved"
     }
   },
   "login": {
@@ -1702,6 +2169,14 @@
   "errors": {
     "access": {
       "ip_denied": "Access from this address is not allowed"
+    },
+    "acme": {
+      "dns_test_failed": "The DNS provider test failed: {detail}",
+      "field_missing": "A required ACME setting is missing ({field})",
+      "invalid": "Invalid ACME setting ({field}): {detail}",
+      "not_enabled": "ACME is not enabled",
+      "running": "An ACME run is already in progress",
+      "terms_required": "The terms of service of the CA must be accepted"
     },
     "advisory": {
       "disabled": "The early warning is not enabled",
@@ -1849,6 +2324,12 @@
     },
     "docs": {
       "not_found": "Page not found"
+    },
+    "endpoint": {
+      "agents_outside": "{count} connected agents are outside the new list and would be disconnected",
+      "invalid_networks": "Invalid network list: {detail}",
+      "unknown": "Unknown endpoint - allowed are ui, agent and mcp",
+      "would_lock_out": "Your own address {address} is not in the new list - you would lock yourself out"
     },
     "events": {
       "bad_message": "Invalid message to the event channel",
@@ -2047,6 +2528,7 @@
       "mailer_disabled": "The standard email sending is not enabled",
       "mailer_incomplete": "The SMTP configuration is incomplete – host and sender are required",
       "mailer_no_recipients": "No admin recipients are set for the standard email sending",
+      "public_host_conflict": "Each service needs its own name on the shared port: {host} is set for both {first} and {second}",
       "session_cookie_needs_https": "The session cookie is only available when LCM is opened over HTTPS"
     },
     "snap": {
@@ -2062,7 +2544,6 @@
       "activation_failed": "The subscription could not be activated: {detail}",
       "apt_switch_unavailable": "The apt switch is not available – the LCM host is not registered as an apt server",
       "channel_switch_failed": "The package channel could not be switched: {detail}",
-      "invalid_service_url": "Invalid service address: {detail}",
       "none": "No subscription is stored",
       "unknown_channel": "Unknown package channel – allowed: community, beta, enterprise",
       "channel_behind": "The package channel is behind the installed version, switching to it is locked",
@@ -2084,6 +2565,14 @@
       "invalid_timezone": "Invalid time zone",
       "ntp_not_synced": "The time servers are set, but synchronization could not be confirmed",
       "too_many_ntp_servers": "At most {limit} NTP servers allowed"
+    },
+    "tls": {
+      "file_too_large": "The file is too large: certificate and key may each be at most 64 KiB",
+      "invalid_certificate": "The certificate cannot be used: {detail}",
+      "not_found": "This certificate does not exist (any more)",
+      "not_removable": "Only uploaded certificates can be removed. This one is set in config.json or comes from ACME",
+      "unavailable": "LCM runs without TLS (development mode), so there are no certificates",
+      "upload_missing": "A file is missing: choose a certificate and a key"
     },
     "user": {
       "email_taken": "This email address already belongs to another user",
@@ -2277,6 +2766,163 @@
     "dsmDiskSmart": "Drive {name}: SMART reports a problem - prepare a replacement (Storage Manager → HDD/SSD)",
     "dsmDiskBadSectors": "Drive {name}: bad sectors above the warning threshold - prepare a replacement",
     "dsmDiskWearOut": "Drive {name}: remaining life below the warning threshold - prepare a replacement"
+  },
+  "setup": {
+    "title": "Setup",
+    "progress": "Step {number} of {total}",
+    "save": "Save and continue",
+    "skip": "Skip",
+    "skipHint": "You can set this up later in Settings.",
+    "continueAnyway": "Continue without these changes",
+    "unsaved": "You have changes that are not saved yet. Save them with the button right there, or continue without them.",
+    "loadFailed": "The settings could not be loaded",
+    "steps": {
+      "addresses": {
+        "title": "How is LCM reached?",
+        "lead": "Choose the addresses that browsers, agents and MCP clients use to reach LCM. You can change this later in Settings → General."
+      },
+      "services": {
+        "title": "Which interfaces of LCM do you want to use?",
+        "lead": "LCM can connect servers through the agent interface and AI assistants through the MCP interface. Turn on only what you need; you can change both later in the settings."
+      },
+      "access": {
+        "title": "Who may reach LCM?",
+        "lead": "Choose the networks the web interface and the interfaces you turned on can be reached from. \"All networks\" is the default. You save each group on its own."
+      },
+      "certificate": {
+        "title": "Certificate",
+        "lead": "Without help, LCM has no valid certificate for your own names. Either Let's Encrypt issues one, or a reverse proxy in front of LCM takes care of it."
+      },
+      "onboarding": {
+        "title": "Adding new servers",
+        "lead": "LCM signs in to new servers with a key of its own. Put the key where you create servers, and new servers are ready at once. You can change this later in the settings."
+      },
+      "mail": {
+        "title": "Email sending",
+        "lead": "LCM can send emails, for example warnings to the admins. You can set this up or change it later under Settings → General."
+      },
+      "retention": {
+        "title": "Retention",
+        "lead": "Every job is a connection from LCM to a server, with an exact record of what LCM did and what came back, stored encrypted in the database. Choose how many days LCM keeps jobs and other histories."
+      },
+      "backup": {
+        "title": "Automatic backup",
+        "lead": "LCM can back up the database, master key and configuration on a schedule."
+      },
+      "subscription": {
+        "title": "Subscription and package channel",
+        "lead": "With a subscription key you switch to the enterprise channel; the beta channel gets you new versions earlier. Otherwise you stay in the community channel; you can change this later under Settings → Subscription."
+      },
+      "session": {
+        "title": "Sign-in in the browser",
+        "lead": "Choose how the browser carries the sign-in. It applies to this installation, and you can change it later under Settings → General."
+      }
+    },
+    "services": {
+      "agent": "Through the agent interface, agents on your servers sign in to LCM. It suits servers behind NAT or a firewall.",
+      "mcp": "Through the MCP interface you connect AI assistants to LCM. An assistant needs an MCP key for it.",
+      "noDomain": "No domain is set up for this interface."
+    },
+    "certificate": {
+      "choice": "How LCM gets a certificate",
+      "letsencrypt": {
+        "title": "Let's Encrypt",
+        "text": "LCM gets and renews the certificate itself, always one for all names.",
+        "needsName": "LCM needs a name for Let's Encrypt. Enter it in step 2 (How is LCM reached?).",
+        "toAddresses": "Go to step 2"
+      },
+      "proxy": {
+        "title": "Reverse proxy in front",
+        "text": "A proxy in front of LCM accepts the connections with its own certificate.",
+        "label": "Addresses of the proxy",
+        "hint": "One address or network range per line. LCM believes the client address from the X-Forwarded-For header only from these addresses.",
+        "empty": "Enter at least one address.",
+        "invalid": "Not a valid address or network range: {list}",
+        "wide": "A network range covering all addresses is not allowed: {list}"
+      },
+      "fallback": "Without Let's Encrypt and without an uploaded certificate, LCM serves its own self-issued certificate.",
+      "redirect": {
+        "title": "LCM is moving to the new address",
+        "text": "The interface is now reachable at {address}, and the wizard forwards you there in a moment. If the name changes, you have to sign in again. Then the wizard continues at the step \"Adding new servers\".",
+        "now": "Switch now"
+      }
+    },
+    "onboarding": {
+      "userHint": "LCM signs in to new servers as this user.",
+      "guide": "Guide: put the key on the server",
+      "where": "Where the key goes",
+      "hetzner": "Hetzner Cloud: add it to the project as an SSH key, and new servers get it when you create them.",
+      "proxmox": "Proxmox: enter it as an SSH key in the cloud-init of the template or container.",
+      "other": "All other servers: put it in ~/.ssh/authorized_keys of that user. The guide above shows how."
+    },
+    "mail": {
+      "testHint": "Saves the entries and sends a test email to the admin recipients."
+    },
+    "backup": {
+      "passphraseRequired": "Set a passphrase: a scheduled backup is encrypted.",
+      "passphraseHint": "Encrypts the backups. Without it a backup cannot be restored, so keep it safe.",
+      "updateHint": "Before every update you start through LCM, LCM creates a backup automatically."
+    },
+    "intro": {
+      "recommended": "Recommended",
+      "trivy": "Trivy is the CVE scanner: it checks the packages of your servers for known security holes and runs in a sandbox, apart from the data of LCM. The buttons for it are on the highlighted card.",
+      "aptCacher": "apt-cacher-ng remembers the Debian and Ubuntu packages your servers download. Each package comes from the internet only once: updates are faster and save bandwidth. You can set it up on the highlighted card.",
+      "close": "Close introduction",
+      "closeHint": "It does not come back. The services stay available in the \"LCM host\" card.",
+      "region": "Introduction to the LCM host",
+      "progress": "{number} of {total}",
+      "next": "Next",
+      "back": "Back",
+      "finish": "Finish",
+      "host": {
+        "title": "This is your LCM host",
+        "text": "LCM itself runs on this server, so it is listed like any other server. The tour shows you what to set up here and on your servers."
+      },
+      "hardening": {
+        "title": "Harden SSH and firewall",
+        "text": "You reach both at the top of every server page. \"Harden SSH\" turns off password login and root login by password, and the firewall blocks everything you do not allow."
+      },
+      "settings": {
+        "operation": {
+          "title": "Settings: Operation",
+          "text": "The gear opens the settings of the server. Under \"Operation\" you decide how LCM treats systems that do not have to run around the clock: \"In maintenance\" leaves the server alone, \"Unreachability not critical\" turns it red only after a grace period."
+        },
+        "userSync": {
+          "text": "\"Do not sync Linux users\" turns off the user sync for this server. LCM then creates no users there and distributes no SSH keys."
+        },
+        "access": {
+          "title": "Settings: Access",
+          "text": "Under \"Access\" you block root login over SSH and, with \"Disable console\", turn off access through the console of LCM."
+        },
+        "dns": {
+          "title": "Settings: DNS",
+          "text": "Under \"DNS\" you enter the name servers of the server. LCM sets them there for you."
+        },
+        "time": {
+          "title": "Settings: Time",
+          "text": "Under \"Time\" you set the time zone and time servers and check that the clock of the server is right."
+        }
+      },
+      "tabs": {
+        "packages": "Here you see outdated packages and install them, all at once or one by one. You can refresh the package lists and pin packages so they stay on their version.",
+        "apps": "LCM detects applications on the server, such as WordPress or Nextcloud. Here you see which ones there are and can update them.",
+        "users": "Here are the accounts that can log in to the server.",
+        "security": "Here are the CVE findings of the server and more security tools you can install.",
+        "deepScan": "The deep scan is an intensive scanner. It runs locally on the server itself and checks kernel holes, open reboots and hardening.",
+        "storage": "Storage monitoring shows the drives of the server. Tick more drives so LCM watches them too.",
+        "jobs": "Here is what LCM has done on this server: every action as a job with a log."
+      },
+      "groups": {
+        "title": "Groups",
+        "text": "Every server belongs to the system group; routine operations and automations run there. With your own groups, each server gets different automations: when, how and which updates are installed."
+      },
+      "done": {
+        "title": "Setup complete",
+        "text": "That was the tour. It does not come back; you reach everything here through the page of the server."
+      }
+    },
+    "back": "Back",
+    "next": "Continue"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -3825,7 +4471,7 @@
       },
       "sandboxOn": "Sandbox active ({backend})",
       "sandboxOff": "No sandbox",
-      "sandboxHelp": "The scanner runs with the same rights as LCM and could reach the LCM data directory. Only the bubblewrap package is missing: Trivy itself stays unchanged, LCM locks it in when it calls it.",
+      "sandboxHelp": "The scanner runs with the same rights as LCM and could reach the LCM data directory. Only the sandbox is missing (usually the bubblewrap package, the exact reason is shown below): Trivy itself stays unchanged, LCM locks it in when it calls it.",
       "freshness": {
         "fresh": "Database up to date",
         "stale": "Database outdated",
@@ -4838,11 +5484,19 @@
       "enroll": "3. Connect to LCM and start as a service",
       "enrollHint": "The token is valid for this server only.",
       "portHint": "The token is valid for this server only. The agent connects on port {port}; the server must be able to reach it.",
+      "proxyTitle": "Agent address without a port",
+      "proxyText": "The enroll command uses {url}, which means port 443. LCM does not listen there; the agent port is {port}. This only works if a reverse proxy on 443 forwards to port {port}. Otherwise enter the address with its port or choose the address mode “One port”.",
+      "proxyLink": "Open public addresses",
       "manual": "Without the package source",
       "manualLabel": "Load the agent directly from LCM and connect",
       "manualHint": "Downloads the program from this LCM. curl accepts the self-signed certificate only with the key of this LCM. Behind a reverse proxy the second attempt checks normally. For ARM64 servers replace amd64 with arm64.",
       "after": "Once connected the server goes online and the first scan starts by itself.",
-      "urlHint": "The token is valid for this server only. The agent connects via {url}; the server must be able to reach this address."
+      "urlHint": "The token is valid for this server only. The agent connects via {url}; the server must be able to reach this address.",
+      "off": {
+        "title": "The agent is switched off",
+        "text": "LCM accepts no agent connections, so a new agent would not arrive. Switch the agent on and this assistant creates the command.",
+        "link": "Go to Settings → General"
+      }
     },
     "routeros": {
       "userHint": "A RouterOS user with SSH access, ideally read-only, e.g. admin.",
@@ -5958,10 +6612,10 @@
         "dbNever": "database never loaded",
         "sandboxOn": "Sandbox active ({backend})",
         "sandboxOff": "no sandbox",
-        "sandboxOffHint": "The scanner runs with LCM's rights and could reach its data directory. Only the bubblewrap package is missing.",
-        "label": "Set up Trivy",
-        "help": "Adds the Aqua Security package archive, installs Trivy and then enables CVE scanning. Runs as a job on this server.",
-        "meaning": "LCM then scans all servers for known vulnerabilities.",
+        "sandboxOffHint": "The scanner runs with LCM's rights and could reach its data directory. Only the sandbox is missing, usually the bubblewrap package.",
+        "label": "Install Trivy with sandbox",
+        "help": "Adds the Aqua Security package archive, installs Trivy together with the sandbox (bubblewrap) and then enables CVE scanning. Runs as a job on this server.",
+        "meaning": "LCM then scans all servers for known vulnerabilities. The scanner runs in the sandbox and cannot reach the data of LCM.",
         "name": "Trivy",
         "version": "Trivy {version}",
         "updateAvailable": "Version {version} available",
@@ -6134,7 +6788,18 @@
         "title": "Listening services",
         "none": "No listening services known yet. Query them from the server.",
         "covered": "All listening services are allowed or run via SSH or Docker.",
-        "add": "Allow {port}/{proto}"
+        "add": "Allow {port}/{proto}",
+        "role": {
+          "ui": "GUI",
+          "agent": "Agent",
+          "mcp": "MCP",
+          "acme": "Let's Encrypt (HTTP-01)"
+        },
+        "acme": {
+          "title": "Let's Encrypt needs port {port}",
+          "hint": "Let's Encrypt checks over port 80 via HTTP-01. LCM opens the port only during the check, but the firewall must let it through, otherwise issuing and renewing the certificate fails.",
+          "add": "Allow port {port}"
+        }
       },
       "rescan": {
         "label": "Query services",

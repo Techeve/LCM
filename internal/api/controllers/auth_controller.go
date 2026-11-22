@@ -129,16 +129,26 @@ type userProfile struct {
 	MustSetup2FA bool `json:"must_setup_2fa"`
 	// Language: gewählte Oberflächensprache, "" = noch nicht gewählt.
 	Language string `json:"language"`
+	// SetupStep: der Schritt des Einrichtungsassistenten, an dem der Server
+	// steht (session, addresses, services, access, certificate, onboarding, backup,
+	// intro). Nur für Konten, die die Einstellungen ändern dürfen; sonst und
+	// wenn erledigt fehlt das Feld.
+	SetupStep string `json:"setup_step,omitempty"`
 }
 
 // profile bildet die API-Sicht auf einen User, einschließlich des Zustands
 // "muss 2FA einrichten", den die Rollen-Policy bestimmt.
 func (ctrl *AuthController) profile(u *domain.User) *userProfile {
 	p := toProfile(u)
+	settings, err := ctrl.settings.Get()
+	if err != nil {
+		return p
+	}
 	if !u.TOTPEnabled {
-		if settings, err := ctrl.settings.Get(); err == nil {
-			p.MustSetup2FA = settings.Requires2FA(u.RoleNames())
-		}
+		p.MustSetup2FA = settings.Requires2FA(u.RoleNames())
+	}
+	if u.HasPermission(domain.PermSettingsManage) {
+		p.SetupStep = settings.SetupStep
 	}
 	return p
 }

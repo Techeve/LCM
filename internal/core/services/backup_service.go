@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/dbmetrics"
+	"LCM/internal/infrastructure/acmex"
 	"LCM/internal/infrastructure/creds"
 	"LCM/internal/infrastructure/crypto"
 	"LCM/internal/infrastructure/tlsx"
@@ -227,6 +229,18 @@ func (s *BackupService) Create(trigger, passphrase string) (*domain.Backup, erro
 		tlsx.CAFileName:    filepath.Join(s.dataDir, tlsx.CAFileName),
 		tlsx.CAKeyFileName: filepath.Join(s.dataDir, tlsx.CAKeyFileName),
 	}
+	// Hochgeladene und von ACME bezogene Zertifikate: einzeln, das Archiv
+	// kennt keine Verzeichnisse.
+	uploads, err := tlsx.UploadBackupFiles(s.dataDir)
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(optional, uploads)
+	issued, err := acmex.BackupFiles(s.dataDir)
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(optional, issued)
 	for archiveName, path := range optional {
 		if path == "" {
 			continue

@@ -17,12 +17,16 @@ For running the repository server. If you only want to **install** LCM, see
 
 ## The model
 
+One rule holds for all channels: the **URL path decides access**, the **suite
+is the channel**, and the component is always `main`. Origin and label in the
+Release file are cosmetic; no tool may rely on them.
+
 All channels ship **the same packages**, built from the same commit and signed
 with the same key. The only difference is timing:
 
 | | Beta | Community | Enterprise |
 |---|---|---|---|
-| apt line | `deb … repo.techeve.de beta main` | `deb … repo.techeve.de stable main` | `deb … repo.techeve.de/enterprise stable main` |
+| apt line | `deb … https://repo.techeve.de beta main` | `deb … https://repo.techeve.de community main` | `deb … https://repo.techeve.de/enterprise/lcm enterprise main` |
 | Access | open | open | subscription key |
 | Feature updates | pre-releases, ahead of the release | immediately, every release | only after they prove themselves in the free channel |
 | Security updates | immediately | immediately | **immediately as well** |
@@ -45,24 +49,29 @@ points side by side:
 
 ```
 repo.techeve.de/
-├── dists/stable/…          community - published by the CI on every release
+├── dists/community/…       community - the suite clients read
+├── dists/stable/…          community, old name: same content, only for
+│                           existing installations (will be switched off)
 ├── dists/beta/…            beta - published by the CI from the beta branch
-├── pool/…                  packages of both open channels (shared pool)
-├── enterprise/
-│   ├── dists/stable/…      enterprise - one promoted snapshot
+├── pool/…                  packages of the open channels (shared pool)
+├── enterprise/lcm/
+│   ├── dists/enterprise/…  enterprise - one promoted snapshot
 │   └── pool/…              its own package pool
 ├── repo-key.gpg            signing key (public)
 └── setup.sh                setup script for the community channel
 ```
 
-The community channel stays **exactly where it is**. Existing installations
-carry `deb … repo.techeve.de stable main` in their sources; changing that path
-would break them at the next `apt update`.
+The CI keeps publishing the community channel to `stable`; the server mirrors it
+to `community` on its own. New installations carry
+`deb … https://repo.techeve.de community main`. Existing sources with `stable`
+keep working, and the `lcm` and `lcm-agent` packages move them to `community`
+themselves on update: only entries for exactly `https://repo.techeve.de` with the
+suite `stable`, never enterprise, beta or foreign sources.
 
 ### Why a path prefix and not a second suite
 
 The obvious alternative is to serve both channels from the same URL root with
-different suites (`stable` and `enterprise`). That is a **security trap**: aptly
+different suites (`community` and `enterprise`). That is a **security trap**: aptly
 creates a separate `pool/` tree per publish prefix, but two suites under the
 same prefix share one pool. The metadata under `dists/enterprise/` would be
 protected - while the `.deb` files themselves would sit in the shared, public
@@ -189,10 +198,10 @@ then never exists as a final version.
 
 ## Release workflow
 
-The community channel is served by the CI as before
+The CI serves community and beta
 (`packaging/publish-deb.sh`, see [CI & release](/en/reference/ci-release/)).
-The enterprise channel is moved forward by hand, using
-`packaging/repo-server/lcm-channel`:
+The enterprise channel (prefix `enterprise/lcm`, suite `enterprise`) is moved
+forward by hand, using `packaging/repo-server/lcm-channel`:
 
 ```bash
 # 1. Right after the release: freeze that state.
@@ -232,65 +241,47 @@ separated - having both serve LCM would defeat the purpose, because apt always
 picks the higher version, and sooner or later that is the one from the free
 channel.
 
-### Separating the channels: a preference rule, not a clear-cut
+### Separating the channels: a preference rule by suite
 
-apt does not know about channels. It tells sources apart by what is in the
-**Release file** - and all three channels carry the same suite on the same host.
-So every publish point gets its own mark (aptly: `Origin` and `Label`, set once
-with `packaging/repo-server/set-channel-metadata.sh`):
-
-| Channel | Origin | Label |
-|---|---|---|
-| Community | `Techeve` | `techeve-community` |
-| Beta | `Techeve` | `techeve-beta` |
-| Enterprise | `Techeve` | `techeve-enterprise` |
-
-That allows expressing exactly what is meant - *the LCM packages* come from the
-enterprise channel, everything else may stay where it is. The switch writes
-`/etc/apt/preferences.d/lcm-enterprise.pref` for that:
+apt does not know about channels, it tells sources apart by what is in the
+**Release file**. There every channel has its own suite (`community`, `beta`,
+`enterprise`, plus the old name `stable`). The switch uses exactly that: *the LCM
+packages* come from the enterprise channel, everything else may stay where it
+is. It writes `/etc/apt/preferences.d/lcm-enterprise.pref`:
 
 ```
-Package: lcm lcm-agent
-Pin: release l=techeve-community
+Package: lcm
+Pin: release a=community
+Pin-Priority: -1
+
+Package: lcm
+Pin: release a=stable
+Pin-Priority: -1
+
+Package: lcm
+Pin: release a=beta
 Pin-Priority: -1
 ```
 
 Priority `-1` means "never an option". The community source stays active and
 keeps delivering its other packages - switching the whole source off would take
-those away too.
+those away too. The rule always applies; it needs no check against the server.
+A community source that an older LCM disabled during the switch is re-enabled.
 
-**Fallback for old publish points:** if the repository server carries no mark
-yet, the rule would have no effect. The switch then disables the community
-source as before and writes into the job log why. The check runs against the
-*re-enabled* source so an earlier run cannot block the better way for good:
-whoever switches first without and later with the mark gets the source back and
-the rule in its place.
-
-The community source exists in two spellings, and both are handled: `setup.sh`
-writes it as the deb822 file `techeve.sources` today - that one gets
-`Enabled: no`, the switch apt understands itself; name and content stay, so the
-way back loses nothing. Older installations have the classic `techeve.list`,
-which is renamed to `techeve.list.disabled` (in `sources.list.d` apt only reads
-`*.list` and `*.sources`).
+The community source exists in two spellings: `setup.sh` writes the deb822 file
+`techeve.sources`, older installations have the classic `techeve.list`. Both stay
+in place.
 
 :::caution[The counter-check is part of it]
 At the end the script asks the question that actually matters: **where would
-`lcm` come from now?** (`apt-cache policy lcm`, the source below the candidate
-version). If that is not the enterprise channel, it says so loudly.
-
-That is exactly what went wrong up to LCM 1.12.5: the switch only looked
-for `techeve.list` while `setup.sh` had long been writing `techeve.sources` - so
-disabling grabbed at nothing, the switch reported success anyway, and both
-channels ran side by side.
-
-Affected hosts are put right with *Settings → Subscription → Apply the switch
-again* (or by running `setup-enterprise.sh` once more).
+`lcm` come from now?** (`apt-cache policy lcm`, the suite below the candidate
+version). If that is not `enterprise`, it says so loudly.
 :::
 
 The credentials are scoped to host **and path**:
 
 ```
-machine repo.techeve.de/enterprise
+machine repo.techeve.de/enterprise/lcm
 login LCM-E-XXXX-XXXX-XXXX
 password <key>
 ```
@@ -427,9 +418,9 @@ package index that `apt update` gets its version from:
 
 | Channel | Index queried | Access |
 |---|---|---|
-| Community | `<repo>/dists/stable/…/Packages` | open |
+| Community | `<repo>/dists/community/…/Packages` | open |
 | Beta | `<repo>/dists/beta/…/Packages` | open |
-| Enterprise | `<subscription-repo>/dists/stable/…/Packages` | instance ID + access key |
+| Enterprise | `<subscription-repo>/dists/enterprise/…/Packages` | instance ID + access key |
 
 This is the difference between "current" and "current **for me**": a
 pre-release sits above the stable version, a matured enterprise release below

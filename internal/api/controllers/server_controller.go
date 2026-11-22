@@ -136,14 +136,16 @@ func (ctrl *ServerController) CreateAgent(c fiber.Ctx) error {
 	if err := checkLine("name", req.Name, maxNameLen); err != nil {
 		return err
 	}
-	server, token, err := ctrl.servers.CreateAgentServer(req.Name, actor(c))
+	host := c.Hostname()
+	server, token, err := ctrl.servers.CreateAgentServer(req.Name, actor(c), host)
 	if err != nil {
 		return mapServerError(err)
 	}
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"server": server, "token": token,
-		// Pin für den Download-Befehl (curl --pinnedpubkey), leer ohne TLS.
-		"download_pin": ctrl.servers.AgentDownloadPin(),
+		// Pin für den Download-Befehl (curl --pinnedpubkey) des Zertifikats,
+		// das LCM für diesen Namen ausliefert; leer ohne TLS.
+		"download_pin": ctrl.servers.AgentDownloadPin(host),
 	})
 }
 
@@ -286,7 +288,7 @@ func (ctrl *ServerController) RegenerateAgentToken(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	token, err := ctrl.servers.RegenerateAgentToken(scopeFor(c), id, actor(c))
+	token, err := ctrl.servers.RegenerateAgentToken(scopeFor(c), id, actor(c), c.Hostname())
 	if err != nil {
 		return mapServerError(err)
 	}
@@ -868,6 +870,8 @@ func (ctrl *ServerController) UpdateTrivy(c fiber.Ctx) error {
 }
 
 // InstallTrivy - POST /api/v1/servers/:id/lcm-host/install-trivy (servers:write)
+// Installiert Trivy samt Sandbox (bubblewrap) auf dem LCM-Host in einem Lauf,
+// ohne Body. Älteren Installationen ohne Sandbox bleibt install-sandbox.
 func (ctrl *ServerController) InstallTrivy(c fiber.Ctx) error {
 	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
 		return ctrl.servers.InstallTrivy(scopeFor(c), id, actor(c))

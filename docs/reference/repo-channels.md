@@ -17,12 +17,16 @@ findet den Weg unter [Installation](/getting-started/installation/).
 
 ## Das Modell
 
+Eine Regel gilt für alle Kanäle: der **URL-Pfad bestimmt den Zugang**, die
+**Suite den Kanal**, die Komponente ist immer `main`. Origin und Label im
+Release-File sind nur Kosmetik; kein Werkzeug darf sich darauf stützen.
+
 Alle Kanäle liefern **dieselben Pakete**, gebaut aus demselben Commit,
 signiert mit demselben Schlüssel. Der einzige Unterschied ist der Zeitpunkt:
 
 | | Beta | Community | Enterprise |
 |---|---|---|---|
-| apt-Zeile | `deb … repo.techeve.de beta main` | `deb … repo.techeve.de stable main` | `deb … repo.techeve.de/enterprise stable main` |
+| apt-Zeile | `deb … https://repo.techeve.de beta main` | `deb … https://repo.techeve.de community main` | `deb … https://repo.techeve.de/enterprise/lcm enterprise main` |
 | Zugang | offen | offen | Subscription-Key |
 | Funktions-Updates | Vorabversionen vor dem Release | sofort mit jedem Release | erst nach Bewährung im freien Kanal |
 | Sicherheitsupdates | sofort | sofort | **ebenfalls sofort** |
@@ -46,24 +50,29 @@ Publish-Punkte parallel bedienen:
 
 ```
 repo.techeve.de/
-├── dists/stable/…          Community - von der CI bei jedem Release publiziert
+├── dists/community/…       Community - die Suite, die Clients lesen
+├── dists/stable/…          Community, alter Name: gleicher Inhalt, nur für
+│                           bestehende Installationen (wird abgeschaltet)
 ├── dists/beta/…            Beta - von der CI aus dem beta-Branch publiziert
-├── pool/…                  Pakete beider offener Kanäle (gemeinsamer Pool)
-├── enterprise/
-│   ├── dists/stable/…      Enterprise - ein freigegebener Snapshot
+├── pool/…                  Pakete der offenen Kanäle (gemeinsamer Pool)
+├── enterprise/lcm/
+│   ├── dists/enterprise/…  Enterprise - ein freigegebener Snapshot
 │   └── pool/…              eigener Paket-Pool
 ├── repo-key.gpg            Signaturschlüssel (öffentlich)
 └── setup.sh                Einrichtungsskript für den Community-Kanal
 ```
 
-Der Community-Kanal bleibt dabei **exakt dort, wo er ist**. Bestehende
-Installationen tragen `deb … repo.techeve.de stable main` in ihren Quellen;
-jede Änderung an diesem Pfad würde sie beim nächsten `apt update` brechen.
+Die CI publiziert den Community-Kanal weiter nach `stable`; der Server spiegelt
+das selbständig nach `community`. Neue Installationen tragen
+`deb … https://repo.techeve.de community main` ein. Bestehende Quellen mit
+`stable` laufen weiter, und die Pakete `lcm` und `lcm-agent` stellen sie beim
+Update selbst auf `community` um: nur Einträge für genau `https://repo.techeve.de`
+mit der Suite `stable`, nie Enterprise-, Beta- oder fremde Quellen.
 
 ### Warum ein Pfad-Prefix und keine zweite Suite
 
 Naheliegend wäre, beide Kanäle über dieselbe URL-Wurzel mit unterschiedlicher
-Suite zu fahren (`stable` und `enterprise`). Das ist eine **Sicherheitsfalle**:
+Suite zu fahren (`community` und `enterprise`). Das ist eine **Sicherheitsfalle**:
 aptly legt für jeden Publish-Prefix einen eigenen `pool/`-Baum an, aber bei
 gleichem Prefix teilen sich beide Suites den Pool. Die Metadaten unter
 `dists/enterprise/` wären geschützt - die `.deb`-Dateien darunter läge aber im
@@ -193,10 +202,10 @@ Beta-Nummer existiert dann nie als finale Version.
 
 ## Release-Ablauf
 
-Der Community-Kanal wird unverändert von der CI bedient
+Community und Beta bedient die CI
 (`packaging/publish-deb.sh`, siehe [CI & Release](/reference/ci-release/)).
-Der Enterprise-Kanal wird von Hand nachgezogen - mit
-`packaging/repo-server/lcm-channel`:
+Der Enterprise-Kanal (Prefix `enterprise/lcm`, Suite `enterprise`) wird von Hand
+nachgezogen, mit `packaging/repo-server/lcm-channel`:
 
 ```bash
 # 1. Direkt nach dem Release: den Stand einfrieren.
@@ -237,67 +246,48 @@ Kanäle getrennt werden - beide gleichzeitig als LCM-Lieferant aktiv würde den
 Zweck aufheben, weil apt immer die höhere Version zöge, also über kurz oder
 lang die aus dem freien Kanal.
 
-### Kanaltrennung: Vorrang-Regel statt Kahlschlag
+### Kanaltrennung: Vorrang-Regel nach Suite
 
-apt kennt keine Kanäle. Es unterscheidet Quellen an dem, was im **Release-File**
-steht - und dort tragen alle drei Kanäle dieselbe Suite auf demselben Host.
-Deshalb bekommt jeder Publish-Punkt eine eigene Kennzeichnung (aptly: `Origin`
-und `Label`, einmalig gesetzt mit
-`packaging/repo-server/set-channel-metadata.sh`):
-
-| Kanal | Origin | Label |
-|---|---|---|
-| Community | `Techeve` | `techeve-community` |
-| Beta | `Techeve` | `techeve-beta` |
-| Enterprise | `Techeve` | `techeve-enterprise` |
-
-Damit lässt sich genau das ausdrücken, worum es geht - *die LCM-Pakete* kommen
-aus dem Enterprise-Kanal, alles andere darf bleiben, wo es ist. Die Umstellung
-schreibt dafür `/etc/apt/preferences.d/lcm-enterprise.pref`:
+apt kennt keine Kanäle, es unterscheidet Quellen an dem, was im **Release-File**
+steht. Dort hat jeder Kanal seine eigene Suite (`community`, `beta`,
+`enterprise`; dazu der alte Name `stable`). Genau das nutzt die Umstellung: *die
+LCM-Pakete* kommen aus dem Enterprise-Kanal, alles andere darf bleiben, wo es
+ist. Sie schreibt `/etc/apt/preferences.d/lcm-enterprise.pref`:
 
 ```
-Package: lcm lcm-agent
-Pin: release l=techeve-community
+Package: lcm
+Pin: release a=community
+Pin-Priority: -1
+
+Package: lcm
+Pin: release a=stable
+Pin-Priority: -1
+
+Package: lcm
+Pin: release a=beta
 Pin-Priority: -1
 ```
 
 Priorität `-1` heißt „kommt nie in Frage". Die Community-Quelle bleibt aktiv und
 liefert weiter ihre anderen Pakete - beim Stilllegen der ganzen Quelle wären die
-mit weg.
+mit weg. Die Regel greift immer, sie braucht keine Vorprüfung am Server. Eine
+Community-Quelle, die ein älteres LCM beim Wechsel stilllegte, schaltet die
+Umstellung wieder ein.
 
-**Rückfall für alte Publish-Punkte:** trägt der Repository-Server noch keine
-Kennzeichnung, wäre die Regel wirkungslos. Dann legt die Umstellung die
-Community-Quelle still wie bisher und schreibt in das Job-Protokoll, warum.
-Die Prüfung läuft gegen die *wieder eingeschaltete* Quelle, damit ein früherer
-Lauf den besseren Weg nicht dauerhaft verstellt: wer erst ohne und später mit
-Kennzeichnung umstellt, bekommt die Quelle zurück und die Regel an ihre Stelle.
-
-Die Community-Quelle gibt es dabei in zwei Schreibweisen, und beide werden
-behandelt: `setup.sh` legt sie heute als deb822-Datei `techeve.sources` an - die
-bekommt `Enabled: no`, den Schalter, den apt selbst kennt; Name und Inhalt
-bleiben, der Rückweg ist dadurch verlustfrei. Ältere Installationen haben die
-klassische `techeve.list`, sie wird nach `techeve.list.disabled` umbenannt (apt
-liest in `sources.list.d` nur `*.list` und `*.sources`).
+Die Community-Quelle gibt es in zwei Schreibweisen, `setup.sh` legt die
+deb822-Datei `techeve.sources` an, ältere Installationen haben die klassische
+`techeve.list`; beide bleiben bestehen.
 
 :::caution[Gegenprobe gehört dazu]
 Zum Schluss stellt das Skript die Frage, um die es wirklich geht: **woher käme
-`lcm` jetzt?** (`apt-cache policy lcm`, Quelle unter der Kandidaten-Version).
-Steht dort nicht der Enterprise-Kanal, sagt es das laut.
-
-Genau daran hing ein Fehler bis LCM 1.12.5: die Umstellung suchte nur
-`techeve.list`, `setup.sh` schrieb aber längst `techeve.sources` - das
-Stilllegen griff ins Leere, die Umstellung meldete trotzdem Erfolg, und beide
-Kanäle liefen nebeneinander.
-
-Betroffene Hosts zieht man mit *Einstellungen → Subscription → Einrichtung
-erneut anwenden* gerade (oder mit einem erneuten Lauf von
-`setup-enterprise.sh`).
+`lcm` jetzt?** (`apt-cache policy lcm`, Suite unter der Kandidaten-Version).
+Steht dort nicht `enterprise`, sagt es das laut.
 :::
 
 Die Zugangsdaten sind dabei auf Host **und Pfad** eingegrenzt:
 
 ```
-machine repo.techeve.de/enterprise
+machine repo.techeve.de/enterprise/lcm
 login LCM-E-XXXX-XXXX-XXXX
 password <key>
 ```
@@ -442,9 +432,9 @@ Paket-Index, aus dem auch `apt update` seine Version bezieht:
 
 | Kanal | Abgefragter Index | Zugang |
 |---|---|---|
-| Community | `<repo>/dists/stable/…/Packages` | offen |
+| Community | `<repo>/dists/community/…/Packages` | offen |
 | Beta | `<repo>/dists/beta/…/Packages` | offen |
-| Enterprise | `<subscription-repo>/dists/stable/…/Packages` | Instanz-ID + Zugangsschlüssel |
+| Enterprise | `<subscription-repo>/dists/enterprise/…/Packages` | Instanz-ID + Zugangsschlüssel |
 
 Das ist der Unterschied zwischen „aktuell" und „aktuell **für mich**": Eine
 Vorabversion liegt über der stabilen, ein abgehangenes Enterprise-Release

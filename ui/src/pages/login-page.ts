@@ -210,8 +210,8 @@ export class LoginPage extends LitElement {
   }
 
   #onCode(event: CustomEvent<{ value: string }>): void {
+    // Abgeschickt wird nur mit dem Knopf oder Enter (#onKeyDown), nie von selbst bei sechs Ziffern.
     this._code = cleanCode(event.detail.value);
-    if (this._code.length === CODE_LENGTH) void this.#submit();
   }
 
   // ---- Darstellung ----

@@ -1,23 +1,22 @@
-// MCP-Schnittstelle: Prüfung der Bind-Adresse und das Anbindungsbeispiel.
+// MCP-Schnittstelle: Adresse des Endpunkts, Anbindungsbeispiel und die Frage, ob MCP eine Domain braucht.
 
-/** Wie der Server: nur `localhost` oder eine Loopback-Adresse (127.0.0.0/8, ::1), gern in eckigen Klammern. */
-export function isLoopbackHost(host: string): boolean {
-  const bare = host.trim().replace(/^\[|\]$/g, '').trim();
-  if (bare.toLowerCase() === 'localhost') return true;
-  if (bare === '::1' || /^0*:(0*:){0,6}0*1$/.test(bare) || bare === '0:0:0:0:0:0:0:1') return true;
-  const parts = bare.split('.');
-  return parts.length === 4 && parts[0] === '127' && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+import type { GlobalSettings } from '../../../api/settings';
+import { MODE_KEY, URL_KEY, hostOf, readMode } from '../addresses/address-model';
+
+const DEFAULT_PORT = '9330';
+
+/** In Modus C ohne Namen für MCP gibt es keine Adresse, und der Schalter bleibt gesperrt (der Dienst ist aus). */
+export function mcpNeedsDomain(settings: GlobalSettings): boolean {
+  return readMode(settings[MODE_KEY]) === 'shared_port' && hostOf(String(settings[URL_KEY.mcp] ?? '')) === '';
 }
 
 /**
- * Adresse des MCP-Endpunkts. Ist eine öffentliche MCP-Adresse eingestellt (Reverse Proxy), gilt sie; sonst so, wie ein
- * Client auf dem LCM-Host den Endpunkt aufruft. IPv6 steht in eckigen Klammern.
+ * Adresse des MCP-Endpunkts: die wirksame MCP-Adresse von LCM (`effective_urls.mcp`) mit dem Pfad `/mcp`. Fehlt sie,
+ * gilt der Aufruf auf dem LCM-Host. MCP spricht immer TLS.
  */
-export function mcpUrl(host: string, port: string, publicUrl = ''): string {
-  if (publicUrl.trim()) return `${publicUrl.trim().replace(/\/+$/, '')}/mcp`;
-  const bare = host.trim().replace(/^\[|\]$/g, '') || '127.0.0.1';
-  const shown = bare.includes(':') ? `[${bare}]` : bare;
-  return `http://${shown}:${port.trim() || '9330'}/mcp`;
+export function mcpUrl(effective: string, port: string): string {
+  const base = effective.trim().replace(/\/+$/, '');
+  return `${base || `https://127.0.0.1:${port.trim() || DEFAULT_PORT}`}/mcp`;
 }
 
 /** Konfiguration für Clients wie Claude Code oder Cursor (`mcpServers`). */

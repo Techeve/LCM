@@ -41,7 +41,8 @@ const notesChangelog = `# Changelog
 `
 
 // TestReleaseNotesScript: Der handgeschriebene Text steht über allen Versionen
-// seiner Reihe, der Auszug nennt nur, was Anwender betrifft.
+// seiner Reihe - auch über Patch-Versionen, denn wer direkt auf 2.0.1 springt,
+// hat den Text zu 2.0.0 nie gesehen. Der Auszug nennt nur, was Anwender betrifft.
 func TestReleaseNotesScript(t *testing.T) {
 	dir := t.TempDir()
 	changelog := filepath.Join(dir, "CHANGELOG.md")
@@ -61,7 +62,7 @@ func TestReleaseNotesScript(t *testing.T) {
 	}
 
 	for version, want := range map[string]string{
-		"2.0.1":        "\n### Behoben\n\n- Port wird geprüft\n",
+		"2.0.1":        "Handtext.\n\n### Behoben\n\n- Port wird geprüft\n",
 		"2.0.0-beta.2": "Handtext.\n\n### Behoben\n\n- Fenster schließt wieder\n",
 		"2.0.0-beta.1": "Handtext.\n\n### Das musst du wissen\n\n- Bearer-Login entfällt\n\n### Neu\n\n- Neue Oberfläche\n",
 	} {

@@ -9,7 +9,6 @@ import (
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
-	"LCM/internal/safego"
 	"LCM/internal/storage/repositories"
 )
 
@@ -310,10 +309,9 @@ func (s *ServerService) ManageSecurityTool(scope repositories.AccessScope, id ui
 	}
 	s.audit.Log(actor, "server.security-tool-manage", "server", id,
 		server.Name+": "+in.Tool+" "+in.Action)
-	safego.GoCleanup("job:security-tool-manage", jobPanicCleanup(s.jobs, job), func() {
+	return startJob(s.jobs, "job:security-tool-manage", job, func() {
 		s.runSecurityToolManageJob(job, server, in, actor)
-	})
-	return job, nil
+	}), nil
 }
 
 // planManageSecurityTool prüft Server und Eingabe einer Verwaltungs-Aktion -

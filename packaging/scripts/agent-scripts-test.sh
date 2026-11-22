@@ -6,6 +6,8 @@
 # - stop and disable only on a real removal, never on an upgrade
 # - restart after an upgrade, but never from inside an agent command
 #   (that would kill the package transaction running the upgrade)
+# - move the apt source of the community channel from the suite stable to
+#   community - and nothing else (enterprise, beta, foreign repositories)
 #
 #   sh packaging/scripts/agent-scripts-test.sh
 #
@@ -120,6 +122,20 @@ check_output() {
 	FAILS=$((FAILS + 1))
 }
 
+# check_file <name> <file below the fake root> <expected content>: compares a
+# file of the fake root with the expected text.
+check_file() {
+	_got=$(cat "$WORK/root/$2")
+	if [ "$_got" = "$3" ]; then
+		echo "ok   $1"
+		return 0
+	fi
+	echo "FAIL $1"
+	echo "     want: $(echo "$3" | tr '\n' '|')"
+	echo "     got:  $(echo "$_got" | tr '\n' '|')"
+	FAILS=$((FAILS + 1))
+}
+
 STOP="systemctl stop lcm-agent.service"
 DISABLE="systemctl disable lcm-agent.service"
 RELOAD="systemctl daemon-reload"
@@ -186,6 +202,167 @@ check "apk .post-upgrade leaves a stopped agent stopped" "rc-service lcm-agent s
 setup openrc started
 run agent-postinstall.sh agent 2.1.0-r0 2.0.0-r0
 check "apk .post-upgrade through the agent does not restart" ""
+
+# --- postinstall: apt source stable -> community -----------------------------
+KEY="[signed-by=/etc/apt/keyrings/techeve.asc]"
+SRCD=etc/apt/sources.list.d
+
+# setup_apt: an apt system with the community source in every notation, next
+# to sources that must stay exactly as they are.
+setup_apt() {
+	setup systemd
+	_apt="$WORK/root/etc/apt"
+	mkdir -p "$_apt/sources.list.d"
+	cat >"$_apt/sources.list" <<EOF
+# main sources
+deb http://archive.ubuntu.com/ubuntu noble main
+deb https://repo.techeve.de stable main
+deb https://repo.example stable main
+EOF
+	echo "deb $KEY https://repo.techeve.de stable main" >"$_apt/sources.list.d/techeve.list"
+	echo "deb [ arch=amd64  signed-by=/k.asc ] http://repo.techeve.de/ stable main contrib" >"$_apt/sources.list.d/slash.list"
+	echo "deb $KEY https://repo.techeve.de/enterprise/lcm enterprise main" >"$_apt/sources.list.d/lcm-enterprise.list"
+	echo "deb $KEY https://repo.techeve.de/enterprise stable main" >"$_apt/sources.list.d/old-enterprise.list"
+	echo "deb $KEY https://repo.techeve.de/internal stable main" >"$_apt/sources.list.d/internal.list"
+	echo "deb $KEY https://repo.techeve.de beta main" >"$_apt/sources.list.d/lcm-beta.list"
+	echo "deb $KEY https://repo.techeve.de.example stable main" >"$_apt/sources.list.d/lookalike.list"
+	echo "deb $KEY https://repo.techeve.de stable-updates main" >"$_apt/sources.list.d/other-suite.list"
+	cat >"$_apt/sources.list.d/techeve.sources" <<EOF
+# Techeve package repository
+Types: deb
+URIs: https://repo.techeve.de
+Suites: stable
+Components: main
+Signed-By: /etc/apt/keyrings/techeve.gpg
+EOF
+	cat >"$_apt/sources.list.d/mixed.sources" <<EOF
+Types: deb
+URIs: https://deb.example
+Suites: stable
+Components: main
+
+Types: deb
+URIs: https://repo.techeve.de/
+Suites: stable
+Components: main
+EOF
+	cat >"$_apt/sources.list.d/enterprise.sources" <<EOF
+Types: deb
+URIs: https://repo.techeve.de/enterprise/lcm
+Suites: stable
+Components: main
+EOF
+	cat >"$_apt/sources.list.d/beta.sources" <<EOF
+Types: deb
+URIs: https://repo.techeve.de
+Suites: beta
+Components: main
+EOF
+}
+
+# check_apt_migrated <prefix>: every source after the migration.
+check_apt_migrated() {
+	check_file "$1: sources.list moves only the techeve line" etc/apt/sources.list \
+		"# main sources
+deb http://archive.ubuntu.com/ubuntu noble main
+deb https://repo.techeve.de community main
+deb https://repo.example stable main"
+	check_file "$1: one-line source with signed-by" $SRCD/techeve.list \
+		"deb $KEY https://repo.techeve.de community main"
+	check_file "$1: http, trailing slash, spaced options" $SRCD/slash.list \
+		"deb [ arch=amd64  signed-by=/k.asc ] http://repo.techeve.de/ community main contrib"
+	check_file "$1: deb822 stanza" $SRCD/techeve.sources \
+		"# Techeve package repository
+Types: deb
+URIs: https://repo.techeve.de
+Suites: community
+Components: main
+Signed-By: /etc/apt/keyrings/techeve.gpg"
+	check_file "$1: deb822 only the techeve stanza" $SRCD/mixed.sources \
+		"Types: deb
+URIs: https://deb.example
+Suites: stable
+Components: main
+
+Types: deb
+URIs: https://repo.techeve.de/
+Suites: community
+Components: main"
+	check_file "$1: enterprise line untouched" $SRCD/lcm-enterprise.list \
+		"deb $KEY https://repo.techeve.de/enterprise/lcm enterprise main"
+	check_file "$1: old enterprise path untouched" $SRCD/old-enterprise.list \
+		"deb $KEY https://repo.techeve.de/enterprise stable main"
+	check_file "$1: internal path untouched" $SRCD/internal.list \
+		"deb $KEY https://repo.techeve.de/internal stable main"
+	check_file "$1: beta line untouched" $SRCD/lcm-beta.list \
+		"deb $KEY https://repo.techeve.de beta main"
+	check_file "$1: lookalike host untouched" $SRCD/lookalike.list \
+		"deb $KEY https://repo.techeve.de.example stable main"
+	check_file "$1: other suite untouched" $SRCD/other-suite.list \
+		"deb $KEY https://repo.techeve.de stable-updates main"
+	check_file "$1: deb822 enterprise untouched" $SRCD/enterprise.sources \
+		"Types: deb
+URIs: https://repo.techeve.de/enterprise/lcm
+Suites: stable
+Components: main"
+	check_file "$1: deb822 beta untouched" $SRCD/beta.sources \
+		"Types: deb
+URIs: https://repo.techeve.de
+Suites: beta
+Components: main"
+}
+
+# apt_state: one checksum over all apt sources.
+apt_state() {
+	cat "$WORK/root/etc/apt/sources.list" "$WORK/root/$SRCD"/* | cksum
+}
+
+setup_apt
+run agent-postinstall.sh admin configure ""
+check_apt_migrated "agent deb postinst"
+check_output "agent postinst says which source it moved" "techeve.list moved from suite stable to community"
+_before=$(apt_state)
+run agent-postinstall.sh admin configure 2.0.0
+if [ "$_before" = "$(apt_state)" ] && ! grep -q "moved from suite" "$WORK/out"; then
+	echo "ok   agent postinst: second run changes nothing and says nothing"
+else
+	echo "FAIL agent postinst: second run changed something"
+	FAILS=$((FAILS + 1))
+fi
+setup systemd
+run agent-postinstall.sh admin 2
+[ ! -e "$WORK/root/etc/apt" ] || {
+	echo "FAIL agent postinst created /etc/apt on a system without apt"
+	FAILS=$((FAILS + 1))
+}
+
+# postinstall.sh of the lcm package does much more (user, sudo, service) and
+# cannot run in here. Its migration is a copy of the one above (dpkg scripts
+# cannot share code): check that it is the same text, and run that copy too.
+migration_of() {
+	awk '/^# migrate_apt_suite moves/ { on = 1 } /^# (is_upgrade tells|1\. Dedicated)/ { on = 0 } on' "$DIR/$1"
+}
+if [ -n "$(migration_of agent-postinstall.sh)" ] &&
+	[ "$(migration_of agent-postinstall.sh)" = "$(migration_of postinstall.sh)" ]; then
+	echo "ok   postinstall.sh carries the same migration as agent-postinstall.sh"
+else
+	echo "FAIL postinstall.sh and agent-postinstall.sh differ in migrate_apt_suite"
+	FAILS=$((FAILS + 1))
+fi
+setup_apt
+{
+	echo 'lcm_lang() { echo en; }'
+	migration_of postinstall.sh
+	echo 'migrate_apt_suite'
+} >"$WORK/migration.sh"
+ROOT="$WORK/root" sh "$WORK/migration.sh" >"$WORK/out" 2>&1
+check_apt_migrated "lcm postinst"
+_before=$(apt_state)
+ROOT="$WORK/root" sh "$WORK/migration.sh" >"$WORK/out" 2>&1
+[ "$_before" = "$(apt_state)" ] && [ ! -s "$WORK/out" ] || {
+	echo "FAIL lcm postinst: second run changed something"
+	FAILS=$((FAILS + 1))
+}
 
 if command -v bash >/dev/null 2>&1; then
 	setup systemd

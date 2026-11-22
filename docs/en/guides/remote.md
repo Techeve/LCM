@@ -38,7 +38,7 @@ interface and the REST API:
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
-| `agent_port` | Port of the agent listener; `0` disables it | `9320` |
+| `agent_port` | Port of the agent listener; an old `0` is read by LCM as "agent off" (`agent_enabled: false`) | `9320` |
 | `agent_host` | Bind address of the agent listener | `0.0.0.0` |
 
 Both live in `config.json` and can be overridden via environment variables
@@ -46,6 +46,13 @@ Both live in `config.json` and can be overridden via environment variables
 listener entirely. The agent port binds to **all interfaces** (`0.0.0.0`) by
 default, because agents connect from the outside; the UI stays on its own bind
 address (default `127.0.0.1`, usually behind a reverse proxy).
+
+**Agent on and off.** Under *Settings → General* the agent has a switch, in the
+*Onboarding* card and below its address in the *Public addresses* block (on out of
+the box). When it is off, the agent port accepts no connection, connected agents
+disconnect, and the *Add server* assistant creates no enroll command. Before you
+switch it off, the page tells you how many servers use the agent
+([Public addresses & address mode](/en/guides/adressen/#switching-agent-and-mcp-on-and-off)).
 
 `config.json` (excerpt):
 
@@ -62,13 +69,47 @@ The agent port **must not** match the UI/REST port - LCM rejects such a config a
 startup (each listener needs its own port).
 
 :::note[TLS & firewall]
-The agent listener uses the **same TLS certificate** as the UI. At enrollment the
-**SHA-256 fingerprint** of the active certificate is embedded into the token; the
-agent pins it on first contact (MitM protection, analogous to SSH fingerprint
-confirmation). Open the agent port (default **9320**) in the firewall so agents
-can reach it. In `--dev` mode the listener runs without TLS (HTTP) and without a
-pin - for local testing only.
+The agent listener serves the certificate by the name under which the agent calls
+it: a certificate of your own that names this name, otherwise the LCM certificate
+(see [Certificates, Let's Encrypt & port 443](/en/guides/zertifikate/)). At
+enrollment the **SHA-256 fingerprint** of the certificate LCM serves for the name
+of the agent address is embedded into the token; the agent pins it on first
+contact (MitM protection, analogous to SSH fingerprint confirmation). Open the
+agent port (default **9320**) in the firewall so agents can reach it. In `--dev`
+mode the listener runs without TLS (HTTP) and without a pin - for local testing
+only.
 :::
+
+## Without a reverse proxy: agent over port 443
+
+The agent needs no proxy in front. In address mode C (or with
+`shared_tls_listen: ":443"` in the `config.json`) LCM accepts the web UI, agent
+and MCP on one port and tells them apart by name
+([Public addresses & address mode](/en/guides/adressen/)). If you enter
+`agent.example.com` as the name for agents under *Settings → General*, you set up
+the agent like this:
+
+```sh
+sudo lcm-agent enroll https://agent.example.com <token>
+```
+
+What the agent trusts:
+
+- **Certificate from a public certificate authority (Let's Encrypt):** The agent
+  checks it with its system's trusted certificates and the name of its address.
+  This works with every agent.
+- **Certificate from your own (private) certificate authority:** The token
+  carries the authority. An agent that you set up with such a token pins it and
+  trusts every certificate from it that carries the name of its address, even
+  after a renewal. Older agents follow only the certificate's fingerprint, their
+  remembered key, or the LCM certificate.
+- **Call by IP or under an unknown name:** LCM serves the LCM certificate, which
+  agents from 2.1 on trust through the remembered LCM certificate authority.
+  Switching to a certificate of your own and back disconnects no agent.
+
+More under [Certificates, Let's Encrypt & port 443](/en/guides/zertifikate/#agents-and-certificates).
+To restrict where agents may connect from, set
+[Allowed networks](/en/guides/netzbereiche/) for the agent.
 
 ## Behind a reverse proxy
 
@@ -236,7 +277,8 @@ two paths: for the web console (`/api/v1/servers/<id>/terminal`) and for the
 event channel (`/api/v1/events`) that keeps the interface live. Without the
 forwarding the console and the live display are missing (the nginx examples are
 in [Reverse proxy & external hardening](/en/guides/reverse-proxy/#nginx)). These
-things have to be set:
+things have to be set (address mode A,
+[Public addresses & address mode](/en/guides/adressen/#mode-a-behind-a-reverse-proxy)):
 
 - **`public_base_url`** under *Settings → General*. Activation and reset links
   are built from it - without it they point at the internal address nobody can

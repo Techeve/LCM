@@ -3,6 +3,8 @@ package domain
 import (
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // GlobalSettings sind die über die UI konfigurierbaren Systemeinstellungen
@@ -76,12 +78,48 @@ type GlobalSettings struct {
 	// MCP-Schnittstelle (Model Context Protocol): ein separater, per Bearer-
 	// API-Key authentifizierter HTTP-Listener, über den KI-Agenten read-only
 	// Server-Eigenschaften abrufen (nie Passwörter/Keys). Vollständig über
-	// diese Einstellungen an-/abschaltbar (MCPEnabled) und in Bind-Adresse
-	// (MCPBindHost) und Port (MCPPort) konfigurierbar. Der Listener wird beim
-	// Umschalten zur Laufzeit gestartet/gestoppt.
+	// diese Einstellungen an-/abschaltbar (MCPEnabled) und im Port (MCPPort)
+	// konfigurierbar. Der Listener wird beim Umschalten zur Laufzeit
+	// gestartet/gestoppt.
 	MCPEnabled  bool   `gorm:"default:false" json:"mcp_enabled"`
 	MCPBindHost string `gorm:"default:'127.0.0.1'" json:"mcp_bind_host"`
 	MCPPort     int    `gorm:"default:9330" json:"mcp_port"`
+	// MCPTLS ist immer wahr: MCP spricht TLS mit dem Zertifikatspool von LCM
+	// (Migration und Seed setzen es). Das Feld bleibt nur, weil ältere Clients es
+	// lesen; es gilt nirgends mehr als Schalter. MCPBindHost ebenso: MCP bindet
+	// an den Host der Oberfläche.
+	MCPTLS bool `json:"mcp_tls"`
+
+	// Erlaubte Netzbereiche je Dienst: kommagetrennte Liste aus Adressen und
+	// CIDR-Netzen, leer = alle Netze (der Standard). Die Listen gehören nicht
+	// zu den allgemeinen Einstellungen und stehen deshalb nicht in deren JSON;
+	// sie laufen über /api/v1/system/network. Eine Liste in der config.json
+	// (allowed_ips, agent_allowed_ips, mcp_allowed_ips) hat Vorrang.
+	AllowedNetsUI    string `json:"-"`
+	AllowedNetsAgent string `json:"-"`
+	AllowedNetsMCP   string `json:"-"`
+
+	// ACME: LCM holt und erneuert Zertifikate selbst bei einer ACME-CA. Wie
+	// die Netzbereiche stehen die Felder nicht in der allgemeinen JSON; sie
+	// laufen über /api/v1/system/acme.
+	ACMEEnabled      bool   `gorm:"default:false" json:"-"`
+	ACMEDirectoryURL string `gorm:"default:'https://acme-v02.api.letsencrypt.org/directory'" json:"-"`
+	ACMEEmail        string `json:"-"`
+	ACMENames        string `json:"-"`                          // kommagetrennt
+	ACMEMode         string `gorm:"default:'single'" json:"-"`  // single oder per_name
+	ACMEChallenge    string `gorm:"default:'http-01'" json:"-"` // http-01 oder dns-01
+	// Bei dns-01: der Anbieter (Kennung aus acmex.DNSProviders), seine Werte
+	// als verschlüsseltes JSON (Geheimnisse und der Rest zusammen) und die
+	// Nameserver, über die LCM den Eintrag prüft (kommagetrennt, leer =
+	// die des Systems).
+	ACMEDNSProvider    string `json:"-"`
+	ACMEDNSConfigEnc   string `json:"-"`
+	ACMEDNSNameservers string `json:"-"`
+	// ACMETermsDirectory ist die Verzeichnis-URL der CA, deren
+	// Nutzungsbedingungen der Admin angenommen hat.
+	ACMETermsDirectory string     `json:"-"`
+	ACMELastRunAt      *time.Time `json:"-"`
+	ACMELastError      string     `json:"-"`
 
 	// CVE-Scan (Trivy): täglicher Abgleich des Paketbestands gegen die
 	// Schwachstellen-Datenbank. Der Zeitplan ist ein Cron-Ausdruck.
@@ -258,6 +296,54 @@ type GlobalSettings struct {
 	PublicAgentURL string `json:"public_agent_url"`
 	PublicMCPURL   string `json:"public_mcp_url"`
 
+	// Adressmodus und Ports (siehe address.go). Die Ports der Dienste stehen
+	// hier, damit sie in der Oberfläche einstellbar sind; nur eine
+	// Umgebungsvariable (LCM_PORT, LCM_AGENT_PORT) gewinnt und sperrt das Feld
+	// (siehe services.AddressConfig). Die config.json spiegelt sie. MCPPort steht
+	// weiter oben bei den MCP-Feldern.
+	// Kein gorm-Default auf einem bool, und die Zahlen-Vorgaben sind die der
+	// config.json - bestehende Installationen behalten so ihre Ports.
+	// AgentEnabled schaltet den Agent-Zugang (LCM Remote) an oder aus; aus heißt:
+	// kein Listener, in Modus C keine Antwort am Namen, verbundene Agenten
+	// getrennt. Vorgabe an. Bewusst kein gorm-Default (bei bool geht ein
+	// ausdrückliches false verloren): Seed und Migration (migrateServiceSwitches)
+	// setzen den Wert.
+	AgentEnabled  bool   `json:"agent_enabled"`
+	AddressMode   string `gorm:"default:'separate'" json:"address_mode"`
+	PublicHost    string `json:"public_host"` // nur one_name: der eine Name, ohne Schema, Port, Pfad
+	UIPort        int    `gorm:"default:9310" json:"ui_port"`
+	AgentPort     int    `gorm:"default:9320" json:"agent_port"`
+	SharedTLSPort int    `gorm:"default:443" json:"shared_tls_port"`
+	// SetupStep: der Schritt des Einrichtungsassistenten, an dem der erste
+	// Administrator steht (session, addresses, services, access,
+	// certificate, onboarding, mail, retention, backup, subscription, intro), leer = erledigt. Zwischen session
+	// und subscription geht er vor und zurück. Bewusst ohne gorm-Default: Bestehende Installationen bekommen
+	// beim Update leer, also erledigt, und sehen den Assistenten nie. Die alte
+	// Spalte address_setup bleibt ungenutzt in der Tabelle (siehe
+	// storage.migrateSetupStep).
+	SetupStep string `json:"setup_step"`
+
+	// TrustProxyHeader und TrustedProxies: LCM glaubt der Client-Adresse aus
+	// X-Forwarded-For nur dann, wenn die direkte Verbindung von einem der
+	// TrustedProxies (IP-Adressen, CIDR-Bereiche oder die Wörter localhost und
+	// private) kommt. Wirken ohne Neustart. Kein gorm-Default auf dem bool.
+	TrustProxyHeader bool     `json:"trust_proxy_header"`
+	TrustedProxies   []string `gorm:"-" json:"trusted_proxies"`
+	// trustedProxiesStored ist die Spalte trusted_proxies: die Liste kommagetrennt
+	// (BeforeSave, AfterFind). Kein gorm-Serializer: Die Schlüsselrotation hält
+	// jeden Serializer für eine verschlüsselte Spalte.
+	TrustedProxiesStored string `gorm:"column:trusted_proxies" json:"-"`
+
+	// ConfigSynced ist der Stand der gespiegelten Werte, den die config.json
+	// zuletzt nachweislich hatte (JSON, siehe cmd/app/config_sync.go). Daran
+	// erkennt LCM beim Start, ob jemand die Datei von Hand geändert hat.
+	ConfigSynced string `json:"-"`
+
+	// ConfigSyncError steht nur in der Antwort auf ein Speichern: Die Werte sind
+	// in der Datenbank, die config.json ließ sich aber nicht schreiben. Nie
+	// gespeichert.
+	ConfigSyncError string `gorm:"-" json:"config_sync_error,omitempty"`
+
 	// Standard-E-Mail-Versand (System-Mailer): SMTP-Konfiguration für
 	// transaktionale Mails - Passwort-Reset, Einladungs-/Aktivierungslinks
 	// und Admin-Hinweise. Getrennt von den Benachrichtigungskanälen; kann
@@ -279,11 +365,6 @@ type GlobalSettings struct {
 	MailUseTLS bool `gorm:"default:true" json:"mail_use_tls"`
 	// MailAdminRecipients: Empfänger für Admin-Hinweise (kommagetrennt).
 	MailAdminRecipients string `json:"mail_admin_recipients"`
-
-	// SSL/TLS: eigenes Zertifikat (PEM). Leer = Self-Signed beim Start.
-	TLSCertPEM    string `json:"-"`
-	TLSKeyPEMEnc  string `json:"-"` // AES-GCM
-	TLSCustomUsed bool   `gorm:"default:false" json:"tls_custom_used"`
 
 	// CrowdSec-Zugang für die Aktion „Sicherheit-Tools": entweder eine
 	// self-hosted zentrale LAPI (URL + Maschinen-Login + Passwort) oder ein
@@ -307,9 +388,8 @@ type GlobalSettings struct {
 	// Zugangsschlüssel AES-GCM-verschlüsselt; die übrigen Felder sind der
 	// zuletzt vom Dienst gemeldete Stand (Anzeige, keine Durchsetzung -
 	// Community und Enterprise sind funktional identisch).
-	SubscriptionServiceURL   string `json:"subscription_service_url"` // leer = DefaultSubscriptionServiceURL
-	SubscriptionKeyEnc       string `json:"-"`                        // AES-GCM
-	SubscriptionAccessKeyEnc string `json:"-"`                        // AES-GCM
+	SubscriptionKeyEnc       string `json:"-"` // AES-GCM
+	SubscriptionAccessKeyEnc string `json:"-"` // AES-GCM
 	SubscriptionRepoURL      string `json:"subscription_repo_url"`
 	SubscriptionCustomer     string `json:"subscription_customer"`
 	SubscriptionKeyPrefix    string `json:"subscription_key_prefix"`
@@ -358,21 +438,9 @@ func (g *GlobalSettings) AptChannel() string {
 	return AptChannelCommunity
 }
 
-// DefaultSubscriptionServiceURL ist der Standard-Anbieter-Dienst für die
-// Enterprise-Subscription (Aktivierung, Lebenszeichen, Paketkanal).
-const DefaultSubscriptionServiceURL = "https://repo.techeve.de"
-
 // SubscriptionConfigured meldet, ob eine Subscription hinterlegt ist.
 func (g *GlobalSettings) SubscriptionConfigured() bool {
 	return g.SubscriptionAccessKeyEnc != ""
-}
-
-// SubscriptionServiceBase liefert die effektive Dienst-Basis-URL.
-func (g *GlobalSettings) SubscriptionServiceBase() string {
-	if u := strings.TrimSpace(g.SubscriptionServiceURL); u != "" {
-		return strings.TrimRight(u, "/")
-	}
-	return DefaultSubscriptionServiceURL
 }
 
 // CrowdSecLapiConfigured meldet, ob eine self-hosted LAPI hinterlegt ist
@@ -680,4 +748,22 @@ func (s *GlobalSettings) SessionMode() string {
 		return BrowserSessionCookie
 	}
 	return BrowserSessionMemory
+}
+
+// BeforeSave schreibt die Liste der Proxys in ihre Spalte.
+func (g *GlobalSettings) BeforeSave(*gorm.DB) error {
+	g.TrustedProxiesStored = strings.Join(g.TrustedProxies, ",")
+	return nil
+}
+
+// AfterFind liest die Liste der Proxys aus ihrer Spalte; leer ergibt eine leere
+// Liste, nie nil.
+func (g *GlobalSettings) AfterFind(*gorm.DB) error {
+	g.TrustedProxies = []string{}
+	for _, entry := range strings.Split(g.TrustedProxiesStored, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			g.TrustedProxies = append(g.TrustedProxies, entry)
+		}
+	}
+	return nil
 }
