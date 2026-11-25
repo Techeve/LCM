@@ -43,11 +43,12 @@ type Guard struct {
 	configPath string
 	uid        int
 	now        func() time.Time
+	denied     []string // Systemverzeichnisse, die der Wächter nie anfasst
 }
 
 // New baut den Wächter für ein Datenverzeichnis und die Konfigurationsdatei.
 func New(dataDir, configPath string) *Guard {
-	return &Guard{dataDir: dataDir, configPath: configPath, uid: os.Getuid(), now: time.Now}
+	return &Guard{dataDir: dataDir, configPath: configPath, uid: os.Getuid(), now: time.Now, denied: SystemDirs}
 }
 
 // secretFiles sind die Dateien, die niemand außer dem Dienst lesen darf.
@@ -60,6 +61,14 @@ var secretFiles = map[string]bool{
 // Abweichungen, auch die behobenen - der Aufrufer protokolliert sie.
 func (g *Guard) Check() []Finding {
 	var out []Finding
+	// Nie Rechte an Systemverzeichnissen ändern (z.B. wenn das Datenverzeichnis
+	// versehentlich auf /usr/bin zeigt) und nie an fremden Verzeichnissen.
+	if isSystemDirIn(g.dataDir, g.denied) {
+		return []Finding{{Path: g.dataDir, Detail: "systemverzeichnis, kein datenverzeichnis von LCM - rechte bleiben unverändert"}}
+	}
+	if !looksLikeDataDir(g.dataDir) {
+		return []Finding{{Path: g.dataDir, Detail: "enthält keine LCM-Dateien, kein datenverzeichnis von LCM - rechte bleiben unverändert"}}
+	}
 	// Das Datenverzeichnis gehört dem Dienst allein: 0700.
 	out = append(out, g.checkDir(g.dataDir, 0o700)...)
 	entries, err := os.ReadDir(g.dataDir)
@@ -67,6 +76,9 @@ func (g *Guard) Check() []Finding {
 		for _, e := range entries {
 			p := filepath.Join(g.dataDir, e.Name())
 			switch {
+			case e.Type()&fs.ModeSymlink != 0:
+				// Ein Symlink kann überall hin zeigen - nie dem Ziel folgen.
+				continue
 			case e.IsDir():
 				// Unterverzeichnisse (backups, logs, trivy, restore-staging):
 				// ebenfalls nur der Dienst.
@@ -84,7 +96,9 @@ func (g *Guard) Check() []Finding {
 	// Konfiguration: gehört root oder dem Dienst, Gruppe darf lesen/schreiben
 	// (Restore), sonst niemand. Sie hält die Betriebsparameter.
 	if g.configPath != "" {
-		out = append(out, g.checkOtherBits(filepath.Dir(g.configPath))...)
+		if confDir := filepath.Dir(g.configPath); !isSystemDirIn(confDir, g.denied) {
+			out = append(out, g.checkOtherBits(confDir)...)
+		}
 		out = append(out, g.checkOtherBits(g.configPath)...)
 	}
 	return out

@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.3.1 - 2026-11-25
+
+### 🐛 Bugfixes
+
+- **cli**: unbekannte Kommandos starten den Server nicht mehr, Systemverzeichnisse sind kein Datenverzeichnis (66645ddd)
+- **deps**: gorilla/websocket auf den Stand mit sicherem Maskenschlüssel heben (0fdccc9a)
+- **security**: Rechte-Wächter fasst keine Systemverzeichnisse und fremden Ordner mehr an (52759007)
+
+### 🔧 Sonstiges
+
+- community nimmt hotfix/*-Branches an, wenn enterprise eine ältere Reihe führt (e2629061)
+
 ## v2.3.0 - 2026-11-22
 
 ### 🚀 Features

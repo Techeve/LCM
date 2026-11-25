@@ -12,6 +12,8 @@
 #               nach beta abfährt (Version aus den Conventional Commits)
 #   enterprise  Fix-Releases des Wartungszweigs (Version aus den Fix-Commits
 #               seit dem letzten Tag der Wartungslinie)
+#   hotfix/*    Fix-Release direkt für community, wenn enterprise eine ältere
+#               Reihe führt (Branch von community, MR zurück nach community)
 #
 # Auf beta und community wird NICHT gearbeitet: Beide sind mit "push: No one"
 # geschützt, ein dort erzeugter Release-Commit ließe sich nicht hochladen.
@@ -44,7 +46,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 case "$BRANCH" in
-  develop|enterprise) ;;
+  develop|enterprise|hotfix/*) ;;
   beta|community)
     # Früher stand hier auch beta. Das führt in eine Sackgasse: Der Commit
     # entsteht, lässt sich aber nicht pushen ("push: No one"), und wer es
@@ -56,7 +58,7 @@ case "$BRANCH" in
     exit 1
     ;;
   *)
-    echo "FEHLER: bitte auf develop oder enterprise ausführen (aktuell: $BRANCH)." >&2
+    echo "FEHLER: bitte auf develop, enterprise oder einem hotfix/*-Branch ausführen (aktuell: $BRANCH)." >&2
     exit 1
     ;;
 esac
@@ -173,4 +175,5 @@ case "$BRANCH" in
            echo "   und rollt aus." ;;
     esac ;;
   enterprise) echo "   Der Push auf enterprise releast v${NEXT_VERSION} in den Enterprise-Kanal." ;;
+  hotfix/*) echo "   Dann: Merge Request ${BRANCH} -> community; der Merge taggt v${NEXT_VERSION} und rollt aus." ;;
 esac
