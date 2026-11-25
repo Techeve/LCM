@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.3.2 - 2026-11-25
+
+### 🐛 Bugfixes
+
+- **agent**: Der Agent bleibt unter dnf, zypper, apk und pacman bei Systemupdates stehen (4a5bece3)
+- **ci**: Agent-Pakete für rpm, apk und Arch kommen mit jedem Release in repo.techeve.de (5aa55d14)
+
+### 🔧 Sonstiges
+
+- **packaging**: Die Paket-Skripte des Agents laufen in der CI unter dash, busybox sh und bash (291d603d)
+
 ## v2.3.1 - 2026-11-25
 
 ### 🐛 Bugfixes
