@@ -10,6 +10,10 @@
 //	fix: / perf: / refactor:                     ->  Patch (1.1.1)
 //	docs: / test: / ci: / chore: / build: ...    ->  kein Release-Auslöser
 //
+// Abhängigkeits-Updates von Renovate: fix(deps) (geht ins Produkt) löst ein
+// Patch-Release aus, chore(deps) (Werkzeuge) nicht. Der Changelog fasst sie je
+// Version zu einer Zeile zusammen (deps.go), statt englische Betreffe zu listen.
+//
 // Verwendung (lokal wie in der CI):
 //
 //	go run ./tools/release                  # Vorschau: nächste Version + Changelog

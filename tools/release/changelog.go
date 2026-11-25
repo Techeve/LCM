@@ -113,7 +113,7 @@ func mergeSections(version, date string, parts []versionSection) string {
 	var b strings.Builder
 	b.WriteString("## v" + version + " - " + date + "\n")
 	for _, cat := range order {
-		entries := dedupSorted(merged.entriesByCategory[cat])
+		entries := dropPlainDepsLine(dedupSorted(merged.entriesByCategory[cat]))
 		if len(entries) == 0 {
 			continue
 		}

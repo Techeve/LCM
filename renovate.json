@@ -6,7 +6,7 @@
     ":semanticCommits"
   ],
   "timezone": "Europe/Berlin",
-  "baseBranchPatterns": ["develop"],
+  "baseBranchPatterns": ["develop", "community", "enterprise"],
   "enabledManagers": ["gomod", "npm", "dockerfile", "gitlabci", "custom.regex"],
   "ignorePaths": [
     "**/node_modules/**",
@@ -22,7 +22,7 @@
   "labels": ["dependencies"],
   "semanticCommitType": "chore",
   "semanticCommitScope": "deps",
-  "prConcurrentLimit": 5,
+  "prConcurrentLimit": 15,
   "prHourlyLimit": 0,
   "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths", "npmDedupe"],
   "platformAutomerge": true,
@@ -30,10 +30,14 @@
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
   "vulnerabilityAlerts": {
-    "description": "Sicherheitsupdates (OSV) ohne Karenzzeit und selbsttätig gemergt, sobald die volle MR-Pipeline grün ist. Eine bekannte Lücke wiegt schwerer als das Restrisiko einer frischen Version.",
-    "labels": ["security"],
+    "description": "Sicherheitsupdates (OSV) jederzeit, ohne Karenzzeit und selbsttätig gemergt, sobald die volle MR-Pipeline grün ist. Eine bekannte Lücke wiegt schwerer als das Restrisiko einer frischen Version. Das Suffix [security] im Commit-Betreff erkennt die Release-Automatik (tools/autorelease): Ein Sicherheitsupdate darf schon am nächsten Tag releast werden, nicht erst dienstags. Auch auf enterprise dürfen Sicherheitsupdates Minor-Sprünge sein.",
+    "schedule": ["at any time"],
+    "labels": ["dependencies", "security"],
+    "commitMessageSuffix": "[security]",
+    "enabled": true,
     "automerge": true,
-    "minimumReleaseAge": null
+    "minimumReleaseAge": null,
+    "dependencyDashboardApproval": false
   },
   "osvVulnerabilityAlerts": true,
   "packageRules": [
@@ -51,46 +55,58 @@
       "enabled": false
     },
     {
+      "description": "Minor- und Patch-Updates mergen selbsttätig, sobald die MR-Pipeline grün ist (Karenzzeit 7 Tage gilt weiter). Majors kommen erst nach Freigabe im Dependency Dashboard und belegen bis dahin keinen MR-Platz.",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "enterprise ist der Wartungszweig (voriges Feature-Release): nur Patch-Updates und Sicherheitsupdates (vulnerabilityAlerts, siehe oben, ausgenommen von dieser Regel), weder Minor noch Major, auch kein Minor der Go-Toolchain.",
+      "matchBaseBranches": ["enterprise"],
+      "matchUpdateTypes": ["minor", "major"],
+      "enabled": false
+    },
+    {
+      "description": "Commit-Typ fix(deps) für alles, was ins Produkt geht und damit ein Patch-Release auslöst: Go-Module, Go-Toolchain, npm-dependencies der Oberfläche, ausgelieferte Basis-Images. Entwicklungs- und CI-Werkzeuge bleiben bei chore(deps) und lösen kein Release aus (tools/release).",
+      "matchManagers": ["gomod"],
+      "semanticCommitType": "fix"
+    },
+    {
       "matchManagers": ["gomod"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "Go-Abhängigkeiten (minor/patch)"
     },
     {
+      "description": "npm-dependencies der Oberfläche gehen in die ausgelieferte Oberfläche und lösen ein Release aus; devDependencies sind Werkzeuge. Beide getrennt gruppieren, weil ein MR nur einen Commit-Typ trägt.",
       "matchManagers": ["npm"],
+      "matchDepTypes": ["dependencies"],
+      "semanticCommitType": "fix",
       "matchUpdateTypes": ["minor", "patch", "digest"],
-      "groupName": "npm-Abhängigkeiten (minor/patch)"
+      "groupName": "npm-Abhängigkeiten der Oberfläche (minor/patch)"
     },
     {
-      "description": "Selbsttätig mergen nur Herausgeber mit belastbarem Release-Prozess (Trägerschaft Stufe 4-5, siehe docs/reference/dependencies.md). Alles andere braucht einen Menschenblick, auch Patches: ein Supply-Chain-Angriff kommt immer als neue Version.",
-      "matchPackageNames": [
-        "golang.org/x/**",
-        "github.com/google/**",
-        "github.com/gofiber/**",
-        "github.com/golang-jwt/**",
-        "github.com/eclipse/**",
-        "gorm.io/**",
-        "lit",
-        "vite",
-        "@playwright/**"
-      ],
-      "matchUpdateTypes": ["patch", "pin", "digest"],
-      "groupName": "Vertrauenswürdige Patch-Updates",
-      "automerge": true
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "npm-Entwicklungswerkzeuge (minor/patch)"
     },
     {
-      "description": "Go-Toolchain: go-Zeile in go.mod und GO_IMAGE der CI immer gemeinsam. Ohne Wartezeit, Patch-Stände sind Sicherheitskorrekturen des Go-Teams.",
+      "description": "Go-Toolchain: go-Zeile in go.mod und GO_IMAGE der CI immer gemeinsam. Ohne Wartezeit, Patch-Stände sind Sicherheitskorrekturen des Go-Teams. Die Toolchain steckt im ausgelieferten Binary: fix(deps).",
       "matchDepNames": ["go", "golang"],
       "matchDatasources": ["golang-version", "docker"],
       "rangeStrategy": "bump",
       "groupName": "Go-Toolchain",
+      "semanticCommitType": "fix",
       "minimumReleaseAge": null
     },
     {
-      "description": "Go-Patch selbsttätig mergen, sobald die Pipeline grün ist. Die Runner frischen ihre Images täglich um 3 Uhr auf, vor diesem Lauf.",
-      "matchDepNames": ["go", "golang"],
-      "matchDatasources": ["golang-version", "docker"],
-      "matchUpdateTypes": ["patch"],
-      "automerge": true
+      "description": "Trivy-Basis des ausgelieferten Sidecar-Images (docker/Dockerfile.trivyd).",
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["aquasec/trivy"],
+      "semanticCommitType": "fix"
     },
     {
       "description": "Node.js der CI (NODE_IMAGE). Ein neuer Major kommt als eigener MR mit Menschenblick.",
@@ -99,9 +115,10 @@
       "groupName": "Node.js"
     },
     {
-      "description": "Playwright-Image und @playwright/test brauchen dieselbe Version, sonst fehlen im Image die passenden Browser.",
+      "description": "Playwright-Image und @playwright/test brauchen dieselbe Version, sonst fehlen im Image die passenden Browser. Ohne Wartezeit: Mit sieben Tagen nähme npm die ältere Version, während das Image noch wartet, und beide liefen auseinander.",
       "matchDepNames": ["mcr.microsoft.com/playwright", "@playwright/test"],
-      "groupName": "Playwright"
+      "groupName": "Playwright",
+      "minimumReleaseAge": null
     },
     {
       "description": "Go-Werkzeuge der CI (govulncheck, nfpm): Version in .gitlab-ci.yml, Makefile und docker/Dockerfile, immer gemeinsam.",
@@ -139,9 +156,8 @@
       "customType": "regex",
       "description": "Werkzeugversionen mit einer Zeile # renovate: datasource=… depName=… darüber, in .gitlab-ci.yml, Makefile und docker/Dockerfile.",
       "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/", "/^Makefile$/", "/^docker/Dockerfile$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[ \\t]*(?:ARG[ \\t]+)?[A-Z_]+_VERSION[ \\t]*(?::|\\?=|=)[ \\t]*(?<currentValue>\\S+)"
-      ]
+      "matchStrings": ["# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[ \\t]*(?:ARG[ \\t]+)?[A-Z_]+_VERSION[ \\t]*(?::|\\?=|=)[ \\t]*(?<currentValue>\\S+)"]
     }
-  ]
+  ],
+  "schedule": ["* 8-12 * * 1"]
 }
