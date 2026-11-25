@@ -178,7 +178,8 @@ workflow:
 # Quelle fehlschlagen - und da die Release-Branches nur mit grüner Pipeline
 # gemergt werden können, sind die Regeln bindend.
 #   beta       ← develop (Release-Zug) oder community (Fix-Aufwärtsmerge)
-#   community  ← beta (Release) oder enterprise (Fix-Aufwärtsmerge)
+#   community  ← beta (Release), enterprise (Fix-Aufwärtsmerge) oder hotfix/*
+#                (Fix direkt für community, wenn enterprise eine ältere Reihe führt)
 #   enterprise ← fix/*- oder hotfix/*-Branches (Fixes entstehen hier zuerst)
 check:mr-source:
   stage: check
@@ -198,8 +199,8 @@ check:mr-source:
           esac ;;
         community)
           case "$SRC" in
-            beta|enterprise) ;;
-            *) fail "MRs nach community sind nur aus beta (Release) oder enterprise (Fix-Aufwärtsmerge) erlaubt." ;;
+            beta|enterprise|hotfix/*) ;;
+            *) fail "MRs nach community sind nur aus beta (Release), enterprise (Fix-Aufwärtsmerge) oder hotfix/*-Branches erlaubt." ;;
           esac ;;
         enterprise)
           case "$SRC" in
@@ -228,7 +229,7 @@ check:release-version:
   stage: check
   image: alpine:3.24
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "beta" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "community" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "beta"))
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && (($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "beta" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop") || ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "community" && ($CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "beta" || $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^hotfix\//)))
   script:
     - apk add --no-cache git
     - git fetch --tags --quiet origin

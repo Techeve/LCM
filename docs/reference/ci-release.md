@@ -13,8 +13,9 @@ Dieses Dokument beschreibt, wie das LCM auf einem (selbst gehosteten) GitLab-Ser
 develop    ── hier wird entwickelt (direkt oder über Feature-Branches mit MR).
 beta       ── Vorabversionen (1.24.0-beta.1). Quelle: develop (Release-Zug)
               oder community (Fix-Aufwärtsmerge).
-community  ── Default-Branch, der freie stabile Kanal. Quelle: beta (Release)
-              oder enterprise (Fix-Aufwärtsmerge).
+community  ── Default-Branch, der freie stabile Kanal. Quelle: beta (Release),
+              enterprise (Fix-Aufwärtsmerge) oder hotfix/* (Fix direkt für
+              community, wenn enterprise eine ältere Reihe führt).
 enterprise ── Wartungszweig mit vertraglicher Zusage. Quelle: fix/*- und
               hotfix/*-Branches - dort entstehen Fixes zuerst.
 feature/*  ── optionale Feature-Branches, MR-Ziel ist immer develop.
@@ -103,7 +104,7 @@ curl -s -X POST -H "PRIVATE-TOKEN: $TOKEN" "$GITLAB/projects/<id>/protected_bran
 | Ziel | erlaubte Quellen |
 |---|---|
 | `beta` | `develop` (Release-Zug) oder `community` (Fix-Aufwärtsmerge) |
-| `community` | `beta` (Release) oder `enterprise` (Fix-Aufwärtsmerge) |
+| `community` | `beta` (Release), `enterprise` (Fix-Aufwärtsmerge) oder `hotfix/*` (Fix für community, wenn enterprise eine ältere Reihe führt) |
 | `enterprise` | `fix/*`, `hotfix/*` oder `community` |
 
 ### 4. Merge-Request-Regeln

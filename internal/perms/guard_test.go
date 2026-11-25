@@ -76,3 +76,99 @@ func TestGuardBackupsUndUnterverzeichnisse(t *testing.T) {
 		t.Errorf("Archiv: %04o", info.Mode().Perm())
 	}
 }
+
+func TestIsSystemDirLoestSymlinksAuf(t *testing.T) {
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "usr-bin")
+	if err := os.Mkdir(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Wie /bin -> /usr/bin auf Debian.
+	link := filepath.Join(root, "bin")
+	if err := os.Symlink(fakeBin, link); err != nil {
+		t.Fatal(err)
+	}
+	denied := []string{link}
+	for _, p := range []string{fakeBin, link, fakeBin + "/", filepath.Join(link, "..", "usr-bin")} {
+		if !isSystemDirIn(p, denied) {
+			t.Errorf("%s müsste als Systemverzeichnis gelten", p)
+		}
+	}
+	other := filepath.Join(root, "lcm")
+	if isSystemDirIn(other, denied) || isSystemDirIn(filepath.Join(fakeBin, "unter"), denied) {
+		t.Error("Unterverzeichnis oder fremdes Verzeichnis darf nicht gelten")
+	}
+	for _, p := range []string{"/", "/usr/bin", "/bin", "/etc", "/usr/local/bin"} {
+		if !IsSystemDir(p) {
+			t.Errorf("%s müsste als Systemverzeichnis gelten", p)
+		}
+	}
+	if IsSystemDir("/var/lib/lcm") {
+		t.Error("/var/lib/lcm ist kein Systemverzeichnis")
+	}
+}
+
+// Der Fall aus dem Fehlerbild: Rechte 0755 auf einem Verzeichnis voller
+// Programme - der Wächter darf sie weder verschärfen noch hineingreifen.
+func TestGuardFasstSystemverzeichnisNichtAn(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "ls")
+	if err := os.WriteFile(prog, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g := New(dir, filepath.Join(dir, "config.json"))
+	g.denied = []string{dir}
+	findings := g.Check()
+	if len(findings) != 1 || findings[0].Fixed {
+		t.Fatalf("erwartet eine unbehobene Meldung, bekam %v", findings)
+	}
+	assertMode(t, dir, 0o755)
+	assertMode(t, prog, 0o755)
+}
+
+func TestGuardFasstFremdesVerzeichnisNichtAn(t *testing.T) {
+	dir := t.TempDir()
+	foreign := filepath.Join(dir, "dokument.txt")
+	if err := os.WriteFile(foreign, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if findings := New(dir, "").Check(); len(findings) != 1 || findings[0].Fixed {
+		t.Fatalf("erwartet eine unbehobene Meldung, bekam %v", findings)
+	}
+	assertMode(t, dir, 0o755)
+	assertMode(t, foreign, 0o644)
+}
+
+func TestGuardFolgtKeinemSymlink(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.Chmod(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lcm.key"), []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "verweis")); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(dir, 0o700)
+	New(dir, "").Check()
+	assertMode(t, outside, 0o755)
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != want {
+		t.Errorf("%s: %04o, erwartet %04o", path, info.Mode().Perm(), want)
+	}
+}

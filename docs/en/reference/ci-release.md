@@ -13,8 +13,9 @@ This document describes how LCM is set up on a (self-hosted) GitLab server and h
 develop    ── where development happens (directly or via feature branches with MR).
 beta       ── prereleases (1.24.0-beta.1). Source: develop (release train)
               or community (fix roll-up).
-community  ── default branch, the free stable channel. Source: beta (release)
-              or enterprise (fix roll-up).
+community  ── default branch, the free stable channel. Source: beta (release),
+              enterprise (fix roll-up) or hotfix/* (a fix straight for
+              community while enterprise carries an older series).
 enterprise ── maintenance branch with a contractual promise. Source: fix/* and
               hotfix/* branches - that is where fixes are born.
 feature/*  ── optional feature branches, the MR target is always develop.
@@ -104,7 +105,7 @@ curl -s -X POST -H "PRIVATE-TOKEN: $TOKEN" "$GITLAB/projects/<id>/protected_bran
 | Target | permitted sources |
 |---|---|
 | `beta` | `develop` (release train) or `community` (fix roll-up) |
-| `community` | `beta` (release) or `enterprise` (fix roll-up) |
+| `community` | `beta` (release), `enterprise` (fix roll-up) or `hotfix/*` (fix for community while enterprise carries an older series) |
 | `enterprise` | `fix/*`, `hotfix/*` or `community` |
 
 ### 4. Merge request rules

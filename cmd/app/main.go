@@ -100,44 +100,11 @@ func main() {
 		return
 	}
 
-	// Subcommand: lcm rotate-db-key - Master-Key-Rotation (Security 9.8).
-	if flag.Arg(0) == "rotate-db-key" {
-		if err := rotateDBKey(*configPath, *dataDir); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-	// Subcommand: lcm restricted-provision <benutzer> - gibt das Skript aus, das
-	// Helper, sudoers-Whitelist und Shims des eingeschränkten Modus schreibt.
-	// Versteckt (nicht in der Hilfe): nur das Paket (postinstall.sh) ruft es auf.
-	if flag.Arg(0) == "restricted-provision" {
-		script, err := services.RestrictedProvisionScript(flag.Arg(1))
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Print(script)
-		return
-	}
-	// Subcommand: lcm tls reload|status - Zertifikate des laufenden Dienstes
-	// über die Steuerbuchse neu laden bzw. anzeigen.
-	if flag.Arg(0) == "tls" {
-		os.Exit(runTLSCommand(*dataDir, flag.Args()[1:], os.Stdout, os.Stderr))
-	}
-	// Subcommand: lcm network status|reset - die erlaubten Netzbereiche des
-	// laufenden Dienstes anzeigen bzw. nach einer Aussperrung zurücksetzen.
-	if flag.Arg(0) == "network" {
-		os.Exit(runNetworkCommand(*dataDir, flag.Args()[1:], os.Stdout, os.Stderr))
-	}
-	// Subcommand: lcm credentials init - Master-Key in ein systemd-Credential
-	// überführen (kein Klartext-Schlüssel mehr auf der Platte).
-	if flag.Arg(0) == "credentials" {
-		if flag.Arg(1) != "init" {
-			log.Fatal("verwendung: lcm credentials init [--with-key auto|host|tpm2|host+tpm2]")
-		}
-		if err := credentialsInit(*configPath, *dataDir, flag.Args()[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+	// Unterkommandos (rotate-db-key, tls, network, credentials, help ...).
+	// Ein unbekanntes Wort startet den Server nicht, siehe runSubcommand.
+	opts := cliOptions{configPath: *configPath, dataDir: *dataDir}
+	if code, handled := runSubcommand(flag.Args(), opts, os.Stdout, os.Stderr); handled {
+		os.Exit(code)
 	}
 
 	if err := run(*configPath, *dataDir, *debug, *demo || *demoPublic, *dev, *demoPublic); err != nil {
@@ -146,7 +113,9 @@ func main() {
 }
 
 // resolveDataDir bestimmt das Datenverzeichnis: -data Flag oder LCM_DATA
-// (env), sonst das Verzeichnis des Binaries.
+// (env), sonst das Verzeichnis des Binaries. Systemverzeichnisse (/usr/bin
+// bei einer Paket-Installation ohne -data) werden abgelehnt, bevor etwas
+// angelegt oder verändert wird.
 func resolveDataDir(dataDir string) (string, error) {
 	if dataDir == "" {
 		dataDir = os.Getenv("LCM_DATA")
@@ -156,7 +125,14 @@ func resolveDataDir(dataDir string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return filepath.Dir(exe), nil
+		dir := filepath.Dir(exe)
+		if err := checkDataDir(dir); err != nil {
+			return "", err
+		}
+		return dir, nil
+	}
+	if err := checkDataDir(dataDir); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return "", fmt.Errorf("datenverzeichnis anlegen: %w", err)
