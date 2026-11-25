@@ -134,6 +134,7 @@ var sections = []struct {
 func RenderChangelog(version string, date time.Time, commits []Commit) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## v%s - %s\n", version, date.Format("2006-01-02"))
+	commits = CollapseDeps(commits)
 
 	for _, section := range sections {
 		var entries []string

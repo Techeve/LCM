@@ -177,10 +177,17 @@ workflow:
 # aus den dafür vorgesehenen Quellen. Dieser Job lässt MR-Pipelines mit anderer
 # Quelle fehlschlagen - und da die Release-Branches nur mit grüner Pipeline
 # gemergt werden können, sind die Regeln bindend.
-#   beta       ← develop (Release-Zug) oder community (Fix-Aufwärtsmerge)
-#   community  ← beta (Release), enterprise (Fix-Aufwärtsmerge) oder hotfix/*
-#                (Fix direkt für community, wenn enterprise eine ältere Reihe führt)
-#   enterprise ← fix/*- oder hotfix/*-Branches (Fixes entstehen hier zuerst)
+#   beta       ← develop (Release-Zug), community (Fix-Aufwärtsmerge) oder
+#                merge/community-* (derselbe Aufwärtsmerge mit aufgelösten
+#                Konflikten, angelegt von merge:up)
+#   community  ← beta (Release), enterprise (Fix-Aufwärtsmerge), hotfix/*
+#                (Fix direkt für community, wenn enterprise eine ältere Reihe
+#                führt; auch die automatischen Patch-Releases hotfix/auto-*)
+#                oder renovate/* (Abhängigkeits-Updates, siehe renovate.json)
+#   enterprise ← fix/*-, hotfix/*- oder renovate/*-Branches (Fixes entstehen
+#                hier zuerst) oder community (von Hand)
+#   develop    nimmt jeden Branch an und steht deshalb nicht in dieser Prüfung
+#                (auch merge/beta-*-nach-develop von merge:up)
 check:mr-source:
   stage: check
   image: alpine:3.24
@@ -194,18 +201,18 @@ check:mr-source:
       case "$TGT" in
         beta)
           case "$SRC" in
-            develop|community) ;;
-            *) fail "MRs nach beta sind nur aus develop (Release-Zug) oder community (Fix-Aufwärtsmerge) erlaubt." ;;
+            develop|community|merge/community-*) ;;
+            *) fail "MRs nach beta sind nur aus develop (Release-Zug), community oder merge/community-* (Fix-Aufwärtsmerge) erlaubt." ;;
           esac ;;
         community)
           case "$SRC" in
-            beta|enterprise|hotfix/*) ;;
-            *) fail "MRs nach community sind nur aus beta (Release), enterprise (Fix-Aufwärtsmerge) oder hotfix/*-Branches erlaubt." ;;
+            beta|enterprise|hotfix/*|renovate/*) ;;
+            *) fail "MRs nach community sind nur aus beta (Release), enterprise (Fix-Aufwärtsmerge), hotfix/*- oder renovate/*-Branches erlaubt." ;;
           esac ;;
         enterprise)
           case "$SRC" in
-            fix/*|hotfix/*|community) ;;
-            *) fail "MRs nach enterprise sind nur aus fix/*-, hotfix/*-Branches oder community erlaubt." ;;
+            fix/*|hotfix/*|renovate/*|community) ;;
+            *) fail "MRs nach enterprise sind nur aus fix/*-, hotfix/*-, renovate/*-Branches oder community erlaubt." ;;
           esac ;;
       esac
       echo "OK: $SRC -> $TGT ist erlaubt."
@@ -224,7 +231,10 @@ check:mr-source:
 # Nur für die beiden Richtungen, in denen der Merge selbst ein Release auslösen
 # SOLL. Fix-Aufwärtsmerges (community -> beta, enterprise -> community) tragen
 # bewusst keine neue Version und bleiben außen vor - ebenso fix/*-MRs nach
-# enterprise, wo der Release-Commit hinterher direkt gepusht wird.
+# enterprise, wo der Release-Commit hinterher direkt gepusht wird, und die
+# Abhängigkeits-Updates von Renovate (renovate/* nach community und enterprise):
+# Sie tragen keine Version, das Wochen-Release (release:patch) bringt sie später
+# in einem eigenen hotfix/auto-*-MR, und der unterliegt dieser Prüfung.
 check:release-version:
   stage: check
   image: alpine:3.24

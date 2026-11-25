@@ -13,7 +13,10 @@
 #   enterprise  Fix-Releases des Wartungszweigs (Version aus den Fix-Commits
 #               seit dem letzten Tag der Wartungslinie)
 #   hotfix/*    Fix-Release direkt für community, wenn enterprise eine ältere
-#               Reihe führt (Branch von community, MR zurück nach community)
+#               Reihe führt (Branch von community, MR zurück nach community).
+#               Auch die automatischen Wochen-Releases (hotfix/auto-<version>,
+#               tools/autorelease) laufen hier durch - für community wie für
+#               enterprise, dann mit MR in die jeweilige Linie.
 #
 # Auf beta und community wird NICHT gearbeitet: Beide sind mit "push: No one"
 # geschützt, ein dort erzeugter Release-Commit ließe sich nicht hochladen.
