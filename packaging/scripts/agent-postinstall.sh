@@ -7,6 +7,21 @@
 # On an upgrade it brings a running agent onto the new binary - but never by
 # restarting it from inside one of its own commands (see restart_after_upgrade).
 #
+# On rpm, zypper and pacman systems it also keeps the agent out of normal
+# system upgrades, so that it is updated only on purpose, by an admin. Per
+# package format:
+#   deb     nothing (apt behaves as before)
+#   rpm     pin_dnf: exclude=lcm-agent in the repo file techeve-lcm
+#           (update: dnf --setopt=disable_excludes=techeve-lcm install lcm-agent)
+#           pin_zypper: a package lock in /etc/zypp/locks
+#           (update: zypper removelock lcm-agent, install, zypper addlock lcm-agent)
+#   pacman  pin_pacman: IgnorePkg = lcm-agent in /etc/pacman.conf
+#           (update: pacman -S lcm-agent or pacman -U, both ignore IgnorePkg)
+#   apk     nothing to write: apk rewrites /etc/apk/world at the end of the
+#           transaction, which overwrites anything done here. `apk add
+#           lcm-agent=<version>` pins the version there. A first install gets
+#           a hint (hint_apk).
+#
 # The same script is the post-upgrade script of apk and pacman
 # (nfpm-agent.yaml). How the package formats call it:
 #   deb     postinst configure [<old>] | abort-upgrade | abort-remove ...
@@ -116,6 +131,99 @@ is_upgrade() {
 	esac
 }
 
+# pkg_kind names the package format from the arguments (see the table above):
+# deb, rpm, apk or pacman. apk and pacman both pass a version; only apk has
+# /etc/apk.
+pkg_kind() {
+	case "$1" in
+	configure | abort-* | triggered) echo deb ;;
+	*[!0-9]*) if [ -d "$ROOT/etc/apk" ]; then echo apk; else echo pacman; fi ;;
+	[0-9]*) echo rpm ;;
+	esac
+}
+
+# pin_dnf adds lcm-agent to the exclude list of the repo file written by the
+# repository's setup script. dnf then leaves the agent out of upgrade and
+# install; an update by hand lifts the exclude of this one repo
+# (--setopt=disable_excludes=techeve-lcm).
+# Only the section [techeve-lcm] counts (the file may hold more repositories),
+# and only the exact package name: lcm-agent-foo is not lcm-agent.
+# Nothing happens without the repo file (installed from a downloaded rpm).
+pin_dnf() {
+	_repo="$ROOT/etc/yum.repos.d/techeve-lcm.repo"
+	[ -f "$_repo" ] || return 0
+	_tmp=$(mktemp 2>/dev/null) || return 0
+	awk '
+		function has(v,   n, t, i) {
+			n = split(v, t, "[ \t,]+")
+			for (i = 1; i <= n; i++) if (t[i] == "lcm-agent") return 1
+			return 0
+		}
+		{ line[NR] = $0 }
+		/^\[/ { sec = ($0 ~ /^\[techeve-lcm\][ \t]*$/); if (sec && !hdr) hdr = NR; next }
+		sec && /^(exclude|excludepkgs)[ \t]*=/ {
+			if (has(substr($0, index($0, "=") + 1))) have = 1
+			else if (!ex) ex = NR
+		}
+		END {
+			for (i = 1; i <= NR; i++) {
+				if (!have && i == ex) print line[i] " lcm-agent"; else print line[i]
+				if (!have && !ex && i == hdr) print "exclude=lcm-agent"
+			}
+		}
+	' "$_repo" >"$_tmp" 2>/dev/null && [ -s "$_tmp" ] && ! cmp -s "$_tmp" "$_repo" && cat "$_tmp" >"$_repo"
+	rm -f "$_tmp"
+}
+
+# pin_zypper locks the package (what `zypper addlock lcm-agent` writes). A
+# locked package is skipped by zypper update; an update by hand lifts the lock
+# around the install and sets it again. The file is written directly: zypper
+# holds its own lock during the transaction that runs this script.
+pin_zypper() {
+	[ -d "$ROOT/etc/zypp" ] || return 0
+	_locks="$ROOT/etc/zypp/locks"
+	grep -qs '^solvable_name: lcm-agent$' "$_locks" && return 0
+	printf '\ntype: package\nmatch_type: glob\ncase_sensitive: on\nsolvable_name: lcm-agent\n' >>"$_locks"
+}
+
+# pin_pacman adds IgnorePkg = lcm-agent to the [options] section: pacman -Syu
+# skips the agent with a warning, while pacman -S lcm-agent and pacman -U still
+# install it.
+pin_pacman() {
+	_conf="$ROOT/etc/pacman.conf"
+	[ -f "$_conf" ] || return 0
+	grep -Eq '^[[:space:]]*IgnorePkg[[:space:]]*=.*(=|[[:space:]])lcm-agent([[:space:]]|$)' "$_conf" && return 0
+	_tmp=$(mktemp 2>/dev/null) || return 0
+	awk '{ print } /^\[options\][ \t]*$/ && !done { print "IgnorePkg = lcm-agent"; done = 1 }' "$_conf" >"$_tmp" 2>/dev/null &&
+		[ -s "$_tmp" ] && cat "$_tmp" >"$_conf"
+	rm -f "$_tmp"
+}
+
+# pin_manager pins on rpm (dnf, zypper) and pacman systems.
+pin_manager() {
+	case "$(pkg_kind "${1:-}")" in
+	rpm)
+		pin_dnf
+		pin_zypper
+		;;
+	pacman) pin_pacman ;;
+	esac
+}
+
+# hint_apk tells a first install on Alpine how to keep the version through
+# apk upgrade (see the table above).
+hint_apk() {
+	[ "$(pkg_kind "${1:-}")" = apk ] || return 0
+	_world="$ROOT/etc/apk/world"
+	grep -qs '^lcm-agent=' "$_world" && return 0
+	_v=${1%-r[0-9]*}
+	if [ "$(lcm_lang)" = "de" ]; then
+		echo "lcm-agent: apk upgrade wuerde den Agent mitaktualisieren. Version halten: apk add lcm-agent=$_v."
+	else
+		echo "lcm-agent: apk upgrade would update the agent with the system. To keep this version: apk add lcm-agent=$_v."
+	fi
+}
+
 # under_agent tells whether this script runs inside a command of the agent:
 # lcm-agent is one of its ancestors. That is the case when LCM patches this
 # server through the agent.
@@ -161,8 +269,12 @@ if [ -d "$ROOT/run/systemd/system" ]; then
 	systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 
+pin_manager "${1:-}" || true
+
 if is_upgrade "${1:-}" "${2:-}"; then
 	restart_after_upgrade
+else
+	hint_apk "${1:-}" || true
 fi
 
 # Only apt systems have /etc/apt; the same script also serves rpm, apk, pacman.

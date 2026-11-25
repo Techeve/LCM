@@ -387,6 +387,45 @@ helper-shellcheck:
     - shellcheck -s sh -S warning packaging/pkg-version.sh packaging/scripts/*.sh
     - go test -run '^TestHelperSkriptBestehtShellcheck$' ./internal/core/services/
 
+# Paket-Skripte unter jeder Shell, die ein Paketformat benutzt:
+# dpkg ruft sie mit dash auf, apk mit busybox sh, rpm und pacman mit bash.
+# agent-scripts-test.sh nimmt die Shell aus LCM_TEST_SHELL und startet die
+# Skripte damit; "ok" je Fall, am Ende steht "all package script cases passed".
+packaging:shells:
+  stage: test
+  image: alpine:3.24
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $GITHUB_ISSUE_SYNC == "true"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "develop"
+      changes:
+        - packaging/**/*
+  script:
+    - apk add --no-cache dash bash
+    - LCM_TEST_SHELL="dash" dash packaging/scripts/agent-scripts-test.sh
+    - LCM_TEST_SHELL="busybox sh" busybox sh packaging/scripts/agent-scripts-test.sh
+    - LCM_TEST_SHELL="bash --posix" bash --posix packaging/scripts/agent-scripts-test.sh
+
+# Das Veröffentlichungsskript für die rpm-, apk- und Arch-Pakete des Agents
+# (packaging/publish-pkgs.sh) gegen einen Attrappen-Server: Upload, 409, Fehlschlag
+# bei falscher Version im veröffentlichten Index.
+packaging:publish:
+  stage: test
+  image: alpine:3.24
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $GITHUB_ISSUE_SYNC == "true"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "develop"
+      changes:
+        - packaging/publish-pkgs*.sh
+  script:
+    - apk add --no-cache bash python3 curl
+    - bash packaging/publish-pkgs-test.sh
+
 # E2E (Playwright gegen das echte Binary) - nur wo es zählt: auf develop,
 # main und in MR-Pipelines. Installiert Go + Chromium im Node-Image.
 e2e:
@@ -613,7 +652,8 @@ packages:deb:
     # .deb, und damit war der Agent faktisch Debian-only. Dasselbe Paket
     # zusaetzlich als RPM, APK und Arch-Paket: Der Agent ist ein statisches
     # Binary, sein postinstall reines POSIX-sh. In den apt-Kanal wandern
-    # weiterhin nur die .deb; die uebrigen Formate haengen am Release.
+    # nur die .deb; die uebrigen Formate gehen im Job deploy:pkgs an den
+    # Paketserver (rpm, apk, Arch) und haengen am Release.
     - |
       for A in amd64 arm64; do
         cp "bin/lcm-agent-linux-${A}" bin/lcm-agent-pkg
@@ -945,6 +985,44 @@ deploy:apt:
         exit 0
       fi
     - bash packaging/publish-deb.sh
+
+# Der Agent als rpm, apk und Arch-Paket (dnf, zypper, apk, pacman): Dieselben Dateien
+# wie am Release gehen an den Paketserver (RSM), der sie signiert und die Metadaten
+# baut. Nur community und beta: Agenten beziehen sich immer aus dem öffentlichen
+# Kanal, einen Enterprise-Pfad gibt es nicht. Danach prüft das Skript die Version
+# im veröffentlichten Index (packaging/publish-pkgs.sh).
+#
+# Läuft wie deploy:apt nur bei RELEASE_NEEDED=true und nach dem release-Job.
+# Voraussetzung: CI-Variablen REPO_URL, REPO_USER, REPO_PASS (masked); der Zugang
+# braucht das Recht auf rpm/<Kanal>, apk/<Kanal> und arch/<Kanal>.
+deploy:pkgs:
+  stage: deploy
+  image: debian:12.15-slim
+  needs:
+    - version
+    - packages:deb
+    - e2e
+    - release
+  rules:
+    - if: $RENOVATE_BOT == "true"
+      when: never
+    - if: $GITHUB_ISSUE_SYNC == "true"
+      when: never
+    - if: $CI_COMMIT_BRANCH == "community"
+      variables:
+        CHANNEL: community
+    - if: $CI_COMMIT_BRANCH == "beta"
+      variables:
+        CHANNEL: beta
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates zstd xz-utils
+  script:
+    - |
+      if [ "$RELEASE_NEEDED" != "true" ]; then
+        echo "Kein Release ansteht (RELEASE_NEEDED != true) - die Pakete werden nicht ausgerollt."
+        exit 0
+      fi
+    - bash packaging/publish-pkgs.sh
 
 # Öffentliche Releases: Dieselben Artefakte wie am privaten Release hängen
 # auch am Spiegel techeve/lcm und auf GitHub - als Komfort-Weg neben dem

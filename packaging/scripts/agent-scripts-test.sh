@@ -6,16 +6,26 @@
 # - stop and disable only on a real removal, never on an upgrade
 # - restart after an upgrade, but never from inside an agent command
 #   (that would kill the package transaction running the upgrade)
+# - hold the agent out of system upgrades on rpm (dnf exclude, zypper lock) and
+#   pacman (IgnorePkg), hint at the pin command on apk, and lift the holds again
+#   on removal - without touching the entries of other sections and packages
 # - move the apt source of the community channel from the suite stable to
 #   community - and nothing else (enterprise, beta, foreign repositories)
 #
 #   sh packaging/scripts/agent-scripts-test.sh
+#
+# The scripts run under the shell in LCM_TEST_SHELL (default "sh"), e.g.
+# LCM_TEST_SHELL=dash or "busybox sh" or "bash --posix": the CI job
+# packaging:shells runs the test once for each, since dpkg (dash), apk (busybox)
+# and rpm (bash) run package scripts with different shells.
 #
 # Needs neither root nor Linux; go test runs it (internal/agent). The scripts
 # read the filesystem below LCM_PKG_ROOT, a fake /proc included.
 set -eu
 
 DIR=$(cd "$(dirname "$0")" && pwd)
+# Left unquoted where it is used: "busybox sh" is two words.
+TEST_SH=${LCM_TEST_SHELL:-sh}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 FAILS=0
@@ -69,12 +79,12 @@ setup() {
 run() {
 	_script=$1 _caller=$2
 	shift 2
-	LC_ALL=C PATH="$WORK/bin:$PATH" LCM_PKG_ROOT="$WORK/root" sh -c '
+	LC_ALL=C PATH="$WORK/bin:$PATH" LCM_PKG_ROOT="$WORK/root" LCM_TEST_SHELL="$TEST_SH" $TEST_SH -c '
 		parent=1; [ "$1" = agent ] && parent=4001
 		mkdir -p "$LCM_PKG_ROOT/proc/$$"
 		echo sh >"$LCM_PKG_ROOT/proc/$$/comm"
 		printf "PPid:\t%s\n" "$parent" >"$LCM_PKG_ROOT/proc/$$/status"
-		shift; exec sh "$@"' sh "$_caller" "$DIR/$_script" "$@" >"$WORK/out" 2>&1
+		shift; exec $LCM_TEST_SHELL "$@"' sh "$_caller" "$DIR/$_script" "$@" >"$WORK/out" 2>&1
 }
 
 # run_pacman <script> <function> <agent|admin> <args...>: pacman wraps the
@@ -136,13 +146,23 @@ check_file() {
 	FAILS=$((FAILS + 1))
 }
 
+# check_absent <name> <file below the fake root>: the file does not exist.
+check_absent() {
+	if [ ! -e "$WORK/root/$2" ]; then
+		echo "ok   $1"
+		return 0
+	fi
+	echo "FAIL $1: $2 exists"
+	FAILS=$((FAILS + 1))
+}
+
 STOP="systemctl stop lcm-agent.service"
 DISABLE="systemctl disable lcm-agent.service"
 RELOAD="systemctl daemon-reload"
 RESTART="systemctl try-restart lcm-agent.service"
 
 for s in agent-preremove.sh agent-postinstall.sh agent-postremove.sh; do
-	sh -n "$DIR/$s"
+	$TEST_SH -n "$DIR/$s"
 done
 
 # --- preremove: stop only on removal ---------------------------------------
@@ -355,10 +375,10 @@ setup_apt
 	migration_of postinstall.sh
 	echo 'migrate_apt_suite'
 } >"$WORK/migration.sh"
-ROOT="$WORK/root" sh "$WORK/migration.sh" >"$WORK/out" 2>&1
+ROOT="$WORK/root" $TEST_SH "$WORK/migration.sh" >"$WORK/out" 2>&1
 check_apt_migrated "lcm postinst"
 _before=$(apt_state)
-ROOT="$WORK/root" sh "$WORK/migration.sh" >"$WORK/out" 2>&1
+ROOT="$WORK/root" $TEST_SH "$WORK/migration.sh" >"$WORK/out" 2>&1
 [ "$_before" = "$(apt_state)" ] && [ ! -s "$WORK/out" ] || {
 	echo "FAIL lcm postinst: second run changed something"
 	FAILS=$((FAILS + 1))
@@ -379,6 +399,147 @@ if command -v bash >/dev/null 2>&1; then
 	check "pacman post_upgrade through the agent does not restart" "$RELOAD"
 else
 	echo "skip pacman cases (no bash)"
+fi
+
+# --- postinstall: the holds of dnf, zypper and pacman -----------------------
+REPOFILE=etc/yum.repos.d/techeve-lcm.repo
+LOCKS=etc/zypp/locks
+PACMANCONF=etc/pacman.conf
+LOCK_STANZA='
+type: package
+match_type: glob
+case_sensitive: on
+solvable_name: lcm-agent'
+
+setup systemd
+mkdir -p "$WORK/root/etc/yum.repos.d"
+printf '[techeve-lcm]\nname=Techeve\nenabled=1\n' >"$WORK/root/$REPOFILE"
+run agent-postinstall.sh admin 1
+check_file "rpm %post puts the exclude into the repo file" "$REPOFILE" '[techeve-lcm]
+exclude=lcm-agent
+name=Techeve
+enabled=1'
+run agent-postinstall.sh admin 2
+check_file "rpm %post leaves a repo file with the exclude alone" "$REPOFILE" '[techeve-lcm]
+exclude=lcm-agent
+name=Techeve
+enabled=1'
+printf '[techeve-lcm]\nexclude=foo bar\nenabled=1\n' >"$WORK/root/$REPOFILE"
+run agent-postinstall.sh admin 2
+check_file "rpm %post extends an existing exclude line" "$REPOFILE" '[techeve-lcm]
+exclude=foo bar lcm-agent
+enabled=1'
+# A repo file with more than one section: only [techeve-lcm] counts.
+printf '[other]\nexclude=foo\nenabled=1\n[techeve-lcm]\nname=Techeve\n[third]\nexclude=lcm-agent\n' >"$WORK/root/$REPOFILE"
+run agent-postinstall.sh admin 1
+check_file "rpm %post ignores the excludes of other sections" "$REPOFILE" '[other]
+exclude=foo
+enabled=1
+[techeve-lcm]
+exclude=lcm-agent
+name=Techeve
+[third]
+exclude=lcm-agent'
+printf '[other]\nexclude=lcm-agent\n[techeve-lcm]\nname=Techeve\n[third]\nexclude=bar\n' >"$WORK/root/$REPOFILE"
+run agent-postinstall.sh admin 1
+check_file "rpm %post does not take an exclude of another section for its own" "$REPOFILE" '[other]
+exclude=lcm-agent
+[techeve-lcm]
+exclude=lcm-agent
+name=Techeve
+[third]
+exclude=bar'
+printf '[other]\nexclude=foo\n[techeve-lcm]\nexcludepkgs=bar\nname=Techeve\n[third]\nexclude=baz\n' >"$WORK/root/$REPOFILE"
+run agent-postinstall.sh admin 2
+check_file "rpm %post extends the exclude of its own section only" "$REPOFILE" '[other]
+exclude=foo
+[techeve-lcm]
+excludepkgs=bar lcm-agent
+name=Techeve
+[third]
+exclude=baz'
+printf '[techeve-lcm]\nexclude=lcm-agent-foo\n' >"$WORK/root/$REPOFILE"
+run agent-postinstall.sh admin 2
+check_file "rpm %post checks the exact package name" "$REPOFILE" '[techeve-lcm]
+exclude=lcm-agent-foo lcm-agent'
+printf '[techeve-lcm]\nexclude=foo,lcm-agent\n' >"$WORK/root/$REPOFILE"
+run agent-postinstall.sh admin 2
+check_file "rpm %post leaves a comma separated exclude alone" "$REPOFILE" '[techeve-lcm]
+exclude=foo,lcm-agent'
+
+setup systemd
+run agent-postinstall.sh admin 1
+check_absent "rpm %post creates no repo file" "$REPOFILE"
+check_absent "rpm %post without zypp writes no locks" "$LOCKS"
+mkdir -p "$WORK/root/etc/yum.repos.d"
+printf '[techeve-lcm]\nname=Techeve\n' >"$WORK/root/$REPOFILE"
+run agent-postinstall.sh admin configure ""
+check_file "deb postinst leaves the repo file alone" "$REPOFILE" '[techeve-lcm]
+name=Techeve'
+
+setup systemd
+mkdir -p "$WORK/root/etc/zypp"
+run agent-postinstall.sh admin 1
+check_file "rpm %post locks the package for zypper" "$LOCKS" "$LOCK_STANZA"
+run agent-postinstall.sh admin 2
+check_file "rpm %post does not lock twice" "$LOCKS" "$LOCK_STANZA"
+printf '\ntype: package\nsolvable_name: other\n' >"$WORK/root/$LOCKS"
+run agent-postinstall.sh admin 2
+if [ "$(grep -c 'solvable_name' "$WORK/root/$LOCKS")" = 2 ]; then
+	echo "ok   rpm %post adds its lock next to the admin's"
+else
+	echo "FAIL rpm %post adds its lock next to the admin's"
+	FAILS=$((FAILS + 1))
+fi
+
+setup systemd
+mkdir -p "$WORK/root/etc"
+printf '[options]\nHoldPkg = pacman\n[core]\nInclude = /etc/pacman.d/mirrorlist\n' >"$WORK/root/$PACMANCONF"
+run agent-postinstall.sh admin 2.1.0-1
+check_file "pacman post_install sets IgnorePkg in [options]" "$PACMANCONF" '[options]
+IgnorePkg = lcm-agent
+HoldPkg = pacman
+[core]
+Include = /etc/pacman.d/mirrorlist'
+run agent-postinstall.sh admin 2.2.0-1 2.1.0-1
+check_file "pacman post_upgrade does not set it twice" "$PACMANCONF" '[options]
+IgnorePkg = lcm-agent
+HoldPkg = pacman
+[core]
+Include = /etc/pacman.d/mirrorlist'
+printf '[options]\nIgnorePkg = foo bar\n' >"$WORK/root/$PACMANCONF"
+run agent-postinstall.sh admin 2.2.0-1 2.1.0-1
+check_file "pacman post_upgrade adds a line next to the admin's IgnorePkg" "$PACMANCONF" '[options]
+IgnorePkg = lcm-agent
+IgnorePkg = foo bar'
+printf '[options]\nIgnorePkg = foo lcm-agent\n' >"$WORK/root/$PACMANCONF"
+run agent-postinstall.sh admin 2.2.0-1 2.1.0-1
+check_file "pacman post_upgrade respects an IgnorePkg the admin set" "$PACMANCONF" '[options]
+IgnorePkg = foo lcm-agent'
+run agent-postinstall.sh admin configure ""
+check_file "deb postinst leaves pacman.conf alone" "$PACMANCONF" '[options]
+IgnorePkg = foo lcm-agent'
+
+# apk: the pin lives in /etc/apk/world, which apk rewrites after the scripts. A
+# first install only gets a hint.
+setup openrc
+mkdir -p "$WORK/root/etc/apk"
+run agent-postinstall.sh admin 2.1.0-r0
+check_output "apk .post-install hints at the pin command" "apk add lcm-agent=2.1.0"
+run agent-postinstall.sh admin 2.1.0-r0 2.0.0-r0
+if grep -q "apk add lcm-agent=" "$WORK/out"; then
+	echo "FAIL apk .post-upgrade must not repeat the hint"
+	FAILS=$((FAILS + 1))
+else
+	echo "ok   apk .post-upgrade does not repeat the hint"
+fi
+printf 'busybox\nlcm-agent=2.1.0\n' >"$WORK/root/etc/apk/world"
+run agent-postinstall.sh admin 2.1.0-r0
+if grep -q "apk add lcm-agent=" "$WORK/out"; then
+	echo "FAIL apk .post-install must not hint when the pin is there"
+	FAILS=$((FAILS + 1))
+else
+	echo "ok   apk .post-install stays quiet when the version is pinned"
 fi
 
 # --- postremove: purge removes the configuration --------------------------
@@ -402,6 +563,101 @@ run agent-postremove.sh admin 1
 	echo "FAIL rpm %postun 1 deleted the configuration"
 	FAILS=$((FAILS + 1))
 }
+
+# The holds of dnf, zypper and pacman go with the package on a real removal -
+# and only the part that belongs to lcm-agent.
+LOCKS_OTHER='
+type: package
+solvable_name: other'
+setup systemd
+mkdir -p "$WORK/root/etc/yum.repos.d" "$WORK/root/etc/zypp"
+for arg in 0 2.1.0-1 remove; do
+	printf '[other]\nexclude=lcm-agent\n[techeve-lcm]\nexclude=lcm-agent\nname=Techeve\n' >"$WORK/root/$REPOFILE"
+	run agent-postremove.sh admin "$arg"
+	check_file "postremove $arg takes the exclude out of the repo file" "$REPOFILE" '[other]
+exclude=lcm-agent
+[techeve-lcm]
+name=Techeve'
+done
+printf '[techeve-lcm]\nexclude=foo lcm-agent bar\n' >"$WORK/root/$REPOFILE"
+run agent-postremove.sh admin 0
+check_file "postremove keeps the other excludes" "$REPOFILE" '[techeve-lcm]
+exclude=foo bar'
+printf '[techeve-lcm]\nexcludepkgs = lcm-agent, foo\n[x]\nexclude=lcm-agent\n' >"$WORK/root/$REPOFILE"
+run agent-postremove.sh admin 0
+check_file "postremove handles excludepkgs and commas" "$REPOFILE" '[techeve-lcm]
+excludepkgs = foo
+[x]
+exclude=lcm-agent'
+printf '[techeve-lcm]\nexclude=lcm-agent-foo\n' >"$WORK/root/$REPOFILE"
+run agent-postremove.sh admin 0
+check_file "postremove touches the exact package name only" "$REPOFILE" '[techeve-lcm]
+exclude=lcm-agent-foo'
+printf '[techeve-lcm]\nexclude=lcm-agent\n' >"$WORK/root/$REPOFILE"
+run agent-postremove.sh admin 1
+check_file "rpm %postun 1 (upgrade) keeps the exclude" "$REPOFILE" '[techeve-lcm]
+exclude=lcm-agent'
+run agent-postremove.sh admin upgrade
+check_file "deb postrm upgrade keeps the exclude" "$REPOFILE" '[techeve-lcm]
+exclude=lcm-agent'
+
+for arg in 0 2.1.0-1 remove; do
+	printf '%s\n\ntype: package\nsolvable_name: lcm-agent\n' "$LOCKS_OTHER" >"$WORK/root/$LOCKS"
+	run agent-postremove.sh admin "$arg"
+	check_file "postremove $arg takes the lock out of /etc/zypp/locks" "$LOCKS" "$LOCKS_OTHER"
+	run agent-postremove.sh admin "$arg"
+	check_file "postremove $arg is idempotent for the locks" "$LOCKS" "$LOCKS_OTHER"
+done
+printf '\ntype: package\nsolvable_name: lcm-agent\n\ntype: package\nsolvable_name: other\n\ntype: package\nsolvable_name: lcm-agent-foo\n' >"$WORK/root/$LOCKS"
+run agent-postremove.sh admin 0
+check_file "postremove takes the lock from the middle of the file" "$LOCKS" '
+type: package
+solvable_name: other
+
+type: package
+solvable_name: lcm-agent-foo'
+printf '\ntype: package\nsolvable_name: lcm-agent\n' >"$WORK/root/$LOCKS"
+run agent-postremove.sh admin 0
+if [ -f "$WORK/root/$LOCKS" ] && [ ! -s "$WORK/root/$LOCKS" ]; then
+	echo "ok   postremove leaves an empty locks file when it was the only lock"
+else
+	echo "FAIL postremove with only the lcm-agent lock"
+	FAILS=$((FAILS + 1))
+fi
+printf '%s\n' "$LOCK_STANZA" >"$WORK/root/$LOCKS"
+run agent-postremove.sh admin 2
+check_file "rpm %postun 2 (upgrade) keeps the lock" "$LOCKS" "$LOCK_STANZA"
+rm -f "$WORK/root/$LOCKS"
+run agent-postremove.sh admin 0
+check_absent "postremove does not create the locks file" "$LOCKS"
+
+for arg in 0 2.1.0-1 remove; do
+	printf '[options]\nIgnorePkg = lcm-agent\nHoldPkg = pacman\n[core]\nInclude = /etc/pacman.d/mirrorlist\n' >"$WORK/root/$PACMANCONF"
+	run agent-postremove.sh admin "$arg"
+	check_file "postremove $arg drops the IgnorePkg line it added" "$PACMANCONF" '[options]
+HoldPkg = pacman
+[core]
+Include = /etc/pacman.d/mirrorlist'
+	run agent-postremove.sh admin "$arg"
+	check_file "postremove $arg is idempotent for pacman.conf" "$PACMANCONF" '[options]
+HoldPkg = pacman
+[core]
+Include = /etc/pacman.d/mirrorlist'
+done
+printf '[options]\nIgnorePkg = foo lcm-agent bar\nIgnorePkg = lcm-agent\n' >"$WORK/root/$PACMANCONF"
+run agent-postremove.sh admin 2.1.0-1
+check_file "postremove keeps the other entries of IgnorePkg" "$PACMANCONF" '[options]
+IgnorePkg = foo bar'
+printf '[options]\n#IgnorePkg = lcm-agent\nIgnorePkg = lcm-agent-foo\n' >"$WORK/root/$PACMANCONF"
+run agent-postremove.sh admin 2.1.0-1
+check_file "postremove touches neither comments nor other packages" "$PACMANCONF" '[options]
+#IgnorePkg = lcm-agent
+IgnorePkg = lcm-agent-foo'
+printf '[options]\nIgnorePkg = lcm-agent\n' >"$WORK/root/$PACMANCONF"
+mkdir -p "$WORK/root/etc/apk"
+run agent-postremove.sh admin 1
+check_file "pacman post_upgrade-like removal arguments of an upgrade keep IgnorePkg" "$PACMANCONF" '[options]
+IgnorePkg = lcm-agent'
 
 if [ "$FAILS" -gt 0 ]; then
 	echo "$FAILS case(s) failed"

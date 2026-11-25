@@ -48,6 +48,23 @@ contents:
 # rpm, apk und pacman rufen sie verschieden auf, siehe Kopf der Skripte). Bei
 # einem Upgrade bleibt der Agent stehen und wechselt selbst aufs neue Binary:
 # Läuft das Upgrade über den Agenten, risse ein Stopp das apt mit.
+#
+# Der Agent soll nur gezielt aktualisiert werden, nie durch ein normales
+# Systemupgrade. Je Paketformat:
+#   deb     unveraendert: kein Eingriff des Paketskripts.
+#   rpm     dnf: postinstall setzt exclude=lcm-agent in /etc/yum.repos.d/techeve-lcm.repo
+#           (die Datei schreibt das Setup-Skript von repo.techeve.de, Abschnitt
+#           [techeve-lcm]); Update von Hand mit
+#           dnf --setopt=disable_excludes=techeve-lcm install lcm-agent.
+#           zypper: postinstall legt ein Paketschloss in /etc/zypp/locks an; fuer ein
+#           Update zypper removelock lcm-agent, installieren, zypper addlock lcm-agent.
+#   pacman  postinstall setzt IgnorePkg = lcm-agent in /etc/pacman.conf; `pacman -S
+#           lcm-agent` und `pacman -U` setzen sich darueber hinweg.
+#   apk     kein Pin aus dem Paketskript moeglich: apk schreibt /etc/apk/world am Ende
+#           der Transaktion neu. Wer mit `apk add lcm-agent=<version>` installiert,
+#           haelt die Version dort selbst; eine Erstinstallation bekommt vom
+#           Paketskript einen Hinweis darauf.
+# postremove nimmt die Sperren beim Entfernen des Pakets wieder heraus.
 scripts:
   postinstall: ./packaging/scripts/agent-postinstall.sh
   preremove: ./packaging/scripts/agent-preremove.sh
