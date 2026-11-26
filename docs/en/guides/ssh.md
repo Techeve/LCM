@@ -375,10 +375,13 @@ hosting provider).
 
 **Tested** is the SSH connection, according to
 [Supported systems](/en/reference/supported-systems/), on **Debian 12 and 13 and
-Ubuntu 22.04, 24.04 and 26.04** (onboarding, service user, restricted mode). For all
-other distributions the code is prepared but a test run is still pending. The notes
+Ubuntu 22.04, 24.04 and 26.04** (onboarding, service user, restricted mode). On
+**AlmaLinux 10, Rocky Linux 10, CentOS Stream 10, Fedora 44, openSUSE Leap 16, Alpine
+3.23 and Arch Linux** a test with root password login (variant 1) ran on 2026-11-26,
+in both modes. Variants 2 and 3 (`sudo`, `su`) are not tested there. For all other
+distributions the code is prepared but a test run is still pending. The notes
 below for them come from the defaults of the respective distribution and from how
-LCM behaves. They are **not** backed by test runs with LCM.
+LCM behaves, unless a section names a test run.
 
 ### Ubuntu (22.04, 24.04, 26.04) - tested
 
@@ -427,7 +430,12 @@ root by key only.
 - Debian 13 uses `ssh.socket`. After a change run `systemctl restart ssh`.
 - The service is called `ssh`.
 
-### RHEL, AlmaLinux, Rocky Linux, CentOS Stream, Fedora - not tested
+### RHEL, AlmaLinux, Rocky Linux, CentOS Stream, Fedora - partly tested
+
+**Status:** Tested on 2026-11-26 with root password login, in both modes: AlmaLinux
+10, Rocky Linux 10, CentOS Stream 10 and Fedora 44. Not tested: Red Hat, AlmaLinux 9
+and Fedora 45. On Rocky Linux, `sshd` had to be restarted after setting the drop-in
+file.
 
 **Starting point:** `sudo` is installed. The administrator is in the group `wheel`
 and needs their password. Current versions have
@@ -449,7 +457,11 @@ password (e.g. `ec2-user`, `almalinux`, `rocky`, `fedora`).
   is **not tested**. If the onboarding reports a failed key login, check
   `/var/log/audit/audit.log`.
 
-### openSUSE (Leap 16, Tumbleweed) - not tested
+### openSUSE (Leap 16, Tumbleweed) - partly tested
+
+**Status:** Leap 16 tested on 2026-11-26 with root password login, in both modes.
+Tumbleweed not. Because no package was outdated, the effect of the update is only
+half checked.
 
 **Starting point:** the installer sets a root password. `sudo` is usually there but
 by default asks for **root's password** (`Defaults targetpw`), not the user's.
@@ -471,7 +483,14 @@ on fits only if user and root password are equal. That follows from the behavior
   not a password prompt).
 - Service: `sshd`.
 
-### Arch Linux - not tested
+### Arch Linux - partly tested
+
+**Status:** Tested on 2026-11-26 with root password login, in a container without
+Landlock. There onboarding **fails** because LCM cannot install `sudo`, and all
+package jobs fail on the pacman sandbox. With `sudo` preinstalled and `DisableSandbox`
+in `/etc/pacman.conf` everything worked, in both modes. An old image needs
+`pacman-key --init`, `pacman-key --populate` and `pacman -Syu` first. On a VM or
+hardware with Landlock this is untested.
 
 **Starting point:** a minimal installation. `openssh` is not installed, the
 service is not active, `sudo` is missing, the `wheel` rule in `sudoers` is
@@ -490,7 +509,12 @@ key (variant 1). LCM then installs `sudo` itself.
 - In restricted mode LCM puts `pacman` **and** `pacman-key` on the whitelist,
   because setting up repositories imports signing keys.
 
-### Alpine (3.22 to 3.24) - not tested
+### Alpine (3.22 to 3.24) - partly tested
+
+**Status:** Alpine 3.23 tested on 2026-11-26 with root password login, in both modes:
+onboarding, scan, update and firewall worked. **Package pinning has no effect**:
+`apk` has no "hold". LCM reports this in the job log, the job still ends
+successfully. Alpine 3.22 and 3.24 are not tested.
 
 **Starting point:** BusyBox and OpenRC. The SSH service is not necessarily part of
 the installation (`apk add openssh`, `rc-update add sshd`,

@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.4.0-beta.2 - 2026-11-26
+
+### 🔧 Sonstiges
+
+- **release**: Hinweise und Changelog von 2.4.0-beta.1 ohne bereits veröffentlichte Punkte (107bbd9e)
+- Abschnitt Architekturen (x86-64 und ARM), Raspberry Pi OS 32 bit ohne Agent und Host (0eb4271f)
+- Host-Spalte bei Proxmox und UCS leer, Desktop-Tabelle ohne Host-Spalte (7c7055d0)
+- Support-Matrix mit den Testergebnissen vom 26.11. für SSH, eingeschränkten Modus und CVE (7600ac6b)
+
 ## v2.4.0-beta.1 - 2026-11-26
 
 ### 🚀 Features
@@ -7,10 +16,8 @@
 - **agent**: Agent-Bugfixes kommen auch auf Server, deren LCM sie selbst noch nicht hat (f0da2ba1)
 - **agent**: Agent-Update auch auf Servern mit dnf, zypper, apk und pacman (48021a7c)
 - **agent**: Agent-Updates gezielt per Knopf oder Gruppenregel, nie über die LCM-Version hinaus (8d049c6d)
-- **agent**: Der Agent bleibt unter dnf, zypper und pacman bei Systemupdates stehen (9b18fa2e)
 - **agent**: LCM erkennt, was ein Agent kann, und empfiehlt bei veralteten Agenten ein Update (972253b5)
 - **agent**: lcm-agent status zeigt Verbindung, Jobs und Update-Stand, und das Journal nennt Trennungen mit Grund (c59fe870)
-- **ci**: Agent-Pakete für rpm, apk und Arch kommen mit jedem Release in repo.techeve.de (adbc71f7)
 - **onboarding**: Server lassen sich auch aufnehmen, wenn su gesperrt ist und root dasselbe Passwort hat wie der Anmelde-Benutzer (0d34c1d9)
 - **remote**: LCM zählt die Verbindungsabbrüche eines Agents und färbt den Server gelb, wenn sie sich häufen (68e657ab)
 - **ui**: Agent-Einrichtung im Onboarding für jedes unterstützte System (f67ebcf8)
@@ -39,15 +46,12 @@
 - **agent**: pacman-Rückfall greift auch, wenn seccomp die Landlock-Regeln verbietet (8cb82e4b)
 - **benutzer-abgleich**: Änderung während eines laufenden Abgleichs geht nicht mehr verloren (94897df4)
 - **ci**: Zugangsdaten mit Anführungszeichen oder Backslash brechen das Hochladen der Pakete nicht mehr (66b536cf)
-- **cli**: unbekannte Kommandos starten den Server nicht mehr, Systemverzeichnisse sind kein Datenverzeichnis (8a24e344)
-- **deps**: gorilla/websocket auf den Stand mit sicherem Maskenschlüssel heben (5a358a81)
 - **docker**: Compose-Update läuft im eingeschränkten Modus (223d28dd)
 - **haertung**: Vorschlagssuche für Welt-Rechte lief mit kaputtem Skript (f769dc78)
 - **jobs**: LCM bricht Jobs auf Agent-Servern nicht mehr wegen Stille ab (2707b989)
 - **mcp**: Der MCP-Dienst gibt seinen Port beim Stoppen zuverlässig frei, auch wenn er gerade erst gestartet war (8677d58d)
 - **remote**: Konsole und Inventar begrenzen den Speicher (0c4c0013)
 - **remote**: Unangemeldete Agent-Verbindungen binden keinen Speicher mehr (12c02599)
-- **security**: Rechte-Wächter fasst keine Systemverzeichnisse und fremden Ordner mehr an (4c05cb2c)
 - **snaps**: verschobene Snap-Updates melden und Bestand neu einlesen (dfc6924c)
 - **storage**: Demo-Daten und SBOM-Scan melden Schreibfehler (9238bc9f)
 - **trivyd**: Fehler beim Schreiben der SBOM-Datei wird gemeldet (f5f64fad)

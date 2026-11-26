@@ -21,6 +21,21 @@ but a test run is still pending.
 
 Installation details: [Installation](/en/getting-started/installation/).
 
+## Architectures
+
+LCM and the `lcm-agent` exist for **x86-64 (amd64)** and **ARM (arm64)**. Both
+architectures are built and published: the `.deb` package and the Docker image of
+LCM, and the agent packages for apt, dnf, zypper, apk and pacman.
+
+**All tests on this page ran on x86-64.** Nothing has been tested on real ARM hardware
+yet (planned on a Raspberry Pi). No differences are expected, though, since the same
+code runs on both architectures. The matrix applies to ARM by analogy, but this is not
+verified.
+
+Servers that LCM manages over SSH need no program from us. Their architecture does not
+matter. There are no agent packages for 32-bit systems (such as Raspberry Pi OS
+32-bit), they can only be managed over SSH.
+
 ## Matrix by distribution
 
 Three levels: ✅ **tested** (run on a real system with the current release line),
@@ -34,12 +49,12 @@ both use apt but still behave differently around systemd, Bubblewrap and paths.
 |---|---|---|---|---|---|
 | Ubuntu 22.04, 24.04, 26.04 | ✅ | ✅ | ✅ | ✅ | full |
 | Debian 12, 13 | ✅ | ✅ | ✅ | ✅ | full |
-| Proxmox VE, Proxmox Backup Server | 🟡 | 🟡 | 🟡 | 🟡 | partial¹ |
+| Proxmox VE, Proxmox Backup Server |  | 🟡 | 🟡 | 🟡 | partial¹ |
 | TurnKey Linux | 🟡 | 🟡 | 🟡 | 🟡 | full |
 | Kali Linux | 🟡 | 🟡 | 🟡 | 🟡 | none |
-| Univention Corporate Server (UCS) | 🟡 | 🟡 | 🟡 | 🟡 | none |
+| Univention Corporate Server (UCS) |  | 🟡 | 🟡 | 🟡 | none |
 | Raspberry Pi OS (64-bit) | 🟡 | 🟡 | 🟡 | 🟡 | partial² |
-| Raspberry Pi OS (32-bit) | 🟡 | 🟡 | 🟡 | 🟡 | none |
+| Raspberry Pi OS (32-bit) |  | 🟡 | 🟡 | ❌ | none |
 
 ### Non-apt distributions: client only
 
@@ -47,28 +62,33 @@ Here LCM itself only runs in the Docker container.
 
 | Distribution | Host | SSH | SSHE | Agent | CVE |
 |---|---|---|---|---|---|
-| Red Hat Enterprise Linux | ❌ | 🟡 | 🟡³ | 🟡 | full |
-| AlmaLinux 9, 10 | ❌ | 🟡 | 🟡³ | ✅ | full |
-| Rocky Linux 10 | ❌ | 🟡 | 🟡³ | ✅ | full |
-| CentOS Stream 10 | ❌ | 🟡 | 🟡³ | ✅ | being checked |
-| Fedora 44, 45 | ❌ | 🟡 | 🟡³ | ✅ | being checked |
-| openSUSE Leap 16 | ❌ | 🟡 | 🟡³ | ✅ | full |
-| openSUSE Tumbleweed | ❌ | 🟡 | 🟡³ | ✅ | none |
-| Arch Linux | ❌ | 🟡 | 🟡³ | ✅ | none |
-| Alpine 3.22 to 3.24 | ❌ | 🟡 | 🟡³ | ✅ | full |
+| Red Hat Enterprise Linux | ❌ | 🟡 | 🟡³ | 🟡 | not verified |
+| AlmaLinux 10 | ❌ | ✅ | ✅³ | ✅ | not verified |
+| AlmaLinux 9 | ❌ | 🟡 | 🟡³ | ✅ | not verified |
+| Rocky Linux 10 | ❌ | ✅ | ✅³ | ✅ | none⁴ |
+| CentOS Stream 10 | ❌ | ✅ | ✅³ | ✅ | none |
+| Fedora 44 | ❌ | ✅ | ✅³ | ✅ | none |
+| Fedora 45 | ❌ | 🟡 | 🟡³ | ✅ | none |
+| openSUSE Leap 16 | ❌ | ✅⁵ | ✅³ | ✅ | not verified |
+| openSUSE Tumbleweed | ❌ | 🟡 | 🟡³ | ✅ | not verified |
+| Arch Linux | ❌ | 🟡⁶ | 🟡³⁶ | ✅ | none |
+| Alpine 3.23 | ❌ | ✅⁷ | ✅³ | ✅ | full |
+| Alpine 3.22, 3.24 | ❌ | 🟡 | 🟡³ | ✅ | full |
 
 ### Desktop distributions
 
-| Distribution | Host | SSH | SSHE | Agent | CVE |
-|---|---|---|---|---|---|
-| Ubuntu Desktop 24.04, 26.04 | 🟡 | 🟡 | 🟡 | 🟡 | full |
-| Debian 13 Desktop | 🟡 | 🟡 | 🟡 | 🟡 | full |
-| Linux Mint | 🟡 | 🟡 | 🟡 | 🟡 | none |
-| Zorin OS | 🟡 | 🟡 | 🟡 | 🟡 | none |
+| Distribution | SSH | SSHE | Agent | CVE |
+|---|---|---|---|---|
+| Ubuntu Desktop 24.04, 26.04 | 🟡 | 🟡 | 🟡 | full |
+| Debian 13 Desktop | 🟡 | 🟡 | 🟡 | full |
+| Linux Mint | 🟡 | 🟡 | 🟡 | none |
+| Zorin OS | 🟡 | 🟡 | 🟡 | none |
 
 The columns:
 
-- **Host:** LCM is installed on the system (`.deb` package or Docker).
+- **Host:** LCM is installed on the system (`.deb` package or Docker). For
+  Proxmox, UCS and the desktop distributions it is left empty: LCM itself does not
+  make sense on such systems, they are only managed.
 - **SSH:** the server is managed over SSH without an agent, with full privileges.
 - **SSHE:** SSH connection in restricted mode. LCM then works with restricted
   privileges on the server. The agent has no such mode, since it runs as a
@@ -77,12 +97,29 @@ The columns:
 - **CVE:** LCM can run CVE scans on this distribution. The value says how far
   they reach: **full** = all packages of the distribution, **partial** = the
   base distribution's packages but not its own packages, **none** = there is
-  no CVE data for the distribution, so a scan says nothing.
+  no CVE data for the distribution, so a scan says nothing, **not verified** =
+  Trivy supports the distribution according to its documentation, but our tests
+  found nothing there. Whether the scan works is open.
+
+With **none**, LCM reports no error: the scan ends without findings and looks like
+a clean server. Only CentOS Stream reports an error.
 
 ¹ Debian packages are covered; Proxmox's own packages (`pve-*`, `proxmox-*`) are not.
+
 ² Debian packages are covered; packages from `archive.raspberrypi.com` are not.
+
 ³ Updates, firewall and package pinning also work in restricted mode. Package
 sources are only managed in restricted mode on apt systems.
+
+⁴ Trivy supports Rocky Linux, but LCM finds nothing there in this version: the
+package identifier lacks the architecture.
+
+⁵ With no outdated packages, the effect of the update is only half checked.
+
+⁶ In a container without Landlock, onboarding and package jobs fail, see
+[Notes per system](#notes-per-system).
+
+⁷ Package pinning has no effect on Alpine, see [Notes per system](#notes-per-system).
 
 We are testing the 🟡 systems and will update this table.
 
@@ -152,12 +189,48 @@ arm64 packages are built and published.
   remove the lock: `zypper rl lcm-agent`.
 - **Alpine:** `lcm-agent=<version>` in `/etc/apk/world` holds the version. When
   installing by hand, use `apk add lcm-agent=<version>`.
+  When managed over SSH, package pinning has no effect because `apk` has no
+  "hold". LCM writes this to the job log, the job still ends successfully, and the
+  update also raises `apk-tools`.
 - **Arch Linux in containers:** if the kernel lacks Landlock, pacman 7 cannot use
   its download sandbox. From LCM 2.4 the agent update retries the download once
   without the sandbox; `setup.sh` does the same.
+  When managed over SSH, onboarding (LCM cannot install `sudo`) and all package
+  jobs fail on the sandbox in such a container. With `DisableSandbox` in
+  `pacman.conf` everything worked. An old Arch image also needs an initialized
+  keyring and a full upgrade (`pacman -Syu`) first. On a VM or hardware with
+  Landlock the problem is not expected, but untested.
+- **CentOS Stream:** Trivy does not support CentOS Stream. The CVE scan reports an
+  error about the Trivy database there and returns no result.
 
 ## Servers without agent (SSH)
 
 Servers that LCM manages over SSH need no agent. Supported package managers are
 apt, dnf, yum, zypper, pacman and apk. Tested are Debian 12 and 13 and Ubuntu
 22.04, 24.04 and 26.04 (onboarding, service user, restricted mode, 2026-11-21).
+
+On the Proxmox test bed, AlmaLinux 10, Rocky Linux 10, CentOS Stream 10, Fedora 44,
+openSUSE Leap 16, Alpine 3.23 and Arch Linux were added on 2026-11-26 (LCM 2.4.0
+beta 1), each in both modes, full and restricted: onboarding, scan, package list,
+update, firewall and package pinning. Not tested are AlmaLinux 9, Fedora 45, Alpine
+3.22 and 3.24, Red Hat, openSUSE Tumbleweed, package sources in restricted mode and
+`arm64`.
+
+## CVE coverage
+
+Measured on 2026-11-26 with Trivy 0.76.2 on package lists with deliberately old
+versions per distribution:
+
+- **Findings:** Debian 12 and 13, Ubuntu 24.04, Alpine 3.22 and 3.23.
+- **Error instead of findings:** CentOS Stream. Trivy finds no usable Red Hat data
+  there.
+- **No findings:** Fedora, Arch, Kali, Linux Mint, Zorin OS, UCS and Raspberry Pi OS
+  (32-bit). Trivy does not know these distributions.
+- **No findings for Rocky Linux**, although Trivy knows it: with the architecture in
+  the package identifier, over 900 findings turned up. LCM does not send it in this
+  version.
+- **No findings, not verified:** AlmaLinux, Red Hat and openSUSE.
+
+Proxmox VE, Proxmox Backup Server, TurnKey Linux and Raspberry Pi OS (64-bit)
+identify as Debian. The Debian packages are thus covered, the systems' own packages
+are not. This was not tested on these systems themselves.

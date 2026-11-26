@@ -390,10 +390,13 @@ das, was du typischerweise antriffst. Dein Server kann abweichen
 **Getestet** ist die SSH-Anbindung laut
 [Unterstützte Systeme](/reference/supported-systems/) auf **Debian 12 und 13 sowie
 Ubuntu 22.04, 24.04 und 26.04** (Aufnahme, Service-Benutzer, eingeschränkter
-Modus). Für alle anderen Distributionen ist der Code vorbereitet, ein Testlauf
-steht aber aus. Die Hinweise unten für sie stammen aus der Vorgabe der jeweiligen
-Distribution und aus dem Verhalten von LCM. Sie sind **nicht** durch Testläufe mit
-LCM belegt.
+Modus). Auf **AlmaLinux 10, Rocky Linux 10, CentOS Stream 10, Fedora 44,
+openSUSE Leap 16, Alpine 3.23 und Arch Linux** lief am 26.11.2026 ein Test mit
+Root-Passwort-Login (Variante 1), in beiden Modi. Die Varianten 2 und 3 (`sudo`, `su`)
+sind dort nicht getestet. Für alle übrigen Distributionen ist der Code vorbereitet,
+ein Testlauf steht aus. Die Hinweise unten stammen aus der Vorgabe der jeweiligen
+Distribution und aus dem Verhalten von LCM, soweit der Abschnitt keinen Testlauf
+nennt.
 
 ### Ubuntu (22.04, 24.04, 26.04) - getestet
 
@@ -442,7 +445,12 @@ erlaubt root nur per Schlüssel.
 - Debian 13 nutzt `ssh.socket`. Nach einer Änderung `systemctl restart ssh`.
 - Der Dienst heißt `ssh`.
 
-### RHEL, AlmaLinux, Rocky Linux, CentOS Stream, Fedora - nicht getestet
+### RHEL, AlmaLinux, Rocky Linux, CentOS Stream, Fedora - teilweise getestet
+
+**Stand:** Getestet am 26.11.2026 mit Root-Passwort-Login, in beiden Modi:
+AlmaLinux 10, Rocky Linux 10, CentOS Stream 10 und Fedora 44. Nicht getestet: Red Hat,
+AlmaLinux 9 und Fedora 45. Auf Rocky Linux musste `sshd` nach dem Setzen der
+Drop-in-Datei neu gestartet werden.
 
 **Ausgangslage:** `sudo` ist installiert. Der Administrator liegt in der Gruppe
 `wheel` und braucht sein Passwort. In aktuellen Versionen steht
@@ -464,7 +472,11 @@ Passwort (z. B. `ec2-user`, `almalinux`, `rocky`, `fedora`).
   **nicht getestet**. Meldet die Aufnahme einen fehlgeschlagenen Schlüssel-Login,
   prüfe `/var/log/audit/audit.log`.
 
-### openSUSE (Leap 16, Tumbleweed) - nicht getestet
+### openSUSE (Leap 16, Tumbleweed) - teilweise getestet
+
+**Stand:** Leap 16 getestet am 26.11.2026 mit Root-Passwort-Login, in beiden Modi.
+Tumbleweed nicht. Weil kein Paket veraltet war, ist die Wirkung des Updates nur halb
+geprüft.
 
 **Ausgangslage:** Der Installer vergibt ein root-Passwort. `sudo` ist meist
 vorhanden, verlangt aber standardmäßig das **Passwort von root**
@@ -489,7 +501,14 @@ Testlauf belegt.
   begrenzt, nicht eine Passwortabfrage).
 - Dienst: `sshd`.
 
-### Arch Linux - nicht getestet
+### Arch Linux - teilweise getestet
+
+**Stand:** Getestet am 26.11.2026 mit Root-Passwort-Login, in einem Container ohne
+Landlock. Dort **scheitert** die Aufnahme, weil LCM `sudo` nicht nachinstallieren kann,
+und alle Paketjobs scheitern an der pacman-Sandbox. Mit vorinstalliertem `sudo` und
+`DisableSandbox` in `/etc/pacman.conf` lief alles, in beiden Modi. Ein altes Image
+braucht vorab `pacman-key --init`, `pacman-key --populate` und `pacman -Syu`. Auf einer
+VM oder Hardware mit Landlock ist das nicht getestet.
 
 **Ausgangslage:** Eine Minimalinstallation. `openssh` ist nicht installiert, der
 Dienst nicht aktiv, `sudo` fehlt, die `wheel`-Regel in `sudoers` ist meist
@@ -508,7 +527,12 @@ Schlüssel (Variante 1). LCM installiert `sudo` dann selbst.
 - Im eingeschränkten Modus nimmt LCM `pacman` **und** `pacman-key` in die
   Whitelist, weil die Einrichtung von Repositories Signaturschlüssel importiert.
 
-### Alpine (3.22 bis 3.24) - nicht getestet
+### Alpine (3.22 bis 3.24) - teilweise getestet
+
+**Stand:** Alpine 3.23 getestet am 26.11.2026 mit Root-Passwort-Login, in beiden Modi:
+Aufnahme, Scan, Update und Firewall liefen. Die **Paket-Fixierung wirkt nicht**: `apk`
+kennt kein „hold“. LCM meldet das im Job-Protokoll, der Job endet trotzdem
+erfolgreich. Alpine 3.22 und 3.24 sind nicht getestet.
 
 **Ausgangslage:** BusyBox und OpenRC. Der SSH-Dienst gehört nicht zwingend zur
 Installation (`apk add openssh`, `rc-update add sshd`, `rc-service sshd start`).
