@@ -147,7 +147,7 @@ brauchst du keine Regel.
   Images prüft er nicht, die Regeln lassen sie unberührt.
 - Der Stand des Checks ist bis zu einen Tag alt. Wie lange der System-Sync läuft,
   siehst du im Job-Protokoll.
-- Die Compose-Regel läuft auch im [eingeschränkten Modus](/guides/ssh/#eingeschränkter-modus).
+- Die Compose-Regel läuft ab LCM 2.4 auch im [eingeschränkten Modus](/guides/ssh/#eingeschränkter-modus).
   Die Container-Regel läuft nur im Voll-Modus und braucht `curl` auf dem
   Server; auf eingeschränkten Servern überspringt LCM sie und nennt den Grund im Job.
   Sonderfälle wie Host-PID-Namensraum oder GPU-Zugriff
@@ -259,7 +259,7 @@ Agent-Updates sollen nach festem Plan laufen.
 | Sicherheitsupdates | `0 1 * * *` (täglich 01:00) | 60 Min. | **Sicherheitsupdates** |
 | Volle Updates | `0 2 * * 0` (sonntags 02:00) | 120 Min. | **Alle Pakete aktualisieren**, **Neustart bei Bedarf** |
 
-**Agent-Updates:** Der Agent aktualisiert sich nie von selbst, auch nicht über
+**Agent-Updates (ab LCM 2.4):** Der Agent aktualisiert sich nie von selbst, auch nicht über
 die Updates der Zeitpläne. Unter *Gruppen → Übersicht → **Agent-Updates*** schaltest
 du **Agenten automatisch aktualisieren** ein. Du legst Beginn (Cron) und
 Länge des Zeitfensters fest, etwa `0 5 * * *` mit 60 Minuten. **Gestaffelt**

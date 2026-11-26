@@ -132,8 +132,8 @@ Verwaltung steht. Andernfalls nennt der Balken den Grund. Im Container wird
 statt dessen das Image getauscht.
 
 Die `lcm-agent`-Pakete auf verwalteten Servern gehören nicht dazu: Sie
-aktualisiert LCM auf Anweisung, per Knopf oder Gruppenregel
-([Agent aktualisieren](/guides/remote/#agent-aktualisieren)).
+aktualisiert LCM auf Anweisung, per Knopf oder Gruppenregel (ab LCM 2.4,
+[Agent aktualisieren](/guides/remote/#agent-aktualisieren)).
 
 Der Dialog *Über LCM* (Kontomenü oben rechts) hat außerdem
 **Jetzt prüfen**: Das fragt den Paketkanal sofort ab und zeigt das Ergebnis

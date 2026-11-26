@@ -414,7 +414,7 @@ zeigt die passenden Befehle:
 1. **Repository einrichten** (`curl … | sudo sh`) - entfällt, wenn schon
    vorhanden.
 2. **Agent installieren.** Aus der Paketquelle, die der Befehl davor eingerichtet
-   hat - mit der Paketverwaltung des Servers (die Oberfläche bietet das System zur Auswahl):
+   hat - mit der Paketverwaltung des Servers (ab LCM 2.4 bietet die Oberfläche das System zur Auswahl):
 
    ```sh
    sudo apt install lcm-agent                                         # Debian, Ubuntu
@@ -445,7 +445,7 @@ sich der Agent, geht der Server offline. Neue Kommandos scheitern sofort (statt 
 einen Timeout zu laufen). Ein bereits laufendes Kommando eines Agents ab 2.4
 läuft auf dem Server weiter, auch wenn die Verbindung abreißt oder der Agent neu
 startet: LCM wartet auf seine Rückkehr und bekommt das Ergebnis dann nachgereicht.
-Angehalten wird es nur, wenn Sie den Job ausdrücklich abbrechen. Startet LCM selbst
+Angehalten wird es nur, wenn Sie den Job ausdrücklich abbrechen. Ab LCM 2.4 und Agent 2.4 gilt: Startet LCM selbst
 neu (etwa bei einem LCM-Update), während ein Kommando läuft, steht der Job zunächst
 als unterbrochen da, und der Server ist wieder frei. Sobald sich der Agent meldet,
 trägt LCM sein Ergebnis (Erfolg oder Fehler, Exit-Code und Ausgabe) in diesen Job
@@ -459,9 +459,12 @@ ausführen.
 
 ## Agent aktualisieren
 
+Gilt ab LCM 2.4. Die Sperre unter apt und der Rückfall setzen außerdem Agent 2.4 voraus.
+
 Der Agent ist oft der einzige Zugang zu einem Server. Deshalb aktualisiert er sich
 nie von selbst und nicht nebenbei: Ab Agent 2.4 sperrt sich das Paket `lcm-agent`
-gegen ein gewöhnliches Systemupdate (auch gegen `unattended-upgrades`). Eine neue
+gegen ein gewöhnliches Systemupdate (auch gegen `unattended-upgrades`; unter dnf, zypper, apk
+und pacman gilt das schon seit 2.3.2). Eine neue
 Version kommt nur auf Anweisung von LCM - per Knopf oder über eine Regel der Gruppe.
 Auf welchen Systemen das geht und was dort getestet ist, steht unter
 [Unterstützte Systeme](/reference/supported-systems/#lcm-agent). Wie sich das Paket
@@ -469,7 +472,7 @@ hält, hängt von der Paketverwaltung ab:
 
 | Paketverwaltung | Halten | LCM installiert mit |
 | --- | --- | --- |
-| apt | Pin in `/etc/apt/preferences.d/lcm-agent` | `apt-get install lcm-agent=<Version>` |
+| apt (ab Agent 2.4) | Pin in `/etc/apt/preferences.d/lcm-agent` | `apt-get install lcm-agent=<Version>` |
 | dnf | `exclude=lcm-agent` in der Paketquelle `techeve-lcm` | `dnf install --setopt=disable_excludes=techeve-lcm lcm-agent-<Version>` |
 | zypper | Paketsperre (`zypper addlock`) | Sperre lösen, `zypper install --oldpackage lcm-agent=<Version>`, Sperre setzen |
 | apk | `lcm-agent=<Version>` in `/etc/apk/world` | `apk add lcm-agent=<Version>` |
@@ -542,6 +545,8 @@ Agent kann, sind ausgegraut.
 
 ### Wenn das Update scheitert
 
+Gilt ab LCM 2.4 und Agent 2.4.
+
 Ein defektes neues Programm kann sich nicht selbst zurückrollen. Deshalb liegt der
 Rückfall (Rollback) im Startskript des Dienstes: Es hält das vorige, bewährte Programm bereit
 und startet es, wenn das neue nicht gesund wird. Das passiert in zwei Fällen:
@@ -573,11 +578,13 @@ Nicht jeder Ausfall führt zum Rückfall. Der Agent rollt nur zurück, wenn es e
 anderes voriges Programm gibt, LCM vom Server aus erreichbar ist und LCM ihn nicht
 abgewiesen hat (Token widerrufen, Server gelöscht, Agent-Zugang aus): Sonst läge es am
 Netz oder an LCM, nicht am neuen Programm. Dann meldet sich der Agent nicht zurück, und
-der Job endet nach 45 Minuten. Dasselbe gilt für Agenten bis 2.3.0, die keinen Rückfall
+der Job endet nach 45 Minuten. Dasselbe gilt für Agenten vor 2.4, die keinen Rückfall
 melden können. In jedem dieser Fälle hilft das Journal des Servers
 (`journalctl -u lcm-agent`) und [`lcm-agent status`](#lcm-agent-status-auf-dem-server).
 
 ### Regel der Gruppe: automatisch aktualisieren
+
+Gilt ab LCM 2.4.
 
 Unter **Gruppen → Übersicht → Agent-Updates** lässt sich festlegen, dass LCM die
 Agenten einer Gruppe selbst nachzieht. **Aus** ist die Vorgabe. Ist die Regel an:
@@ -609,6 +616,8 @@ Einstellung und den Stand des letzten Laufs. Die Jobs erscheinen wie gewohnt unt
 
 ## Agent-Status und Befunde
 
+Gilt ab LCM 2.4, mit Ausnahme von „Keine Verbindung zum Server möglich“.
+
 Ein Server hat genau **eine Status-Pille** (Berechnung:
 [Status-Berechnung](/guides/status/)). Befunde zum Agent gehen als Grund in sie ein,
 mit Text; daneben gibt es keine zweite Anzeige. Im Serverdetail steht zusätzlich ein
@@ -629,6 +638,8 @@ warum der Agent hinterherhinkt. Die Verbindungsbilanz zählt LCM seit seinem Sta
 ein Neustart von LCM setzt sie zurück.
 
 ### `lcm-agent status` auf dem Server
+
+Gilt ab Agent 2.4.
 
 Wenn LCM den Agent nicht erreicht, hilft die Sicht von der anderen Seite. Auf dem
 Agent-Server zeigt

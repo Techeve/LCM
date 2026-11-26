@@ -393,11 +393,11 @@ Removal runs without `--purge` - snapd takes a snapshot of the snap's data
 first, which `snap restore` can bring back.
 
 While an application from a snap is running, snapd postpones that snap's
-update and still reports success for "refresh all". LCM therefore checks with
+update and still reports success for "refresh all". LCM therefore checks (from LCM 2.4) with
 `snap refresh --list` after every run whether anything is still pending and
 fails the run, naming the snap. Close the application and refresh again. Held
 snaps (`snap refresh --hold`) do not count. After every package run LCM reads
-the snap inventory again.
+the snap inventory again (from LCM 2.4).
 
 Snaps are not checked for CVEs: there is no vulnerability database for snaps
 that Trivy could evaluate.

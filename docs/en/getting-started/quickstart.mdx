@@ -80,7 +80,7 @@ import { Steps } from '@astrojs/starlight/components';
 
    **Instead of SSH: agent mode.** For servers behind NAT or without inbound SSH
    access, choose the **Agent** mode in the dialog and enter just a name. LCM
-   creates the server and shows three commands to run on it:
+   creates the server and shows three commands to run on it (from LCM 2.4 the dialog picks the install command to match the system):
 
    ```sh
    # 1. Set up the package source (detects apt, dnf, zypper, apk and pacman)
@@ -99,7 +99,7 @@ import { Steps } from '@astrojs/starlight/components';
 
    The server then goes online and the first scan starts on its own. The agent
    never updates itself on the side: a system update leaves it on its version,
-   and new versions come from LCM by button or group rule (from agent 2.4). More
+   and new versions come from LCM by button or group rule (from LCM 2.4). More
    under [LCM Remote](/en/guides/remote/).
 
 3. **Check the status and details.**

@@ -134,10 +134,10 @@ Was du wissen solltest:
   [Beta-Kanal: ohne Subscription, ohne Konsole](#beta-kanal-ohne-subscription-ohne-konsole)).
 - **Der Agent bleibt auf seiner Version.** Das Paket `lcm-agent` hält sich nach
   der Installation selbst fest, damit ein Systemupdate ihn nicht verschiebt
-  (apt: Datei in `/etc/apt/preferences.d/`, dnf: `exclude=lcm-agent` in der
+  (apt, ab Agent 2.4: Datei in `/etc/apt/preferences.d/`, dnf: `exclude=lcm-agent` in der
   Quelle, zypper: Paketsperre, pacman: `IgnorePkg`). `setup.sh` trägt das nicht
   vorab ein, damit die erste Installation ohne Umweg geht; ein erneuter Lauf
-  behält ein vorhandenes `exclude`. Aktualisiert wird der Agent über LCM, siehe
+  behält ein vorhandenes `exclude`. Aktualisiert wird der Agent über LCM (ab LCM 2.4), siehe
   [Unterstützte Systeme](/reference/supported-systems/#lcm-agent).
 - **dnf und zypper:** `--uninstall` entfernt nur die Quelle. Den importierten
   Schlüssel behält die rpm-Datenbank.

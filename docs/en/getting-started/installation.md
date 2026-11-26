@@ -128,8 +128,8 @@ whose host is registered as an apt server. Otherwise the banner states the
 reason. In a container you replace the image instead.
 
 The `lcm-agent` packages on managed servers are not part of this: LCM updates
-them on instruction, by button or group rule
-([Update the agent](/en/guides/remote/#update-the-agent)).
+them on instruction, by button or group rule (from LCM 2.4,
+[Update the agent](/en/guides/remote/#update-the-agent)).
 
 The *About LCM* dialog (account menu at the top right) also offers
 **Check now**: it queries the package channel right away and shows the result

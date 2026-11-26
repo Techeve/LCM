@@ -131,11 +131,11 @@ What you should know:
   community on apt, use the switch in LCM (see
   [Beta channel: no subscription, no console](#beta-channel-no-subscription-no-console)).
 - **The agent stays on its version.** After installation the `lcm-agent` package
-  holds itself, so a system update does not move it (apt: a file in
+  holds itself, so a system update does not move it (apt, from agent 2.4: a file in
   `/etc/apt/preferences.d/`, dnf: `exclude=lcm-agent` in the source, zypper: a
   package lock, pacman: `IgnorePkg`). `setup.sh` does not write this up front, so
   the first installation goes through without a detour; a repeated run keeps an
-  existing `exclude`. The agent is updated through LCM, see
+  existing `exclude`. The agent is updated through LCM (from LCM 2.4), see
   [Supported systems](/en/reference/supported-systems/#lcm-agent).
 - **dnf and zypper:** `--uninstall` removes the source only. The imported key
   stays in the rpm database.

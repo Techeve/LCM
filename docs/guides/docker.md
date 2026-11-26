@@ -128,7 +128,7 @@ er erst, wenn der neue läuft.
   [eingeschränktem Sudo](/guides/ssh/#eingeschränkter-modus) überspringt LCM sie
   und nennt den Grund im Job: `curl` darf der eingeschränkte Benutzer nicht über
   `sudo` starten, und ohne Root-Zugriff auf den Socket gibt es kein Neuerstellen.
-- Die Compose-Regel läuft auch im eingeschränkten Modus. Das gilt ebenso für
+- Die Compose-Regel läuft ab LCM 2.4 auch im eingeschränkten Modus. Das gilt ebenso für
   das Compose-Update, den Image-Pull und das Aufräumen im Reiter *Container*.
   LCM übergibt Docker das Projektverzeichnis und die Compose-Dateien als
   Argumente, statt ins Verzeichnis zu wechseln. So klappt es auch, wenn

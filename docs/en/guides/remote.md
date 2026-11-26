@@ -397,7 +397,7 @@ commands:
 
 1. **Set up the repository** (`curl … | sudo sh`) - skip if already present.
 2. **Install the agent.** From the package source the previous command set up,
-   with the server's package manager (the UI offers the system as a choice):
+   with the server's package manager (from LCM 2.4 the UI offers the system as a choice):
 
    ```sh
    sudo apt install lcm-agent                                         # Debian, Ubuntu
@@ -428,7 +428,7 @@ agent disconnects, the server goes offline. New commands fail immediately (inste
 of running into a timeout). A command that is already running on an agent from 2.4 on
 keeps running on the server when the connection drops or the agent restarts: LCM
 waits for the agent to come back and receives the result afterwards. It is only
-stopped when you abort the job explicitly. If LCM itself restarts (for example for
+stopped when you abort the job explicitly. From LCM 2.4 and agent 2.4: if LCM itself restarts (for example for
 an LCM update) while a command is running, the job first shows as interrupted and the
 server is free again. As soon as the agent reports back, LCM enters its result
 (success or error, exit code and output) into that job; further steps of the job do
@@ -440,9 +440,12 @@ retry may run the command twice.
 
 ## Update the agent
 
+Applies from LCM 2.4. The hold under apt and the rollback also require agent 2.4.
+
 The agent is often the only way into a server. That is why it never updates on its
 own or on the side: from agent 2.4 the `lcm-agent` package holds itself back from a
-plain system update (including `unattended-upgrades`). A new version arrives only when
+plain system update (including `unattended-upgrades`; under dnf, zypper, apk and pacman
+this has applied since 2.3.2). A new version arrives only when
 LCM tells it to - with the button or through a rule of the group. Which systems
 support this and what has been tested is listed under
 [Supported systems](/en/reference/supported-systems/#lcm-agent). How the package holds
@@ -450,7 +453,7 @@ itself depends on the package manager:
 
 | Package manager | Hold | LCM installs with |
 | --- | --- | --- |
-| apt | pin in `/etc/apt/preferences.d/lcm-agent` | `apt-get install lcm-agent=<version>` |
+| apt (from agent 2.4) | pin in `/etc/apt/preferences.d/lcm-agent` | `apt-get install lcm-agent=<version>` |
 | dnf | `exclude=lcm-agent` in the `techeve-lcm` repository | `dnf install --setopt=disable_excludes=techeve-lcm lcm-agent-<version>` |
 | zypper | package lock (`zypper addlock`) | lift the lock, `zypper install --oldpackage lcm-agent=<version>`, set the lock |
 | apk | `lcm-agent=<version>` in `/etc/apk/world` | `apk add lcm-agent=<version>` |
@@ -518,6 +521,8 @@ newer agent has are greyed out.
 
 ### When the update fails
 
+Applies from LCM 2.4 and agent 2.4.
+
 A broken new program cannot roll itself back. That is why the rollback lives in the
 service's start script: it keeps the previous, proven program ready and starts it when
 the new one does not become healthy. This happens in two cases:
@@ -547,11 +552,13 @@ Not every failure leads to a rollback. The agent only rolls back if there is a d
 previous program, LCM is reachable from the server and LCM has not rejected the agent
 (token revoked, server deleted, agent access off): otherwise the network or LCM is at
 fault, not the new program. The agent then does not report back, and the job ends after
-45 minutes. The same applies to agents up to 2.3.0, which cannot report a rollback. In
+45 minutes. The same applies to agents before 2.4, which cannot report a rollback. In
 each of these cases the server's journal (`journalctl -u lcm-agent`) and
 [`lcm-agent status`](#lcm-agent-status-on-the-server) help.
 
 ### Group rule: update automatically
+
+Applies from LCM 2.4.
 
 Under **Groups → Overview → Agent updates** you can have LCM bring the agents of a
 group up to date itself. **Off** is the default. When the rule is on:
@@ -579,6 +586,8 @@ the setting and the state of the last run. The jobs appear under **Jobs** as usu
 
 ## Agent status and findings
 
+Applies from LCM 2.4, except for "No connection to the server possible".
+
 A server has exactly **one status pill** (calculation:
 [Status calculation](/en/guides/status/)). Findings about the agent go into it as a
 reason, with text; there is no second indicator next to it. The server detail also shows
@@ -599,6 +608,8 @@ agent lags behind. LCM counts the connection balance since its own start; restar
 resets it.
 
 ### `lcm-agent status` on the server
+
+Applies from agent 2.4.
 
 When LCM cannot reach the agent, the view from the other side helps. On the agent server,
 

@@ -88,7 +88,7 @@ Ergebnis im Aufnahme-Protokoll festgehalten.
 | 4 | su ohne Passwort | `su root -c true` mit leerer Eingabe | Variante 3: root ohne Passwort oder `pam_wheel` mit Vertrauen |
 | 5 | su mit **Login-Passwort** | `su root -c true`, Login-Passwort über stdin | Variante 3: root hat **dasselbe** Passwort wie der Login-Benutzer |
 | 6 | `login` ohne Passwort | `login root` | root hat kein Passwort, `su` ist aber gesperrt (z. B. per Gruppe) |
-| 7 | `login` mit **Login-Passwort** | `login root`, Login-Passwort über stdin (nur, wenn du eines eingetragen hast) | Variante 3: root hat **dasselbe** Passwort wie der Login-Benutzer, `su` ist aber gesperrt (z. B. per Gruppe) |
+| 7 (ab LCM 2.4) | `login` mit **Login-Passwort** | `login root`, Login-Passwort über stdin (nur, wenn du eines eingetragen hast) | Variante 3: root hat **dasselbe** Passwort wie der Login-Benutzer, `su` ist aber gesperrt (z. B. per Gruppe) |
 
 Findet LCM keinen Weg, bricht die Aufnahme ab, bevor auf dem Server etwas
 angelegt wurde. Die Meldung beginnt mit *keine Root-Rechte für die
@@ -150,7 +150,7 @@ Hier kommt LCM mit einem normalen Benutzer herein und wechselt per `su` oder
 - **login ohne Passwort** (Versuch 6): `su` ist gesperrt (z. B. per Gruppe), aber
   das Programm `login` hat eine eigene PAM-Richtlinie und lässt root herein, weil
   root kein Passwort hat.
-- **login mit dem Login-Passwort** (Versuch 7): wie Versuch 5, nur über `login`.
+- **login mit dem Login-Passwort** (Versuch 7, ab LCM 2.4): wie Versuch 5, nur über `login`.
   Das hilft, wenn `su` gesperrt ist, root aber **dasselbe Passwort** wie der
   Login-Benutzer hat.
 
@@ -272,7 +272,7 @@ tun soll als pflegen, oder wo eine Einschränkung kaum etwas gewinnt.
 | Web-, Datei- und Datenbankserver mit Updates, Neustart bei Bedarf und Firewall per Regel | eingeschränkt | Mehr als Paketverwaltung, Firewall und Neustart braucht LCM dort nicht. |
 | Server mit sensiblen Daten oder Prüfpflichten | eingeschränkt | Was LCM darf, ist festgelegt und für Prüfer nachvollziehbar. |
 | Server mit eigenen Wartungsskripten: Datenbank-Dump vor dem Update, Deployment, Dienst neu laden | voll | Skripte und eigene Aktionen brauchen eine Root-Shell. |
-| Docker-Host mit Compose-Projekten, die LCM per Regel aktualisiert | eingeschränkt | Compose-Updates laufen über `docker` auf der Whitelist. |
+| Docker-Host mit Compose-Projekten, die LCM per Regel aktualisiert | eingeschränkt | Compose-Updates laufen über `docker` auf der Whitelist (ab LCM 2.4). |
 | Docker-Host mit einzelnen Containern ohne Compose, die LCM per Regel aktualisieren soll | voll | Die Regel *Container aktualisieren* braucht den Docker-Socket direkt. |
 | Test-, Entwicklungs- und Laborserver, auf denen ohnehin viele Personen root haben | voll | Die Einschränkung bringt dort wenig Sicherheit, kostet aber Funktionen. |
 | Server, auf denen LCM die SSH-2FA einrichten soll | voll | Die Einrichtung braucht eine Root-Shell. |
@@ -283,7 +283,7 @@ nicht ausführen darf, überspringt LCM bei ihm mit Hinweis im Job, statt sie
 scheitern zu lassen. Der Zeitplan bleibt dadurch grün.
 
 **Was geht weiter:** Paketverwaltung (apt, dnf, yum, zypper, pacman, apk, snap),
-Docker (Scans, Compose-Updates, Pull, Aufräumen und ungenutzte Images), ufw, die Prüfwerkzeuge des Deep Scan und der **LCM-Helper**. Der Helper ist
+Docker (Scans, Compose-Updates, Pull, Aufräumen und ungenutzte Images; Compose-Updates und Pull ab LCM 2.4), ufw, die Prüfwerkzeuge des Deep Scan und der **LCM-Helper**. Der Helper ist
 ein von LCM installiertes, streng prüfendes Programm für alles, was root braucht und
 nicht auf der Whitelist steht: Repositories, APT-Cache, SSH-Konfiguration,
 Benutzer-Sync, firewalld und nftables, fail2ban, CrowdSec, Neustart.

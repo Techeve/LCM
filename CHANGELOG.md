@@ -1,15 +1,6 @@
 # Changelog
 
-## v2.4.0-beta.2 - 2026-11-26
-
-### 🔧 Sonstiges
-
-- **release**: Hinweise und Changelog von 2.4.0-beta.1 ohne bereits veröffentlichte Punkte (107bbd9e)
-- Abschnitt Architekturen (x86-64 und ARM), Raspberry Pi OS 32 bit ohne Agent und Host (0eb4271f)
-- Host-Spalte bei Proxmox und UCS leer, Desktop-Tabelle ohne Host-Spalte (7c7055d0)
-- Support-Matrix mit den Testergebnissen vom 26.11. für SSH, eingeschränkten Modus und CVE (7600ac6b)
-
-## v2.4.0-beta.1 - 2026-11-26
+## v2.4.0 - 2026-11-26
 
 ### 🚀 Features
 
@@ -89,6 +80,7 @@
 - **plan**: Wortlaut zu Entscheidung 7 und C-3 nachgezogen (8637b587)
 - **release**: Abhängigkeits-Updates stehen im Changelog in einer Zeile (d7150007)
 - **release**: Hinweise für die Reihe 2.4 (a2741bd4)
+- **release**: Hinweise und Changelog von 2.4.0-beta.1 ohne bereits veröffentlichte Punkte (107bbd9e)
 - **release**: Renovate-MRs nach community und enterprise zulassen (c25b291d)
 - **release**: automatische Wochen-Releases beschreiben (b9c83282)
 - **release**: wöchentliches Patch-Release und Aufwärtsmerge automatisieren (84822ad7)
@@ -98,6 +90,7 @@
 - **tools**: distro-matrix.sh für die Agent-Pakete auf dem Testbett (b1051f53)
 - **trivyd**: Download-Test ohne eigene Frist (325723f1)
 - Abkürzung SSHE nur noch in der Tabelle der unterstützten Systeme (1b199083)
+- Abschnitt Architekturen (x86-64 und ARM), Raspberry Pi OS 32 bit ohne Agent und Host (0eb4271f)
 - Angaben zur config.json in bestehenden Seiten richtiggestellt (50f0560c)
 - Beispiele als Konfigurationen je Servertyp (0ab12ad2)
 - Debian 11 aus der Seite Unterstützte Systeme genommen (a56b6b21)
@@ -105,6 +98,7 @@
 - Einstieg mit Agent und allen Paketverwaltungen (59fef323)
 - Historisches aus Referenz und Installation entfernt (458a2fec)
 - Historisches aus den Anleitungen entfernt (a0b7f29c)
+- Host-Spalte bei Proxmox und UCS leer, Desktop-Tabelle ohne Host-Spalte (7c7055d0)
 - LCM Remote mit Rückfall, Befunden der Status-Pille und lcm-agent status (b394aa9d)
 - Matrix je Distribution auf der Seite Unterstützte Systeme (3767a661)
 - Matrix mit Spalte SSHE, Desktop-Distributionen nach unten (6bec7d5d)
@@ -119,6 +113,8 @@
 - Sicherheitsbericht und offene Punkte nach den Entscheidungen vom 24.11. (060d8523)
 - Startseite mit Agent, Systemen und Schnelleinstieg zur Support-Seite (f3385f82)
 - Startseite zeigt das Icon der Karte Sicherheit (padlock statt fehlendem shield) (ae5f4eb4)
+- Support-Matrix mit den Testergebnissen vom 26.11. für SSH, eingeschränkten Modus und CVE (7600ac6b)
+- Versionshinweise ab LCM 2.4 und ab Agent 2.4 (b15c78d7)
 - compat:agents, packaging:shells, packaging:units und Prüfung auf CGO_ENABLED=0 in binaries (4647b651)
 - neue Seite Konfigurationsdatei config.json (4b44de2b)
 - neue Seite SSH-Anbindung (f4a892fa)

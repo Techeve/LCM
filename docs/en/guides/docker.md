@@ -115,7 +115,7 @@ removed only once the new one runs.
   [restricted sudo](/en/guides/ssh/#restricted-mode) LCM skips it and names the
   reason in the job: the restricted user may not start `curl` through `sudo`,
   and without root access to the socket there is no recreating.
-- The Compose rule also runs in restricted mode, and so do the Compose update,
+- From LCM 2.4 the Compose rule also runs in restricted mode, and so do the Compose update,
   the image pull and the cleanup in the *Containers* tab. LCM hands Docker the
   project directory and the Compose files as arguments instead of changing into
   the directory, so it works even when the restricted user may not enter it.

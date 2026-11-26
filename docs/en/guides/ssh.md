@@ -85,7 +85,7 @@ attempt is recorded in the onboarding log.
 | 4 | su without a password | `su root -c true` with empty input | Variant 3: root without a password, or `pam_wheel` with trust |
 | 5 | su with the **login password** | `su root -c true`, login password via stdin | Variant 3: root has the **same** password as the login user |
 | 6 | `login` without a password | `login root` | root has no password but `su` is blocked (e.g. by group) |
-| 7 | `login` with the **login password** | `login root`, login password via stdin (only if you entered one) | Variant 3: root has the **same** password as the login user, but `su` is blocked (e.g. by group) |
+| 7 (from LCM 2.4) | `login` with the **login password** | `login root`, login password via stdin (only if you entered one) | Variant 3: root has the **same** password as the login user, but `su` is blocked (e.g. by group) |
 
 If LCM finds no way, the onboarding stops before anything was created on the
 server. The message starts with *keine Root-Rechte für die Provisionierung* (no
@@ -144,7 +144,7 @@ Here LCM gets in with an ordinary user and switches to root with `su` or
 - **login without a password** (attempt 6): `su` is blocked (e.g. by group), but
   the `login` program has its own PAM policy and lets root in because root has no
   password.
-- **login with the login password** (attempt 7): like attempt 5, but through
+- **login with the login password** (attempt 7, from LCM 2.4): like attempt 5, but through
   `login`. It helps when `su` is blocked but root has the **same password** as the
   login user.
 
@@ -262,7 +262,7 @@ upkeep, or where a restriction gains little.
 | Web, file and database servers with updates, reboot if needed and firewall by rule | restricted | LCM needs no more than package management, firewall and reboot there. |
 | Servers with sensitive data or audit requirements | restricted | What LCM may do is fixed and traceable for auditors. |
 | Servers with custom maintenance scripts: database dump before the update, deployment, reloading a service | full | Scripts and custom actions need a root shell. |
-| Docker host with Compose projects that LCM updates by rule | restricted | Compose updates run via `docker` on the whitelist. |
+| Docker host with Compose projects that LCM updates by rule | restricted | Compose updates run via `docker` on the whitelist (from LCM 2.4). |
 | Docker host with standalone containers without Compose that LCM should update by rule | full | The *Update container* rule needs the Docker socket directly. |
 | Test, development and lab servers where many people have root anyway | full | The restriction gains little security there but costs features. |
 | Servers on which LCM should set up SSH 2FA | full | The setup needs a root shell. |
@@ -273,7 +273,7 @@ skipped for that server with a note in the job instead of failing, so the
 schedule stays green.
 
 **What keeps working:** package management (apt, dnf, yum, zypper, pacman, apk,
-snap), Docker (scans, Compose updates, pull, pruning and unused images), ufw, the Deep Scan audit tools and the **LCM helper**. The helper is
+snap), Docker (scans, Compose updates, pull, pruning and unused images; Compose updates and pull from LCM 2.4), ufw, the Deep Scan audit tools and the **LCM helper**. The helper is
 a strictly validating program installed by LCM for everything that needs root and
 is not on the whitelist: repositories, APT cache, SSH configuration, user sync,
 firewalld and nftables, fail2ban, CrowdSec, reboot.

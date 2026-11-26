@@ -407,11 +407,11 @@ Entfernt wird ohne `--purge` - snapd legt vorher eine Momentaufnahme der
 Snap-Daten an, die sich mit `snap restore` zurückholen lässt.
 
 Läuft gerade eine Anwendung aus einem Snap, verschiebt snapd dessen Update und
-meldet bei „alle aktualisieren" trotzdem Erfolg. LCM prüft deshalb nach jedem
+meldet bei „alle aktualisieren" trotzdem Erfolg. LCM prüft deshalb (ab LCM 2.4) nach jedem
 Lauf mit `snap refresh --list`, ob noch etwas aussteht, und lässt den Lauf mit
 dem Namen des Snaps scheitern. Anwendung beenden und erneut aktualisieren.
 Zurückgehaltene Snaps (`snap refresh --hold`) zählen nicht. Nach jedem
-Paketlauf liest LCM den Snap-Bestand neu ein.
+Paketlauf liest LCM den Snap-Bestand neu ein (ab LCM 2.4).
 
 Snaps werden nicht auf CVEs geprüft: Für Snaps gibt es keine
 Schwachstellen-Datenbank, die Trivy auswerten könnte.

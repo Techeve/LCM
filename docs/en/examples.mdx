@@ -143,7 +143,7 @@ this.
   registries and locally built images; the rules leave them alone.
 - The result of the check can be up to a day old. You can see how long the
   system sync runs in its job log.
-- The Compose rule also runs in [restricted mode](/en/guides/ssh/#restricted-mode).
+- From LCM 2.4 the Compose rule also runs in [restricted mode](/en/guides/ssh/#restricted-mode).
   The container rule runs in full mode only and needs `curl` on the server; on
   restricted servers LCM skips it and names the reason in the job.
   Special cases such as the host PID namespace or GPU access
@@ -253,7 +253,7 @@ updates should run on a fixed plan.
 | Security updates | `0 1 * * *` (daily 01:00) | 60 min | **Security updates** |
 | Full updates | `0 2 * * 0` (Sundays 02:00) | 120 min | **Update all packages**, **Restart if needed** |
 
-**Agent updates:** The agent never updates itself, not even through the updates
+**Agent updates (from LCM 2.4):** The agent never updates itself, not even through the updates
 of the schedules. Under *Groups → Overview → **Agent updates*** you switch on
 **Update agents automatically**. You set the start (cron) and the length of the
 time window, for example `0 5 * * *` with 60 minutes. **Staged** is the default:
