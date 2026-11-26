@@ -4,6 +4,7 @@ import '../../../components/lcm-button';
 import '../../../components/lcm-command';
 import '../../../components/lcm-input';
 import '../../../components/lcm-notice';
+import '../../../components/lcm-select';
 import { baseStyles, emit } from '../../../components/shared';
 import { agentListener, createAgentServer, type AgentListener, type AgentResult } from '../../../api/provisioning';
 import { I18nController } from '../../../lib/controllers';
@@ -11,7 +12,7 @@ import { errorText, t } from '../../../lib/i18n';
 import { LIMITS } from '../../../lib/validate';
 import { unsaved } from '../../../lib/unsaved';
 import { formStyles } from '../../account/form-styles';
-import { agentCommands, EXAMPLES, lineProblem } from './join-model';
+import { AGENT_SYSTEMS, agentCommands, agentSystemOf, EXAMPLES, lineProblem, type AgentSystem } from './join-model';
 import { problemText } from './join-parts';
 import './join-parts';
 import { joinStyles } from './join-styles';
@@ -28,6 +29,7 @@ export class LcmJoinAgent extends LitElement {
     _error: { state: true },
     _result: { state: true },
     _listener: { state: true },
+    _system: { state: true },
   };
   static override styles = [
     baseStyles,
@@ -56,6 +58,7 @@ export class LcmJoinAgent extends LitElement {
   declare _error: string;
   declare _result: AgentResult | null;
   declare _listener: AgentListener;
+  declare _system: AgentSystem;
 
   constructor() {
     super();
@@ -65,6 +68,7 @@ export class LcmJoinAgent extends LitElement {
     this._error = '';
     this._result = null;
     this._listener = { port: 0, url: '' };
+    this._system = 'apt';
     new I18nController(this);
   }
 
@@ -130,6 +134,18 @@ export class LcmJoinAgent extends LitElement {
     </div>`;
   }
 
+  /** Auf welchem System der Agent läuft: bestimmt den Install-Befehl. */
+  #system() {
+    const options = AGENT_SYSTEMS.map((system) => ({ value: system, label: t(`joinWizard.agent.system.${system}`) }));
+    return html`<lcm-select
+      label=${t('joinWizard.agent.systemLabel')}
+      width="l"
+      .options=${options}
+      .value=${this._system}
+      @lcm-change=${(event: CustomEvent<{ value: string }>) => (this._system = agentSystemOf(event.detail.value))}
+    ></lcm-select>`;
+  }
+
   #enrollHint(): string {
     const { port, url } = this._listener;
     if (url) return t('joinWizard.agent.urlHint', { url });
@@ -137,7 +153,7 @@ export class LcmJoinAgent extends LitElement {
   }
 
   #ready(result: AgentResult) {
-    const commands = agentCommands(location, this._listener, result.token, result.download_pin);
+    const commands = agentCommands(location, this._listener, result.token, result.download_pin, this._system);
     return html`<div class="stack">
       <h2>${t('joinWizard.agent.readyTitle', { name: result.server.name })}</h2>
       <lcm-notice tone="warn">${t('joinWizard.agent.once')}</lcm-notice>
@@ -149,7 +165,8 @@ export class LcmJoinAgent extends LitElement {
         : nothing}
       <div class="commands">
         ${this.#command(t('joinWizard.agent.repo'), commands.repo, t('joinWizard.agent.repoHint'))}
-        ${this.#command(t('joinWizard.agent.install'), commands.install)}
+        ${this.#system()}
+        ${this.#command(t('joinWizard.agent.install'), commands.install, t(`joinWizard.agent.installHint.${this._system}`))}
         ${this.#command(
           t('joinWizard.agent.enroll'),
           commands.enroll,

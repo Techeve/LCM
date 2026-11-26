@@ -71,3 +71,25 @@ func TestFeatureBehindZaehltNurMajorUndFeature(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildZusatzZaehltNicht: Agenten melden version.String() - der Zusatz darf
+// den Vergleich nicht kippen.
+func TestBuildZusatzZaehltNicht(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"2.3.0 (Build 412, a1b2c3d4e5f6)", "2.3.0", 0},
+		{"2.3.0 (Build 0)", "2.4.0", -1},
+		{"2.4.0~beta.2 (Build 7)", "2.4.0~beta.1", 1},
+		{"2.4.0~beta.2 (Build 7, ab12)", "2.4.0", -1},
+	}
+	for _, c := range cases {
+		if got := Compare(c.a, c.b); got != c.want {
+			t.Errorf("Compare(%q, %q) = %d, erwartet %d", c.a, c.b, got, c.want)
+		}
+	}
+	if got := Core(" 2.3.0 (Build 1) "); got != "2.3.0" {
+		t.Errorf("Core = %q", got)
+	}
+}

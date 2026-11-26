@@ -425,12 +425,12 @@ func clampSessionTTL(minutes int) int {
 	if minutes <= 0 {
 		return 0
 	}
-	const min, max = 5, 30 * 24 * 60
-	if minutes < min {
-		return min
+	const minTTL, maxTTL = 5, 30 * 24 * 60
+	if minutes < minTTL {
+		return minTTL
 	}
-	if minutes > max {
-		return max
+	if minutes > maxTTL {
+		return maxTTL
 	}
 	return minutes
 }

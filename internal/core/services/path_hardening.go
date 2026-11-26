@@ -261,8 +261,8 @@ type HardenSuggestion struct {
 // das Welt-Recht fällt. Ohne sie verliert der Dienst den Zugriff.
 func hardenSuggestScript() string {
 	var steps []string
-	report := `m=$(stat -c '%a' "$d"); [ $(( 0$m %% 8 )) -ne 0 ] || continue; ` +
-		`g=$(stat -c '%G' "$d"); ` +
+	report := `m=$(stat -c '%%a' "$d"); [ $(( 0$m %% 8 )) -ne 0 ] || continue; ` +
+		`g=$(stat -c '%%G' "$d"); ` +
 		// Gruppe der Inhalte: die häufigste unter den ersten Einträgen.
 		`sg=$(find "$d" -mindepth 1 -maxdepth 1 -printf '%%g\n' 2>/dev/null | sort | uniq -c | sort -rn | head -1 | awk '{print $2}'); ` +
 		`echo "LCM-KAND|%s|$d|$m|$g|${sg:-$g}"`

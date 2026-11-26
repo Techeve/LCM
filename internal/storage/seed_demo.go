@@ -472,17 +472,25 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 	if err := db.Create(&group).Error; err != nil {
 		return err
 	}
-	db.Model(&group).Association("Servers").Append(&demoServers[0], &demoServers[1])
+	if err := db.Model(&group).Association("Servers").Append(&demoServers[0], &demoServers[1]); err != nil {
+		return err
+	}
 	// Verwaltungs-User der Gruppe: erst diese Zuordnung macht die Gruppe (und
 	// ihre Server) für ops.manager sichtbar - ohne sie bliebe seine Ansicht
 	// leer. Bewusst NUR diese Gruppe, damit die Demo die Mandantentrennung
 	// zeigt: der Manager sieht zwei der elf Server.
-	db.Model(&group).Association("Managers").Append(&demoManager)
+	if err := db.Model(&group).Association("Managers").Append(&demoManager); err != nil {
+		return err
+	}
 	// Linux-Benutzer der Gruppe zuordnen (werden auf ihre Server verteilt).
-	db.Model(&group).Association("LinuxUsers").Append(&linuxUsers[0], &linuxUsers[1])
+	if err := db.Model(&group).Association("LinuxUsers").Append(&linuxUsers[0], &linuxUsers[1]); err != nil {
+		return err
+	}
 	// anna direkt an web01 - nicht über die Gruppe, damit die Demo beide
 	// Zuordnungswege zeigt (und die Sperre unabhängig vom Weg greift).
-	db.Model(&demoServers[0]).Association("LinuxUsers").Append(&linuxUsers[2])
+	if err := db.Model(&demoServers[0]).Association("LinuxUsers").Append(&linuxUsers[2]); err != nil {
+		return err
+	}
 	// Grundsatz-Regel: wird bei jeder Verbindung (Health-Ping) geprüft und
 	// bei Abweichung durchgesetzt - hängt an keinem Zeitplan.
 	db.Create(&domain.Rule{
@@ -602,7 +610,9 @@ func seedDemo(db *gorm.DB, roleRepo *repositories.RoleRepository) error {
 	if err := db.Create(&staging).Error; err != nil {
 		return err
 	}
-	db.Model(&staging).Association("Servers").Append(&demoServers[3], &demoServers[4], &demoServers[10])
+	if err := db.Model(&staging).Association("Servers").Append(&demoServers[3], &demoServers[4], &demoServers[10]); err != nil {
+		return err
+	}
 	nightly := domain.Schedule{GroupID: staging.ID, Name: "Nächtliche Updates", CronExpr: "0 3 * * *", Enabled: true}
 	if err := db.Create(&nightly).Error; err != nil {
 		return err

@@ -54,9 +54,8 @@ const (
 	PreviewUserRemove      = "user-remove"           // POST users/remove
 )
 
-// Bedingungen eines Schritts (PreviewCommand.When).
+// Bedingungen eines Schritts (PreviewCommand.When); leer = immer.
 const (
-	whenAlways    = ""
 	whenIfNeeded  = "if_needed"  // nur, wenn der Lauf auf dem Server feststellt, dass es nötig ist
 	whenOnFailure = "on_failure" // nur, wenn ein vorheriger Schritt scheitert (Rollback)
 )

@@ -116,7 +116,7 @@ func TestNotificationChannelDeleteInUse(t *testing.T) {
 	}, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if err := env.notification.Delete(ch.ID, "admin"); err != services.ErrChannelInUse {
+	if err := env.notification.Delete(ch.ID, "admin"); !errors.Is(err, services.ErrChannelInUse) {
 		t.Errorf("erwartete ErrChannelInUse, bekam: %v", err)
 	}
 }

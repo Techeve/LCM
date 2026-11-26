@@ -64,8 +64,8 @@ func routerRouten(t *testing.T) map[string]bool {
 }
 
 var (
-	rePfad    = regexp.MustCompile(`^  (/\S*):\s*$`)
-	reMethode = regexp.MustCompile(`^    (get|post|put|patch|delete):\s*$`)
+	rePfad    = regexp.MustCompile(`^ {2}(/\S*):\s*$`)
+	reMethode = regexp.MustCompile(`^ {4}(get|post|put|patch|delete):\s*$`)
 )
 
 // dokuRouten liest die beschriebenen Pfade aus der openapi.yaml.

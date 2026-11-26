@@ -182,7 +182,7 @@ func sortByName(servers []domain.Server) {
 func (r *ServerRepository) FindByIDUnscoped(id uint) (*domain.Server, error) {
 	var server domain.Server
 	if err := r.db.First(&server, "id = ?", id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -753,7 +753,7 @@ func (r *ServerRepository) findDeepScanFindingsOfReport(reportID string) ([]doma
 func (r *ServerRepository) FindDeepScanFindings(serverID uint) ([]domain.DeepScanFinding, error) {
 	var latest domain.DeepScanReport
 	err := r.db.Where("server_id = ?", serverID).Order("created_at DESC").First(&latest).Error
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {

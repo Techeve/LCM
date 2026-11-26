@@ -145,14 +145,6 @@ Auslösen:
   **alle** Scan-Wege: *Hardware aktualisieren*, *Alles aktualisieren*, den
   Scan beim Anbinden eines Servers und den geplanten **System-Sync**.
   Rein lesend und ohne `sudo`, kostet also nichts.
-
-  :::note[Auch ohne Handgriff aktuell]
-  Der DNS-Befund lief lange nur beim manuellen Refresh. Auf Servern, die
-  ausschließlich der geplante Sync anfasst, blieben die DNS-Daten damit
-  dauerhaft leer - was aussieht, als würde der Check kein DNS prüfen. Seitdem
-  er in jedem Scan-Weg steckt, ist der Befund überall so aktuell wie der letzte
-  Kontakt.
-  :::
 - **Server-Aktion** - Server-Detail → *Aktionen → DNS-Test*.
 - **Gruppen-Regel** - in einer Gruppe eine Regel vom Typ **„DNS-Test"** anlegen
   (geplant oder manuell auslösbar). Ohne Angabe nutzt sie die zentral gepflegten

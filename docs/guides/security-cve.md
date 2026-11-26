@@ -86,7 +86,7 @@ Fehlermeldung von bubblewrap dabei; häufige Ursachen sind abgeschaltete
 unprivilegierte User-Namespaces (Kernel-Schalter, AppArmor-Regel unter Ubuntu,
 verschachtelte Container) oder eine zu strenge Dienst-Härtung.
 
-Fehlt beides, läuft der Scan wie früher ungesperrt - dann aber mit einem
+Fehlt beides, läuft der Scan ungesperrt - dann aber mit einem
 **sichtbaren Hinweis** an der Scanner-Anzeige. Ein stiller Rückfall wäre die
 schlechteste Variante: Man hielte sich für geschützt, ohne es zu sein.
 
@@ -374,7 +374,7 @@ hinter einem Reverse-Proxy (z.&nbsp;B. für TLS), ist die direkte Gegenstelle
 der Proxy - dann `"trust_proxy_header": true` setzen, damit LCM die Client-IP
 aus `X-Forwarded-For` nimmt, **und** in `trusted_proxies` die Adresse(n) des
 Proxys eintragen. Nur von dort wird die Kopfzeile geglaubt; jeder andere Peer
-gilt mit seiner eigenen Adresse. Ohne die Liste zählt die Kopfzeile seit 2.0
+gilt mit seiner eigenen Adresse. Ohne die Liste zählt die Kopfzeile
 von niemandem, und die Allowlist sieht nur die Adresse des Proxys. Details und Proxy-Beispiele:
 [Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/).
 :::

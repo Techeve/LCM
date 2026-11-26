@@ -16,6 +16,49 @@
 //	                                      Tastatur, Fenstergröße, schließen)
 //	lcm/a/<agentID>/ttyo   Agent→Server   TTYFrame (geöffnet, Bildschirm,
 //	                                      beendet)
+//
+// Lebendprüfung (Capability "ping", nur additiv, nie ohne Capability):
+// Meldet ein Agent im Inventory die Capability CapabilityPing, schickt LCM ihm
+// alle PingInterval auf dem cmd-Topic ein Command{Ping: true} (QoS 0, ohne ID).
+// Der Agent antwortet auf dem res-Topic mit Result{Pong: true} (QoS 0, ohne
+// ID) und baut die Verbindung selbst neu auf, wenn mehrere Pings ausbleiben.
+// So zählt die ganze Strecke einschließlich Abonnement, nicht nur TCP.
+// Verträglichkeit: Ein Agent ohne die Capability bekommt nie ein Ping (LCM
+// schickt keinen Nachrichtentyp, den er nicht kennt); und selbst ein Ping
+// ohne ID überlesen alte Agenten (handleCommand verwirft Kommandos ohne ID),
+// ebenso ein altes LCM das Pong (handleResult verwirft Ergebnisse ohne ID).
+//
+// Jobs, die Abbrüche überleben (Capability "jobs-v2", nur additiv):
+// Meldet ein Agent im Inventory die Capability CapabilityJobs, führt er jedes
+// Kommando als eigenen Job aus, der nicht am Agent-Prozess hängt (eigener
+// systemd-Scope bzw. eigene Sitzung, Ausgabe und Exit-Code in einer Ablage auf
+// der Platte). Daraus folgt für beide Seiten:
+//   - Der Agent hält Kommandos nie von sich aus an: weder durch Stille noch
+//     durch Neustart oder Absturz. Er ignoriert Command.IdleTimeoutSec. Nach
+//     einem Neustart nimmt er laufende Jobs wieder auf, nach jedem Verbindungs-
+//     aufbau stellt er noch nicht bestätigte Ergebnisse zu (QoS-1-PUBACK
+//     bestätigt; Result.Recovered kennzeichnet ein aus der Ablage zugestelltes).
+//   - Sein Lebenszeichen (Result.Progress) trägt Result.Vitals: was der Agent
+//     am Kommando sieht (Prozessbaum, CPU, E/A, Stille, Warten).
+//   - LCM lässt einen Aufruf bei Trennung nicht scheitern, sondern wartet auf
+//     Wiederverbindung und Ergebnis, schickt kein IdleTimeoutSec und bricht nie
+//     nach Zeit ab; nur ein ausdrücklicher Abbruch (Command.Cancel: SIGTERM,
+//     nach Frist SIGKILL) hält ein Kommando an. Ein Cancel, das LCM bei
+//     getrenntem Agent nicht zustellen kann, wird nach der Wiederverbindung
+//     nachgereicht. Damit kein Aufrufer ewig blockiert, gibt LCM nach sehr
+//     langer Zeit ohne jedes Lebenszeichen auf, ohne etwas zu beenden. Bei
+//     VERBUNDENEM Agent genügt das Fünffache von ProgressInterval ohne Lebenszeichen
+//     (ein Job meldet sich im Takt, solange der Agent ihn kennt), und ein Agent,
+//     der im Inventar KnownJobs meldet, lässt Aufrufe scheitern, die er nicht
+//     kennt: Sie sind nie bei ihm angekommen.
+//
+// Verträglichkeit: Ein Agent ohne die Capability (jede 2.x-Fassung vor jobs-v2)
+// behält das bisherige Protokoll samt Verhalten: LCM lässt dessen Aufrufe bei
+// Trennung scheitern, bricht ein Kommando nach der erlaubten Stille ab und
+// schickt dieselbe Frist als Command.IdleTimeoutSec für die Notbremse des
+// Agents: Ein hängendes Kommando ohne Jobs hielte den Server sonst für immer
+// fest. Die neuen Felder überlesen ältere Agenten und LCM-Fassungen. Ein neuer Agent an einem alten LCM lässt Jobs ebenso über Abbrüche
+// laufen; LCM verwirft dann nur das verspätete Ergebnis, wie bisher.
 package wire
 
 import (
@@ -73,6 +116,9 @@ type Command struct {
 	Cmd    string `json:"cmd,omitempty"`
 	Stdin  string `json:"stdin,omitempty"`
 	Cancel bool   `json:"cancel,omitempty"`
+	// Ping ist die Lebendprüfung (siehe Kopf des Pakets): kein Auftrag, ID
+	// leer. Nur an Agenten mit CapabilityPing.
+	Ping bool `json:"ping,omitempty"`
 	// IdleTimeoutSec ist die Notbremse im Agent: Erzeugt das Kommando so
 	// lange keine Ausgabe mehr, gilt es als hängend und wird abgebrochen.
 	// Gemessen wird die STILLE, nicht die Gesamtdauer - ein Upgrade darf
@@ -102,20 +148,78 @@ type Result struct {
 	// ein alter Server ignoriert das unbekannte Feld.
 	Progress    bool `json:"progress,omitempty"`
 	OutputBytes int  `json:"output_bytes,omitempty"`
+	// Vitals sind die Beobachtungen des Agents am Kommando, nur in Lebenszeichen
+	// von Agenten mit CapabilityJobs.
+	Vitals *Vitals `json:"vitals,omitempty"`
+	// Recovered kennzeichnet ein Ergebnis, das der Agent aus seiner Job-Ablage
+	// zustellt (nach Neustart oder Wiederverbindung), nicht direkt nach dem
+	// Ende des Kommandos. Rein informativ.
+	Recovered bool `json:"recovered,omitempty"`
+	// Pong beantwortet ein Ping des Servers (ID leer, kein Ergebnis).
+	Pong bool `json:"pong,omitempty"`
 }
+
+// Vitals beschreibt, was der Agent an einem Kommando sieht. Er beurteilt
+// selbst, ob es noch arbeitet; LCM zeigt es an („läuft, seit X ohne Ausgabe“)
+// und hält deshalb nichts nach Zeit an. Alle Zahlen sind Näherungen (Linux:
+// /proc, Summe über alle Prozesse der Job-Sitzung); was der Agent nicht
+// ermitteln kann, bleibt 0.
+type Vitals struct {
+	// Alive: Der Prozessbaum des Kommandos lebt.
+	Alive bool `json:"alive"`
+	// Procs ist die Zahl der Prozesse im Baum (0 = nicht ermittelbar).
+	Procs int `json:"procs,omitempty"`
+	// CPUMillis ist die CPU-Zeit des Baums seit dem letzten Lebenszeichen.
+	CPUMillis int64 `json:"cpu_ms,omitempty"`
+	// IOBytes sind die gelesenen und geschriebenen Bytes des Baums seit dem
+	// letzten Lebenszeichen (rchar+wchar aus /proc/<pid>/io).
+	IOBytes int64 `json:"io_bytes,omitempty"`
+	// SilentSec: Sekunden seit der letzten Ausgabe des Kommandos.
+	SilentSec int `json:"silent_sec,omitempty"`
+	// Waiting nennt, worauf das Kommando wartet (WaitingPrevious, WaitingLock),
+	// leer, wenn es läuft.
+	Waiting string `json:"waiting,omitempty"`
+}
+
+// Werte von Vitals.Waiting.
+const (
+	// WaitingPrevious: Das Kommando wartet, bis das vorige im Agent fertig ist
+	// (es läuft höchstens eins zugleich).
+	WaitingPrevious = "previous-command"
+	// WaitingLock: Ein Prozess des Kommandos wartet auf eine Dateisperre (aus
+	// /proc/locks, z.B. dpkg).
+	WaitingLock = "lock"
+)
 
 // ProgressInterval ist der Takt der Lebenszeichen eines laufenden Kommandos.
 // Deutlich kürzer als jede sinnvolle Stille-Frist, damit ein arbeitendes
 // Kommando nie versehentlich als hängend gilt.
 const ProgressInterval = 30 * time.Second
 
+// PingInterval ist der Takt der Pings, die LCM an Agenten mit CapabilityPing
+// schickt. Der Agent baut die Verbindung neu auf, wenn drei Pings in Folge
+// ausbleiben.
+const PingInterval = 30 * time.Second
+
+// ProtocolVersion ist die Protokollversion dieses Pakets, die ein Agent im
+// Inventory meldet. 1 hat jeder Agent, der das Feld nicht schickt (2.0 bis 2.3);
+// 2 steht für Ping und Jobs-v2. Die Fähigkeiten (Capability*) sagen, was ein
+// Agent im Einzelnen kann; die Protokollversion hebt nur, wer das Format
+// einer bestehenden Nachricht NICHT mehr additiv erweitern kann - LCM stuft
+// einen Agent mit höherem Protokoll als dem eigenen als „neuer als LCM“ ein
+// und bietet nur an, was es selbst kennt (internal/core/agentcaps).
+const ProtocolVersion = 2
+
 // Inventory schickt der Agent bei jedem Connect - Versions-/Hostinfo für
 // die Anzeige; der vollständige System-Scan läuft weiterhin serverseitig
 // über die normalen Scan-Kommandos.
 type Inventory struct {
 	AgentVersion string `json:"agent_version"`
-	Hostname     string `json:"hostname"`
-	Kernel       string `json:"kernel,omitempty"`
+	// ProtocolVersion ist die Protokollversion, die der Agent spricht
+	// (ProtocolVersion). Fehlt das Feld, spricht er Protokoll 1 (2.0 bis 2.3).
+	ProtocolVersion int    `json:"protocol_version,omitempty"`
+	Hostname        string `json:"hostname"`
+	Kernel          string `json:"kernel,omitempty"`
 	// KeyPin ist der Schlüssel-Pin, den der Agent führt (SHA-256 über die
 	// SubjectPublicKeyInfo des LCM-Zertifikats, hex). Agenten bis 2.0
 	// schicken ihn nicht - sie pinnen nur das Zertifikat selbst, und LCM
@@ -129,6 +233,24 @@ type Inventory struct {
 	// CapabilityTTY). Ältere Agents schicken das Feld nicht - LCM bietet
 	// ihnen dann nichts davon an, statt ins Leere zu senden.
 	Capabilities []string `json:"capabilities,omitempty"`
+	// KnownJobs sind die IDs der Kommandos, die der Agent kennt: angenommene,
+	// laufende und fertige mit noch unbestätigtem Ergebnis (nur von Agenten mit
+	// CapabilityJobs, die es melden). Ein Agent ohne Kommandos schickt eine leere
+	// Liste, ein älterer gar nichts (nil): Dann weiß LCM nichts. Kommandos, die
+	// LCM vor dieser Verbindung abgeschickt hat und die hier fehlen, haben den Agent
+	// nie erreicht - LCM lässt den wartenden Aufruf scheitern, statt zu warten.
+	KnownJobs []string `json:"known_jobs"`
+	// RolledBack nennt die Agent-Version, von der der Agent nach einem Update
+	// auf das vorige Binary zurückgerollt hat, weil sich die neue nicht
+	// verbinden konnte (leer: kein Rollback). Ältere Agenten schicken das Feld
+	// nicht. LCM zeigt es als gescheitertes Update und als Befund am Server.
+	RolledBack string `json:"rolled_back,omitempty"`
+	// RolledBackTo ist die Version, die nach dem Rückfall läuft, und
+	// RolledBackReason der Grund: crash-loop (das neue Programm stürzte in
+	// Folge ab) oder not-ready (es wurde nicht rechtzeitig bereit). Beides nur
+	// zusammen mit RolledBack.
+	RolledBackTo     string `json:"rolled_back_to,omitempty"`
+	RolledBackReason string `json:"rolled_back_reason,omitempty"`
 }
 
 // Fähigkeiten eines Agents (Inventory.Capabilities).
@@ -138,6 +260,17 @@ const (
 	// CapabilityTTYOff: Der Agent könnte es, der Betreiber hat es auf dem
 	// Server abgeschaltet (lcm-agent terminal off).
 	CapabilityTTYOff = "tty-off"
+	// CapabilityPing: Der Agent beantwortet die Pings des Servers und prüft
+	// damit seine Verbindung (siehe Kopf des Pakets).
+	CapabilityPing = "ping"
+	// CapabilityJobs: Der Agent führt Kommandos als Jobs aus, die Abbrüche und
+	// Neustarts des Agents überleben (siehe Kopf des Pakets).
+	CapabilityJobs = "jobs-v2"
+	// CapabilitySelfUpdate: Das Paket des Agents sperrt sich gegen normale
+	// Upgrades (apt-Pin) und bringt den Rückfall auf das vorige Programm mit.
+	// Ohne sie lässt sich der Agent trotzdem aktualisieren, nur ohne Sperre
+	// und ohne Rückfall.
+	CapabilitySelfUpdate = "self-update-v2"
 )
 
 // ServerCertMarker steht als URI im Server-Zertifikat, das die LCM-CA

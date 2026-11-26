@@ -1,12 +1,12 @@
 ---
 title: LCM - Linux Centralized Management
-description: Beliebig viele Linux-Server zentral über SSH verwalten - Monitoring, CVE-Scans, Docker, Backups und Automatisierung in einem einzigen Binary.
+description: Beliebig viele Linux-Server zentral verwalten, per SSH oder Agent - Monitoring, CVE-Scans, Docker, Backups und Automatisierung in einem einzigen Binary.
 template: splash
 hero:
   image:
     alt: LCM-Logo
     file: ./logo.svg
-  tagline: Einmal installieren, beliebig viele Linux-Server remote über SSH verwalten. Ein einziges Binary, keine Agents auf den Zielsystemen.
+  tagline: Einmal installieren, beliebig viele Linux-Server zentral verwalten - per SSH ohne Installation auf den Zielsystemen oder mit schlankem Agenten. Ein einziges Binary.
   actions:
     - text: Loslegen
       link: /getting-started/overview/
@@ -28,20 +28,23 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 **LCM (Linux Centralized Management)** ist ein zentrales Management-Werkzeug für
 Linux-Server: Go-Backend (Fiber v3, GORM, SQLite) und Lit-Oberfläche in
-**einem einzigen Binary**, lauffähig unter Linux, Windows und macOS - ohne
-externe Abhängigkeiten auf den verwalteten Servern. Die Kommunikation läuft
-ausschließlich über SSH (agentless).
+**einem einzigen Binary**. LCM selbst läuft auf Debian und Ubuntu oder im
+Docker-Container. Die verwalteten Server erreicht es per SSH, ohne dort etwas zu
+installieren, oder über den `lcm-agent`, der sich ausgehend verbindet - auch
+hinter NAT. Verwalten lassen sich Debian, Ubuntu, die RHEL-Familie, openSUSE,
+Arch Linux und Alpine.
 
 <CardGrid stagger>
-  <Card title="Agentless über SSH" icon="setting">
-    Server werden mit Host-Key-Bestätigung angebunden; jeder bekommt einen
-    dedizierten Service-User und ein eigenes Schlüsselpaar (Zero Trust).
+  <Card title="SSH oder Agent" icon="setting">
+    Per SSH mit Host-Key-Bestätigung, eigenem Service-User und eigenem
+    Schlüsselpaar je Server (Zero Trust). Wo kein SSH hinkommt, verbindet sich
+    der Agent ausgehend.
   </Card>
   <Card title="Monitoring & Ampel" icon="approve-check">
     Pakete, Updates, Hardware und Speicher-Verlauf - Status 🟢🟡🔴 pro Server,
     inklusive CVE-getriebener Bewertung.
   </Card>
-  <Card title="Sicherheit eingebaut" icon="shield">
+  <Card title="Sicherheit eingebaut" icon="padlock">
     AES-256-GCM at-rest, TOTP-2FA, SSH-Hardening, Firewall, verschlüsselte
     Backups und lückenloses Audit-Log.
   </Card>
@@ -57,5 +60,7 @@ ausschließlich über SSH (agentless).
   <LinkCard title="Überblick" href="/getting-started/overview/" description="Was LCM kann und wie es aufgebaut ist." />
   <LinkCard title="Installation" href="/getting-started/installation/" description="Binary, .deb-Paket oder Docker." />
   <LinkCard title="Schnellstart" href="/getting-started/quickstart/" description="Ersten Server in 5 Minuten anbinden." />
+  <LinkCard title="Unterstützte Systeme" href="/reference/supported-systems/" description="Welche Linux-Distributionen LCM und der Agent unterstützen." />
+  <LinkCard title="LCM Remote (Agent)" href="/guides/remote/" description="Server hinter NAT oder ohne SSH anbinden." />
   <LinkCard title="Beispiele" href="/examples/" description="Typische Arbeitsabläufe Schritt für Schritt." />
 </CardGrid>

@@ -42,14 +42,29 @@ den Zielserver - mit Adresse und Token bereits eingesetzt.
 Melde dich auf dem zu verwaltenden Server an. Es gibt zwei Wege - den
 angezeigten Befehlen kannst du folgen, hier stehen sie zur Einordnung:
 
-**Mit Paketquelle (empfohlen)** - der Agent bekommt damit Updates wie jedes
-andere Paket:
+**Mit Paketquelle (empfohlen)** - LCM kann den Agent damit aktualisieren (Knopf
+**Agent aktualisieren** am Server oder eine Regel der Gruppe; ein gewöhnliches
+Systemupdate lässt ihn in Ruhe). Die Paketquelle richtest du einmal mit demselben
+Befehl ein, dann installierst du mit der Paketverwaltung des Servers:
 
 ```bash
 # einmalig die TechEve-Paketquelle einrichten (entfällt, wenn schon vorhanden)
 curl -fsSL https://repo.techeve.de/setup.sh | sudo sh
-sudo apt install lcm-agent
 ```
+
+| System | Installation |
+| --- | --- |
+| Debian, Ubuntu (apt) | `sudo apt install lcm-agent` |
+| RHEL, AlmaLinux, Rocky, Fedora (dnf) | `sudo dnf install --setopt=disable_excludes=techeve-lcm lcm-agent` |
+| openSUSE Leap und Tumbleweed (zypper) | `sudo zypper install lcm-agent` |
+| Alpine Linux (apk) | `sudo apk add lcm-agent` |
+| Arch Linux (pacman) | `sudo pacman -Syu lcm-agent` |
+
+Der Agent bleibt bei einem Systemupdate stehen: unter dnf über ein `exclude` in der
+Paketquelle (deshalb die Ausnahme bei der Erstinstallation), unter zypper über eine
+Paketsperre, unter pacman über `IgnorePkg`. Unter apk legt `apk add lcm-agent` keine
+Version fest; das Paket nennt nach der Installation den Befehl dazu
+(`apk add lcm-agent=<Version>`), und LCM hält den Agent bei jedem Update selbst.
 
 **Ohne Paketquelle** - das Binary direkt vom LCM-Server laden. Praktisch für
 einen schnellen Test, aber Updates musst du dann selbst einspielen.

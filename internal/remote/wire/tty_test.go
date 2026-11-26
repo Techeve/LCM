@@ -1,6 +1,9 @@
 package wire
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func seqs(frames []TTYFrame) []uint64 {
 	var out []uint64
@@ -50,7 +53,48 @@ func TestSequencerLuecke(t *testing.T) {
 			t.Fatalf("rahmen %d: %v", i, err)
 		}
 	}
-	if _, err := s.Push(TTYFrame{Seq: 2 + maxHeldFrames}); err != ErrTTYGap {
+	if _, err := s.Push(TTYFrame{Seq: 2 + maxHeldFrames}); !errors.Is(err, ErrTTYGap) {
 		t.Fatalf("erwartet ErrTTYGap, bekam %v", err)
+	}
+}
+
+// Ein Gegenüber, das Nummer 1 nie schickt, kann den Sequencer nicht beliebig
+// füllen: Die Nutzdaten der gehaltenen Rahmen sind begrenzt, nicht nur ihre Zahl
+// (vorher 256 Rahmen bis zur Paketgröße, also bis zu 2 GiB).
+func TestSequencerHaeltNurBegrenzteDaten(t *testing.T) {
+	var s Sequencer
+	big := make([]byte, 1<<20)
+	var err error
+	pushed := 0
+	for seq := uint64(2); err == nil && seq < 100; seq++ {
+		_, err = s.Push(TTYFrame{Seq: seq, Data: big})
+		pushed++
+	}
+	if !errors.Is(err, ErrTTYGap) {
+		t.Fatalf("Fehler = %v, erwartet ErrTTYGap", err)
+	}
+	if pushed > maxHeldBytes/len(big)+1 {
+		t.Errorf("%d MiB-Rahmen gehalten, Grenze %d Bytes", pushed-1, maxHeldBytes)
+	}
+	if s.heldBytes() > maxHeldBytes {
+		t.Errorf("hält %d Bytes", s.heldBytes())
+	}
+}
+
+// Ein doppelt zugestellter, vorausgeeilter Rahmen zählt nur einmal.
+func TestSequencerDoppelterVorausRahmen(t *testing.T) {
+	var s Sequencer
+	for range 3 {
+		if _, err := s.Push(TTYFrame{Seq: 3, Data: []byte("abc")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.heldBytes() != 3 {
+		t.Errorf("hält %d Bytes, erwartet 3", s.heldBytes())
+	}
+	got, _ := s.Push(TTYFrame{Seq: 1})
+	got2, _ := s.Push(TTYFrame{Seq: 2})
+	if len(got) != 1 || len(got2) != 2 || s.heldBytes() != 0 {
+		t.Errorf("Lieferung %v / %v, hält %d", seqs(got), seqs(got2), s.heldBytes())
 	}
 }

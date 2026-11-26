@@ -144,9 +144,82 @@ func TestDetectRootEscalationNone(t *testing.T) {
 	if esc := detectRootEscalation(conn, "tony", "pw", &log); esc != nil {
 		t.Fatalf("erwartet nil (keine Rechte), bekam %+v", esc)
 	}
-	// Alle fünf Proben wurden versucht.
-	if len(conn.calls) != 5 {
-		t.Errorf("erwartete 5 Proben (2× sudo, 2× su, 1× login), bekam %d: %v", len(conn.calls), conn.calls)
+	// Alle sechs Proben wurden versucht.
+	if len(conn.calls) != 6 {
+		t.Errorf("erwartete 6 Proben (2× sudo, 2× su, 2× login), bekam %d: %v", len(conn.calls), conn.calls)
+	}
+}
+
+// TestDetectRootEscalationLoginWithoutPasswordWins: login ohne Passwort hat
+// Vorrang - das Login-Passwort wird dann gar nicht erst eingespeist.
+func TestDetectRootEscalationLoginWithoutPasswordWins(t *testing.T) {
+	var stdins []string
+	conn := &scriptedConn{handler: func(cmd, stdin string) (string, int) {
+		if cmd == "login root" {
+			stdins = append(stdins, stdin)
+			return "", 0
+		}
+		return "", 1
+	}}
+	var log strings.Builder
+	esc := detectRootEscalation(conn, "tony", "geheim", &log)
+	if esc == nil || esc.method != "login" {
+		t.Fatalf("erwartet login, bekam %+v", esc)
+	}
+	if len(stdins) != 1 || stdins[0] != "\ntrue\nexit\n" {
+		t.Errorf("erwartet genau eine login-Probe ohne Passwort, bekam %q", stdins)
+	}
+	if _, stdin := esc.wrap("id -u"); strings.Contains(stdin, "geheim") {
+		t.Errorf("wrap sollte ohne Passwort arbeiten, bekam %q", stdin)
+	}
+}
+
+// TestDetectRootEscalationLoginWithLoginPassword: sudo und su sind gesperrt,
+// login akzeptiert root nur mit dem Login-Passwort. Das Passwort läuft über
+// stdin - nie über die Kommandozeile oder das Protokoll - und wird bei jedem
+// späteren Kommando wieder eingespeist.
+func TestDetectRootEscalationLoginWithLoginPassword(t *testing.T) {
+	conn := &scriptedConn{handler: func(cmd, stdin string) (string, int) {
+		if cmd == "login root" && stdin == "geheim\ntrue\nexit\n" {
+			return "", 0
+		}
+		return "Login incorrect", 1
+	}}
+	var log strings.Builder
+	esc := detectRootEscalation(conn, "tony", "geheim", &log)
+	if esc == nil || esc.method != "login" {
+		t.Fatalf("erwartet login, bekam %+v", esc)
+	}
+	for _, c := range conn.calls {
+		if strings.Contains(c, "geheim") {
+			t.Errorf("passwort steht in einer kommandozeile (leak): %q", c)
+		}
+	}
+	if strings.Contains(log.String(), "geheim") {
+		t.Error("passwort steht im Provisionierungs-Protokoll (leak)")
+	}
+	for _, kommando := range []string{"id -u", "apt-get install -y sudo"} {
+		cmd, stdin := esc.wrap(kommando)
+		if cmd != "login root" {
+			t.Errorf("wrap sollte 'login root' laufen, bekam %q", cmd)
+		}
+		if want := "geheim\n" + kommando + "\nexit\n"; stdin != want {
+			t.Errorf("wrap sollte das Passwort erneut einspeisen: erwartet %q, bekam %q", want, stdin)
+		}
+	}
+}
+
+// TestDetectRootEscalationNoPasswordNoLoginPasswordProbe: ohne Login-Passwort
+// gibt es weder sudo-, su- noch login-Probe mit Passwort.
+func TestDetectRootEscalationNoPasswordNoLoginPasswordProbe(t *testing.T) {
+	conn := &scriptedConn{handler: func(string, string) (string, int) { return "", 1 }}
+	var log strings.Builder
+	if esc := detectRootEscalation(conn, "tony", "", &log); esc != nil {
+		t.Fatalf("erwartet nil, bekam %+v", esc)
+	}
+	// sudo -n, su ohne Passwort, login ohne Passwort.
+	if len(conn.calls) != 3 {
+		t.Errorf("erwartete 3 Proben ohne Passwort, bekam %d: %v", len(conn.calls), conn.calls)
 	}
 }
 

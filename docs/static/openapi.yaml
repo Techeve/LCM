@@ -3593,6 +3593,131 @@ paths:
           description: Nicht angemeldet.
         '403':
           description: Keine Berechtigung.
+  /api/v1/server-groups/{id}/agent-updates:
+    get:
+      tags:
+      - Servergruppen
+      summary: Liest die Agent-Update-Regel der Gruppe.
+      operationId: agentUpdateCtrl_Get
+      description: |-
+        Die Agent-Update-Regel der Gruppe (Vorgabe: aus) mit nächstem Fenster, der Zahl der Agent-Server und wie viele hinter LCM liegen, dazu der Stand des letzten Laufs.
+
+        Benötigte Berechtigung: `groups:read`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Die Regel.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+    put:
+      tags:
+      - Servergruppen
+      summary: Speichert die Agent-Update-Regel der Gruppe.
+      operationId: agentUpdateCtrl_Save
+      description: |-
+        Schaltet die automatischen Agent-Updates der Gruppe ein oder aus. In einem Zeitfenster (Beginn als Cron-Ausdruck, Länge in Minuten, Server gleichmäßig verteilt) bringt LCM die Agenten der Gruppe auf die Version, die zu LCM passt - nie höher als LCM selbst. Mit staged geht ein Server voran, der Rest folgt, wenn er sich mit der neuen Version zurückgemeldet hat und auf Kommandos antwortet. Das Speichern hebt eine Sperre nach einem gescheiterten Lauf auf.
+
+        Benötigte Berechtigung: `rules:manage`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [off, auto]
+                staged:
+                  type: boolean
+                cron_expr:
+                  type: string
+                  example: 0 3 * * *
+                window_minutes:
+                  type: integer
+                  example: 120
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Die Regel.
+        '422':
+          description: Ungültiger Modus, Cron-Ausdruck oder ungültiges Fenster.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/server-groups/{id}/agent-updates/run:
+    post:
+      tags:
+      - Servergruppen
+      summary: Führt die Agent-Update-Regel jetzt aus.
+      operationId: agentUpdateCtrl_Run
+      description: |-
+        Startet einen Lauf im Hintergrund, unabhängig vom Zeitfenster und davon, ob die Regel an ist. Die Update-Jobs erscheinen unter Jobs.
+
+        Benötigte Berechtigung: `rules:manage`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Lauf gestartet.
+        '409':
+          description: Für diese Gruppe läuft schon ein Lauf.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/server-groups/{id}/agent-updates/resume:
+    post:
+      tags:
+      - Servergruppen
+      summary: Hebt die Sperre der Agent-Update-Regel auf.
+      operationId: agentUpdateCtrl_Resume
+      description: |-
+        Ein gescheiterter erster Server oder ein Rollback hält die Regel für die aktuelle LCM-Version an. Das hebt die Sperre auf; der nächste Lauf versucht es wieder.
+
+        Benötigte Berechtigung: `rules:manage`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Die Regel.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
   /api/v1/server-groups/{id}/rules/order:
     put:
       tags:
@@ -6934,6 +7059,61 @@ paths:
       responses:
         '200':
           description: Erfolgreich.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+  /api/v1/servers/{id}/agent-update:
+    get:
+      tags:
+      - Server
+      summary: Zeigt, was ein Agent-Update täte.
+      operationId: serverCtrl_AgentUpdatePlan
+      description: |-
+        Was ein Agent-Update auf diesem Server täte: installierte Version, Zielversion (die höchste, die die Paketquelle des Servers führt und die nicht über LCM liegt), die verfügbaren Versionen und ob ein Update überhaupt möglich ist. Fragt den Agent live und ändert nichts.
+
+        Benötigte Berechtigung: `servers:read`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: 'Der Plan: action (update, current, newer, none, unsupported), installed, target, server_version, available.'
+        '409':
+          description: Der Agent ist nicht verbunden oder der Server ist kein Agent-Server.
+        '401':
+          description: Nicht angemeldet.
+        '403':
+          description: Keine Berechtigung.
+    post:
+      tags:
+      - Server
+      summary: Aktualisiert den Agent des Servers.
+      operationId: serverCtrl_StartAgentUpdate
+      description: |-
+        Aktualisiert den lcm-agent auf die Version, die LCM bestimmt (nie höher als LCM selbst), und liefert den Job. Der Job endet, wenn sich der Agent mit der neuen Version meldet und auf Kommandos antwortet, oder scheitert mit dem Grund (auch wenn der Agent zurückgerollt ist).
+
+        Benötigte Berechtigung: `servers:write`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job gestartet.
+        '409':
+          description: Es läuft schon ein Job, der Agent ist nicht verbunden oder der Server hat kein apt.
         '401':
           description: Nicht angemeldet.
         '403':

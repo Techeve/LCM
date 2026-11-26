@@ -48,9 +48,9 @@ func (s *SettingsService) ListIPAllowlists() ([]domain.IPAllowlist, error) {
 func allowlistAuditDetail(name, entries string) string {
 	list := strings.FieldsFunc(entries, func(r rune) bool { return r == '\n' || r == ',' })
 	joined := strings.Join(list, ", ")
-	const max = 200
-	if len(joined) > max {
-		joined = joined[:max] + " …"
+	const maxLen = 200
+	if len(joined) > maxLen {
+		joined = joined[:maxLen] + " …"
 	}
 	return fmt.Sprintf("%s - %d Eintrag/Einträge: [%s]", name, len(list), joined)
 }

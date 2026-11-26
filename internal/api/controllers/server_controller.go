@@ -814,6 +814,32 @@ func (ctrl *ServerController) Reboot(c fiber.Ctx) error {
 	})
 }
 
+// AgentUpdatePlan - GET /api/v1/servers/:id/agent-update (servers:read)
+// Was ein Agent-Update auf diesem Server täte: installierte und Zielversion
+// (die höchste, die zu diesem LCM passt), die Versionen der Paketquellen und
+// ob ein Update überhaupt möglich ist. Fragt den Agent live, ändert nichts.
+func (ctrl *ServerController) AgentUpdatePlan(c fiber.Ctx) error {
+	id, err := paramID(c)
+	if err != nil {
+		return err
+	}
+	plan, err := ctrl.servers.AgentUpdatePlan(scopeFor(c), id)
+	if err != nil {
+		return mapServerActionError(err)
+	}
+	return c.JSON(plan)
+}
+
+// StartAgentUpdate - POST /api/v1/servers/:id/agent-update (servers:write)
+// Aktualisiert den lcm-agent des Servers auf die Version, die LCM bestimmt
+// (nie höher als LCM selbst). Läuft als Job und endet erst, wenn sich der Agent
+// mit der neuen Version meldet.
+func (ctrl *ServerController) StartAgentUpdate(c fiber.Ctx) error {
+	return ctrl.startPackageJob(c, func(id uint) (*domain.Job, error) {
+		return ctrl.servers.StartAgentUpdate(scopeFor(c), id, actor(c))
+	})
+}
+
 // RefreshHardware - POST /api/v1/servers/:id/refresh-hardware (servers:write)
 // Liest Hardware-/OS-Fakten neu ein (kein Upgrade, kein Bestand-Replace).
 func (ctrl *ServerController) RefreshHardware(c fiber.Ctx) error {

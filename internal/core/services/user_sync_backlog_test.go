@@ -12,7 +12,37 @@ import (
 
 // Der automatische Benutzer-Abgleich läuft nebenläufig - die Oberfläche soll
 // nicht auf die Verbindungsaufnahme zu womöglich vielen Servern warten.
-// Deshalb wird hier auf das Ergebnis gewartet (waitFor aus scheduler_test.go).
+// Die Tests warten deshalb, bis alle Abgleiche im Hintergrund fertig sind
+// (settle), und prüfen erst dann. Ein Pollen mit Frist hing an der Last des
+// Runners, und ein noch laufender Abgleich aus der Vorbereitung las FailKey
+// mitten im Umschalten.
+
+// settle wartet, bis alle Benutzer-Abgleiche im Hintergrund fertig sind.
+func (env *testEnv) settle() { env.Prov.WaitReconcilesForTest() }
+
+// requireRan bricht ab, wenn kein Kommando mit diesem Teilstring lief.
+func (env *testEnv) requireRan(t *testing.T, substr string) {
+	t.Helper()
+	if !env.ranCommand(substr) {
+		t.Fatalf("%q nicht ausgeführt: %v", substr, env.recordedCommands())
+	}
+}
+
+// requireFailedEntry bricht ab, wenn für username kein Eintrag mit
+// Fehlversuch im Rückstand liegt ("" = der vollständige Abgleich).
+func (env *testEnv) requireFailedEntry(t *testing.T, serverID uint, username string) {
+	t.Helper()
+	entries, err := env.Pending.ForServer(serverID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range entries {
+		if entries[i].Username == username && entries[i].Attempts > 0 {
+			return
+		}
+	}
+	t.Fatalf("kein Fehlversuch für %q im Rückstand: %+v", username, entries)
+}
 
 // recordedCommands liefert die Mitschrift des Fake-Dialers als Kopie. Alle
 // Zugriffe laufen ueber Recorded() statt direkt auf die Slices: Der
@@ -49,6 +79,7 @@ func setupGroupUser(t *testing.T, env *testEnv, serverName, username string) (*d
 	if err != nil {
 		t.Fatal(err)
 	}
+	env.settle() // Abgleiche aus der Vorbereitung (Server tritt der Gruppe bei)
 	return server, group, lu.ID
 }
 
@@ -63,9 +94,8 @@ func TestGruppenZuordnungRichtetKontoSofortEin(t *testing.T) {
 	if err := env.LinuxUsers.AssignToGroup(repositories.ScopeAll(), userID, group.ID, nil, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		return env.ranCommand("id -u deployer")
-	})
+	env.settle()
+	env.requireRan(t, "id -u deployer")
 }
 
 // Und die Gegenrichtung: Wird die Zuordnung gelöst, muss das Konto vom Server
@@ -76,15 +106,15 @@ func TestEntzogeneGruppenZuordnungEntferntKonto(t *testing.T) {
 	if err := env.LinuxUsers.AssignToGroup(repositories.ScopeAll(), userID, group.ID, nil, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return env.ranCommand("id -u leaver") })
+	env.settle()
+	env.requireRan(t, "id -u leaver")
 
 	env.Dialer.Reset()
 	if err := env.LinuxUsers.RemoveFromGroup(repositories.ScopeAll(), userID, group.ID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		return env.ranCommand("userdel -r leaver")
-	})
+	env.settle()
+	env.requireRan(t, "userdel -r leaver")
 }
 
 // Wer über eine zweite Zuordnung weiterhin berechtigt ist, darf sein Konto
@@ -99,13 +129,17 @@ func TestWeiterhinBerechtigterBenutzerBehaeltKonto(t *testing.T) {
 	if err := env.Prov.AssignLinuxUserToServer(server, userID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return env.ranCommand("id -u bleiber") })
+	env.settle()
+	env.requireRan(t, "id -u bleiber")
 
 	env.Dialer.Reset()
 	if err := env.LinuxUsers.RemoveFromGroup(repositories.ScopeAll(), userID, group.ID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return len(env.recordedCommands()) > 0 })
+	env.settle()
+	if len(env.recordedCommands()) == 0 {
+		t.Fatal("kein Abgleich nach dem Lösen der Gruppe")
+	}
 	if env.ranCommand("userdel -r bleiber") {
 		t.Errorf("Konto entfernt, obwohl direkt zugeordnet: %v", env.recordedCommands())
 	}
@@ -119,15 +153,15 @@ func TestServerVerlaesstGruppeUndVerliertKonto(t *testing.T) {
 	if err := env.LinuxUsers.AssignToGroup(repositories.ScopeAll(), userID, group.ID, nil, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return env.ranCommand("id -u gastuser") })
+	env.settle()
+	env.requireRan(t, "id -u gastuser")
 
 	env.Dialer.Reset()
 	if err := env.Groups.RemoveServer(repositories.ScopeAll(), group.ID, server.ID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		return env.ranCommand("userdel -r gastuser")
-	})
+	env.settle()
+	env.requireRan(t, "userdel -r gastuser")
 }
 
 // Der Kern des Rückstands: Ein Server, der im Moment der Änderung nicht
@@ -142,10 +176,11 @@ func TestNichtErreichbarerServerHoltDenAbgleichNach(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Der Fehlversuch steht am Eintrag - und der Eintrag bleibt liegen.
-	waitFor(t, func() bool {
-		entries, err := env.Pending.ForServer(server.ID)
-		return err == nil && len(entries) == 1 && entries[0].Attempts > 0
-	})
+	env.settle()
+	if entries, err := env.Pending.ForServer(server.ID); err != nil || len(entries) != 1 {
+		t.Fatalf("Rückstand: %+v, %v", entries, err)
+	}
+	env.requireFailedEntry(t, server.ID, "")
 
 	// Server wieder erreichbar: Der Rückstand wird abgearbeitet und geleert.
 	env.Dialer.FailKey = nil
@@ -175,10 +210,8 @@ func TestManuellerAbgleichLeertDenRueckstand(t *testing.T) {
 	if err := env.LinuxUsers.AssignToGroup(repositories.ScopeAll(), userID, group.ID, nil, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		entries, err := env.Pending.ForServer(server.ID)
-		return err == nil && len(entries) == 1 && entries[0].Attempts > 0
-	})
+	env.settle()
+	env.requireFailedEntry(t, server.ID, "")
 
 	env.Dialer.FailKey = nil
 	env.Dialer.Reset()
@@ -202,24 +235,15 @@ func TestEntzogenerZugangBleibtImRueckstand(t *testing.T) {
 	if err := env.LinuxUsers.AssignToGroup(repositories.ScopeAll(), userID, group.ID, nil, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return env.ranCommand("id -u weguser") })
+	env.settle()
+	env.requireRan(t, "id -u weguser")
 
 	env.Dialer.FailKey = errors.New("host down")
 	if err := env.LinuxUsers.RemoveFromGroup(repositories.ScopeAll(), userID, group.ID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		entries, err := env.Pending.ForServer(server.ID)
-		if err != nil {
-			return false
-		}
-		for i := range entries {
-			if entries[i].Username == "weguser" && entries[i].Attempts > 0 {
-				return true
-			}
-		}
-		return false
-	})
+	env.settle()
+	env.requireFailedEntry(t, server.ID, "weguser")
 
 	env.Dialer.FailKey = nil
 	env.Dialer.Reset()
@@ -239,14 +263,49 @@ func TestNeuerSchluesselWirdSofortVerteilt(t *testing.T) {
 	if err := env.LinuxUsers.AssignToGroup(repositories.ScopeAll(), userID, group.ID, nil, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return env.ranCommand("id -u keyuser") })
+	env.settle()
+	env.requireRan(t, "id -u keyuser")
 
 	env.Dialer.Reset()
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijklmnopqrstuvwxyz012345 keyuser@laptop"
 	if _, err := env.LinuxUsers.AddSSHKey(userID, "laptop", key, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		return env.ranCommand("AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijklmnopqrstuvwxyz012345")
-	})
+	env.settle()
+	env.requireRan(t, "AAAAC3NzaC1lZDI1NTE5AAAAIabcdefghijklmnopqrstuvwxyz012345")
+}
+
+// Eine Änderung, die während eines laufenden Abgleichs dazukommt, landet im
+// schon offenen Eintrag. Der laufende Abgleich hat den alten Stand verteilt -
+// er darf den Eintrag danach nicht löschen, sonst geht die Änderung verloren
+// (CI-Flake: die Gruppen-Zuordnung kam nie auf dem Server an).
+func TestErneutEingestellterAuftragUeberlebtDieLaufendeAbarbeitung(t *testing.T) {
+	env := newTestEnv(t)
+	serverID := joinTestServer(t, env, "web08")
+	env.settle()
+
+	if err := env.Pending.Queue(serverID, ""); err != nil {
+		t.Fatal(err)
+	}
+	read, err := env.Pending.ForServer(serverID) // die laufende Abarbeitung liest
+	if err != nil || len(read) != 1 {
+		t.Fatalf("Rückstand: %+v, %v", read, err)
+	}
+	if err := env.Pending.Queue(serverID, ""); err != nil { // Änderung währenddessen
+		t.Fatal(err)
+	}
+	if err := env.Pending.Clear(&read[0]); err != nil { // Abarbeitung fertig
+		t.Fatal(err)
+	}
+	left, err := env.Pending.ForServer(serverID)
+	if err != nil || len(left) != 1 {
+		t.Fatalf("erneut eingestellter Auftrag verloren: %+v, %v", left, err)
+	}
+
+	if err := env.Pending.Clear(&left[0]); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ = env.Pending.ForServer(serverID); len(left) != 0 {
+		t.Errorf("unveränderter Auftrag nicht gelöscht: %+v", left)
+	}
 }

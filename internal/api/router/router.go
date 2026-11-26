@@ -43,6 +43,7 @@ type Deps struct {
 	Audit         *services.AuditService
 	Groups        *services.GroupService
 	Scheduler     *services.Scheduler
+	AgentUpdates  *services.AgentUpdateService
 	Backups       *services.BackupService
 	Packages      *services.PackageService
 	Settings      *services.SettingsService
@@ -206,6 +207,7 @@ func New(deps Deps) *fiber.App {
 	serverCtrl := controllers.NewServerController(deps.Servers)
 	jobCtrl := controllers.NewJobController(deps.Jobs, deps.Audit)
 	groupCtrl := controllers.NewGroupController(deps.Groups, deps.Scheduler)
+	agentUpdateCtrl := controllers.NewAgentUpdateController(deps.Groups, deps.AgentUpdates)
 	opsCtrl := controllers.NewOpsController(deps.Scheduler, deps.Groups, deps.Backups, deps.Packages, deps.Settings, deps.Servers, deps.Restart).
 		WithSelfUpdate(deps.SelfUpdate).WithBrowserSessions(deps.Auth, eventHub).WithReleaseNotes(deps.ReleaseNotes)
 	provCtrl := controllers.NewProvisioningController(deps.Provisioning, deps.Activation, deps.Servers)
@@ -527,6 +529,9 @@ func New(deps Deps) *fiber.App {
 	servers.Post("/:id/reconnect", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Reconnect)
 	servers.Post("/:id/rotate-key", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.RotateKey)
 	servers.Post("/:id/reboot", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Reboot)
+	// Agent aktualisieren: Plan (Ziel-Version) lesen, Update als Job starten.
+	servers.Get("/:id/agent-update", middlewares.RequirePermission(domain.PermServersRead), serverCtrl.AgentUpdatePlan)
+	servers.Post("/:id/agent-update", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.StartAgentUpdate)
 	servers.Post("/:id/decommission", middlewares.RequirePermission(domain.PermServersWrite), serverCtrl.Decommission)
 
 	// Jobs & Audit
@@ -556,6 +561,12 @@ func New(deps Deps) *fiber.App {
 	groups.Post("/:id/remove-manager", middlewares.RequirePermission(domain.PermGroupsWrite), groupCtrl.RemoveManager)
 	groups.Post("/:id/disband", middlewares.RequirePermission(domain.PermGroupsWrite), groupCtrl.Disband)
 	// Schedules & Rules einer Gruppe
+	// Agent-Updates der Gruppe: Regel lesen (wer die Gruppe sieht), ändern und
+	// auslösen nur mit der Berechtigung für Regeln - sie wirkt auf die Server.
+	groups.Get("/:id/agent-updates", middlewares.RequirePermission(domain.PermGroupsRead), agentUpdateCtrl.Get)
+	groups.Put("/:id/agent-updates", middlewares.RequirePermission(domain.PermRulesManage), agentUpdateCtrl.Save)
+	groups.Post("/:id/agent-updates/run", middlewares.RequirePermission(domain.PermRulesManage), agentUpdateCtrl.Run)
+	groups.Post("/:id/agent-updates/resume", middlewares.RequirePermission(domain.PermRulesManage), agentUpdateCtrl.Resume)
 	groups.Get("/:id/schedules", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.ListSchedules)
 	groups.Post("/:id/schedules/define", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.DefineSchedule)
 	groups.Get("/:id/rules", middlewares.RequirePermission(domain.PermRulesManage), groupCtrl.ListRules)

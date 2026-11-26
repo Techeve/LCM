@@ -22,7 +22,7 @@ them ([Certificates, Let's Encrypt & port 443](/en/guides/zertifikate/)).
 
 | Mode | Ports | Names | Fields | When it fits |
 |---|---|---|---|---|
-| **A: Own ports, own names** (default) | one per service, adjustable (defaults 9310, 9320, 9330) | one address per service, with or without a port | three address fields and three port fields | A reverse proxy sits in front, or each service should run under its own name. This is how earlier versions worked. |
+| **A: Own ports, own names** (default) | one per service, adjustable (defaults 9310, 9320, 9330) | one address per service, with or without a port | three address fields and three port fields | A reverse proxy sits in front, or each service should run under its own name. |
 | **B: Own ports, one name** | one per service, adjustable | one name for all services | one name field and three port fields | Operation without a proxy, with one certificate. |
 | **C: One port, own names** | one shared port, default 443 | one name of its own per service; required only for the web UI | three name fields and *Shared port* | No port in the browser. LCM tells the services apart by the requested name (SNI). |
 
@@ -202,10 +202,9 @@ The interface and the `config.json` carry the same values. The table shows which
 - **Gear behind an address:** *Certificate & security*. The dialog has two parts.
   At the top is the certificate LCM serves for the name. You can upload one by
   hand or remove it again. Below it are the **allowed networks** of this service
-  ([Allowed networks](/en/guides/netzbereiche/)). There is no separate *Access*
-  section in the block.
+  ([Allowed networks](/en/guides/netzbereiche/)).
 - **Let's Encrypt:** collapsed, available in every mode. The names come from the
-  addresses, so there is one field fewer than before. After you save, LCM issues
+  addresses. After you save, LCM issues
   the certificate by itself
   ([Certificates, Let's Encrypt & port 443](/en/guides/zertifikate/#lets-encrypt-acme)).
 

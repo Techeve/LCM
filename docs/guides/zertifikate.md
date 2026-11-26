@@ -9,8 +9,8 @@ LCM spricht ab Werk HTTPS mit einem Zertifikat aus seiner eigenen
 Zertifizierungsstelle. Das Zertifikat nennt nur `localhost` und `127.0.0.1`,
 deshalb warnt jeder Browser, der LCM über einen echten Namen aufruft. Wer LCM
 ohne Reverse-Proxy betreibt, hinterlegt dafür ein eigenes Zertifikat oder lässt
-LCM eines bei Let's Encrypt holen und erneuern. Ein Reverse-Proxy bleibt
-möglich, ist aber nicht mehr nötig
+LCM eines bei Let's Encrypt holen und erneuern. Ein Reverse-Proxy ist
+möglich, aber nicht nötig
 ([Reverse-Proxy & Absicherung von außen](/guides/reverse-proxy/)). Welche Namen
 und Ports LCM nutzt, legst du im Adressmodus fest
 ([Öffentliche Adressen & Adressmodus](/guides/adressen/)).
@@ -282,8 +282,7 @@ Internet auf LCM zeigen**.
 - **Er beantwortet nur offene Prüfungen.** Auf
   `GET /.well-known/acme-challenge/<Token>` für ein gerade offenes Token liefert
   er die Antwort. Alles andere (andere Pfade, Methoden, Tokens) beendet er ohne
-  Antwort, als wäre er nicht da. Eine Weiterleitung auf die Weboberfläche gibt es
-  nicht mehr. Die Netzbereiche gelten dafür nicht: Die Prüfung beantwortet er
+  Antwort, als wäre er nicht da. Die Netzbereiche gelten dafür nicht: Die Prüfung beantwortet er
   aus jedem Netz.
 - Port 80 braucht die Berechtigung für Ports unter 1024. Die Dienstdatei
   `lcm.service` bringt sie mit ([Port 80 und 443 freigeben](#port-80-und-443-freigeben)).
@@ -509,7 +508,7 @@ Namen kein eigenes Zertifikat.
 Ports unter 1024 darf ein Dienst ohne Root-Rechte nur mit einer zusätzlichen
 Berechtigung öffnen. Die mitgelieferte Dienstdatei `lcm.service` gibt LCM genau
 diese eine Berechtigung (`CAP_NET_BIND_SERVICE`). Du musst nichts einstellen, und
-ein Drop-in (`systemctl edit lcm`) ist nicht mehr nötig. Alle anderen Härtungen
+ein Drop-in (`systemctl edit lcm`) ist nicht nötig. Alle anderen Härtungen
 der Dienstdatei bleiben. LCM braucht die Berechtigung für zwei Dinge:
 
 - **Port 443**, wenn du Modus C wählst oder die Weboberfläche selbst auf 443
@@ -549,7 +548,7 @@ sie gilt, hängt davon ab, woher das Zertifikat kommt.
   sudo lcm-agent enroll https://agent.example.com <token>
   ```
 
-- **Eigene (private) Zertifizierungsstelle.** Das Token des Servers trägt jetzt
+- **Eigene (private) Zertifizierungsstelle.** Das Token des Servers trägt
   neben dem Fingerprint des Zertifikats auch die Zertifizierungsstelle, die es
   ausgestellt hat, und die LCM-eigene Stelle. Ein **neuer Agent**, den du mit
   einem solchen Token einrichtest, pinnt die private Stelle. Danach gilt jedes

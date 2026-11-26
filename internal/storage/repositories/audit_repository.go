@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -60,7 +61,7 @@ func (r *AuditRepository) appendOnce(entry *domain.AuditLog) error {
 		// Seq ist der monotone Ketten-Anker (UUID-PKs sind nicht sortierbar).
 		err := tx.Order("seq DESC").First(&last).Error
 		switch {
-		case err == gorm.ErrRecordNotFound:
+		case errors.Is(err, gorm.ErrRecordNotFound):
 			entry.PrevHash = domain.AuditChainStart
 			entry.Seq = 1
 		case err != nil:

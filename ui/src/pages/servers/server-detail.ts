@@ -19,6 +19,7 @@ import { baseStyles } from '../../components/shared';
 import {
   activeJobUrl,
   agentConsoleBlock,
+  agentUnsupported,
   hasConsole,
   dsmUrl,
   isApiDevice,
@@ -34,6 +35,7 @@ import {
   serversApi,
   visibleTabs,
   type ActiveJob,
+  type AgentState,
   type ServerItem,
   type ServerPackage,
   type ServerTab,
@@ -48,7 +50,7 @@ import { setupStepOf } from '../../lib/address-setup';
 import { I18nController, SubscribeController } from '../../lib/controllers';
 import { formatDateTime, formatRelative } from '../../lib/format';
 import { errorText, t } from '../../lib/i18n';
-import { insightText } from '../../lib/insight-text';
+import { disconnectText, insightText } from '../../lib/insight-text';
 import { LiveData } from '../../lib/live-data';
 import { FadeOnChange } from '../../lib/motion';
 import { palette } from '../../lib/palette';
@@ -56,11 +58,21 @@ import { router } from '../../lib/router';
 import { STATUS_LEVEL, statusLabel } from './servers-list';
 import './set-action';
 import './srv-action';
+import './srv-agent-update';
 import './srv-intro';
 import './srv-more';
 import './srv-settings';
 
 const PROXMOX: Record<string, string> = { pve: 'Proxmox VE', pbs: 'Proxmox Backup Server', pmg: 'Proxmox Mail Gateway', pdm: 'Proxmox Datacenter Manager' };
+
+type AgentBand = { tone: 'warn' | 'crit'; heading: string; text: string };
+
+/** Der Agent passt nicht zu diesem LCM. Die Zustände ok und „noch nie gemeldet“ haben kein Band. */
+const AGENT_BANDS: Partial<Record<AgentState, AgentBand>> = {
+  outdated: { tone: 'warn', heading: 'serverDetail.agent.outdated.heading', text: 'serverDetail.agent.outdated.text' },
+  unsupported: { tone: 'crit', heading: 'serverDetail.agent.unsupported.heading', text: 'serverDetail.agent.unsupported.text' },
+  newer: { tone: 'warn', heading: 'serverDetail.agent.newer.heading', text: 'serverDetail.agent.newer.text' },
+};
 
 const TAB_MODULES: Record<ServerTab, () => Promise<unknown>> = {
   overview: () => import('./tab-overview'),
@@ -162,7 +174,8 @@ export class ServerDetail extends LitElement {
       }
       /* Kompakte Knöpfe wie die kleine Knopfleiste der bisherigen Oberfläche: alles passt auf eine Zeile. */
       /* Hält den Hinweis eines ausgegrauten Knopfs: der Knopf selbst nimmt dann keine Maus an. */
-      .bar .blocked {
+      .bar .blocked,
+      .states .blocked {
         display: inline-flex;
         cursor: not-allowed;
       }
@@ -370,10 +383,18 @@ export class ServerDetail extends LitElement {
       <p class="seen">
         <span title=${server.last_seen_at ?? ''}>${t('servers.facts.lastSeen', { when: server.last_seen_at ? formatRelative(server.last_seen_at) : t('servers.never') })}</span>
         ${server.transport === 'agent' ? html` · ${t(server.agent_connected ? 'servers.facts.agentOnline' : 'servers.facts.agentOffline')}` : nothing}
+        ${this.#renderAgentDrops(server)}
       </p>
     </div>
       ${this.#renderBar(server)}
     </div>`;
+  }
+
+  /** Wie oft die Verbindung des Agents in der letzten Stunde ungewollt abriss, mit der letzten Ursache. */
+  #renderAgentDrops(server: ServerItem): TemplateResult | typeof nothing {
+    const link = server.agent_link;
+    if (!link || link.unintended_last_hour === 0) return nothing;
+    return html` · ${t('servers.facts.agentDrops', { count: link.unintended_last_hour, reason: disconnectText(link.last_cause) })}`;
   }
 
   /** Eine Zeile: System · Adresse · Dienstbenutzer · Hostname · Kernel (· Agent-Version). */
@@ -400,12 +421,14 @@ export class ServerDetail extends LitElement {
     if (hasConsole(server)) return html`<lcm-button icon="terminal" @click=${() => router.setQuery({ terminal: 1 })}>${t('servers.bar.terminal.label')}</lcm-button>`;
     const blocked = agentConsoleBlock(server);
     if (!blocked) return nothing;
-    return html`<span class="blocked" title=${t(blocked)}><lcm-button icon="terminal" disabled>${t('servers.bar.terminal.label')}</lcm-button></span>`;
+    return html`<span class="blocked" title=${t(blocked.key, blocked.params)}><lcm-button icon="terminal" disabled>${t('servers.bar.terminal.label')}</lcm-button></span>`;
   }
 
   /** Eine Knopfleiste: Terminal, Alles aktualisieren, SSH-Härtung, Firewall, Einstellungen und das Menü „Aktionen“. */
   #renderBar(server: ServerItem): TemplateResult {
     const write = auth.can('servers:write');
+    // Ein Agent unter der Mindestversion bedient LCM nicht mehr: Verwalten gibt es dann nicht, nur noch das Band mit „Agent aktualisieren“.
+    const manage = write && !agentUnsupported(server);
     const device = isApiDevice(server);
     // SSH-Härtung gibt es auch für Agent-Server: das Skript läuft dort als root über den Agent.
     const ssh = !device;
@@ -415,7 +438,10 @@ export class ServerDetail extends LitElement {
         ? html`<lcm-button icon="external" href=${dsmUrl(server)} target="_blank" title=${t('serverDetail.bar.openDsmHelp')}>${t('serverDetail.bar.openDsm')}</lcm-button>`
         : nothing}
       ${this.#terminalButton(server)}
-      ${write
+      ${manage && server.agent_support?.behind && !server.agent_support.update_recommended && !server.agent_support.rolled_back
+        ? html`<lcm-srv-agent-update size="m" variant="secondary" server-id=${server.id} server-name=${server.name} ?disabled=${busy}></lcm-srv-agent-update>`
+        : nothing}
+      ${manage
         ? html`<lcm-srv-action
             no-confirm
             icon="refresh"
@@ -427,7 +453,7 @@ export class ServerDetail extends LitElement {
             .run=${() => serversApi.refreshAll(server.id)}
           ></lcm-srv-action>`
         : nothing}
-      ${write && ssh
+      ${manage && ssh
         ? html`<lcm-set-action
             data-tour="harden"
             quiet
@@ -443,7 +469,7 @@ export class ServerDetail extends LitElement {
             .run=${() => (server.ssh_hardened ? detailApi.unhardenSsh(server.id) : detailApi.hardenSsh(server.id))}
           ></lcm-set-action>`
         : nothing}
-      ${write && !device
+      ${manage && !device
         ? html`<lcm-button
             data-tour="firewall"
             icon="firewall"
@@ -480,9 +506,36 @@ export class ServerDetail extends LitElement {
             >${t('servers.state.maintenanceText')}</lcm-notice
           >`
         : null,
+      this.#renderAgentState(server),
       this.#renderBusy(server),
     ].filter((state) => state !== null && state !== nothing);
     return states.length > 0 ? html`<div class="states">${states}</div>` : nothing;
+  }
+
+  /**
+   * Der Agent ist zu alt, veraltet oder neuer als LCM, oder sein letztes Update ist gescheitert. „Agent aktualisieren“
+   * liest vom Agent, auf welche Version LCM ihn hebt (nie höher als LCM selbst), und fragt mit „von → nach“ nach.
+   */
+  #renderAgentState(server: ServerItem): TemplateResult | typeof nothing {
+    const support = server.agent_support;
+    if (!support) return nothing;
+    const params = { version: support.agent_version, server: support.server_version, min: support.min_version, needs: support.needs_version, failed: support.rolled_back };
+    const write = auth.can('servers:write');
+    // Ein Rollback sagt, warum der Agent hinterher ist; es ersetzt das Band „veraltet“, außer er liegt unter der Mindestversion.
+    if (support.rolled_back && support.state !== 'unsupported') {
+      return html`<lcm-notice variant="band" tone="crit" heading=${t('serverDetail.agent.rolledBack.heading')}>
+        ${t('serverDetail.agent.rolledBack.text', params)}
+        ${write ? html`<lcm-srv-agent-update slot="action" server-id=${server.id} server-name=${server.name} label=${t('serverDetail.agent.retry')}></lcm-srv-agent-update>` : nothing}
+      </lcm-notice>`;
+    }
+    const band = AGENT_BANDS[support.state];
+    if (!band) return nothing;
+    return html`<lcm-notice variant="band" tone=${band.tone} heading=${t(band.heading)}>
+      ${t(band.text, params)}
+      ${support.update_recommended && write
+        ? html`<lcm-srv-agent-update slot="action" server-id=${server.id} server-name=${server.name}></lcm-srv-agent-update>`
+        : nothing}
+    </lcm-notice>`;
   }
 
   #renderBusy(server: ServerItem): TemplateResult | typeof nothing {

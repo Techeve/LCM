@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,7 +117,8 @@ func runDetached(t *testing.T, audit, script string) (string, int) {
 	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
 	code := 0
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		code = exitErr.ExitCode()
 	} else if err != nil {
 		t.Fatal(err)

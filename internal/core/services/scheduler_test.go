@@ -133,7 +133,9 @@ func TestTriggerSystemSchedule(t *testing.T) {
 
 	// Cleanup läuft synchron genug: wir prüfen, dass kein Panik/Fehler
 	// auftritt und danach ein cleanup-job existiert.
-	env.Scheduler.TriggerSystem(services.KindCleanup, "admin")
+	if err := env.Scheduler.TriggerSystem(services.KindCleanup, "admin"); err != nil {
+		t.Fatal(err)
+	}
 	// TriggerSystem startet eine Goroutine; gewartet wird, bis der Job
 	// FERTIG ist, nicht nur angelegt. Sonst schreibt er unter Last noch ins
 	// Testverzeichnis, während das schon aufgeräumt wird.

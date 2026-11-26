@@ -82,8 +82,8 @@ func ensureProfileGroupScript(slug string) string {
 // gesamten System lahmzulegen - auch für LCMs eigenen Zugang. Dasselbe Muster
 // nutzt bereits das Umschalten in den eingeschränkten Modus.
 func writeProfileSudoersScript(profile *domain.PrivilegeProfile) string {
-	path := domain.ProfileSudoersPath(profile.Slug)
-	tmp := path + ".tmp"
+	sudoersPath := domain.ProfileSudoersPath(profile.Slug)
+	tmp := sudoersPath + ".tmp"
 	return strings.Join([]string{
 		// Fehlt visudo, bricht die Kette sonst mit einem rohen
 		// "visudo: command not found" ab - der Grund (sudo ist gar nicht
@@ -99,7 +99,7 @@ func writeProfileSudoersScript(profile *domain.PrivilegeProfile) string {
 		// jedem Versuch erneut liegen. Harmlos (sudo ignoriert Dateinamen mit
 		// Punkt), aber sie sammelt sich an und sieht nach Fehler aus.
 		fmt.Sprintf("{ visudo -cf %s >/dev/null || { rm -f %s; false; }; }", tmp, tmp),
-		fmt.Sprintf("mv %s %s", tmp, path),
+		fmt.Sprintf("mv %s %s", tmp, sudoersPath),
 	}, " && ")
 }
 

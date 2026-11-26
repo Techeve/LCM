@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -24,6 +25,9 @@ func TestNormalizeServerURL(t *testing.T) {
 		{"whitespace", "  https://lcm.example.com  ", "https://lcm.example.com", false},
 		{"leer", "", "", true},
 		{"falsches schema", "ftp://lcm.example.com", "", true},
+		{"nur port, ohne namen", "https://:8443", "", true},
+		{"nur port ohne schema", ":8443", "", true},
+		{"nur schema", "https://", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -155,41 +159,40 @@ func TestRunnerCancel(t *testing.T) {
 	}
 }
 
-// TestLimitedBufferBehaeltAnfangUndEnde: Über dem Limit bleiben die erste und
-// die letzte Hälfte stehen, die Mitte fällt weg und wird gezählt. Vorher blieb
-// nur der Anfang - die Fehler am Ende eines apt-Laufs fehlten.
-func TestLimitedBufferBehaeltAnfangUndEnde(t *testing.T) {
-	b := &limitedBuffer{max: 10}
-	if _, err := b.Write([]byte("12345abcdefgh")); err != nil {
+// TestReadOutputBehaeltAnfangUndEnde: Über dem Limit bleiben die erste und die
+// letzte Hälfte stehen, die Mitte fällt weg und wird gezählt. Vorher blieb nur
+// der Anfang - die Fehler am Ende eines apt-Laufs fehlten.
+func TestReadOutputBehaeltAnfangUndEnde(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out")
+	if err := os.WriteFile(path, []byte("12345abcdefghXYZ"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Weitere Writes melden Erfolg (Writer-Vertrag), auch wenn sie die Mitte
-	// verdrängen.
-	if n, _ := b.Write([]byte("XYZ")); n != 3 {
-		t.Fatal("write muss volle länge melden")
+	head, tail, omitted, err := readOutput(path, 10)
+	if err != nil {
+		t.Fatal(err)
 	}
-	head, tail, omitted := b.parts()
 	if string(head) != "12345" || string(tail) != "ghXYZ" || omitted != 6 {
 		t.Fatalf("got head=%q tail=%q omitted=%d", head, tail, omitted)
 	}
-	if got := b.String(); !strings.HasPrefix(got, "12345\n") || !strings.HasSuffix(got, "\nghXYZ") ||
-		!strings.Contains(got, "6 Bytes") {
+	got := joinOutput(head, tail, omitted)
+	if !strings.HasPrefix(got, "12345\n") || !strings.HasSuffix(got, "\nghXYZ") || !strings.Contains(got, "6 Bytes") {
 		t.Fatalf("ausgabe ohne hinweis auf die lücke: %q", got)
-	}
-	if b.Written() != 16 {
-		t.Fatalf("written = %d, want 16", b.Written())
 	}
 }
 
-// TestLimitedBufferVieleKleineWrites: Das Ende bleibt auch bei vielen kleinen
-// Writes richtig (Kürzen erst beim Doppelten des Platzes).
-func TestLimitedBufferVieleKleineWrites(t *testing.T) {
-	b := &limitedBuffer{max: 8}
-	for i := 0; i < 100; i++ {
-		_, _ = b.Write([]byte{byte('a' + i%26)})
+// TestReadOutputKleineAusgabeUndFehlendeDatei: Unter dem Limit kommt alles in
+// den Anfang; fehlt die Datei, war die Ausgabe leer.
+func TestReadOutputKleineAusgabeUndFehlendeDatei(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "out")
+	if err := os.WriteFile(path, []byte("kurz"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	head, tail, omitted := b.parts()
-	if string(head) != "abcd" || string(tail) != "stuv" || omitted != 92 {
-		t.Fatalf("got head=%q tail=%q omitted=%d", head, tail, omitted)
+	head, tail, omitted, err := readOutput(path, 100)
+	if err != nil || string(head) != "kurz" || len(tail) != 0 || omitted != 0 {
+		t.Fatalf("got (%q, %q, %d, %v)", head, tail, omitted, err)
+	}
+	if head, tail, omitted, err = readOutput(filepath.Join(dir, "gibt-es-nicht"), 100); err != nil || len(head)+len(tail)+omitted != 0 {
+		t.Fatalf("fehlende datei: (%q, %q, %d, %v)", head, tail, omitted, err)
 	}
 }

@@ -6,13 +6,20 @@ import '../../components/lcm-ampel';
 import '../../components/lcm-badge';
 import '../../components/lcm-status';
 import { hostLabel, isOffline, isToleratedOutage } from '../../api/servers-list';
-import type { ServerItem, ServerStatus } from '../../api/servers';
+import type { AgentState, ServerItem, ServerStatus } from '../../api/servers';
 import { baseStyles, type StatusLevel } from '../../components/shared';
 import { t } from '../../lib/i18n';
 import { insightText } from '../../lib/insight-text';
 import '../../components/lcm-hover-tip';
 
 const STATUS_LEVEL: Record<ServerStatus, StatusLevel> = { excellent: 'great', green: 'ok', yellow: 'warn', red: 'crit' };
+
+/** Was die Blase am Agent zum Zustand sagt; ok und „noch nie gemeldet“ haben nichts zu sagen. Der Farbton gehört zum Zeichen, nicht zu einer zweiten Pille. */
+const AGENT_STATE_TEXT: Partial<Record<AgentState, { tone: 'warn' | 'crit'; text: string }>> = {
+  outdated: { tone: 'warn', text: 'servers.agentState.outdated' },
+  unsupported: { tone: 'crit', text: 'servers.agentState.unsupported' },
+  newer: { tone: 'warn', text: 'servers.agentState.newer' },
+};
 
 const cellStyles = css`
   :host {
@@ -178,10 +185,17 @@ export class SrvHostCell extends LitElement {
     const server = this.server;
     if (!server) return nothing;
     if (server.transport !== 'agent') return html`<span class="host">${hostLabel(server)}</span>`;
+    const support = server.agent_support;
+    const state = support ? AGENT_STATE_TEXT[support.state] : undefined;
+    const tone = state?.tone ?? (server.agent_connected ? 'info' : 'muted');
     return html`<span class="host">${server.host}</span>
-      <lcm-hover-tip icon="bolt" tone=${server.agent_connected ? 'info' : 'muted'} label=${t('servers.agent')}>
+      <lcm-hover-tip icon="bolt" tone=${tone} label=${t('servers.agent')}>
         <span class="tip-title">${t('servers.agent')}</span>
         <p class="tip-text">${t(server.agent_connected ? 'servers.agentOn' : 'servers.agentOff')}</p>
+        ${server.agent_version ? html`<p class="tip-text">${t('serverDetail.header.agentVersion', { version: server.agent_version })}</p>` : nothing}
+        ${support && state
+          ? html`<p class="tip-text">${t(state.text, { min: support.min_version, needs: support.needs_version, server: support.server_version })}</p>`
+          : nothing}
       </lcm-hover-tip>`;
   }
 }

@@ -1,26 +1,31 @@
 #!/bin/sh
-# agent-postinstall - registers the unit. The service deliberately does NOT
-# start automatically: the unit carries
-# ConditionPathExists=/etc/lcm-agent/agent.json, and only
+# agent-postinstall - registers the unit and keeps the package out of normal
+# upgrades. The service deliberately does NOT start automatically: the unit
+# carries ConditionPathExists=/etc/lcm-agent/agent.json, and only
 # `lcm-agent enroll <url> <token>` writes that config and activates it.
 #
-# On an upgrade it brings a running agent onto the new binary - but never by
-# restarting it from inside one of its own commands (see restart_after_upgrade).
+# It NEVER restarts a running agent, neither on a first install nor on an
+# upgrade: A restart (even from outside LCM) stops the unit, and a running LCM
+# command would go with it - or the package transaction that runs inside it. The
+# running agent notices the new binary on its own and switches to it (exec,
+# same PID) once it is idle, and the guard script (lcm-agent-start) takes the
+# way back if the new binary does not come up (internal/agent/switch.go,
+# update.go).
 #
-# On rpm, zypper and pacman systems it also keeps the agent out of normal
-# system upgrades, so that it is updated only on purpose, by an admin. Per
-# package format:
-#   deb     nothing (apt behaves as before)
+# It also keeps the agent out of normal system upgrades, so that it is updated
+# only on purpose, by LCM. Per package format:
+#   deb     pin_apt: apt preferences pin the installed version
+#           (LCM: apt-get install lcm-agent=<version>)
 #   rpm     pin_dnf: exclude=lcm-agent in the repo file techeve-lcm
-#           (update: dnf --setopt=disable_excludes=techeve-lcm install lcm-agent)
+#           (LCM: dnf --setopt=disable_excludes=techeve-lcm install lcm-agent-<ver>)
 #           pin_zypper: a package lock in /etc/zypp/locks
-#           (update: zypper removelock lcm-agent, install, zypper addlock lcm-agent)
+#           (LCM: zypper removelock, install, addlock)
 #   pacman  pin_pacman: IgnorePkg = lcm-agent in /etc/pacman.conf
-#           (update: pacman -S lcm-agent or pacman -U, both ignore IgnorePkg)
+#           (LCM: pacman -S / pacman -U, both ignore IgnorePkg)
 #   apk     nothing to write: apk rewrites /etc/apk/world at the end of the
 #           transaction, which overwrites anything done here. `apk add
-#           lcm-agent=<version>` pins the version there. A first install gets
-#           a hint (hint_apk).
+#           lcm-agent=<version>` pins the version there; LCM installs that way.
+#           A first install gets a hint (hint_apk).
 #
 # The same script is the post-upgrade script of apk and pacman
 # (nfpm-agent.yaml). How the package formats call it:
@@ -131,6 +136,45 @@ is_upgrade() {
 	esac
 }
 
+# tell_upgrade explains why nothing restarts.
+tell_upgrade() {
+	if [ "$(lcm_lang)" = "de" ]; then
+		echo "lcm-agent: Der laufende Agent wechselt selbst auf die neue Version, sobald er untaetig ist (kein Neustart)."
+	else
+		echo "lcm-agent: the running agent switches to the new version by itself once it is idle (no restart)."
+	fi
+}
+
+# pin_apt writes /etc/apt/preferences.d/lcm-agent: the installed version, with a
+# priority above 1000. apt then treats exactly this version as the candidate -
+# apt upgrade, full-upgrade and unattended-upgrades find nothing newer and leave
+# the agent alone. An explicit `apt-get install lcm-agent=<version>` (add
+# --allow-downgrades for an older one) still works: the version named on the
+# command line wins over any pin, and this script then pins the new version.
+#
+# Why not apt-mark hold: it runs dpkg --set-selections / writes the dpkg status
+# while dpkg holds its own lock - from a maintainer script that waits for
+# itself. A plain file in preferences.d has no such problem.
+#
+# Only for deb (first argument "configure"): apt-based systems only. The
+# installed version comes from dpkg-query; if that fails, nothing is pinned.
+pin_apt() {
+	[ "${1:-}" = configure ] || return 0
+	[ -d "$ROOT/etc/apt" ] || return 0
+	_v=$(dpkg-query -W -f='${Version}' lcm-agent 2>/dev/null) || return 0
+	[ -n "$_v" ] || return 0
+	mkdir -p "$ROOT/etc/apt/preferences.d" || return 0
+	_pin="$ROOT/etc/apt/preferences.d/lcm-agent"
+	{
+		echo "# Written by the lcm-agent package: keeps lcm-agent at the installed version."
+		echo "# LCM updates it on purpose: apt-get install lcm-agent=<version>. Removed with the package."
+		echo "Package: lcm-agent"
+		echo "Pin: version $_v"
+		echo "Pin-Priority: 1001"
+	} >"$_pin.tmp" || return 0
+	mv -f "$_pin.tmp" "$_pin" || rm -f "$_pin.tmp"
+}
+
 # pkg_kind names the package format from the arguments (see the table above):
 # deb, rpm, apk or pacman. apk and pacman both pass a version; only apk has
 # /etc/apk.
@@ -144,8 +188,7 @@ pkg_kind() {
 
 # pin_dnf adds lcm-agent to the exclude list of the repo file written by the
 # repository's setup script. dnf then leaves the agent out of upgrade and
-# install; an update by hand lifts the exclude of this one repo
-# (--setopt=disable_excludes=techeve-lcm).
+# install; LCM disables the exclude of this one repo for its own installs.
 # Only the section [techeve-lcm] counts (the file may hold more repositories),
 # and only the exact package name: lcm-agent-foo is not lcm-agent.
 # Nothing happens without the repo file (installed from a downloaded rpm).
@@ -176,9 +219,9 @@ pin_dnf() {
 }
 
 # pin_zypper locks the package (what `zypper addlock lcm-agent` writes). A
-# locked package is skipped by zypper update; an update by hand lifts the lock
-# around the install and sets it again. The file is written directly: zypper
-# holds its own lock during the transaction that runs this script.
+# locked package is skipped by zypper update; LCM lifts the lock around its own
+# install and sets it again. The file is written directly: zypper holds its own
+# lock during the transaction that runs this script.
 pin_zypper() {
 	[ -d "$ROOT/etc/zypp" ] || return 0
 	_locks="$ROOT/etc/zypp/locks"
@@ -187,8 +230,8 @@ pin_zypper() {
 }
 
 # pin_pacman adds IgnorePkg = lcm-agent to the [options] section: pacman -Syu
-# skips the agent with a warning, while pacman -S lcm-agent and pacman -U still
-# install it.
+# skips the agent with a warning, while pacman -S lcm-agent and pacman -U (what
+# LCM runs) still install it.
 pin_pacman() {
 	_conf="$ROOT/etc/pacman.conf"
 	[ -f "$_conf" ] || return 0
@@ -218,50 +261,9 @@ hint_apk() {
 	grep -qs '^lcm-agent=' "$_world" && return 0
 	_v=${1%-r[0-9]*}
 	if [ "$(lcm_lang)" = "de" ]; then
-		echo "lcm-agent: apk upgrade wuerde den Agent mitaktualisieren. Version halten: apk add lcm-agent=$_v."
+		echo "lcm-agent: apk upgrade wuerde den Agent mitaktualisieren. Version halten: apk add lcm-agent=$_v (LCM haelt ihn bei jedem Update selbst)."
 	else
-		echo "lcm-agent: apk upgrade would update the agent with the system. To keep this version: apk add lcm-agent=$_v."
-	fi
-}
-
-# under_agent tells whether this script runs inside a command of the agent:
-# lcm-agent is one of its ancestors. That is the case when LCM patches this
-# server through the agent.
-under_agent() {
-	_pid=$$
-	while [ "${_pid:-0}" -gt 1 ]; do
-		[ "$(cat "$ROOT/proc/$_pid/comm" 2>/dev/null)" = "lcm-agent" ] && return 0
-		_pid=$(awk '$1 == "PPid:" { print $2 }' "$ROOT/proc/$_pid/status" 2>/dev/null) || _pid=0
-	done
-	return 1
-}
-
-# restart_after_upgrade brings a running agent onto the new binary.
-#
-# Not from inside one of its commands: A restart stops the unit, and systemd
-# kills the whole control group with it - this package transaction included,
-# dpkg would be left half-configured. The running agent notices the new
-# binary itself and switches to it (exec, same PID) once its command has
-# finished and the result is delivered. That is the only moment that is safe
-# for sure; a delayed restart from here (systemd-run --on-active, try-restart
-# --no-block) can only guess it.
-#
-# Outside the agent (an admin runs apt), restarting right away is safe.
-restart_after_upgrade() {
-	if under_agent; then
-		if [ "$(lcm_lang)" = "de" ]; then
-			echo "lcm-agent: Der Agent wechselt auf die neue Version, sobald das laufende LCM-Kommando fertig ist."
-		else
-			echo "lcm-agent: the agent switches to the new version once the running LCM command has finished."
-		fi
-		return 0
-	fi
-	if [ -d "$ROOT/run/systemd/system" ]; then
-		systemctl try-restart lcm-agent.service >/dev/null 2>&1 || true
-	elif command -v rc-service >/dev/null 2>&1; then
-		if rc-service lcm-agent status >/dev/null 2>&1; then
-			rc-service lcm-agent restart >/dev/null 2>&1 || true
-		fi
+		echo "lcm-agent: apk upgrade would update the agent with the system. To keep this version: apk add lcm-agent=$_v (LCM does this itself on every update)."
 	fi
 }
 
@@ -269,10 +271,11 @@ if [ -d "$ROOT/run/systemd/system" ]; then
 	systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 
+pin_apt "${1:-}" || true
 pin_manager "${1:-}" || true
 
 if is_upgrade "${1:-}" "${2:-}"; then
-	restart_after_upgrade
+	tell_upgrade
 else
 	hint_apk "${1:-}" || true
 fi

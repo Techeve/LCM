@@ -6,7 +6,7 @@ description: What LCM is, the problems it solves and how it is roughly structure
 ---
 
 **LCM (Linux Centralized Management)** manages any number of Linux servers
-centrally over SSH - with no agent on the target systems. Backend (Go) and
+centrally over SSH, or with a lightweight agent if you prefer. Backend (Go) and
 frontend (Lit) ship as **a single binary** that keeps its data in a local
 SQLite file.
 
@@ -14,13 +14,15 @@ SQLite file.
 
 ## Why LCM?
 
-- **Agentless.** Nothing needs to be installed on the managed servers. LCM
-  connects over SSH, reads the state and runs actions as a dedicated service
-  user.
+- **No agent required.** Nothing needs to be installed on the managed servers.
+  LCM connects over SSH, reads the state and runs actions as a dedicated
+  service user. Servers behind NAT or without inbound SSH connect outbound
+  with the `lcm-agent` instead ([LCM Remote](/en/guides/remote/)).
 - **Zero trust per server.** Every server gets its **own** SSH key pair during
   onboarding. A compromised key never endangers the whole fleet.
 - **One binary, no runtime dependencies.** Copy, start, done - on Debian and
-  Ubuntu (other Linux distributions work but are not part of our testing).
+  Ubuntu or in Docker. The RHEL family, openSUSE, Arch Linux and Alpine can be
+  managed too ([Supported systems](/en/reference/supported-systems/)).
 - **Security built in.** Sensitive data is stored AES-256-GCM-encrypted in the
   database; access is protected by RBAC and optional 2FA.
 

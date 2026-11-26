@@ -56,6 +56,11 @@ export function causeText(errorClass: string, params: Record<string, string> = {
   return t(`insights.cause.${variant}`, { ...params, process });
 }
 
+/** Ursache einer Trennung des Agents (ping, network, takeover) als Text; Unbekanntes bleibt, wie es kommt. */
+export function disconnectText(cause: string): string {
+  return i18n.tryT(`insights.disconnect.${cause}`) ?? cause;
+}
+
 /** Zählangaben müssen Zahlen sein, damit der Katalog die Pluralform wählt (der Server liefert Text). */
 function typed(params: Record<string, string>): Params {
   const result: Params = { ...params };
@@ -63,10 +68,11 @@ function typed(params: Record<string, string>): Params {
   return result;
 }
 
-/** Ergänzt `duration` (aus `since`) sowie `cause` und `job` (aus `causeKey`, nur bei Handlungsunfähigkeit). */
+/** Ergänzt `duration` (aus `since`), `reason` (aus `disconnect`) sowie `cause` und `job` (aus `causeKey`, nur bei Handlungsunfähigkeit). */
 function withDerived(params: Record<string, string>, now: number): Params {
   const result = typed(params);
   if (params.since) result.duration = durationSince(params.since, now);
+  if (params.disconnect !== undefined) result.reason = disconnectText(params.disconnect);
   if (params.causeKey !== undefined) {
     result.cause = causeText(params.causeKey, params);
     result.job = params.job ? t('insights.jobSuffix', { job: params.job }) : '';

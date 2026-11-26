@@ -9,8 +9,8 @@ Out of the box LCM speaks HTTPS with a certificate from its own certificate
 authority. That certificate names only `localhost` and `127.0.0.1`, so every
 browser that opens LCM under a real name shows a warning. If you run LCM without
 a reverse proxy, you either install a certificate of your own or let LCM fetch
-and renew one from Let's Encrypt. A reverse proxy is still possible, but no
-longer required
+and renew one from Let's Encrypt. A reverse proxy is possible, but not
+required
 ([Reverse proxy & external hardening](/en/guides/reverse-proxy/)). You choose
 which names and ports LCM uses with the address mode
 ([Public addresses & address mode](/en/guides/adressen/)).
@@ -269,7 +269,7 @@ LCM from the internet**.
 - **It answers open checks only.** For `GET /.well-known/acme-challenge/<token>`
   with a token that is open right now, it returns the answer. Everything else
   (other paths, methods, tokens) it ends without a reply, as if nothing were
-  there. There is no redirect to the web UI any more. The allowed networks do not
+  there. The allowed networks do not
   apply to it: it answers the check from any network.
 - Port 80 needs the permission for ports below 1024. The service file
   `lcm.service` brings it along ([Freeing port 80 and 443](#freeing-port-80-and-443)).
@@ -486,7 +486,7 @@ of your own fits its name.
 Without root rights a service may open ports below 1024 only with an extra
 permission. The `lcm.service` file shipped with LCM grants exactly this one
 capability (`CAP_NET_BIND_SERVICE`). You need not set anything, and a drop-in
-(`systemctl edit lcm`) is no longer needed. All other hardening in the service
+(`systemctl edit lcm`) is not needed. All other hardening in the service
 file stays. LCM needs the capability for two things:
 
 - **Port 443**, if you choose mode C or put the web UI itself on 443
@@ -525,7 +525,7 @@ on where the certificate comes from.
   sudo lcm-agent enroll https://agent.example.com <token>
   ```
 
-- **Your own (private) certificate authority.** The server's token now carries,
+- **Your own (private) certificate authority.** The server's token carries,
   besides the fingerprint of the certificate, the certificate authority that
   issued it and LCM's own authority. A **new agent** that you set up with such a
   token pins the private authority. After that every certificate from it **that

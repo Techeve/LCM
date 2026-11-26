@@ -290,7 +290,7 @@ Structure (DE + EN each):
 | **Getting started** | overview, installation, quickstart |
 | **Guides** | monitoring, groups/rules, security & CVE, Docker, APT cache, Linux users, backups, alerts |
 | **Examples** | typical workflows step by step |
-| **Reference** | architecture, database & migrations, frontend & API, security model, dependencies & supply chain, packaging, CI/CD & releases |
+| **Reference** | architecture, database & migrations, frontend & API, security model, dependencies & supply chain, packaging |
 
 ## Open source & contributing
 
@@ -332,9 +332,9 @@ snapshot of the `community` and `beta` branches on every release:
   updates (no grace period, after a green pipeline) and patches from
   publishers with a solid release process are auto-merged
   ([rationale](docs/reference/dependencies.md)). Runs as a CI image only - not
-  a project dependency. Details: [docs/reference/ci-release.md](docs/reference/ci-release.md).
+  a project dependency.
 - **Automated releases**: commits follow
-  [Conventional Commits](docs/reference/ci-release.md) (`feat:`, `fix:`,
+  [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`,
   `feat!:` …). Version and [CHANGELOG.md](CHANGELOG.md) are prepared on
   `develop` with `make prepare-release` - so they are part of exactly the
   commit that will be tagged. On merge into a channel branch the pipeline

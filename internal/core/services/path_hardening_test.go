@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,7 +141,8 @@ func TestDienstausfallStelltGruppeUndModusHer(t *testing.T) {
 	cmd := exec.Command("sh", "-c", hardenScript(dir, otherGroup(t, before), "nginx"))
 	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin"}
 	out, err := cmd.CombinedOutput()
-	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 {
 		t.Fatalf("dienstprobe sollte mit exit 2 zurücknehmen: %v\n%s", err, out)
 	}
 	if after := pathStat(t, dir); after != before {
@@ -268,6 +270,21 @@ func TestVorschlaegeSindEinePositivliste(t *testing.T) {
 	// Symlinks bleiben außen vor.
 	if !strings.Contains(script, `[ -L "$d" ] && continue`) {
 		t.Errorf("symlinks werden nicht übersprungen: %s", script)
+	}
+}
+
+// TestVorschlagsSkriptHatKeineFormatfehler: Das Skript läuft durch Sprintf;
+// ein ungeschütztes % im Shell-Teil landet als %!a(...) oder %!G(MISSING) auf
+// dem Server, und stat liefert keine Rechte mehr.
+func TestVorschlagsSkriptHatKeineFormatfehler(t *testing.T) {
+	script := hardenSuggestScript()
+	if strings.Contains(script, "%!") {
+		t.Errorf("Formatfehler im Skript: %s", script)
+	}
+	for _, want := range []string{"stat -c '%a'", "stat -c '%G'", "LCM-KAND|daten|", "LCM-KAND|konfig|"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("%q fehlt im Skript: %s", want, script)
+		}
 	}
 }
 

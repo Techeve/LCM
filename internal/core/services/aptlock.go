@@ -30,6 +30,17 @@ import "strconv"
 //     unangetastet, der Lauf endet dann mit aptLockBusyExit.
 //   - lcm_apt_update begrenzt `apt-get update` zeitlich, damit es gar nicht
 //     erst zum dauerhaften Sperrenhalter werden kann.
+//   - lcm_dpkg_repair schließt angebrochene Installationen ab, bevor lcm_apt
+//     etwas Verändertes beginnt: Ein Lauf, der mitten in dpkg endete
+//     (abgebrochen, Agent oder Rechner gestorben), hinterlässt halb
+//     konfigurierte Pakete, an denen jedes weitere apt scheitert. Bei lesenden
+//     Befehlen (update, list, ...) und Simulationen entfällt es; lcm_apt_mutates
+//     nennt die lesenden, alles andere gilt als verändernd (so steht kein
+//     Installationsverb im Vorspann, und Tests können an einem Skript ablesen,
+//     dass es nichts installiert). dpkg läuft mit Zeitgrenze und --force-confold
+//     (nie eine Rückfrage zu Konfigurationsdateien). Meldet dpkg nur Pakete im
+//     Zustand reinstreq, hilft --configure nicht: Dann bleibt es bei einem
+//     Eintrag im Protokoll.
 
 // aptLockWaitSeconds ist die Frist, die ein Lauf auf belegte Sperren wartet.
 const aptLockWaitSeconds = 600
@@ -38,6 +49,12 @@ const aptLockWaitSeconds = 600
 // langsamen Cache ist ein Update nach wenigen Minuten durch; wer länger
 // braucht, hängt.
 const aptUpdateTimeoutSeconds = 900
+
+// dpkgRepairTimeoutSeconds begrenzt `dpkg --configure -a` im Vorspann. Ein
+// Paket, dessen Konfigurationsskript hängt, soll den Lauf nicht für immer
+// festhalten; dpkg räumt beim Abbruch selbst auf, das nächste Mal macht es dort
+// weiter.
+const dpkgRepairTimeoutSeconds = 1800
 
 // aptLockBusyExit ist der Exit-Code „apt ist belegt" (EX_TEMPFAIL). Er
 // unterscheidet sich bewusst von apts eigener 100: Gegen eine fremde Sperre
@@ -101,8 +118,39 @@ lcm_apt_wait() {
     w=$((w + 5))
   done
 }
+lcm_dpkg_repair() {
+  __audit=$(LC_ALL=C dpkg --audit 2>/dev/null)
+  [ -n "$__audit" ] || return 0
+  __heads=$(printf '%s\n' "$__audit" | grep '^The following packages')
+  if [ -n "$__heads" ] && [ -z "$(printf '%s\n' "$__heads" | grep -v 'in a mess')" ]; then
+    echo "LCM: dpkg meldet nur Pakete, die neu eingespielt werden muessen (reinstreq) - dpkg --configure -a hilft dort nicht und wird uebersprungen:"
+    printf '%s\n' "$__audit"
+    return 0
+  fi
+  echo "LCM: dpkg meldet angebrochene Pakete - sie werden abgeschlossen (dpkg --configure -a)"
+  printf '%s\n' "$__audit"
+  DEBIAN_FRONTEND=noninteractive timeout -k 30 ` + strconv.Itoa(dpkgRepairTimeoutSeconds) + ` dpkg --force-confold --configure -a
+  __drc=$?
+  [ $__drc -eq 124 ] && echo "LCM: dpkg --configure -a nach ` + strconv.Itoa(dpkgRepairTimeoutSeconds/60) + ` Minuten abgebrochen"
+  [ $__drc -eq 0 ] || echo "LCM: dpkg --configure -a endete mit Exit-Code $__drc"
+  return 0
+}
+lcm_apt_mutates() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -s|--simulate|--just-print|--dry-run|--recon|--no-act) return 1 ;;
+      -o|-t|-c|-a|-e) shift ;;
+      -*) ;;
+      update|list|show|showsrc|search|policy|depends|rdepends|download|source|check|clean|autoclean|changelog|indextargets) return 1 ;;
+      *) return 0 ;;
+    esac
+    shift
+  done
+  return 1
+}
 lcm_apt() {
   lcm_apt_wait || return
+  lcm_apt_mutates "$@" && lcm_dpkg_repair
   DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60 \
     ${LCM_APT_PHASED:+-o APT::Get::Always-Include-Phased-Updates=true} "$@"
 }

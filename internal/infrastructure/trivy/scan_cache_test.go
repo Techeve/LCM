@@ -203,12 +203,12 @@ func TestScanCacheZaehltTrefferUndFehlgriffe(t *testing.T) {
 func TestScanCacheZaehlerUeberlebenDenDatenbankWechsel(t *testing.T) {
 	var c scanCache
 	old := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
-	new := old.Add(6 * time.Hour)
+	newer := old.Add(6 * time.Hour)
 
 	c.put(old, "k", nil)
 	c.get(old, "k") // Treffer
 
-	c.put(new, "k", nil) // neuer Stand: Einträge verfallen
+	c.put(newer, "k", nil) // neuer Stand: Einträge verfallen
 	st := c.stats()
 	if st.Hits != 1 {
 		t.Errorf("Treffer-Zähler wurde zurückgesetzt: %d", st.Hits)

@@ -39,7 +39,7 @@ Allgemein* einen Namen einträgst.
 
 ## Verschlüsselung und Adresse
 
-MCP spricht **immer HTTPS**, einen Schalter dafür gibt es nicht mehr. LCM wählt
+MCP spricht **immer HTTPS**, einen Schalter dafür gibt es nicht. LCM wählt
 das Zertifikat aus dem Pool nach dem Namen, unter dem der Client MCP aufruft.
 Der Listener bindet an dieselbe Adresse wie die Weboberfläche (`host` in der
 `config.json`), ein eigenes Feld dafür gibt es nicht. Clients rufen
@@ -148,10 +148,10 @@ Mehrere Instanzen lassen sich parallel eintragen - jede mit eigenem Key:
 ```json
 {
   "mcpServers": {
-    "lcm-prod": {
+    "lcm-main": {
       "type": "http",
       "url": "https://mcp.example.com/mcp",
-      "headers": { "Authorization": "Bearer <PROD_KEY>" }
+      "headers": { "Authorization": "Bearer <MAIN_KEY>" }
     },
     "lcm-lab": {
       "type": "http",
@@ -162,7 +162,7 @@ Mehrere Instanzen lassen sich parallel eintragen - jede mit eigenem Key:
 }
 ```
 
-(Die `lcm-prod`-URL steht hier für Modus C auf dem gemeinsamen Port 443, `lcm-lab`
+(Die `lcm-main`-URL steht hier für Modus C auf dem gemeinsamen Port 443, `lcm-lab`
 für eigene Ports.)
 
 Direkt testen (JSON-RPC 2.0 über curl). Trägt der Name kein Zertifikat einer
@@ -203,5 +203,5 @@ curl -s --cacert lcm-ca.pem https://lcm.example.com:9330/mcp \
   **405 Method Not Allowed**.
 - Schalter und Port sind jederzeit zur Laufzeit umschaltbar, ohne Neustart der
   Anwendung. Der Port steht in *Einstellungen → Allgemein*.
-- Über die API (`PUT /api/v1/settings/mcp`) nimmt LCM nur noch `enabled` an.
-  `bind_host`, `port` und `tls` älterer Clients überliest es.
+- Über die API (`PUT /api/v1/settings/mcp`) nimmt LCM nur `enabled` an.
+  Andere Felder überliest es.

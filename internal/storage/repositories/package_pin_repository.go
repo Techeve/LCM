@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"errors"
 	"strings"
 
 	"gorm.io/gorm"
@@ -58,7 +59,7 @@ func (r *PackagePinRepository) Create(pin *domain.PackagePin) error {
 		*pin = existing
 		return nil
 	}
-	if err != gorm.ErrRecordNotFound {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
 	return r.db.Create(pin).Error

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/crypto"
@@ -40,6 +41,8 @@ type ProvisioningService struct {
 	// profiles liefert die Berechtigungsprofile. Optional; ohne sie fällt der
 	// Sync auf das alte sudo-Bit zurück.
 	profiles *repositories.PrivilegeProfileRepository
+	// reconciles zählt die laufenden Abgleiche im Hintergrund (ReconcileServer).
+	reconciles sync.WaitGroup
 }
 
 // WithProfiles verdrahtet die Berechtigungsprofile. Optional, damit schlanke

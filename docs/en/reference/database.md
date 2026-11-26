@@ -15,7 +15,7 @@ The connection (`internal/storage/database.go`) enables production-relevant prag
 - `busy_timeout(5000)` - waits instead of an immediate `database is locked`
 - `foreign_keys(1)` - referential integrity
 
-The DB path comes from `config.json` (`database_path`, default `app.db` next to the binary). Tests use `:memory:`.
+The DB path comes from `config.json` (`database_path`, default `app.db`, relative to the data directory unless absolute). Tests use `:memory:`.
 
 ## Migrations
 
@@ -40,7 +40,7 @@ For everything AutoMigrate cannot do - rewriting data, backfills, destructive re
 
 Some rebuilds cannot be done by SQLite via `ALTER` and cannot be detected by AutoMigrate - above all the **type change of a primary key**. Such steps run as an idempotent function **before** `autoMigrate()` in `storage.Migrate()`; they detect the old schema themselves and are a no-op on fresh or already-migrated databases. Model: `migrateRulesToSchedules` (checking a schema column) and `migrateToUUID`.
 
-**UUID migration (v0.2.0, `internal/storage/migrate_uuid.go`):** The log and inventory tables (`jobs`, `audit_logs`, `packages`, `ssh_sessions`, `ssh_commands`; since v0.10.0 following the same pattern also `alert_events`, see `internal/storage/migrate_alert_events.go`) carry **UUID primary keys** instead of sequential numbers - not guessable, and without revealing volume. The migration reads the old rows, drops the tables (child before parent), recreates them in the new schema, and writes the rows back with new UUIDs; the foreign keys between them (`ssh_sessions.job_id`, `ssh_commands.ssh_session_id`) are remapped consistently - lossless, all in **one** transaction (`defer_foreign_keys`). Because UUIDs are not sortable, the repositories sort chronologically by `created_at`/`opened_at` with `rowid` as a unique tiebreaker; the audit log gets a monotonic `seq` column (carried over from the old id) that preserves the order of the hash chain.
+**UUID primary keys:** The log and inventory tables (`jobs`, `audit_logs`, `packages`, `ssh_sessions`, `ssh_commands`, `alert_events`) carry UUIDs instead of sequential numbers - not guessable, and without revealing volume. Because UUIDs are not sortable, the repositories sort chronologically by `created_at`/`opened_at` with `rowid` as a unique tiebreaker; the audit log has a monotonic `seq` column that preserves the order of the hash chain.
 
 ## Update migration system (version-based)
 
@@ -61,7 +61,7 @@ On startup (after `Migrate()`, before `Seed()`) `storage.RunUpdateMigrations()` 
 | **First start** (no DB, no version file) | `version.json` is created with the binary version. Migrations do not run - the fresh DB is already current (the registry is logged as a *baseline*). |
 | **Same version** | Nothing to do. |
 | **Newer binary version** (update applied) | The update is logged (`update erkannt - von 1.0.0 auf 1.2.0`). All not-yet-run migrations up to and including the new version are executed in SemVer order. Afterwards `version.json` is advanced. |
-| **DB present, but no version file** | An update from a state before the file was introduced - all pending migrations run, and the file is created. |
+| **DB present, but no version file** | All pending migrations run, and the file is created. |
 
 **Skipped versions are not a problem:** jumping from 1.0.0 straight to 1.3.0 runs the migrations for 1.1.0, 1.2.0, and 1.3.0 one after another. Each migration runs in its own transaction together with its log entry in the `update_migrations` table - if it fails, the start aborts and nothing is half-applied. The DB log is the second safeguard alongside the version file: even if `version.json` is deleted, no migration runs twice.
 
@@ -83,7 +83,7 @@ Over time more and more scripts are added; the SemVer sorting guarantees the cor
 
 Typical flow when releasing a new version that needs data adjustments - as a concrete example the real v0.5.0 case (storage history: existing installations get the retention default):
 
-1. Determine the target version: `make next-version` shows which version the release pipeline will compute from the Conventional Commits (the `VERSION` file itself is maintained automatically by the release bot, see [CI & Release](/en/reference/ci-release/)). A migration belongs to a `feat:` or `feat!:` commit - the target version is therefore the next minor or major version.
+1. Determine the target version: `make next-version` shows which version the release pipeline will compute from the Conventional Commits. A migration belongs to a `feat:` or `feat!:` commit - the target version is therefore the next minor or major version.
 2. Make the schema change in the domain struct (the field `StorageHistoryRetentionDays` in `domain.Settings`) - AutoMigrate creates the new columns automatically on startup.
 3. Create a new file in the migrations folder, `v0_5_0_storage.go`, that registers itself via `init()`:
 

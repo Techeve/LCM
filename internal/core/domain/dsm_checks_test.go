@@ -64,7 +64,7 @@ func TestDSMSpeicherBefundMitEigenemSchluessel(t *testing.T) {
 	}})
 	disk := findInsight(insights, "dsmDiskFailed")
 	if disk == nil || disk.Severity != "critical" || disk.Params["name"] != "Drive 2" || disk.Params["rawState"] != "crashed" {
-		t.Errorf("Plattenausfall falsch: %+v", disk)
+		t.Fatalf("Plattenausfall falsch: %+v", disk)
 	}
 	if !strings.HasPrefix(disk.Message, "Laufwerk Drive 2") {
 		t.Errorf("Klartext ohne Art und Namen: %q", disk.Message)

@@ -26,7 +26,7 @@ func monotonic() time.Duration {
 // selfUsage rechnet die eigene CPU-Zeit in Mengen je Intervall um.
 type selfUsage struct{ last time.Duration }
 
-func (u *selfUsage) cpuSince(time.Duration) float64 {
+func (u *selfUsage) cpuSince() float64 {
 	var ru syscall.Rusage
 	if syscall.Getrusage(syscall.RUSAGE_SELF, &ru) != nil {
 		return 0

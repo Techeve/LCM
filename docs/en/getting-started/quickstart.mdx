@@ -75,6 +75,33 @@ import { Steps } from '@astrojs/starlight/components';
      in it would point at nothing without the program. What was installed is
      recorded in the onboarding log.
 
+   All access variants (root, sudo, su), restricted mode and the pitfalls per
+   distribution are explained in [SSH connection](/en/guides/ssh/).
+
+   **Instead of SSH: agent mode.** For servers behind NAT or without inbound SSH
+   access, choose the **Agent** mode in the dialog and enter just a name. LCM
+   creates the server and shows three commands to run on it (from LCM 2.4 the dialog picks the install command to match the system):
+
+   ```sh
+   # 1. Set up the package source (detects apt, dnf, zypper, apk and pacman)
+   curl -fsSL https://repo.techeve.de/setup.sh | sudo sh
+
+   # 2. Install the agent - the command depends on the package manager
+   sudo apt install lcm-agent                                         # Debian, Ubuntu
+   sudo dnf install --setopt=disable_excludes=techeve-lcm lcm-agent   # RHEL, Fedora, Rocky, Alma
+   sudo zypper install lcm-agent                                      # openSUSE
+   sudo apk add lcm-agent                                             # Alpine
+   sudo pacman -Syu lcm-agent                                         # Arch Linux
+
+   # 3. Connect to LCM (agent port, token from the dialog)
+   sudo lcm-agent enroll https://lcm.example.com:9320 <token>
+   ```
+
+   The server then goes online and the first scan starts on its own. The agent
+   never updates itself on the side: a system update leaves it on its version,
+   and new versions come from LCM by button or group rule (from LCM 2.4). More
+   under [LCM Remote](/en/guides/remote/).
+
 3. **Check the status and details.**
 
    The server appears with a 🟢🟡🔴 status in the overview. A click opens the
@@ -99,7 +126,8 @@ import { Steps } from '@astrojs/starlight/components';
 ## What happens behind the scenes
 
 During onboarding and on every health check, LCM opens a **short-lived SSH
-connection**, reads the state and records each action as a **job** with exact
+connection** (on an agent server it sends the commands over the agent's
+connection), reads the state and records each action as a **job** with exact
 console output. The system group already ships two baseline schedules for
 this: a **health check** every 15 minutes and a daily **system sync**
 (hardware, packages, Docker check).
@@ -107,5 +135,6 @@ this: a **health check** every 15 minutes and a daily **system sync**
 ## Next steps
 
 - [Understand monitoring](/en/guides/monitoring/)
+- [LCM Remote: servers with an agent](/en/guides/remote/)
 - [Examples: typical workflows](/en/examples/)
 - [Set up backups](/en/guides/backups/)

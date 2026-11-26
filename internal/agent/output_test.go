@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -24,13 +26,18 @@ func escapeHeavy(n int) []byte {
 // steht der Hinweis.
 func TestFitOutputBleibtUnterDemLimit(t *testing.T) {
 	const limit = 64 * 1024
-	b := &limitedBuffer{max: 48 * 1024} // roh unter dem Limit, kodiert weit darüber
-	_, _ = b.Write([]byte("ANFANG"))
-	_, _ = b.Write(escapeHeavy(200 * 1024))
-	_, _ = b.Write([]byte("ENDE"))
+	// Roh unter dem Limit, kodiert weit darüber.
+	path := filepath.Join(t.TempDir(), "out")
+	raw := append(append([]byte("ANFANG"), escapeHeavy(200*1024)...), "ENDE"...)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	head, tail, omitted, err := readOutput(path, 48*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	res := wire.Result{ID: "id-1", ExitCode: 0}
-	head, tail, omitted := b.parts()
 	fitOutput(&res, head, tail, omitted, limit)
 
 	payload, err := json.Marshal(res)
@@ -87,7 +94,7 @@ func TestRunnerErgebnisPasstInsPaket(t *testing.T) {
 	if testing.Short() {
 		t.Skip("erzeugt 5 MB Ausgabe")
 	}
-	r := NewRunner()
+	r := NewRunner().WithJobsDir(t.TempDir())
 	res := r.Run(wire.Command{ID: "esc", Cmd: `head -c 5000000 /dev/zero | tr '\0' '\033'; echo SCHLUSS`}, nil)
 	payload, err := json.Marshal(res)
 	if err != nil {

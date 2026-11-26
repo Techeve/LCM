@@ -75,6 +75,33 @@ func TestUpdateComposeProjectRunsPullUp(t *testing.T) {
 	}
 }
 
+// TestUpdateComposeProjectRestricted: Das Compose-Update aus der Detailansicht
+// läuft auf einem eingeschränkten Server über den docker-Shim - Verzeichnis und
+// Datei gehen als Argumente an Docker, ein cd gibt es nicht.
+func TestUpdateComposeProjectRestricted(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinDockerServer(t, env, "docker01")
+	setServerFields(t, env, id, map[string]any{"restricted_sudo": true})
+
+	env.Dialer.Commands = nil
+	if _, err := env.Servers.UpdateComposeProject(repositories.ScopeAll(), id, "webshop", "", "admin"); err != nil {
+		t.Fatalf("compose-update: %v", err)
+	}
+	done := waitServerJob(t, env, id, domain.RuleTypeDockerUpdate)
+	if done.Status != domain.JobStatusSuccess {
+		t.Fatalf("job nicht erfolgreich: %+v", done)
+	}
+	all := strings.Join(env.Dialer.Commands, "\n")
+	for _, want := range []string{"/.lcm/sudo-bin:", "--project-directory", "/opt/webshop/compose.yaml", "pull", "up -d"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("%q fehlt:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "sudo sh -c") || strings.Contains(all, "cd '/opt/webshop'") {
+		t.Errorf("weder sudo sh noch cd im eingeschränkten Modus:\n%s", all)
+	}
+}
+
 // TestUpdateComposeProjectValidatesAgainstInventory: unbekannte Projekte
 // und ungültige Namen starten keinen Job.
 func TestUpdateComposeProjectValidatesAgainstInventory(t *testing.T) {

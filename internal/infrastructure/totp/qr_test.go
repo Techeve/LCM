@@ -102,18 +102,18 @@ func TestCodewordsGolden(t *testing.T) {
 func TestVersionSelection(t *testing.T) {
 	for version := 1; version <= len(qrVersionSpecs); version++ {
 		spec := qrVersionSpecs[version-1]
-		max := (spec.dataCodewords*8 - 4 - qrCharCountBits(version)) / 8
-		if got, err := qrVersionFor(max); err != nil || got != version {
-			t.Errorf("länge %d: version %d, err %v - erwartet %d", max, got, err, version)
+		maxLen := (spec.dataCodewords*8 - 4 - qrCharCountBits(version)) / 8
+		if got, err := qrVersionFor(maxLen); err != nil || got != version {
+			t.Errorf("länge %d: version %d, err %v - erwartet %d", maxLen, got, err, version)
 		}
 		if version == len(qrVersionSpecs) {
-			if _, err := qrVersionFor(max + 1); err == nil {
+			if _, err := qrVersionFor(maxLen + 1); err == nil {
 				t.Error("überlange inhalte müssen einen fehler liefern")
 			}
 			continue
 		}
-		if got, _ := qrVersionFor(max + 1); got != version+1 {
-			t.Errorf("länge %d: version %d - erwartet %d", max+1, got, version+1)
+		if got, _ := qrVersionFor(maxLen + 1); got != version+1 {
+			t.Errorf("länge %d: version %d - erwartet %d", maxLen+1, got, version+1)
 		}
 	}
 }

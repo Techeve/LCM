@@ -1,16 +1,23 @@
 #!/bin/sh
-# agent-postremove - cleans up after removal. On "purge" the enrollment
-# configuration (holding the connection secret) is removed as well; a plain
-# "remove" keeps it for a reinstall.
+# agent-postremove - cleans up after removal. On every real removal the apt pin
+# (/etc/apt/preferences.d/lcm-agent, see agent-postinstall.sh) and the update
+# state with the previous binary go: a pin for a package that is gone would
+# force exactly this version on the next install, and an old previous binary
+# must not become the way back of a later installation.
+#
+# On "purge" the enrollment configuration (holding the connection secret) and
+# the job store are removed as well; a plain "remove" keeps them for a reinstall
+# (the job store may still hold the result of a command that finished after the
+# removal).
 #
 # Only deb knows "purge". rpm calls this script with 0 (removal) or 1
 # (upgrade), apk and pacman with the old version, and only on removal - none
 # of them removes the configuration. An upgrade (deb "upgrade", rpm 1) keeps
-# everything: the new package has just written its own hold.
+# everything: the new package has just written its own pin.
 #
 # The holds that agent-postinstall.sh wrote for rpm and pacman go with the
-# package on a real removal (dnf exclude, zypper lock, pacman IgnorePkg): they
-# would otherwise stay behind for a package that is no longer there, and a later
+# package as well (dnf exclude, zypper lock, pacman IgnorePkg): they would
+# otherwise stay behind for a package that is no longer there, and a later
 # install by hand would find itself held.
 #
 # LCM_PKG_ROOT is for packaging/scripts/agent-scripts-test.sh only.
@@ -22,7 +29,7 @@ if [ -d "$ROOT/run/systemd/system" ]; then
 	systemctl daemon-reload >/dev/null 2>&1 || true
 fi
 
-# is_removal tells a real removal from an upgrade (see the header).
+# is_removal tells a real removal from an upgrade (see the table above).
 is_removal() {
 	case "$1" in
 	remove | purge | 0 | "") return 0 ;;
@@ -102,13 +109,15 @@ unpin_pacman() {
 }
 
 if is_removal "${1:-}"; then
+	rm -f "$ROOT/etc/apt/preferences.d/lcm-agent" "$ROOT/etc/apt/preferences.d/lcm-agent.tmp"
+	rm -rf "$ROOT/var/lib/lcm-agent/update"
 	unpin_dnf || true
 	unpin_zypper || true
 	unpin_pacman || true
 fi
 
 if [ "${1:-}" = "purge" ]; then
-	rm -rf "$ROOT/etc/lcm-agent"
+	rm -rf "$ROOT/etc/lcm-agent" "$ROOT/var/lib/lcm-agent"
 fi
 
 exit 0

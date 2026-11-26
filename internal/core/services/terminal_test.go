@@ -2,8 +2,10 @@ package services_test
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
+	"LCM/internal/core/agentcaps"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/services"
 	"LCM/internal/storage/repositories"
@@ -201,5 +203,103 @@ func TestKonsoleAgentNachFaehigkeit(t *testing.T) {
 	_, err = env.Servers.OpenTerminal(repositories.ScopeAll(), server.ID, "admin", "", 80, 24)
 	if errors.Is(err, services.ErrTerminalAgentOutdated) || errors.Is(err, services.ErrTerminalAgentDisabled) || errors.Is(err, services.ErrTerminalNotPossible) {
 		t.Errorf("mit fähigkeit trotzdem abgewiesen: %v", err)
+	}
+}
+
+// TestKonsoleAgentUnterMindestversion: Unter der Mindestversion bietet LCM nichts
+// mehr an, auch wenn der Agent die Fähigkeit meldet.
+func TestKonsoleAgentUnterMindestversion(t *testing.T) {
+	env := newTestEnv(t)
+	schalteKonsole(t, env, true)
+	server, _, err := env.Servers.CreateAgentServer("agent01", "tester", "lcm.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.DB().Model(&domain.Server{}).Where("id = ?", server.ID).
+		Updates(map[string]any{"agent_version": "1.48.1", "agent_capabilities": "tty"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Servers.OpenTerminal(repositories.ScopeAll(), server.ID, "admin", "", 80, 24); !errors.Is(err, services.ErrTerminalAgentOutdated) {
+		t.Errorf("erwartet ErrTerminalAgentOutdated, bekam %v", err)
+	}
+}
+
+// TestServerTraegtDieEinordnungDesAgents: Die API liefert zu einem Agent-Server,
+// was der Agent kann und wie er zu diesem LCM passt (SSH-Server: nichts).
+func TestServerTraegtDieEinordnungDesAgents(t *testing.T) {
+	env := newTestEnv(t)
+	server, _, err := env.Servers.CreateAgentServer("agent01", "tester", "lcm.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.DB().Model(&domain.Server{}).Where("id = ?", server.ID).
+		Updates(map[string]any{"agent_version": "2.0.0", "agent_protocol": 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err := env.Servers.Get(repositories.ScopeAll(), server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	support := got.AgentSupport
+	if support == nil || support.AgentVersion != "2.0.0" || support.MinVersion != agentcaps.MinAgentVersion {
+		t.Fatalf("Einordnung: %+v", support)
+	}
+	if support.Features[agentcaps.FeatureConsole].Supported {
+		t.Error("ein Agent 2.0.0 hat keine Konsole")
+	}
+}
+
+// TestVerbindungsbilanzFaerbtDiePille: Reißt die Verbindung des Agents oft ab,
+// trägt der Server die Bilanz, und die EINE Pille bekommt den Befund (SSH-Server
+// haben beides nicht).
+func TestVerbindungsbilanzFaerbtDiePille(t *testing.T) {
+	env := newTestEnv(t)
+	hub := &fakeHub{links: map[string]domain.AgentLink{}}
+	env.Servers.WithAgentHub(hub)
+	server, _, err := env.Servers.CreateAgentServer("agent01", "tester", "lcm.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.DB().Model(&domain.Server{}).Where("id = ?", server.ID).Update("reachable", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Ohne Paketbestand wäre der Server nicht bewertbar und die Ampel endete dort.
+	if err := repositories.NewServerRepository(env.DB()).ReplacePackages(server.ID, []domain.Package{{Name: "bash", Version: "5.2"}}); err != nil {
+		t.Fatal(err)
+	}
+	insightKeys := func() []string {
+		_, insights, _, err := env.Servers.Status(repositories.ScopeAll(), server.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var keys []string
+		for _, in := range insights {
+			keys = append(keys, in.Key)
+		}
+		return keys
+	}
+
+	hub.links[server.AgentID] = domain.AgentLink{Connects: 6, Disconnects: 5, UnintendedLastHour: 5}
+	if slices.Contains(insightKeys(), "agentLinkUnstable") {
+		t.Fatal("fünf Abbrüche dürfen noch keinen Befund geben")
+	}
+
+	env.Servers.ForgetStatus(nil)
+	hub.links[server.AgentID] = domain.AgentLink{Connects: 8, Disconnects: 7, UnintendedLastHour: 7, LastCause: domain.DropNetwork}
+	if !slices.Contains(insightKeys(), "agentLinkUnstable") {
+		t.Fatalf("sieben Abbrüche müssen den Befund geben: %v", insightKeys())
+	}
+	got, err := env.Servers.Get(repositories.ScopeAll(), server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AgentLink == nil || got.AgentLink.UnintendedLastHour != 7 || got.AgentLink.LastCause != domain.DropNetwork {
+		t.Fatalf("Bilanz am Server: %+v", got.AgentLink)
+	}
+
+	ssh := seedSSHServer(t, env, "ssh01")
+	got, err = env.Servers.Get(repositories.ScopeAll(), ssh.ID)
+	if err != nil || got.AgentLink != nil {
+		t.Fatalf("SSH-Server: Bilanz %+v, Fehler %v", got.AgentLink, err)
 	}
 }

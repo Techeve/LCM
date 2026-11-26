@@ -25,6 +25,8 @@ The choice depends on the network topology:
 | Classic server with reachable SSH | **SSH** |
 | Key rotation, reconnect needed | **SSH** (these actions are hidden on the agent) |
 
+How the SSH connection works is covered under [SSH connection](/en/guides/ssh/).
+
 A server is either one **or** the other - the transport is fixed at creation time.
 
 ## Dedicated agent port
@@ -341,9 +343,9 @@ at all - demo servers, Synology DSM devices and servers in maintenance.
 On agent servers the console runs through the agent connection, so no
 inbound SSH port is needed. The agent opens a **login shell as root** in a
 pseudo terminal; permission, switches, console limit, audit and recording
-apply as with SSH. It needs an `lcm-agent` from this version on - older agents
-do not report the capability, and the button is then greyed out with a hint
-to update the agent.
+apply as with SSH. It needs an `lcm-agent` from 2.2 on - older agents do not
+report the capability, and the button is then greyed out with a hint to update the
+agent.
 
 The operator of the server can switch the console off there, independent of
 LCM:
@@ -394,22 +396,19 @@ additionally rate-limited per IP (10 attempts/minute).
 commands:
 
 1. **Set up the repository** (`curl … | sudo sh`) - skip if already present.
-2. **Install the agent.** On Debian/Ubuntu from the package channel
-   (`sudo apt install lcm-agent`). For the other distributions the same
-   package is attached to the
-   [release](https://gitlab.techeve.de/techeve/lcm/-/releases?mtm_campaign=linking&mtm_kwd=doc) as an RPM, APK
-   and Arch package - there is no dedicated channel for those yet, so the file
-   is installed directly:
+2. **Install the agent.** From the package source the previous command set up,
+   with the server's package manager (from LCM 2.4 the UI offers the system as a choice):
 
    ```sh
-   sudo dnf install ./lcm-agent-<version>.x86_64.rpm      # RHEL, Fedora, Rocky, Alma
-   sudo zypper install ./lcm-agent-<version>.x86_64.rpm   # openSUSE, SLES
-   sudo apk add --allow-untrusted ./lcm-agent_<version>_x86_64.apk   # Alpine
-   sudo pacman -U ./lcm-agent-<version>-x86_64.pkg.tar.zst           # Arch
+   sudo apt install lcm-agent                                         # Debian, Ubuntu
+   sudo dnf install --setopt=disable_excludes=techeve-lcm lcm-agent   # RHEL, Fedora, Rocky, Alma
+   sudo zypper install lcm-agent                                      # openSUSE Leap, Tumbleweed
+   sudo apk add lcm-agent                                             # Alpine
+   sudo pacman -Syu lcm-agent                                          # Arch
    ```
 
    The agent is a static Go binary with no dependencies; the package only
-   places it and its systemd unit. If you want no package at all, fetch the
+   places it and its systemd unit (an OpenRC script on Alpine). If you want no package at all, fetch the
    bare binary from LCM itself (`GET /api/v1/agent/download/<arch>`).
 3. **Set up the service** (`sudo lcm-agent enroll <agent-url> <token>`) - the
    `<agent-url>` points at the **agent port**, e.g.:
@@ -425,8 +424,233 @@ server (over the **UI/REST port**), while the subsequent `enroll` again uses the
 After enrolling, the agent connects outbound, the server goes **online**, LCM
 takes the reported agent version into the inventory, and the first system scan
 starts automatically (once the agent has subscribed to its command topic). If the
-agent disconnects, the server goes offline and in-flight commands fail immediately
-(instead of running into a timeout).
+agent disconnects, the server goes offline. New commands fail immediately (instead
+of running into a timeout). A command that is already running on an agent from 2.4 on
+keeps running on the server when the connection drops or the agent restarts: LCM
+waits for the agent to come back and receives the result afterwards. It is only
+stopped when you abort the job explicitly. From LCM 2.4 and agent 2.4: if LCM itself restarts (for example for
+an LCM update) while a command is running, the job first shows as interrupted and the
+server is free again. As soon as the agent reports back, LCM enters its result
+(success or error, exit code and output) into that job; further steps of the job do
+not run any more, and the next scan brings the inventory up to date. Older agents
+(before 2.4) fail running commands on disconnect; updating the agent fixes
+that. Note: with an older LCM server a
+disconnect still fails the call while the job keeps running on a new agent, so a
+retry may run the command twice.
+
+## Update the agent
+
+Applies from LCM 2.4. The hold under apt and the rollback also require agent 2.4.
+
+The agent is often the only way into a server. That is why it never updates on its
+own or on the side: from agent 2.4 the `lcm-agent` package holds itself back from a
+plain system update (including `unattended-upgrades`; under dnf, zypper, apk and pacman
+this has applied since 2.3.2). A new version arrives only when
+LCM tells it to - with the button or through a rule of the group. Which systems
+support this and what has been tested is listed under
+[Supported systems](/en/reference/supported-systems/#lcm-agent). How the package holds
+itself depends on the package manager:
+
+| Package manager | Hold | LCM installs with |
+| --- | --- | --- |
+| apt (from agent 2.4) | pin in `/etc/apt/preferences.d/lcm-agent` | `apt-get install lcm-agent=<version>` |
+| dnf | `exclude=lcm-agent` in the `techeve-lcm` repository | `dnf install --setopt=disable_excludes=techeve-lcm lcm-agent-<version>` |
+| zypper | package lock (`zypper addlock`) | lift the lock, `zypper install --oldpackage lcm-agent=<version>`, set the lock |
+| apk | `lcm-agent=<version>` in `/etc/apk/world` | `apk add lcm-agent=<version>` |
+| pacman | `IgnorePkg = lcm-agent` in `/etc/pacman.conf` | `pacman -S` or `pacman -U` (both override `IgnorePkg`) |
+
+On pacman the repository database holds only the newest version; older files sit in
+the repository directory, and LCM fetches them with `pacman -U` when needed (pacman
+checks the signature). The package formats write versions differently
+(`2.4.0~beta.1`, apk `2.4.0_beta1`, Arch `2.4.0beta.1`); LCM converts them.
+
+**Target version.** LCM decides, not the package manager: the **highest version the
+server's package source offers that fits LCM's feature series, including all bug fixes
+in it.** LCM 2.3.0 therefore raises the agent to 2.3.7, but never to 2.4.0. There is
+only one agent for all channels; servers of an enterprise LCM use it too. That way an
+agent fix also reaches servers whose LCM does not have it yet, for example because the
+enterprise channel lags behind. The agent never gets a higher feature series than LCM.
+An LCM in a pre-release (beta) takes agents exactly up to its own version.
+
+| LCM | Source offers | Agent becomes |
+| --- | --- | --- |
+| 2.3.0 (stable) | 2.2.1, 2.3.0, 2.3.4, 2.4.0 | 2.3.4 |
+| 2.2.0 (enterprise, behind community) | 2.2.0, 2.2.1, 2.3.0 | 2.2.1 |
+| 2.3.0 (stable) | 2.3.0\~beta.4, 2.2.1 | 2.2.1 (a stable LCM never takes a pre-release) |
+| 2.4.0-beta.2 (beta) | 2.3.0, 2.4.0\~beta.1, 2.4.0\~beta.3 | 2.4.0\~beta.1 |
+| 2.3.0 | agent already on 2.3.4 | no change |
+| 2.3.0 | agent on 2.5.0 | no change - the agent is newer than LCM, update LCM |
+
+An agent is never moved to an older version.
+
+**With the button.** In the detail view of an agent server, **Update agent** first
+shows what happens (installed version, target version, effect) and asks for
+confirmation. The button sits in the "Agent outdated" band and - for an agent behind
+LCM - in the button bar. It needs the `servers:write` permission.
+
+**The job** (`Update agent`) runs through the agent like any other:
+
+1. Refresh the package lists and read the versions of `lcm-agent`.
+2. Pick the target version. If the agent is already on it, the job ends without a change.
+3. Install exactly that version (under apt, LCM waits for busy apt locks and finishes
+   interrupted installations) and read the installed version back. If the package
+   manager reports a different one, the job fails at once.
+4. Wait until the agent reports back with the new version. It switches to the new
+   program on its own as soon as it has nothing left to do (at the earliest after 30
+   seconds; open web consoles delay the switch by up to 30 minutes). LCM waits up to
+   45 minutes. The server stays reserved for this job in the meantime.
+5. Send a command through the new agent: connected does not yet mean able to answer.
+
+Only then does the job count as successful. If the agent does not come back, the job
+fails after 45 minutes; if it reports a rollback, the job fails at once (see
+[When the update fails](#when-the-update-fails)).
+
+**Source.** On managed servers `lcm-agent` always comes from the **community source**
+that the server setup created (`setup.sh`); the enterprise channel carries
+no `lcm-agent` and is only set up on the LCM server itself. The update therefore needs
+no additional source, not even with an enterprise LCM. If a server has set up the beta
+source, a beta LCM can pick beta agents too.
+
+**Requirements.** The package must be installed through the server's package manager
+(apt, dnf, zypper, apk or pacman) from the Techeve source: an agent copied by hand
+(`/usr/local/bin/lcm-agent`) cannot be updated from LCM - the dialog names the reason.
+The same applies to systems with `yum` but no `dnf` (CentOS 7, Amazon Linux 2): the
+agent runs there but is updated by hand. The minimum agent version is 2.0.0; below it
+LCM only offers the update. Agents from 2.0.0 on keep working; functions that only a
+newer agent has are greyed out.
+
+### When the update fails
+
+Applies from LCM 2.4 and agent 2.4.
+
+A broken new program cannot roll itself back. That is why the rollback lives in the
+service's start script: it keeps the previous, proven program ready and starts it when
+the new one does not become healthy. This happens in two cases:
+
+- The new program **crashes repeatedly** (three starts in a row without becoming
+  "healthy"). This shows after about half a minute.
+- It runs but **does not become ready in time** (5 minutes without a connection to
+  LCM). This shows after six to seven minutes.
+
+The agent reports the rollback with the failed and the running version. After that:
+
+- The job shows as **failed** in the history, with the reason ("crashed repeatedly" or
+  "did not become ready in time").
+- LCM aligns the package with the running program. Otherwise the package manager would
+  list the failed version, and a new attempt would take the agent for up to date. If
+  the running version is no longer in the source, the package state stays as it is; the
+  agent runs anyway.
+- The server's status pill shows the finding "Agent update failed", and the server
+  detail shows a band with **Try again** (see
+  [Agent status and findings](#agent-status-and-findings)). The button needs the
+  `servers:write` permission and starts the same job again.
+- The finding stays until an update to a different version succeeds; restarting the
+  agent does not clear it. **Try again** clears it before the attempt.
+- A group rule skips the server and pauses (see below).
+
+Not every failure leads to a rollback. The agent only rolls back if there is a different
+previous program, LCM is reachable from the server and LCM has not rejected the agent
+(token revoked, server deleted, agent access off): otherwise the network or LCM is at
+fault, not the new program. The agent then does not report back, and the job ends after
+45 minutes. The same applies to agents before 2.4, which cannot report a rollback. In
+each of these cases the server's journal (`journalctl -u lcm-agent`) and
+[`lcm-agent status`](#lcm-agent-status-on-the-server) help.
+
+### Group rule: update automatically
+
+Applies from LCM 2.4.
+
+Under **Groups → Overview → Agent updates** you can have LCM bring the agents of a
+group up to date itself. **Off** is the default. When the rule is on:
+
+- **Time window** like the schedules: start as a cron expression (default 03:00) and
+  length in minutes. Servers start evenly spread within the window.
+- **The first server goes ahead:** every run begins with one server of the group (always
+  the same one, by name). Its job checks what the source offers, including a new bug fix
+  while LCM stays on its version. After that only the servers whose agent is below it
+  follow; if there is nothing new, the run stays at that one job.
+- **Staged** (default): the rest follows only when the first server has reported back with
+  the new version and answers commands, and at most up to the version it reached.
+- **Pausing:** if the first server of a staged rule fails or any server reports a
+  rollback, the rule does not continue for this LCM version. **Resume** (or saving the
+  rule) lifts the pause, as does a new LCM version. The rule skips servers that rolled
+  back until somebody has looked at them; likewise servers that are offline or in
+  maintenance.
+- **After an LCM update:** with the new LCM version the agents may catch up. If a window
+  is open right then, the run begins a few minutes after LCM has started (the agents
+  reconnect by then); otherwise the next window takes over.
+- **Run now** starts a run immediately, regardless of the window.
+
+The rule needs the `rules:manage` permission; anyone who may only see the group sees
+the setting and the state of the last run. The jobs appear under **Jobs** as usual.
+
+## Agent status and findings
+
+Applies from LCM 2.4, except for "No connection to the server possible".
+
+A server has exactly **one status pill** (calculation:
+[Status calculation](/en/guides/status/)). Findings about the agent go into it as a
+reason, with text; there is no second indicator next to it. The server detail also shows
+a band with the matching button.
+
+| Finding | Pill | Meaning | What to do |
+| --- | --- | --- | --- |
+| No connection to the server possible | red | The agent is disconnected, the server offline. | On the server, look at `lcm-agent status` and `systemctl status lcm-agent`, then check network, proxy and agent port. |
+| Agent too old | red | The agent is below the minimum version 2.0.0. LCM only offers **Update agent**. | Update the agent. |
+| Agent update failed | yellow | The last update was rolled back, the agent runs on its previous version (see [When the update fails](#when-the-update-fails)). | Look at the server's journal, then **Try again**. |
+| Agent outdated | yellow | The agent does not know functions that LCM offers. What it cannot do is greyed out. | Update the agent. |
+| Agent newer than LCM | yellow | The agent is newer than this LCM. LCM only offers what it knows itself. | Update LCM. |
+| Connection unstable | yellow | The agent was disconnected unintentionally more than five times in the last hour (network error, missing sign of life, duplicate connection). Intentional disconnects do not count. | Check network, proxy timeouts (see [Behind a reverse proxy](#behind-a-reverse-proxy)) and the journal; look at `lcm-agent status` on the server. |
+
+If the agent is both below the minimum version and rolled back, "Agent too old" applies.
+Otherwise "Agent update failed" replaces the finding "Agent outdated": it says why the
+agent lags behind. LCM counts the connection balance since its own start; restarting LCM
+resets it.
+
+### `lcm-agent status` on the server
+
+Applies from agent 2.4.
+
+When LCM cannot reach the agent, the view from the other side helps. On the agent server,
+
+```sh
+lcm-agent status
+```
+
+shows the service's connection, running jobs and update state, without `sudo`:
+
+```text
+lcm-agent:         2.4.0
+Connection:        connected for 3 h
+Last contact:      4 s ago
+Reconnects:        2 since start
+Last disconnect:   3 h ago - <reason>
+Jobs:              none
+Binary:            proven
+```
+
+- **Connection** and **Last contact**: whether the agent is currently connected to LCM and
+  when LCM last got in touch (connection, ping or command).
+- **Reconnects** and **Last disconnect**: how often it has reconnected since the start
+  and why the last connection ended.
+- **Jobs**: running commands and finished ones whose result LCM has not confirmed yet.
+- **Binary**: *proven*, or *unproven* if the program is new from an update and not yet
+  confirmed healthy. After a rollback there is an extra line *Rolled back* with the
+  failed and the running version.
+
+The output is English, or German on a system set to German. `lcm-agent status --json`
+prints the raw data.
+
+The service writes the state every 10 seconds and on every change to the file
+`/run/lcm-agent/status.json`; the service (systemd or OpenRC) creates the directory
+`/run/lcm-agent`. The file holds no secrets and is readable by everyone. The command only
+reads it and opens no access to the agent. Under systemd it survives an automatic restart,
+so the last state of a crashed agent stays readable, and it disappears on an intentional
+stop.
+
+If the file is older than 30 seconds, the agent no longer writes it: the command says the
+agent probably is not running and shows the last known state. If the file is missing, it
+says so too. In both cases it exits with an error code, which scripts can check.
 
 ## Renew agent token
 

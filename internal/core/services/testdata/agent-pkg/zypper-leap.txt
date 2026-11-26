@@ -1,0 +1,13 @@
+LCM_AGENT_INSTALLED=2.3.0-1
+LCM_AGENT_VERSIONS
+Refreshing service 'openSUSE'.
+Loading repository data...
+Reading installed packages...
+
+S  | Name      | Type    | Version        | Arch   | Repository
+---+-----------+---------+----------------+--------+------------
+vl | lcm-agent | package | 2.4.0~beta.2-1 | x86_64 | techeve-lcm
+vl | lcm-agent | package | 2.4.0~beta.1-1 | x86_64 | techeve-lcm
+vl | lcm-agent | package | 2.3.1-1        | x86_64 | techeve-lcm
+il | lcm-agent | package | 2.3.0-1        | x86_64 | techeve-lcm
+vl | lcm-agent | package | 2.2.1-1        | x86_64 | techeve-lcm

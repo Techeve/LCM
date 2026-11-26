@@ -60,3 +60,13 @@ func TestSetAcceptingNilIstHarmlos(t *testing.T) {
 	var hub *remote.Hub
 	hub.SetAccepting(false)
 }
+
+// Ein zweites Close ist folgenlos (der Broker schlösse sonst einen Kanal doppelt).
+func TestHubCloseIstWiederholbar(t *testing.T) {
+	hub := remote.New(nil, slog.Default())
+	if err := hub.Start(); err != nil {
+		t.Fatal(err)
+	}
+	hub.Close()
+	hub.Close()
+}

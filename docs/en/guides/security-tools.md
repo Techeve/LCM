@@ -145,9 +145,6 @@ is left behind.
 For *Central LAPI*, the install form offers a choice of the stored LAPIs.
 Only configured options are selectable.
 
-Up to LCM 1.45 there was exactly one LAPI in the settings. The update moves it
-into the list as **"Standard-LAPI"**.
-
 ## CrowdSec LAPI on the LCM host
 
 Instead of running an external LAPI server, LCM can set up the **CrowdSec Local
@@ -279,7 +276,7 @@ What LCM sets up:
   stack in the auth section is disabled - otherwise a password prompt would
   follow the code. All changes are marker-based and fully reversible on
   removal (backup: `/etc/pam.d/sshd.lcm-backup`).
-- An sshd drop-in (`40-lcm-2fa.conf`, formerly `55-lcm-2fa.conf`) sets
+- An sshd drop-in (`40-lcm-2fa.conf`) sets
   `AuthenticationMethods publickey,keyboard-interactive:pam` - deliberately
   sorted alphabetically **before** the hardening drop-in and before
   `50-redhat.conf` of RHEL 9 and its clones (OpenSSH takes the first value

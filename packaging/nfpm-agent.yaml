@@ -35,6 +35,20 @@ contents:
     dst: /usr/lib/systemd/system/lcm-agent.service
     file_info:
       mode: 0644
+  # Startskript des Dienstes: zaehlt Starts und faellt auf das vorige Binary
+  # zurueck, wenn ein neues nicht hochkommt (siehe Kopf des Skripts).
+  - src: ./packaging/lcm-agent-start.sh
+    dst: /usr/lib/lcm-agent/lcm-agent-start
+    file_info:
+      mode: 0755
+  # needrestart (Debian, Ubuntu) startet den Agent nach einem Paket-Upgrade
+  # nicht neu: Er wechselt selbst aufs neue Binary (exec), sobald er untaetig
+  # ist. Ein Neustart von aussen riss laufende Kommandos mit.
+  - src: ./packaging/needrestart-lcm-agent.conf
+    dst: /etc/needrestart/conf.d/lcm-agent.conf
+    packager: deb
+    file_info:
+      mode: 0644
   # Alpine hat kein systemd. Ohne dieses Init-Skript installierte das
   # apk-Paket zwar das Binary, aber es gab keinen Dienst - und `enroll` wäre
   # an `systemctl` gescheitert.
@@ -49,23 +63,31 @@ contents:
 # einem Upgrade bleibt der Agent stehen und wechselt selbst aufs neue Binary:
 # Läuft das Upgrade über den Agenten, risse ein Stopp das apt mit.
 #
-# Der Agent soll nur gezielt aktualisiert werden, nie durch ein normales
-# Systemupgrade. Je Paketformat:
-#   deb     unveraendert: kein Eingriff des Paketskripts.
-#   rpm     dnf: postinstall setzt exclude=lcm-agent in /etc/yum.repos.d/techeve-lcm.repo
-#           (die Datei schreibt das Setup-Skript von repo.techeve.de, Abschnitt
-#           [techeve-lcm]); Update von Hand mit
-#           dnf --setopt=disable_excludes=techeve-lcm install lcm-agent.
-#           zypper: postinstall legt ein Paketschloss in /etc/zypp/locks an; fuer ein
-#           Update zypper removelock lcm-agent, installieren, zypper addlock lcm-agent.
-#   pacman  postinstall setzt IgnorePkg = lcm-agent in /etc/pacman.conf; `pacman -S
-#           lcm-agent` und `pacman -U` setzen sich darueber hinweg.
+# Der Agent soll nur gezielt aktualisiert werden (durch LCM), nie durch ein normales
+# Upgrade. Je Paketformat:
+#   deb     postinst schreibt /etc/apt/preferences.d/lcm-agent (Pin auf die
+#           installierte Version, Prioritaet 1001); apt upgrade und unattended-upgrades
+#           lassen ihn aus, `apt-get install [--allow-downgrades] lcm-agent=<version>`
+#           geht weiter und zieht den Pin nach. needrestart-Ausnahme im Paket.
+#           (apt-mark hold geht aus dem postinst nicht: dpkg haelt seine Sperre.)
+#   rpm     dnf: postinst setzt exclude=lcm-agent in /etc/yum.repos.d/techeve-lcm.repo
+#           (die Datei schreibt setup.sh aus repo.techeve.de, meist schon mit exclude);
+#           LCM installiert mit --setopt=disable_excludes=techeve-lcm.
+#           zypper: postinst legt ein Paketschloss in /etc/zypp/locks an; LCM loest es
+#           um die Installation herum und setzt es danach wieder.
+#   pacman  postinst setzt IgnorePkg = lcm-agent in /etc/pacman.conf; `pacman -S` auf
+#           das Paket und `pacman -U` (LCM) setzen sich darueber hinweg.
 #   apk     kein Pin aus dem Paketskript moeglich: apk schreibt /etc/apk/world am Ende
 #           der Transaktion neu. Wer mit `apk add lcm-agent=<version>` installiert,
-#           haelt die Version dort selbst; eine Erstinstallation bekommt vom
-#           Paketskript einen Hinweis darauf.
-# postremove nimmt die Sperren beim Entfernen des Pakets wieder heraus.
+#           haelt die Version dort selbst; LCM installiert immer so. Eine Erstinstallation
+#           bekommt vom Paketskript einen Hinweis darauf.
+# `lcm-agent version --json` zeigt, was davon gilt (pinned, pin_source).
+#
+# preinstall legt das Binary, das gleich ersetzt wird, als Rueckfall ab
+# (/var/lib/lcm-agent/update/lcm-agent.prev); postinstall haelt den Agent aus
+# normalen Upgrades heraus (siehe oben und die Kopfkommentare der Skripte).
 scripts:
+  preinstall: ./packaging/scripts/agent-preinstall.sh
   postinstall: ./packaging/scripts/agent-postinstall.sh
   preremove: ./packaging/scripts/agent-preremove.sh
   postremove: ./packaging/scripts/agent-postremove.sh
@@ -76,9 +98,11 @@ scripts:
 # erkennt das Upgrade an der zweiten Version im Aufruf.
 apk:
   scripts:
+    preupgrade: ./packaging/scripts/agent-preinstall.sh
     postupgrade: ./packaging/scripts/agent-postinstall.sh
 archlinux:
   scripts:
+    preupgrade: ./packaging/scripts/agent-preinstall.sh
     postupgrade: ./packaging/scripts/agent-postinstall.sh
 
 deb:

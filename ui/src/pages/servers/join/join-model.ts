@@ -204,6 +204,29 @@ export function duplicateOf(servers: KnownServer[], host: string, port: number |
   return { taken, sameHost: taken ? null : (matches[0] ?? null) };
 }
 
+/** Systeme, für die der Agent als Paket aus repo.techeve.de bereitsteht; der Wert ist die Paketverwaltung. */
+export const AGENT_SYSTEMS = ['apt', 'dnf', 'zypper', 'apk', 'pacman'] as const;
+export type AgentSystem = (typeof AGENT_SYSTEMS)[number];
+
+/**
+ * Der Install-Befehl je Paketverwaltung, nach `setup.sh`. dnf hält den Agenten über ein `exclude` in der Repo-Datei
+ * (ein Systemupdate lässt ihn stehen), deshalb nimmt die Erstinstallation es für diese eine Quelle aus; LCM tut
+ * dasselbe bei jedem Update. apk legt keine Version fest (apk upgrade würde ihn mitnehmen): Das Paket sagt nach
+ * der Installation den Befehl dazu, LCM hält ihn bei jedem Update selbst.
+ */
+const INSTALL_COMMANDS: Record<AgentSystem, string> = {
+  apt: 'sudo apt install lcm-agent',
+  dnf: 'sudo dnf install --setopt=disable_excludes=techeve-lcm lcm-agent',
+  zypper: 'sudo zypper install lcm-agent',
+  apk: 'sudo apk add lcm-agent',
+  pacman: 'sudo pacman -Syu lcm-agent',
+};
+
+/** Der Wert als bekanntes System; alles andere ist apt. */
+export function agentSystemOf(value: string): AgentSystem {
+  return AGENT_SYSTEMS.find((system) => system === value) ?? 'apt';
+}
+
 export interface AgentCommands {
   repo: string;
   install: string;
@@ -222,11 +245,12 @@ export function agentCommands(
   listener: { port: number; url: string },
   token: string,
   downloadPin = '',
+  system: AgentSystem = 'apt',
 ): AgentCommands {
   const enroll = `sudo lcm-agent enroll ${agentBase(location, listener)} ${token}`;
   return {
     repo: 'curl -fsSL https://repo.techeve.de/setup.sh | sudo sh',
-    install: 'sudo apt install lcm-agent',
+    install: INSTALL_COMMANDS[system],
     enroll,
     manual: `${agentDownload(location.origin, downloadPin)} && sudo chmod +x /usr/local/bin/lcm-agent && ${enroll}`,
   };

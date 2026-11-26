@@ -523,14 +523,14 @@ func (s *AlertService) evalAdvisory(rule *domain.AlertRule, server *domain.Serve
 		slog.Warn("advisory alert: findings not loadable", "server", server.Name, "error", err)
 		return finding{}
 	}
-	min := rule.MinCVESeverity()
+	minSeverity := rule.MinCVESeverity()
 	var relevant, malware int
 	for i := range findings {
 		f := &findings[i]
 		// Die Sonderstellung der Schadpakete steckt in EffectiveSeverity
 		// (dort gilt malware immer als kritisch) - hier wird sie NICHT ein
 		// zweites Mal ausformuliert. Die Zaehlung dient nur dem Meldetext.
-		if f.Acknowledged() || !domain.SeverityAtLeast(f.EffectiveSeverity(), min) {
+		if f.Acknowledged() || !domain.SeverityAtLeast(f.EffectiveSeverity(), minSeverity) {
 			continue
 		}
 		relevant++
@@ -551,7 +551,7 @@ func (s *AlertService) evalAdvisory(rule *domain.AlertRule, server *domain.Serve
 	}
 	return finding{
 		fired:       true,
-		description: fmt.Sprintf("%d neue(r) Fruehwarn-Befund(e) ab Schwere %q auf %s", relevant, min, server.Name),
+		description: fmt.Sprintf("%d neue(r) Fruehwarn-Befund(e) ab Schwere %q auf %s", relevant, minSeverity, server.Name),
 		details:     "Gemeldet von der Online-Quelle, bevor der taegliche CVE-Scan sie kennt. Details unter Sicherheit → Fruehwarnung.",
 	}
 }
@@ -801,17 +801,17 @@ func (s *AlertService) evalSecurityCVE(rule *domain.AlertRule, server *domain.Se
 		return finding{}
 	}
 	summary := weightedVulnSummary(facts, s.cveWeightList(), splitCSVList(server.ListeningPackages), dockerRelevantRefs(s.servers, server))
-	min := rule.MinCVESeverity()
+	minSeverity := rule.MinCVESeverity()
 	count := 0
 	for sev, n := range summary {
-		if domain.SeverityAtLeast(sev, min) {
+		if domain.SeverityAtLeast(sev, minSeverity) {
 			count += n
 		}
 	}
 	if count > 0 {
 		return finding{
 			fired:       true,
-			description: fmt.Sprintf("%d Sicherheitslücke(n) ab Schwere %q auf %s", count, min, server.Name),
+			description: fmt.Sprintf("%d Sicherheitslücke(n) ab Schwere %q auf %s", count, minSeverity, server.Name),
 			details:     fmt.Sprintf("CVE-Übersicht: %s", formatSeveritySummary(summary)),
 		}
 	}

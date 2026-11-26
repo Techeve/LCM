@@ -2,73 +2,356 @@
 sidebar:
   order: 90
 title: Beispiele
-description: Typische Arbeitsabläufe Schritt für Schritt - vom Server-Onboarding bis zur API-Nutzung.
+description: Konfigurationsbeispiele für typische Servertypen - Gruppen, Zeitpläne und Regeln für Updates, Neustarts, Docker, Firewall und APT-Cache.
 ---
-
-Eine Sammlung typischer Abläufe. Sie setzen eine laufende LCM-Instanz voraus
-(siehe [Installation](/getting-started/installation/)).
-
-## Einen Server anbinden und täglich aktualisieren
 
 import { Steps } from '@astrojs/starlight/components';
 
-<Steps>
+Diese Seite zeigt Konfigurationen für typische Servertypen, die du nach der
+Anbindung der Server anlegst. Wie du einen Server anbindest, steht im
+[Schnellstart](/getting-started/quickstart/). Die Beispiele setzen eine laufende
+LCM-Instanz mit angebundenen Servern voraus.
 
-1. **Onboarding-Key hinterlegen:** Public Key aus *Einstellungen → Allgemein*
-   in `~/.ssh/authorized_keys` von `root` auf dem Zielserver eintragen.
-2. **Join:** Dashboard → „+ Server hinzufügen“, Host/Zugang eingeben,
-   Host-Key-Fingerprint bestätigen.
-3. **Gruppe:** Unter *Gruppen* eine Gruppe „Produktion“ anlegen, den Server
-   zuweisen.
-4. **Schedule + Regel:** Schedule „Nächtlich“ mit `0 2 * * *` anlegen, dann eine
-   Regel vom Typ **Update** hinzufügen.
-5. Fertig - die Updates laufen jede Nacht und erscheinen als Jobs mit
-   Konsolen-Output.
+## Wie du die Beispiele liest
 
-</Steps>
+Alles läuft über **Gruppen**: Eine Gruppe bündelt Server, ein **Zeitplan** legt
+fest, wann etwas läuft, und **Regeln** legen fest, was läuft. Die Beispiele sind
+nach demselben Muster aufgebaut:
 
-## Eine Firewall als Grundsatz-Regel erzwingen
+- **Ausgangslage:** für welchen Servertyp das Beispiel gedacht ist.
+- **Gruppe und Zeitpläne:** was du anlegst, mit Cron-Ausdruck und Zeitfenster.
+  Die Regeln eines Zeitplans laufen in der angegebenen Reihenfolge.
+- **Was passiert:** der Ablauf in Worten.
+- **Worauf achten:** Eigenheiten, die im Betrieb auffallen.
 
-Ziel: Auf allen Webservern sind dauerhaft nur 80, 443 (und SSH) offen.
+Namen, Zeiten und Fensterlängen sind Vorschläge. Passe sie an deine Server an.
+Die Zeiten gelten in der Zeitzone des LCM-Servers. Die Beispiele lassen sich
+kombinieren: Ein Server darf in mehreren Gruppen sein, etwa in „Standard-Server“
+für die Updates und in „Docker-Hosts“ für die Container.
 
-<Steps>
+Ein Cron-Ausdruck hat fünf Felder: Minute, Stunde, Tag des Monats, Monat,
+Wochentag. Beim Wochentag steht `0` für Sonntag, `1` für Montag bis `6` für
+Samstag. `0 2 * * 2,4,6` heißt „um 02:00 Uhr, dienstags, donnerstags und
+samstags“.
 
-1. Gruppe „Webserver“ anlegen, Server zuweisen.
-2. Im Reiter *Regeln* der Gruppe an der Karte **Grundsatz-Regeln** eine neue
-   Regel hinzufügen: Typ **Firewall**, Ports `80,443`.
-3. Beim nächsten Health-Ping wird ufw geprüft und - falls abweichend -
-   angewendet. Ändert später jemand die Firewall am Server, stellt der nächste
-   Ping den Soll-Zustand wieder her.
+Das **Zeitfenster** (Feld *Zeitfenster in Minuten* am Zeitplan) macht aus der
+Startzeit einen Zeitraum: `0 2 * * 2,4,6` mit 120 Minuten heißt „zwischen 02:00
+und 04:00“. Die Server beginnen gleichmäßig über das Fenster verteilt, jeder
+arbeitet dort alle Regeln des Zeitplans nacheinander ab. Das Fenster muss
+kürzer sein als der Abstand zweier Läufe. Mehr dazu unter
+[Gruppen, Schedules & Regeln](/guides/groups-rules/#zeitfenster-statt-fester-startzeit).
 
-</Steps>
-
-## Zentralen APT-Cache einrichten
-
-<Steps>
-
-1. Auf dem LCM-Host `apt-cacher-ng` installieren und `PassThroughPattern: .*`
-   in der `acng.conf` setzen (siehe [APT-Cache](/guides/apt-cache/)).
-2. In LCM unter *Einstellungen → APT-Cache* die URL
-   `http://<host>:3142` eintragen und „Prüfen“.
-3. Als Gruppen-Regel „**APT-Cache anbinden**“ hinzufügen (als Grundsatz-Regel
-   wird die Anbindung bei Abweichung wiederhergestellt) - alle Server der
-   Gruppe leiten ihre APT-Anfragen künftig über den Cache.
-
-</Steps>
-
-## Backup erstellen und auf frischer Instanz wiederherstellen
+## Grundablauf: Gruppe, Zeitplan, Regel
 
 <Steps>
 
-1. `LCM_BACKUP_PASSPHRASE` setzen und unter *Einstellungen → Backups* ein
-   Backup erstellen (oder Intervall aktivieren).
-2. Das `.lcmbak` herunterladen und sicher ablegen.
-3. Auf einer **neuen** Instanz das Archiv unter *Einstellungen → Backups →
-   Aus Datei wiederherstellen* hochladen und (mit derselben Passphrase)
-   anwenden - die Instanz übernimmt
-   Daten, Schlüssel, Konfiguration und Zertifikat.
+1. **Gruppe anlegen:** *Gruppen* → **Gruppe anlegen**, Name vergeben.
+2. **Server zuweisen:** im Reiter *Server* der Gruppe.
+3. **Zeitplan anlegen:** im Reiter *Zeitpläne* **Zeitplan anlegen** mit Name,
+   Cron-Ausdruck und optional *Zeitfenster in Minuten*.
+4. **Regeln hinzufügen:** im Reiter *Regeln* an der Karte des Zeitplans
+   **Regel hinzufügen**. Die Reihenfolge änderst du per Ziehen oder mit den Pfeilen.
+5. **Ausprobieren:** **Jetzt ausführen** am Zeitplan startet den Lauf sofort.
+   Das Zeitfenster gilt dabei nicht. Das Ergebnis steht unter *Jobs*.
 
 </Steps>
+
+## Beispiel 1: Standardrhythmus für Linux-Server
+
+**Ausgangslage:** Mehrere Debian- oder Ubuntu-Server. Sicherheitsupdates sollen
+täglich kommen, alle anderen Updates nur zwei- bis dreimal pro Woche. Ein
+Neustart soll nur stattfinden, wenn ein Update ihn braucht, und nur im
+geplanten Zeitfenster.
+
+**Gruppe:** „Standard-Server“.
+
+| Zeitplan | Cron | Zeitfenster | Regeln in Reihenfolge |
+|---|---|---|---|
+| Sicherheitsupdates | `0 1 * * *` (täglich 01:00) | 60 Min. | **Sicherheitsupdates** |
+| Volle Updates | `0 2 * * 2,4,6` (Di, Do, Sa 02:00) | 120 Min. | **Alle Pakete aktualisieren**, dann **Neustart bei Bedarf** |
+
+**Was passiert:**
+
+- Jede Nacht zwischen 01:00 und 02:00 spielt LCM die Sicherheitsupdates ein.
+- Dienstags, donnerstags und samstags zwischen 02:00 und 04:00 folgt je Server
+  erst das volle Update, dann **Neustart bei Bedarf**. LCM fragt den Server erst
+  in diesem Moment, ob er einen Neustart anfordert. Ist keiner nötig, endet der
+  Job mit „Kein Neustart nötig - übersprungen“. Andernfalls startet der Server
+  neu, und der Job bleibt offen, bis er wieder antwortet (bis zu 10 Minuten,
+  sonst schlägt der Job fehl).
+- Das Fenster endet vor 04:00, dem Standardtermin des System-Sync.
+
+**Worauf achten:**
+
+- **Zwischen den vollen Läufen ist der Server gelb.** Jedes offene, nicht
+  gesperrte Paket-Update zählt als „überfälliges Paket-Update“. Ebenso gilt
+  „System fordert Neustart an“ als Gelb-Kriterium, bis der Neustart im nächsten
+  Fenster erfolgt ist (siehe [Status-Berechnung](/guides/status/)). Das ist bei
+  diesem Rhythmus zu erwarten. Wer durchgehend grün sein will, plant die vollen
+  Updates täglich.
+- Die Regeln eines Zeitplans laufen unabhängig voneinander. Scheitert das
+  Update, läuft **Neustart bei Bedarf** trotzdem, und ein bereits angeforderter
+  Neustart findet statt.
+- Gesperrte (`apt-mark hold`), zurückgehaltene und gestaffelte Updates bleiben
+  liegen. LCM nennt sie am Ende des Job-Protokolls (siehe
+  [Was ein Update nicht mitnimmt](/guides/groups-rules/#was-ein-update-nicht-mitnimmt-apt)).
+- Auf pacman- und apk-Systemen gibt es keinen eigenen Kanal für
+  Sicherheitsupdates. Die Regel **Sicherheitsupdates** spielt dort alle Updates
+  ein.
+- Fehlt ein Server beim Lauf (offline), endet sein Job mit einem
+  Verbindungsfehler. Der nächste planmäßige Lauf versucht es wieder.
+- Aktualisieren viele Server über denselben APT-Cache, verteilt das Zeitfenster
+  die Last, statt den Cache auf einen Schlag zu treffen.
+
+## Beispiel 2: Docker-Host
+
+**Ausgangslage:** Server, auf denen Container laufen. Neue Images sollen
+regelmäßig eingespielt werden, ungenutzte Images wieder verschwinden. Das
+Betriebssystem pflegt Beispiel 1; die Server sind dazu zusätzlich in der Gruppe
+„Docker-Hosts“.
+
+**Was LCM von sich aus tut:** Der **Docker-Check** läuft täglich im
+System-Sync (04:00). Er erfasst Container und Images und fragt die Registry, ob
+hinter dem Tag ein neuer Stand liegt. Das Ergebnis steht auf der Seite
+*Container* im Reiter *Images* und im Reiter *Container* des Servers. Dafür
+brauchst du keine Regel.
+
+**Gruppe:** „Docker-Hosts“.
+
+| Zeitplan | Cron | Zeitfenster | Regeln in Reihenfolge |
+|---|---|---|---|
+| Container-Updates | `30 5 * * 1,4` (Mo, Do 05:30) | 60 Min. | **Docker: Compose-Projekte aktualisieren**, **Docker: einzelne Container aktualisieren**, **Docker: ungenutzte Images aufräumen** |
+
+**Was passiert:**
+
+- Die beiden Update-Regeln wirken nur auf Images, für die der Docker-Check ein
+  Update meldet. Deshalb liegt der Zeitplan nach dem System-Sync.
+- **Compose-Projekte:** `docker compose pull && up -d` im Projektverzeichnis,
+  danach werden ungetaggte alte Images entfernt.
+- **Einzelne Container** (ohne Compose): LCM zieht das Image und erstellt den
+  Container mit derselben Konfiguration neu. Der alte Container wird zuerst nur
+  umbenannt und erst gelöscht, wenn der neue läuft. Scheitert Erstellen oder
+  Start, läuft der alte unter seinem Namen weiter.
+- **Aufräumen:** löscht ungenutzte Images (`docker image prune -af`).
+- Im Feld *Auswahl (optional)* der Update-Regeln nennst du ein einzelnes
+  Compose-Projekt oder einen Container. Leer heißt: alle mit Update. So kannst du
+  ein wichtiges Projekt in einer eigenen Regel zu einer anderen Zeit
+  aktualisieren.
+
+**Worauf achten:**
+
+- Beim Neuerstellen steht der Container kurz still. Nur **laufende** Container
+  werden aktualisiert.
+- Der Check prüft den Digest hinter dem Tag. Ein neuer Tag (etwa `1.26` statt
+  `1.25`) erscheint nicht als Update. Private Registries und lokal gebaute
+  Images prüft er nicht, die Regeln lassen sie unberührt.
+- Der Stand des Checks ist bis zu einen Tag alt. Wie lange der System-Sync läuft,
+  siehst du im Job-Protokoll.
+- Die Compose-Regel läuft ab LCM 2.4 auch im [eingeschränkten Modus](/guides/ssh/#eingeschränkter-modus).
+  Die Container-Regel läuft nur im Voll-Modus und braucht `curl` auf dem
+  Server; auf eingeschränkten Servern überspringt LCM sie und nennt den Grund im Job.
+  Sonderfälle wie Host-PID-Namensraum oder GPU-Zugriff
+  sind nicht getestet: erst auf einem Testserver ausprobieren (siehe
+  [Docker-Monitoring](/guides/docker/#überholte-images-und-update-regeln)).
+- **Ungenutzte Images aufräumen** löscht alle Images ohne Container, auch die,
+  die du für einen späteren Start vorhältst.
+- Container, die an anderer Stelle gepflegt werden (eigene CI/CD-Strecke,
+  Anbieter), nimmst du pro Server aus: *Servereinstellungen → Betrieb →
+  **Keine Docker-Updates einspielen**.* Das Monitoring bleibt vollständig, nur
+  das Einspielen ist abgeschaltet.
+- Gelb wird ein Server, sobald ein **genutztes** Image ein Update hat. Er bleibt
+  es bis zum nächsten Lauf (siehe [Status-Berechnung](/guides/status/)).
+- Docker-Ports an der Host-Firewall vorbei: siehe
+  [Docker und die Host-Firewall](/guides/docker/#docker-und-die-host-firewall-ufw).
+
+## Beispiel 3: Datenbankserver
+
+**Ausgangslage:** Datenbankserver, bei denen ein ungeplanter Neustart oder ein
+Versionssprung Folgen hat. Sicherheitsupdates sollen trotzdem täglich kommen.
+Neustarts sollen nur in einem angekündigten Wartungsfenster stattfinden.
+
+**Gruppe:** „Datenbank“.
+
+| Zeitplan | Cron | Zeitfenster | Regeln in Reihenfolge |
+|---|---|---|---|
+| Sicherheitsupdates | `0 1 * * *` (täglich 01:00) | keins | **Sicherheitsupdates** |
+| Volle Updates | `0 2 * * 0` (sonntags 02:00) | keins | **Alle Pakete aktualisieren** |
+| Neustart im Wartungsfenster | `0 3 * * 0` (sonntags 03:00) | 60 Min. | **Neustart bei Bedarf** |
+
+**Was passiert:**
+
+- Sicherheitsupdates kommen jede Nacht, volle Updates sonntags. Beide Zeitpläne
+  starten **keinen** Neustart.
+- Ein Neustart, den ein Update anfordert (etwa nach einem Kernel-Update), wartet
+  bis zum Sonntag um 03:00. Dann prüft LCM beim Lauf, ob er noch nötig ist, und
+  startet nur dann neu. Bei mehreren Servern verteilt das Fenster die Neustarts
+  über 60 Minuten.
+- Willst du jeden Neustart selbst auslösen, schaltest du den Zeitplan *Neustart
+  im Wartungsfenster* **aus**. Ein ausgeschalteter Zeitplan läuft nicht von
+  selbst, lässt sich aber mit **Jetzt ausführen** starten, wenn das Fenster
+  vereinbart ist.
+
+**Worauf achten:**
+
+- Bis zum Neustart zeigt der Server „System fordert Neustart an“ und ist gelb.
+  Gelb ist er auch zwischen den vollen Updates, solange nicht
+  sicherheitsrelevante Updates offen sind (siehe Beispiel 1).
+- Pakete, die nicht mitziehen sollen, kannst du im Reiter *Pakete* des Servers
+  mit **Version einfrieren** festhalten. Dann kommen für dieses Paket gar keine
+  Updates mehr, auch keine Sicherheitsupdates. Das ist eine bewusste
+  Entscheidung (siehe [Paket-Pins](/guides/monitoring/#paket-pins-was-das-aufräumen-nicht-anfassen-darf)).
+- Datenbanken gehören zu den Paketen, deren CVE-Funde LCM eine Stufe höher
+  gewichtet (Liste unter *Einstellungen → Sicherheit*). Offene Sicherheitslücken
+  fallen hier früher auf.
+- Der Neustart-Job wartet bis zu 10 Minuten auf die Rückkehr des Servers. Danach
+  schlägt er fehl und der Server steht als Vorfall da.
+- Kein Zeitplan steuert, in welcher Reihenfolge Dienste herunter- und
+  hochfahren. Wo das nötig ist, prüfe vorher auf einem Testserver, ob der
+  Dienst den Neustart von selbst übersteht.
+
+## Beispiel 4: Testserver zuerst, Produktion danach
+
+**Ausgangslage:** Testserver bekommen Updates sofort und aggressiv. Produktionsserver bekommen volle Updates erst später, wenn die Testserver sie überstanden
+haben.
+
+**Gruppen und Zeitpläne:**
+
+| Gruppe | Zeitplan | Cron | Zeitfenster | Regeln in Reihenfolge |
+|---|---|---|---|---|
+| Testserver | Täglich voll | `0 1 * * *` (täglich 01:00) | 60 Min. | **Alle Pakete aktualisieren**, **Nicht mehr benötigte Pakete entfernen**, **Neustart bei Bedarf** |
+| Produktion | Sicherheitsupdates | `0 1 * * *` (täglich 01:00) | 60 Min. | **Sicherheitsupdates** |
+| Produktion | Volle Updates | `0 2 * * 4` (donnerstags 02:00) | 120 Min. | **Alle Pakete aktualisieren**, **Neustart bei Bedarf** |
+
+**Was passiert:**
+
+- Testserver laufen jede Nacht auf dem neuesten Stand. In den Tagen bis zum
+  Donnerstag zeigt sich, ob ein Update etwas bricht.
+- Produktion bekommt Sicherheitsupdates täglich, alle übrigen Updates erst
+  donnerstags.
+- Bricht ein Update auf den Testservern etwas, schaltest du den Zeitplan *Volle
+  Updates* der Produktion mit dem Schalter am Zeitplan **aus**. Er läuft dann
+  nicht mehr von selbst, bis du ihn wieder einschaltest.
+- Für redundante Paare legst du zwei Produktionsgruppen an, die an
+  verschiedenen Tagen laufen (Gruppe „Produktion A“ donnerstags, „Produktion B“
+  freitags). So sind nie beide Server zugleich im Update und Neustart.
+
+**Worauf achten:**
+
+- Test und Produktion sehen nie denselben Paketstand, denn Updates erscheinen
+  laufend. Das Verfahren fängt grobe Fehler ab, garantiert aber nichts.
+- **Nicht mehr benötigte Pakete entfernen** räumt auch ältere Kernel weg. Willst
+  du eine Rückfallebene behalten, schütze die Kernel vorher mit **Kernel
+  schützen** (siehe [Paket-Pins](/guides/monitoring/#paket-pins-was-das-aufräumen-nicht-anfassen-darf)).
+- Weise jeden Server genau einer der beiden Gruppen zu. In beiden Gruppen
+  bekäme er beide Rhythmen.
+
+## Beispiel 5: Server hinter NAT mit Agent
+
+**Ausgangslage:** Server in Außenstellen oder Kundennetzen, die LCM nicht per
+SSH erreicht. Sie sind mit **lcm-agent** angebunden und verbinden sich
+ausgehend zu LCM (siehe [LCM Remote](/guides/remote/)). Updates und
+Agent-Updates sollen nach festem Plan laufen.
+
+**Gruppe:** „Außenstellen“. Die Paketregeln sind dieselben wie bei SSH-Servern.
+
+| Zeitplan | Cron | Zeitfenster | Regeln in Reihenfolge |
+|---|---|---|---|
+| Sicherheitsupdates | `0 1 * * *` (täglich 01:00) | 60 Min. | **Sicherheitsupdates** |
+| Volle Updates | `0 2 * * 0` (sonntags 02:00) | 120 Min. | **Alle Pakete aktualisieren**, **Neustart bei Bedarf** |
+
+**Agent-Updates (ab LCM 2.4):** Der Agent aktualisiert sich nie von selbst, auch nicht über
+die Updates der Zeitpläne. Unter *Gruppen → Übersicht → **Agent-Updates*** schaltest
+du **Agenten automatisch aktualisieren** ein. Du legst Beginn (Cron) und
+Länge des Zeitfensters fest, etwa `0 5 * * *` mit 60 Minuten. **Gestaffelt**
+ist die Vorgabe: Zuerst aktualisiert ein Server der Gruppe, die übrigen
+folgen erst, wenn er sich mit der neuen Version zurückgemeldet hat.
+
+**Worauf achten:**
+
+- Ist ein Server zur Laufzeit nicht erreichbar, endet sein Job mit einem
+  Verbindungsfehler. Der nächste Lauf versucht es erneut.
+- Für Geräte, die planmäßig zeitweise offline sind, stellst du unter
+  *Servereinstellungen → Betrieb* **Nichterreichbarkeit unkritisch** ein. Der
+  Server behält dann seinen letzten Status und wird erst nach der **Frist bis
+  kritisch** (Standard 28 Tage) rot.
+- Schlägt bei einer gestaffelten Regel das Agent-Update auf dem ersten Server
+  fehl, hält die Regel an. Mit **Fortsetzen** läuft sie weiter (siehe
+  [Regel der Gruppe: automatisch aktualisieren](/guides/remote/#regel-der-gruppe-automatisch-aktualisieren)).
+
+## Standardkonfigurationen (Grundsatz-Regeln)
+
+Die Beispiele oben laufen zu festen Zeiten. **Grundsatz-Regeln** dagegen
+beschreiben einen Soll-Zustand. LCM prüft ihn bei jeder Verbindung (mindestens
+beim Health-Check alle 15 Minuten) und greift nur ein, wenn der Server
+abweicht. Jeder Eingriff steht im Protokoll. Möglich sind sie für **Firewall**,
+**APT-Cache anbinden**, **ACL einrichten** und **Rechte-Soll halten** (die
+letzten beiden gehören zu den [Berechtigungsprofilen](/guides/linux-users/)).
+Du legst sie im Reiter *Regeln* der Gruppe an der Karte **Grundsatz-Regeln** an.
+
+### Firewall für Webserver
+
+**Gruppe:** „Webserver“. **Grundsatz-Regel:** Typ **Firewall** mit den Freigaben
+Port 80 (TCP) und Port 443 (TCP).
+
+Der SSH-Port bleibt immer offen. Alles andere schließt die Firewall. Verstellt
+jemand die Firewall am Server, stellt der nächste Health-Check den Soll-Zustand
+wieder her.
+
+:::caution[Ohne Ports wird die Regel abgewiesen]
+Eine Firewall-Grundsatzregel muss sagen, welche Ports offen sein sollen. Soll
+nur SSH offen sein, gibst du die leere Liste `[]` an (siehe
+[Gruppen, Schedules & Regeln](/guides/groups-rules/)).
+:::
+
+### Firewall für Datenbankserver
+
+**Gruppe:** „Datenbank“ (die Gruppe aus Beispiel 3). **Grundsatz-Regel:** Typ
+**Firewall**, Freigabe Port 5432 (TCP, PostgreSQL) oder 3306 (TCP, MySQL und
+MariaDB), bei **Erlaubte Quellen** die IP-Allowlist „App-Server“.
+
+Die Allowlist legst du einmal unter *Einstellungen → Allowlists* an. Statt
+einer Allowlist kannst du auch **Eigene IPs oder Netze** eintragen. Die Freigabe
+gilt dann nur für diese Quellen. Wird eine Allowlist leer, lässt LCM die Regel
+aus: Der Port bleibt zu und wird nie stillschweigend offen. Details unter
+[Firewall](/guides/firewall/#quell-einschränkung-allowlists-und-eigene-ips).
+
+:::note[Eine Firewall-Gruppe je Server]
+Regeln desselben Typs aus mehreren Gruppen kollidieren. Es setzt sich die Gruppe
+mit dem kleineren **Vorrang** durch (Standard 100). Lege deshalb pro Server nur
+eine Gruppe mit Firewall-Regel fest. Docker-Ports, die ein Container
+veröffentlicht, laufen an der Host-Firewall vorbei (siehe
+[Docker-Monitoring](/guides/docker/#docker-und-die-host-firewall-ufw)).
+:::
+
+### APT-Cache für alle apt-Server
+
+**Ziel:** Alle Debian- und Ubuntu-Server laden Pakete über einen zentralen Cache.
+
+<Steps>
+
+1. Cache aufsetzen (apt-cacher-ng) wie unter [APT-Cache](/guides/apt-cache/)
+   beschrieben.
+2. In LCM unter *Einstellungen → APT-Cache* **Cache hinzufügen**, die URL
+   eintragen (`http://<host>:3142`) und **Prüfen**.
+3. Gruppe „Alle apt-Server“ anlegen, nur Server mit **apt** zuweisen.
+4. Als **Grundsatz-Regel** den Typ **APT-Cache anbinden** hinzufügen und den
+   Cache wählen. Gibt es nur einen, gilt er ohne Auswahl.
+
+</Steps>
+
+LCM schreibt auf jedem Server ein Drop-in und macht einen Funktionstest. Bei
+Abweichung (etwa nach einer geänderten URL) stellt die Grundsatz-Regel die
+Anbindung wieder her. Wer einen Server trennt, ohne die Regel abzuschalten,
+sieht ihn beim nächsten Health-Check wieder angebunden.
+
+## LCM sichern
+
+LCM sichert seinen **eigenen** Zustand (Datenbank, Master-Key, Konfiguration,
+Zertifikat) in ein verschlüsseltes `.lcmbak`-Archiv. Das Archiv lässt sich auf
+einer frischen Instanz wiederherstellen. Die Daten der verwalteten Server, etwa
+Datenbank-Dumps, gehören nicht dazu. Einrichtung, Empfänger-Schlüssel,
+automatische Backups und Wiederherstellung stehen auf der Seite
+[Backups](/guides/backups/).
 
 ## Die API mit einem read-only-Key nutzen
 
@@ -76,18 +359,20 @@ Für Monitoring-Skripte, die nur lesen dürfen:
 
 <Steps>
 
-1. *Einstellungen → API-Schlüssel* → neuen Key mit Scope **read** anlegen. Der
-   Klartext-Key (`lcm_…`) erscheint **nur einmal** - kopieren.
-2. Abfragen mit dem `X-API-Key`-Header:
+1. *Einstellungen → API-Schlüssel* → neuen Schlüssel mit den Rechten **Nur
+   lesen** anlegen. Der Klartext-Key (`lcm_…`) erscheint **nur einmal**:
+   kopieren.
+2. Abfragen mit dem `X-API-Key`-Header (Standard-Port der Weboberfläche und
+   REST-API ist `9310`):
 
    ```sh
    curl -s https://<host>:9310/api/v1/servers \
      -H "X-API-Key: lcm_dein_key" | jq '.items[].name'
    ```
 
-3. Schreibende Requests (POST/PUT/DELETE) werden mit einem read-Key serverseitig
-   mit **403** abgelehnt - der Key kann selbst im Admin-Kontext nichts ändern.
+3. Schreibende Requests (POST/PUT/DELETE) lehnt LCM mit einem read-Key mit
+   **403** ab. Der Key kann selbst im Admin-Kontext nichts ändern.
 
 </Steps>
 
-Mehr zu Endpunkten und Auth: [Frontend- & API-Referenz](/reference/api/).
+Mehr zu Endpunkten und Authentifizierung: [REST-API](/reference/rest-api/).

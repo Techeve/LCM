@@ -8,3 +8,11 @@ func SetRebindForTest(d time.Duration) (restore func()) {
 	rebindFor = d
 	return func() { rebindFor = old }
 }
+
+// SetAfterReleaseForTest lässt f laufen, nachdem der Listener beim Wechsel von
+// TLS seinen Port freigegeben hat und bevor er ihn erneut bindet.
+func SetAfterReleaseForTest(f func(addr string)) (restore func()) {
+	old := afterRelease
+	afterRelease = f
+	return func() { afterRelease = old }
+}

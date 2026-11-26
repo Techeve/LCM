@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -55,28 +56,46 @@ func TestEnsureFullSudo(t *testing.T) {
 	if err := ensureFullSudo(&domain.Server{RestrictedSudo: false}); err != nil {
 		t.Errorf("voll-server sollte kein guard-fehler sein: %v", err)
 	}
-	if err := ensureFullSudo(&domain.Server{RestrictedSudo: true}); err != ErrRestrictedSudo {
+	if err := ensureFullSudo(&domain.Server{RestrictedSudo: true}); !errors.Is(err, ErrRestrictedSudo) {
 		t.Errorf("eingeschränkter server sollte ErrRestrictedSudo liefern, bekam: %v", err)
 	}
 }
 
 // TestRestrictedAllowsRule: Paketverwaltung/Docker/Firewall/Health sowie
 // Sync, apt-proxy und Neustart (alle über den LCM-Helper) sind erlaubt; beliebige
-// Skripte und Custom-Aktionen nicht.
+// Skripte und Custom-Aktionen nicht, ebenso wenig die Container-Regel (curl am
+// Docker-Socket).
 func TestRestrictedAllowsRule(t *testing.T) {
 	allowed := []string{domain.RuleTypeUpdate, domain.RuleTypePackages, domain.RuleTypeSecurity,
-		domain.RuleTypeDockerPrune, domain.RuleTypeFirewall, domain.RuleTypeHealth,
+		domain.RuleTypeDockerPrune, domain.RuleTypeDockerUpdateUnused,
+		domain.RuleTypeDockerComposeUpdate, domain.RuleTypeDockerUpdate,
+		domain.RuleTypeFirewall, domain.RuleTypeHealth,
 		domain.RuleTypeSync, domain.RuleTypeAptProxy, domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded}
 	for _, rt := range allowed {
 		if !restrictedAllowsRule(rt) {
 			t.Errorf("%q sollte im eingeschränkten modus erlaubt sein", rt)
 		}
 	}
-	blocked := []string{domain.RuleTypeScript, domain.RuleTypeCustom}
+	blocked := []string{domain.RuleTypeScript, domain.RuleTypeCustom, domain.RuleTypeDockerContainerUpdate}
 	for _, rt := range blocked {
 		if restrictedAllowsRule(rt) {
 			t.Errorf("%q sollte im eingeschränkten modus gesperrt sein", rt)
 		}
+	}
+}
+
+// TestRestrictedSkipNoteNamesTheReason: Die Container-Regel nennt den Grund und
+// den Ausweg über die Compose-Regel; ein unbekannter Typ bekommt die allgemeine
+// Meldung.
+func TestRestrictedSkipNoteNamesTheReason(t *testing.T) {
+	note := restrictedSkipNote(domain.RuleTypeDockerContainerUpdate)
+	for _, want := range []string{"übersprungen", "Docker-Socket", "docker-compose-update"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("hinweis zur container-regel nennt %q nicht: %s", want, note)
+		}
+	}
+	if !strings.Contains(restrictedSkipNote("gibtsnicht"), "„gibtsnicht“") {
+		t.Error("die allgemeine meldung nennt den aktionstyp nicht")
 	}
 }
 

@@ -137,13 +137,6 @@ Trigger:
   *Refresh hardware*, *Refresh everything*, the scan when onboarding a server
   and the scheduled **system sync**. Read-only and without `sudo`, so it costs
   nothing.
-
-  :::note[Current without lifting a finger]
-  For a long time the DNS check ran only on a manual refresh. On servers touched
-  exclusively by the scheduled sync the DNS data stayed empty forever - which
-  looks as if the check does no DNS test at all. Since it is part of every scan
-  path, the finding is as current as the last contact everywhere.
-  :::
 - **Server action** - server detail → *Actions → DNS test*.
 - **Group rule** - add a rule of type **"DNS test"** to a group (scheduled or
   manually triggerable). Without input it uses the centrally maintained test

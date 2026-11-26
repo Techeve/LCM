@@ -22,7 +22,7 @@ Links in E-Mails. Dazu nimmt LCM die Namen für das Zertifikat von Let's Encrypt
 
 | Modus | Ports | Namen | Felder | Wann passt er |
 |---|---|---|---|---|
-| **A: Eigene Ports, eigene Namen** (Standard) | je Dienst einer, einstellbar (Vorgabe 9310, 9320, 9330) | je Dienst eine Adresse, mit oder ohne Port | drei Adressfelder und drei Portfelder | Ein Reverse-Proxy steht davor, oder jeder Dienst soll unter eigenem Namen laufen. Das ist der Stand früherer Versionen. |
+| **A: Eigene Ports, eigene Namen** (Standard) | je Dienst einer, einstellbar (Vorgabe 9310, 9320, 9330) | je Dienst eine Adresse, mit oder ohne Port | drei Adressfelder und drei Portfelder | Ein Reverse-Proxy steht davor, oder jeder Dienst soll unter eigenem Namen laufen. |
 | **B: Eigene Ports, ein Name** | je Dienst einer, einstellbar | ein Name für alle Dienste | ein Namensfeld und drei Portfelder | Betrieb ohne Proxy mit einem Zertifikat. |
 | **C: Ein Port, eigene Namen** | ein gemeinsamer Port, Vorgabe 443 | je Dienst ein eigener Name; Pflicht nur für die Oberfläche | drei Namensfelder und *Gemeinsamer Port* | Im Browser steht kein Port. LCM trennt die Dienste nach dem angefragten Namen (SNI). |
 
@@ -209,9 +209,8 @@ Tabelle:
   Teile. Oben steht das Zertifikat, das LCM für den Namen ausliefert. Du kannst
   eines von Hand hochladen oder wieder entfernen. Darunter stehen die **erlaubten
   Netzbereiche** dieses Dienstes ([Erlaubte Netzbereiche](/guides/netzbereiche/)).
-  Einen eigenen Abschnitt *Zugriff* im Block gibt es nicht.
 - **Let's Encrypt:** eingeklappt, in allen Modi wählbar. Die Namen kommen aus
-  den Adressen, es gibt ein Feld weniger als früher. Nach dem Speichern stellt LCM
+  den Adressen. Nach dem Speichern stellt LCM
   das Zertifikat von selbst aus
   ([Zertifikate, Let's Encrypt & Port 443](/guides/zertifikate/#lets-encrypt-acme)).
 

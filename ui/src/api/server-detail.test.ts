@@ -1,6 +1,5 @@
-import { agentConsoleBlock, hasConsole } from './servers';
 import { describe, expect, it } from 'vitest';
-import { normaliseServer } from './servers';
+import { agentConsoleBlock, agentUnsupported, hasConsole, normaliseAgentLink, normaliseAgentSupport, normaliseServer, type AgentFeature, type AgentSupport } from './servers';
 import {
   clockState,
   summariseExposures,
@@ -124,26 +123,94 @@ describe('Serverdetail: App-Aktionen', () => {
 });
 
 describe('hasConsole', () => {
-  const server = { os_id: 'debian', transport: 'ssh', console_disabled: false, agent_capabilities: [] as string[], agent_version: '2.1.0' };
+  const support = (console: Partial<AgentFeature>, state: AgentSupport['state'] = 'ok'): AgentSupport => ({
+    state,
+    agent_version: '2.3.0',
+    server_version: '2.4.0',
+    min_version: '2.0.0',
+    protocol: 1,
+    update_recommended: false,
+    needs_version: '',
+    behind: false,
+    rolled_back: '',
+    features: { console: { supported: false, reason: '', needs_version: '', ...console } },
+  });
+  const server = { os_id: 'debian', transport: 'ssh', console_disabled: false, agent_support: null as AgentSupport | null, agent_version: '2.1.0' };
 
-  it('gibt es über SSH und über einen Agenten, der sie meldet', () => {
+  it('gibt es über SSH und über einen Agenten, den das Backend als fähig meldet', () => {
     expect(hasConsole(server)).toBe(true);
-    expect(hasConsole({ ...server, transport: 'agent', agent_capabilities: ['tty'] })).toBe(true);
+    expect(hasConsole({ ...server, transport: 'agent', agent_support: support({ supported: true }) })).toBe(true);
   });
 
   it('gibt es nicht über ältere oder abgeschaltete Agenten, auf Geräten und wenn sie abgeschaltet ist', () => {
     expect(hasConsole({ ...server, transport: 'agent' })).toBe(false);
-    expect(hasConsole({ ...server, transport: 'agent', agent_capabilities: ['tty-off'] })).toBe(false);
+    expect(hasConsole({ ...server, transport: 'agent', agent_support: support({ reason: 'outdated', needs_version: '2.2.0' }) })).toBe(false);
+    expect(hasConsole({ ...server, transport: 'agent', agent_support: support({ reason: 'disabled' }) })).toBe(false);
     expect(hasConsole({ ...server, os_id: 'routeros' })).toBe(false);
     expect(hasConsole({ ...server, console_disabled: true })).toBe(false);
   });
 
-  it('nennt beim Agenten den Grund', () => {
-    expect(agentConsoleBlock({ ...server, transport: 'agent' })).toBe('errors.terminal.agent_outdated');
-    expect(agentConsoleBlock({ ...server, transport: 'agent', agent_capabilities: ['tty-off'] })).toBe('errors.terminal.agent_disabled');
-    expect(agentConsoleBlock({ ...server, transport: 'agent', agent_capabilities: ['tty'] })).toBe('');
-    expect(agentConsoleBlock(server)).toBe('');
-    expect(agentConsoleBlock({ ...server, transport: 'agent', agent_version: '' })).toBe('');
+  it('nennt beim Agenten den Grund samt nötiger Version', () => {
+    const outdated = { ...server, transport: 'agent', agent_support: support({ reason: 'outdated', needs_version: '2.2.0' }) };
+    expect(agentConsoleBlock(outdated)).toEqual({ key: 'serverDetail.agent.needs', params: { version: '2.2.0' } });
+    const tooOld = { ...server, transport: 'agent', agent_support: support({ reason: 'below_minimum', needs_version: '2.2.0' }, 'unsupported') };
+    expect(agentConsoleBlock(tooOld)).toEqual({ key: 'serverDetail.agent.needs', params: { version: '2.2.0' } });
+    const disabled = { ...server, transport: 'agent', agent_support: support({ reason: 'disabled' }) };
+    expect(agentConsoleBlock(disabled)).toEqual({ key: 'errors.terminal.agent_disabled', params: {} });
+    expect(agentConsoleBlock({ ...server, transport: 'agent', agent_support: support({ supported: true }) })).toBeNull();
+    expect(agentConsoleBlock(server)).toBeNull();
+    expect(agentConsoleBlock({ ...outdated, agent_version: '' })).toBeNull();
+  });
+});
+
+describe('normaliseAgentSupport', () => {
+  it('liest die Antwort des Backends', () => {
+    const support = normaliseAgentSupport({
+      state: 'outdated',
+      agent_version: '2.0.0',
+      server_version: '2.4.0',
+      min_version: '2.0.0',
+      protocol: 1,
+      update_recommended: true,
+      needs_version: '2.4.0',
+      features: { console: { supported: false, reason: 'outdated', needs_version: '2.2.0' }, liveness: { supported: true } },
+    });
+    expect(support?.state).toBe('outdated');
+    expect(support?.update_recommended).toBe(true);
+    expect(support?.features.console).toEqual({ supported: false, reason: 'outdated', needs_version: '2.2.0' });
+    expect(support?.features.liveness).toEqual({ supported: true, reason: '', needs_version: '' });
+  });
+
+  it('kennt nur bekannte Zustände und ist bei SSH-Servern leer', () => {
+    expect(normaliseAgentSupport({ state: 'neu-erfunden' })?.state).toBe('');
+    expect(normaliseAgentSupport(undefined)).toBeNull();
+  });
+
+  it('erkennt einen Agenten unter der Mindestversion', () => {
+    expect(agentUnsupported({ agent_support: normaliseAgentSupport({ state: 'unsupported' }) })).toBe(true);
+    expect(agentUnsupported({ agent_support: normaliseAgentSupport({ state: 'outdated' }) })).toBe(false);
+    expect(agentUnsupported({ agent_support: null })).toBe(false);
+  });
+});
+
+describe('normaliseAgentLink', () => {
+  it('liest die Verbindungsbilanz des Agents', () => {
+    expect(normaliseAgentLink({ connects: 4, disconnects: 3, unintended_last_hour: 2, last_cause: 'ping', last_cause_at: '2026-11-24T10:00:00Z' })).toEqual({
+      connects: 4,
+      disconnects: 3,
+      unintended_last_hour: 2,
+      last_cause: 'ping',
+    });
+  });
+
+  it('ist bei SSH-Servern leer und füllt Lücken mit Null', () => {
+    expect(normaliseAgentLink(undefined)).toBeNull();
+    expect(normaliseAgentLink({})).toEqual({ connects: 0, disconnects: 0, unintended_last_hour: 0, last_cause: '' });
+  });
+
+  it('hängt am Server als agent_link', () => {
+    expect(normaliseServer({ id: 1, agent_link: { unintended_last_hour: 6, last_cause: 'network' } }).agent_link?.unintended_last_hour).toBe(6);
+    expect(normaliseServer({ id: 1 }).agent_link).toBeNull();
   });
 });
 

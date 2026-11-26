@@ -84,7 +84,7 @@ own error message is included; common causes are disabled unprivileged user
 namespaces (kernel switch, AppArmor rule on Ubuntu, nested containers) or
 service hardening that is too strict.
 
-If neither is available, the scan runs unsandboxed as before - but with a
+If neither is available, the scan runs unsandboxed - but with a
 **visible notice** on the scanner display. A silent fallback would be the worst
 option: you would believe yourself protected without being so.
 
@@ -359,8 +359,7 @@ Filtering uses the **direct TCP connection** (spoof-proof). If LCM runs behind
 a reverse proxy (e.g. for TLS), the direct peer is the proxy - in that case set
 `"trust_proxy_header": true` so LCM takes the client IP from `X-Forwarded-For`,
 **and** list the proxy address(es) in `trusted_proxies`. The header is believed
-from those peers only; any other peer counts with its own address. Since 2.0,
-without the list the header counts from no one, and the allowlist only sees the
+from those peers only; any other peer counts with its own address. Without the list the header counts from no one, and the allowlist only sees the
 proxy's address. Details and proxy examples:
 [Reverse proxy & external hardening](/en/guides/reverse-proxy/).
 :::

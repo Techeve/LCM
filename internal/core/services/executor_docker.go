@@ -131,7 +131,7 @@ func (e *Executor) runDockerComposeUpdateRule(job *domain.Job, server *domain.Se
 
 	var log strings.Builder
 	for _, t := range targets {
-		script, err := composeUpdateScript(t.WorkingDir, t.ConfigFiles, "")
+		script, err := composeUpdateScript(t.WorkingDir, t.ConfigFiles, "", server.RestrictedSudo)
 		if err != nil {
 			log.WriteString("übersprungen: " + t.Project + " (" + err.Error() + ")\n")
 			continue

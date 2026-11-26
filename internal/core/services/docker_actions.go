@@ -141,7 +141,7 @@ func (s *ServerService) planComposeUpdate(server *domain.Server, project, servic
 	if match == nil {
 		return dockerPlan{}, ErrComposeProjectUnknown
 	}
-	script, err := composeUpdateScript(match.ComposeWorkingDir, match.ComposeConfigFiles, service)
+	script, err := composeUpdateScript(match.ComposeWorkingDir, match.ComposeConfigFiles, service, server.RestrictedSudo)
 	if err != nil {
 		return dockerPlan{}, err
 	}

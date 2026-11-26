@@ -1,0 +1,14 @@
+LCM_AGENT_INSTALLED=2.3.0
+LCM_AGENT_VERSIONS
+lcm-agent policy:
+  2.2.1:
+    file:///srv/repo
+  2.3.0:
+    lib/apk/db/installed
+    file:///srv/repo
+  2.3.1:
+    file:///srv/repo
+  2.4.0_beta1:
+    file:///srv/repo
+  2.4.0_beta2:
+    file:///srv/repo

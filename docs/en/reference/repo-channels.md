@@ -2,24 +2,25 @@
 sidebar:
   order: 27
 title: Package channels (community, beta & enterprise)
-description: Three apt channels from one aptly instance - community open and rolling, beta open with pre-releases, enterprise seasoned and protected by a subscription key.
+description: The package channels of repo.techeve.de - community, beta and enterprise - for apt, dnf, zypper, apk and pacman - differences, setup with setup.sh, keys, subscription and the update check.
 ---
 
-LCM is shipped through its own apt repository. That repository serves **three
-channels**: an open community channel, an equally open beta channel carrying
-pre-releases, and an enterprise channel with a subscription. This page
-describes the setup on the repository server.
+LCM is shipped through its own package repository: `repo.techeve.de`. It serves
+packages for **apt** (Debian, Ubuntu), **dnf** and **zypper** (rpm), **apk**
+(Alpine) and **pacman** (Arch Linux). It serves **three channels**: an open
+community channel, an equally open beta channel carrying pre-releases, and an
+enterprise channel with a subscription.
 
-:::note[Who is this page for?]
-For running the repository server. If you only want to **install** LCM, see
+The page shows how the channels differ, how you set up and check the sources, how
+the switch to enterprise and beta works in LCM, and how LCM checks for updates
+per channel. If you only want to **install** LCM, see
 [Installation](/en/getting-started/installation/).
-:::
 
 ## The model
 
-One rule holds for all channels: the **URL path decides access**, the **suite
-is the channel**, and the component is always `main`. Origin and label in the
-Release file are cosmetic; no tool may rely on them.
+With apt, one rule holds for all channels: the **URL path decides access**, the
+**suite is the channel**, and the component is always `main`. The other package
+formats have a path of their own per channel (see below).
 
 All channels ship **the same packages**, built from the same commit and signed
 with the same key. The only difference is timing:
@@ -42,202 +43,163 @@ A security release goes into all channels at once. Leaving paying customers
 exposed for longer than free users would be neither defensible nor sellable.
 :::
 
-## Server layout
+The table applies to apt. **Enterprise exists for apt only.** For dnf, zypper,
+apk and pacman there are the community and beta channels.
 
-**A second server is not needed.** One aptly instance can serve several publish
-points side by side:
+## Package managers and sources
 
-```
-repo.techeve.de/
-├── dists/community/…       community - the suite clients read
-├── dists/stable/…          community, old name: same content, only for
-│                           existing installations (will be switched off)
-├── dists/beta/…            beta - published by the CI from the beta branch
-├── pool/…                  packages of the open channels (shared pool)
-├── enterprise/lcm/
-│   ├── dists/enterprise/…  enterprise - one promoted snapshot
-│   └── pool/…              its own package pool
-├── repo-key.gpg            signing key (public)
-└── setup.sh                setup script for the community channel
-```
+Which systems these are and what is tested is listed under
+[Supported systems](/en/reference/supported-systems/). This section covers where
+the source lives and what it needs. The "Source" column shows the community
+channel.
 
-The CI keeps publishing the community channel to `stable`; the server mirrors it
-to `community` on its own. New installations carry
-`deb … https://repo.techeve.de community main`. Existing sources with `stable`
-keep working, and the `lcm` and `lcm-agent` packages move them to `community`
-themselves on update: only entries for exactly `https://repo.techeve.de` with the
-suite `stable`, never enterprise, beta or foreign sources.
+| Package manager | Packages | Source | File that `setup.sh` creates | Key |
+|---|---|---|---|---|
+| apt | `lcm`, `lcm-agent` | `https://repo.techeve.de`, suite `community`, component `main` | `/etc/apt/sources.list.d/techeve.sources` (deb822) | `/etc/apt/keyrings/techeve-repo.gpg`, fetched from `/repo-key.gpg` |
+| dnf | `lcm-agent` | `https://repo.techeve.de/rpm/community/$basearch/` | `/etc/yum.repos.d/techeve-lcm.repo` | `/keys/techeve-packages.asc`, imported with `rpm --import` |
+| zypper | `lcm-agent` | same as dnf | `/etc/zypp/repos.d/techeve-lcm.repo` (plus `type=rpm-md`, `autorefresh=1`) | same as dnf |
+| apk | `lcm-agent` | `https://repo.techeve.de/apk/community` | one line in `/etc/apk/repositories` | `/etc/apk/keys/techeve-apk.rsa.pub`, fetched from `/keys/techeve-apk.rsa.pub` |
+| pacman | `lcm-agent` | `https://repo.techeve.de/arch/community/$arch` | section `[techeve]` in `/etc/pacman.conf` (`SigLevel = Required`) | `/keys/techeve-packages.asc`, added to the pacman keyring and signed locally |
 
-### Why a path prefix and not a second suite
+Three points about the packages:
 
-The obvious alternative is to serve both channels from the same URL root with
-different suites (`community` and `enterprise`). That is a **security trap**: aptly
-creates a separate `pool/` tree per publish prefix, but two suites under the
-same prefix share one pool. The metadata under `dists/enterprise/` would be
-protected - while the `.deb` files themselves would sit in the shared, public
-`pool/` and could be downloaded by guessing the path.
+- **`lcm` exists for apt only.** That is the LCM server. On the other systems LCM
+  runs in a Docker container, see [Installation](/en/getting-started/installation/).
+  On those systems you manage servers with the `lcm-agent`, which exists for all
+  five package managers.
+- **Architectures:** apt serves `amd64` and `arm64`, the other formats `x86_64`
+  and `aarch64`. A package without an architecture (`noarch`, `any`) sits in both
+  directories.
+- **Enterprise** exists for apt only, at `https://repo.techeve.de/enterprise/lcm`,
+  suite `enterprise`, with credentials (see [Switching to Enterprise](#switching-to-enterprise)). It
+  carries `lcm`, not `lcm-agent`.
 
-With its own prefix, a single `location` rule protects metadata **and**
-packages.
+The directories of the other formats below `https://repo.techeve.de`:
 
-### Web server (nginx)
+| Path | Content |
+|---|---|
+| `/rpm/<channel>/<arch>/` | `repodata/` with `repomd.xml` and `repomd.xml.asc`, plus the `.rpm` files |
+| `/apk/<channel>/<arch>/` | `APKINDEX.tar.gz` and the `.apk` files |
+| `/arch/<channel>/<arch>/` | the databases `techeve.db` and `techeve.files`, the `.pkg.tar.zst` files, each with a `.sig` |
+| `/keys/` | the public keys, see below |
 
-Full configuration: `packaging/repo-server/nginx-lcm-repo.conf`. The three
-relevant blocks:
+`<channel>` is `community` or `beta`. Every channel has a valid, signed index,
+even before the first package is in it. All indexes are signed, and for rpm and
+Arch the packages too; `setup.sh` switches the verification on (`gpgcheck=1` and
+`repo_gpgcheck=1` for dnf and zypper, `SigLevel = Required` for pacman).
 
-```nginx
-# Enterprise channel - subscription key required.
-# "^~" without a trailing slash so that /enterprise (no slash) is covered too.
-location ^~ /enterprise {
-    auth_basic           "LCM Enterprise Repository";
-    auth_basic_user_file /etc/lcm-repo/enterprise.htpasswd;
-    try_files $uri $uri/ =404;
-}
+Old versions stay available. For rpm and apk the index lists all versions; you
+install a specific one with
+`dnf --setopt=disable_excludes=techeve-lcm install lcm-agent-<version>`,
+`zypper install lcm-agent=<version>` or `apk add lcm-agent=<version>`. pacman
+lists only the latest version in its database; fetch an older one with
+`pacman -U` from its fixed address below `/arch/<channel>/<arch>/`.
 
-# aptly API - CI credentials only, separate file.
-location ^~ /api {
-    auth_basic           "aptly API";
-    auth_basic_user_file /etc/lcm-repo/api.htpasswd;
-    proxy_pass           http://127.0.0.1:8080;
-}
+## Setup with setup.sh
 
-# Everything else is the open community channel.
-location / {
-    try_files $uri $uri/ =404;
-}
-```
-
-Two points are not negotiable:
-
-- **Separate `htpasswd` files.** The aptly API can publish *and delete*. A
-  customer key must never be able to reach it.
-- **HTTPS only.** Basic authentication merely base64-encodes the key. Port 80
-  redirects and nothing else.
-
-## Managing subscription keys
-
-Keys live in a plain file from which the `htpasswd` is generated - no extra
-service to run and monitor. Tool: `packaging/repo-server/lcm-subscriptions`.
+One command sets up the source on all five package managers. It runs as `root`:
 
 ```bash
-# Add a customer (the key is displayed ONCE)
-lcm-subscriptions add "Example Ltd" 2027-08-01
+# Community channel
+curl -fsSL https://repo.techeve.de/setup.sh | sudo sh
 
-# Overview with status (active / expiring / expired)
-lcm-subscriptions list
+# Beta channel
+curl -fsSL https://repo.techeve.de/setup.sh | sudo sh -s -- --beta
 
-# Renew once the invoice is paid
-lcm-subscriptions renew LCM-E-XXXX-XXXX-XXXX 2028-08-01
-
-# Cancellation - takes effect immediately
-lcm-subscriptions revoke LCM-E-XXXX-XXXX-XXXX
+# Remove the source and the key again
+curl -fsSL https://repo.techeve.de/setup.sh | sudo sh -s -- --uninstall
 ```
 
-Only the **hash** of a key is stored; the key itself exists in clear text only
-at the moment it is created and handed over. If it is lost it gets replaced,
-not recovered.
+`setup.sh` takes the first package manager it finds (order: apt, dnf, zypper,
+apk, pacman), creates key and source, and reads the index once. You can run it
+again.
 
-The expiry date is enforced by the daily `sync`, which drops expired keys from
-the `htpasswd`:
+| Call | Effect |
+|---|---|
+| no option | community channel |
+| `--beta` | beta channel instead of community |
+| `--uninstall` (also `--remove`) | removes source and key, not the installed packages |
+| `--help` | shows the help |
+| `SUITE=beta` (apt only) | selects the beta channel like `--beta` |
+| `TECHEVE_REPO_URL=<address>` | replaces `https://repo.techeve.de`, for example for tests or your own server |
 
-```
-0 4 * * * root /usr/local/sbin/lcm-subscriptions sync >/dev/null
-```
+What you should know:
 
-nginx re-reads the `htpasswd` on **every request**, so revoking and renewing
-take effect at once, without a reload.
+- **Running it again replaces the source.** `--beta` replaces the community
+  source with the beta source, a run without `--beta` switches back to community.
+  With apt it swaps the suite in `techeve.sources`. If you want beta **next to**
+  community on apt, use the switch in LCM (see
+  [Beta channel: no subscription, no console](#beta-channel-no-subscription-no-console)).
+- **The agent stays on its version.** After installation the `lcm-agent` package
+  holds itself, so a system update does not move it (apt, from agent 2.4: a file in
+  `/etc/apt/preferences.d/`, dnf: `exclude=lcm-agent` in the source, zypper: a
+  package lock, pacman: `IgnorePkg`). `setup.sh` does not write this up front, so
+  the first installation goes through without a detour; a repeated run keeps an
+  existing `exclude`. The agent is updated through LCM (from LCM 2.4), see
+  [Supported systems](/en/reference/supported-systems/#lcm-agent).
+- **dnf and zypper:** `--uninstall` removes the source only. The imported key
+  stays in the rpm database.
+- **pacman:** `--uninstall` removes the `[techeve]` section and exactly the
+  Techeve key whose fingerprint is in `/etc/pacman.d/techeve-packages.asc`. If the
+  fingerprint cannot be determined, the keyring stays untouched. If the kernel
+  has no Landlock (Arch in an LXC container, for example), `setup.sh` runs pacman
+  once with `--disable-sandbox`, because the download fails otherwise.
+  `pacman.conf` never gets this setting.
+- **Old name `stable`:** The suite `stable` is the old name of `community`.
+  Existing installations keep working, and the `lcm` and `lcm-agent` packages
+  move the source to `community` themselves on update. This only affects entries
+  for `https://repo.techeve.de` with the suite `stable`, never enterprise, beta or
+  foreign sources.
+- **Language:** messages are in English unless the system is set to German.
 
-## Which version number does a train get?
+### Beta channel per package format
 
-**The pre-release already carries the number that will become final.**
-`1.16.0-beta.1` becomes `1.16.0` - the same figure, just without the suffix.
-The beta is the candidate for exactly that version, not for "some later one".
+| Package manager | Source in the beta channel |
+|---|---|
+| apt | `https://repo.techeve.de`, suite `beta`, component `main` |
+| dnf, zypper | `https://repo.techeve.de/rpm/beta/$basearch/` |
+| apk | `https://repo.techeve.de/apk/beta` |
+| pacman | `https://repo.techeve.de/arch/beta/$arch` |
 
-Which number that is follows from the commits since the last release
-(Conventional Commits) and is decided **before** the first beta train:
+Each format writes pre-release versions differently. `2.4.0-beta.1` becomes
+`2.4.0~beta.1` for apt and rpm, `2.4.0_beta1` for apk and `2.4.0beta.1` for Arch.
+Every format sorts the pre-release before the final version.
 
-```sh
-make next-version     # shows the number the commits imply
-```
+## Keys
 
-| Commits included | Number | Beta is then called |
-|---|---|---|
-| only `docs:`, `chore:`, `test:`, `ci:` | **no release** | - |
-| `fix:`, `perf:`, `refactor:` | patch (1.16.**1**) | `1.16.1-beta.1` |
-| at least one `feat:` | minor (1.**17**.0) | `1.17.0-beta.1` |
-| `feat!:` / `BREAKING CHANGE` | major (**2**.0.0) | `2.0.0-beta.1` |
+All channels are signed. The public keys are freely available on the server:
 
-Only `feat`, `fix`, `perf` and `refactor` are release-relevant. If the commits
-since the last tag consist purely of documentation or maintenance work,
-`make next-version` reports "no new release" and `prepare-release.sh` does
-nothing without an argument. To ship such a state anyway - because a
-documentation correction should reach users, say - state the version
-explicitly; it then follows the same rule as above (a patch, in that case).
+| File | Used for |
+|---|---|
+| `https://repo.techeve.de/keys/techeve-packages.asc` | GPG key for rpm (dnf, zypper) and Arch (pacman) |
+| `https://repo.techeve.de/keys/techeve-apk.rsa.pub` | RSA key for apk |
+| `https://repo.techeve.de/repo-key.gpg` | GPG key for apt (also as `/repo-key.asc`) |
 
-If a commit lands during stabilisation that raises the level - say a `feat:` in
-a series planned as a patch - the beta number moves with it: the next
-pre-release is called `1.17.0-beta.1`, not `1.16.1-beta.2`.
+The apt key is not in `/keys/`. It is a key of its own and covers the suites
+`community`, `beta` and `enterprise` together. `setup.sh` always fetches the key
+that the detected package manager needs. For apk, the file name in
+`/etc/apk/keys/` is also the name of the key in the index; do not rename the
+file.
 
-:::caution[A pre-release is LOWER than its final version]
-`1.16.0-beta.1 < 1.16.0` - that is what SemVer and (using `~`) the Debian
-version ordering prescribe. Creating a pre-release for an already published
-version therefore makes no sense: it would be a step backwards and `apt` would
-never install it.
+## Switching to Enterprise
 
-Beta hosts do not fall behind because of this: for them the beta source sits
-**next to** the community source, and `apt` takes the higher version of the
-two. As soon as the community channel carries the final version they switch to
-it automatically - until the next, higher pre-release appears.
-:::
+Switching to the enterprise channel applies to the LCM host with apt and runs in
+LCM under *Settings → Subscription* (see
+[Subscription in LCM](#subscription-in-lcm-settings--subscription)). The
+subscription key itself does not open the repository. LCM exchanges it for an
+access key bound to the instance. LCM signs in to the repository with the
+instance ID as login and the access key as password.
 
-If the final number does end up differing from the beta (e.g. because it only
-becomes apparent when promoting that a `feat:` was included), that is
-technically harmless as long as it is **higher**: the version comparison holds
-and the upgrade works. What remains is a gap in the sequence - the beta number
-then never exists as a final version.
+The switch creates these files:
 
-## Release workflow
+| File | Content |
+|---|---|
+| `/etc/apt/auth.conf.d/lcm-enterprise.conf` | credentials, readable by `root` only (`0600`) |
+| `/etc/apt/sources.list.d/lcm-enterprise.list` | `deb [signed-by=…] https://repo.techeve.de/enterprise/lcm enterprise main`, using the keyring of the community source |
+| `/etc/apt/preferences.d/lcm-enterprise.pref` | the preference rule below |
 
-The CI serves community and beta
-(`packaging/publish-deb.sh`, see [CI & release](/en/reference/ci-release/)).
-The enterprise channel (prefix `enterprise/lcm`, suite `enterprise`) is moved
-forward by hand, using `packaging/repo-server/lcm-channel`:
-
-```bash
-# 1. Right after the release: freeze that state.
-#    It is immutable from now on, whatever follows in the community channel.
-lcm-channel freeze 1.10.0
-
-# 2. After the soak period (rule of thumb: 2-4 weeks without critical reports):
-lcm-channel promote 1.10.0
-```
-
-`freeze` creates an aptly snapshot, `promote` switches the enterprise publish
-point to it. Customers see the new version at their next `apt update`.
-
-:::tip[Why the HTTP API and not the aptly CLI]
-aptly locks its database for a single process. While `aptly api serve` runs as a
-service - and it does, because the CI publishes through it - concurrent CLI
-calls fail with a database error. `lcm-channel` therefore speaks the same HTTP
-API as the CI.
-:::
-
-## Customer side
-
-Switching to the enterprise channel is done by a script that sits next to
-`setup.sh` on the repository server:
-
-```bash
-curl -fsSL https://repo.techeve.de/setup-enterprise.sh | sudo sh -s -- \
-  LCM-E-XXXX-XXXX-XXXX <key>
-```
-
-Called without arguments it asks for the key interactively - which keeps it out
-of the shell history and the process list.
-
-The script stores the credentials in `/etc/apt/auth.conf.d/` (readable by `root`
-only, `0600`) and adds the enterprise source. After that the channels have to be
-separated - having both serve LCM would defeat the purpose, because apt always
+The switch clears a beta source (`lcm-beta.list`). After that the channels have to
+be separated - having both serve LCM would defeat the purpose, because apt always
 picks the higher version, and sooner or later that is the one from the free
 channel.
 
@@ -245,9 +207,9 @@ channel.
 
 apt does not know about channels, it tells sources apart by what is in the
 **Release file**. There every channel has its own suite (`community`, `beta`,
-`enterprise`, plus the old name `stable`). The switch uses exactly that: *the LCM
-packages* come from the enterprise channel, everything else may stay where it
-is. It writes `/etc/apt/preferences.d/lcm-enterprise.pref`:
+`enterprise`, plus the old name `stable`). The switch uses exactly that: *the
+`lcm` package* comes from the enterprise channel, everything else may stay where
+it is. It writes `/etc/apt/preferences.d/lcm-enterprise.pref`:
 
 ```
 Package: lcm
@@ -268,42 +230,41 @@ keeps delivering its other packages - switching the whole source off would take
 those away too. The rule always applies; it needs no check against the server.
 A community source that an older LCM disabled during the switch is re-enabled.
 
+Only `lcm` is pinned. The `lcm-agent` is not in the enterprise channel; if it
+were pinned, it would come from no source at all on the LCM host.
+
 The community source exists in two spellings: `setup.sh` writes the deb822 file
 `techeve.sources`, older installations have the classic `techeve.list`. Both stay
 in place.
 
 :::caution[The counter-check is part of it]
-At the end the script asks the question that actually matters: **where would
+At the end the switch asks the question that actually matters: **where would
 `lcm` come from now?** (`apt-cache policy lcm`, the suite below the candidate
-version). If that is not `enterprise`, it says so loudly.
+version). If that is not `enterprise`, it reports a warning in the job log.
 :::
 
 The credentials are scoped to host **and path**:
 
 ```
-machine repo.techeve.de/enterprise/lcm
-login LCM-E-XXXX-XXXX-XXXX
-password <key>
+machine https://repo.techeve.de/enterprise/lcm
+login <instance ID>
+password <access key>
 ```
 
-That way the key is only ever sent to the enterprise path, never to the public
-part of the same server.
+That way the access key is only ever sent to the enterprise path, never to the
+public part of the same server.
 
-If the key is rejected - mistyped, or the subscription has expired - the script
-undoes every change and restores the community channel, so a machine is never
-left without a package source. The way back stays open later, too:
-
-```bash
-curl -fsSL https://repo.techeve.de/setup-enterprise.sh | sudo sh -s -- --revert
-```
+If the access is rejected - the subscription has expired or the key is invalid -
+the switch undoes every change and restores the community channel, so a machine
+is never left without a package source. The way back stays open later, too: in
+LCM, choose the community channel under *Package channel of the LCM host*. That
+removes the credentials, the enterprise source, the preference rule and any beta
+source.
 
 ## Subscription in LCM (Settings → Subscription)
 
-Instead of the script path above, the subscription can be managed directly in
-the LCM interface - provided the **subscription service** runs on the
-repository server (separate repository:
-[techeve/lcm-subscription-service](https://gitlab.techeve.de/techeve/lcm-subscription-service?mtm_campaign=linking&mtm_kwd=doc)).
-The flow:
+The subscription is managed directly in the LCM interface. For that, LCM asks the
+**subscription service** of the repository server. The flow:
 
 1. On first start LCM creates a permanent **instance identity** (UUID). It
    lives in the database and travels with backups - after a restore-based move
@@ -317,7 +278,7 @@ The flow:
    shows "expires in X days", the last check and errors. If the service is
    unreachable, the status honestly says "unreachable" (unknown ≠ bad).
 4. Under **"Package channel of the LCM host"** all three channels are offered;
-   switching runs as a job on the LCM host. For the enterprise channel:
+   switching runs as a job on the LCM host (which uses apt). For the enterprise channel:
    credentials into `/etc/apt/auth.conf.d/` (0600), dedicated source, channel
    separation, verification against the new source only - with a full rollback
    on failure. The way back ("community channel") aborts rather than leaving a
@@ -339,7 +300,8 @@ community source instead of replacing it:
 deb [signed-by=<keyring of the community source>] https://repo.techeve.de beta main
 ```
 
-The address is taken from the host's existing community source (own repository
+The line lives in `/etc/apt/sources.list.d/lcm-beta.list`. The address is taken
+from the host's existing community source (own repository
 servers included), and so is the signing keyring - all channels are signed with
 the same key. There is deliberately **no preference rule**: apt takes the newer
 version of the two sources. A beta tester therefore gets the pre-release while
@@ -401,13 +363,10 @@ build identifier**: for the same build the server answers `304 Not Modified`
 (nothing is transferred), for a new build `200` with the new file.
 
 :::note[Why not Last-Modified]
-The frontend is embedded in the binary as a file tree, and every file there
-carries the zero timestamp as its modification date. A `Last-Modified` derived
-from that is identical across all versions - so the browser revalidated
-dutifully, always received a `304` and kept the old `index.html` along with its
-old asset references. After an update the old interface kept running, and even
-"reload now" ended up in the same place. The build identifier is the only value
-that reliably changes with every release.
+Inside the binary every embedded file carries the same zero timestamp as its
+modification date, so a `Last-Modified` would be identical across all versions.
+The build identifier is the only value that reliably changes with every
+release.
 :::
 
 ### The check follows the configured channel
@@ -424,8 +383,7 @@ package index that `apt update` gets its version from:
 
 This is the difference between "current" and "current **for me**": a
 pre-release sits above the stable version, a matured enterprise release below
-it. Anyone on Beta previously got the stable version reported and therefore
-saw no update at all, even when their own channel had one waiting.
+it.
 
 The check runs every three hours and once at startup. The **info window**
 (click the copyright notice in the footer) shows the version last determined
@@ -438,13 +396,8 @@ is stored, the check reports that as an error. It deliberately does **not**
 fall back to the Community channel - presenting a version from a foreign
 channel as "the latest" would be worse than an honest failure notice.
 
-## Limits of this setup
+## Server count
 
-- **No copy protection.** All channels contain the same binary; whoever passes
-  on the key passes on access. The protection is contractual, not technical -
-  with identical packages, anything else would be self-deception. The
-  subscription service prevents multiple *activation* of a key, not passing on
-  packages.
-- **Server count is reported, never enforced.** Community and Enterprise can
-  both manage unlimited servers; the count reported with the heartbeat is
-  display at the vendor, not a limit.
+Community and Enterprise can both manage unlimited servers. LCM reports the
+number of servers with the daily heartbeat; it is displayed only and never
+enforced as a limit.

@@ -73,6 +73,12 @@ variables:
   GOVULNCHECK_VERSION: v1.9.0
   # renovate: datasource=go depName=github.com/goreleaser/nfpm/v2
   NFPM_VERSION: v2.48.0
+  # Agent-Fassungen, gegen die der Hub in compat:agents geprüft wird (Tags,
+  # durch Komma getrennt). Der Release-Zug trägt jeden neuen Final-Tag hier ein
+  # (Paket E-3). Heißt bewusst nicht LCM_COMPAT_AGENT_TAGS: Diese Variable würde
+  # sonst auch `go test ./...` im Job backend erreichen und den langen Test dort
+  # einschalten.
+  COMPAT_AGENT_TAGS: "v2.0.0,v2.1.0,v2.2.0,v2.2.1,v2.3.0"
   # Volle Historie + Tags: die Versionsermittlung braucht beides.
   GIT_DEPTH: "0"
   # Der npm-Cache im Projektverzeichnis, damit der Runner ihn über MinIO
@@ -86,10 +92,10 @@ variables:
   # das FTP-Zielverzeichnis automatisch ab.
   DOCS_URL: "https://doc.techeve.de/lcm/"
   DOCS_TITLE: "LCM - Linux Centralized Management"
-  # Repository-/Social-Link oben rechts in der Doku-Kopfzeile.
-  # Bewusst der ÖFFENTLICHE Spiegel: das private Repo wäre für Leser der
+  # Repository-Links oben rechts in der Doku-Kopfzeile, kommagetrennt.
+  # Bewusst die ÖFFENTLICHEN Spiegel: das private Repo wäre für Leser der
   # Doku ein 404.
-  DOCS_REPO: "https://gitlab.techeve.de/techeve/lcm"
+  DOCS_REPO: "https://gitlab.techeve.de/techeve/lcm,https://github.com/Techeve/LCM"
 
 # Branch-Pipelines + MR-Pipelines, ohne Duplikate bei offenem MR.
 workflow:
@@ -111,16 +117,15 @@ workflow:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
 
-# Auf Bot-Pipelinen (geplant mit RENOVATE_BOT=true bzw. GITHUB_ISSUE_SYNC=true)
-# läuft NUR der jeweilige Bot-Job - alle regulären Test-/Build-Jobs werden
-# übersprungen. Diese Anker werden von den betroffenen Jobs eingebunden (die
-# Validierung der Renovate-Bumps übernimmt ohnehin die Pipeline seiner MRs,
-# und der Issue-Sync fasst den Code gar nicht an).
+# Auf Bot-Pipelinen (geplant mit RENOVATE_BOT=true, GITHUB_ISSUE_SYNC=true,
+# RELEASE_PATCH=true oder MERGE_UP=true) läuft NUR der jeweilige Bot-Job - alle
+# regulären Test-/Build-Jobs werden übersprungen. Diese Anker werden von den
+# betroffenen Jobs eingebunden (die Validierung der Renovate-Bumps übernimmt
+# ohnehin die Pipeline seiner MRs, der Issue-Sync fasst den Code gar nicht an,
+# und die MRs der Release-Automatik tragen ihre eigene Pipeline).
 .skip-on-bot-pipelines:
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - when: on_success
 
@@ -148,9 +153,7 @@ workflow:
 #             wird das mit der Release-Version gebaut, nicht mit der aus dem MR.
 .nicht-auf-release-branch:
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_COMMIT_BRANCH =~ /^(community|beta)$/
       when: never
@@ -360,6 +363,9 @@ backend:
   extends: .nicht-auf-release-branch
   image: $GO_IMAGE
   script:
+    # git: Die Tests von tools/autorelease laufen gegen echte Repositories und
+    # überspringen sich ohne git - das Alpine-Image bringt es nicht mit.
+    - apk add --no-cache git
     # Formatierung zuerst: gofmt-Abweichungen sind billig zu beheben, aber sie
     # verrauschen jeden späteren Diff. `go vet` prüft das nicht mit.
     # Nur eigene Quellen prüfen: Unter .cache/ liegen Caches, und
@@ -397,7 +403,43 @@ helper-shellcheck:
     - shellcheck -s sh -S warning packaging/pkg-version.sh packaging/scripts/*.sh
     - go test -run '^TestHelperSkriptBestehtShellcheck$' ./internal/core/services/
 
-# Paket-Skripte unter jeder Shell, die ein Paketformat benutzt:
+# Abwärtskompatibilität (Paket E-3): Die ECHTEN Agenten der Release-Tags melden
+# sich am aktuellen Hub an (Befehl, Eingabe, Abbruch, Ergebnis nach Netzabriss,
+# Konsole, Inventar). Der Test baut jeden Agent aus einem git worktree des Tags
+# und braucht deshalb git und alle Tags (GIT_DEPTH 0 holt die Historie; `git
+# fetch --tags` sichert die Tags). Die gebauten Binaries liegen je Tag in einer
+# Datei im Cache; ein neuer Tag in COMPAT_AGENT_TAGS baut nur sich selbst.
+# Der Job ist der einzige Schreiber dieses Caches. Läuft nur, wenn sich ändert,
+# was ein Agent und der Hub miteinander sprechen.
+compat:agents:
+  stage: test
+  image: $GO_IMAGE
+  cache:
+    key: compat-agents
+    paths: [.cache/compat-agents]
+  rules:
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "develop"
+      changes:
+        - internal/remote/**/*
+        - internal/agent/**/*
+        - internal/core/agentcaps/**/*
+        - cmd/agent/**/*
+        - go.mod
+        - .gitlab-ci.yml
+  script:
+    # golang:alpine hat kein git; der Test legt für jeden Tag einen worktree an.
+    - apk add --no-cache git
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - git fetch --tags --force --quiet origin || echo "Hinweis - Tags nicht nachgeladen, es gelten die des Klons."
+    - |
+      for TAG in $(echo "$COMPAT_AGENT_TAGS" | tr ',' ' '); do
+        git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null || { echo "FEHLER: Tag $TAG fehlt im Klon."; exit 1; }
+      done
+    - LCM_COMPAT_AGENT_TAGS="$COMPAT_AGENT_TAGS" LCM_COMPAT_CACHE_DIR="$CI_PROJECT_DIR/.cache/compat-agents" go test -count=1 -timeout 20m -run '^TestEchteAeltereAgenten$' ./internal/remote/
+
+# Paket-Skripte unter jeder Shell, die ein Paketformat benutzt (Paket F-2):
 # dpkg ruft sie mit dash auf, apk mit busybox sh, rpm und pacman mit bash.
 # agent-scripts-test.sh nimmt die Shell aus LCM_TEST_SHELL und startet die
 # Skripte damit; "ok" je Fall, am Ende steht "all package script cases passed".
@@ -405,9 +447,7 @@ packaging:shells:
   stage: test
   image: alpine:3.24
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "develop"
       changes:
@@ -425,9 +465,7 @@ packaging:publish:
   stage: test
   image: alpine:3.24
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "develop"
       changes:
@@ -435,6 +473,42 @@ packaging:publish:
   script:
     - apk add --no-cache bash python3 curl
     - bash packaging/publish-pkgs-test.sh
+
+# Die Unit des Agents gegen systemd 247 (Debian 11), die älteste Fassung, die wir
+# unterstützen (Paket F-2): Eine Option, die dort unbekannt ist, soll hier rot
+# werden und nicht beim Kunden stillschweigend wirkungslos bleiben.
+# `systemd-analyze verify` meldet unbekannte Schlüssel nur als Warnung und endet
+# mit 0; deshalb scheitert der Job an jeder Ausgabe. Debian 11 liegt im Archiv.
+packaging:units:
+  stage: test
+  image: debian:11
+  rules:
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "develop"
+      changes:
+        - packaging/**/*
+  script:
+    - |
+      printf '%s\n' \
+        'deb http://archive.debian.org/debian bullseye main' \
+        'deb http://archive.debian.org/debian-security bullseye-security main' >/etc/apt/sources.list
+      rm -f /etc/apt/sources.list.d/*
+    - apt-get -o Acquire::Check-Valid-Until=false update -qq
+    - apt-get install -y -qq --no-install-recommends systemd
+    - systemd-analyze --version | head -n 1
+    # verify prüft auch, dass ExecStart ausführbar ist.
+    - mkdir -p /usr/lib/lcm-agent
+    - install -m 755 packaging/lcm-agent-start.sh /usr/lib/lcm-agent/lcm-agent-start
+    - install -m 644 packaging/lcm-agent.service /etc/systemd/system/lcm-agent.service
+    - |
+      OUT=$(systemd-analyze verify /etc/systemd/system/lcm-agent.service 2>&1) || true
+      if [ -n "$OUT" ]; then
+        echo "FEHLER: systemd-analyze verify beanstandet lcm-agent.service:"
+        echo "$OUT"
+        exit 1
+      fi
+      echo "OK: lcm-agent.service ist für systemd 247 unbeanstandet."
 
 # E2E (Playwright gegen das echte Binary) - nur wo es zählt: auf develop,
 # main und in MR-Pipelines. Installiert Go + Chromium im Node-Image.
@@ -454,9 +528,7 @@ e2e:
   cache: *npm-cache-ro
   needs: [frontend]
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "enterprise"
@@ -613,6 +685,18 @@ binaries:
     - GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-trivyd-linux-amd64 ./cmd/trivyd
     - GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o bin/lcm-trivyd-linux-arm64 ./cmd/trivyd
     - ls -lh bin/
+    # Statisch gelinkt? Ein Binary mit cgo hängt an der libc des Build-Systems
+    # und läuft auf älteren Debian-Ständen nicht mehr (Paket F-1). `go version
+    # -m` liest die Build-Einstellungen aus dem Binary selbst; `file` hat das
+    # alpine-Image nicht.
+    - |
+      for BIN in bin/lcm*-linux-*; do
+        if ! go version -m "$BIN" | grep -q 'CGO_ENABLED=0'; then
+          echo "FEHLER: $BIN wurde nicht mit CGO_ENABLED=0 gebaut."
+          exit 1
+        fi
+      done
+      echo "OK: alle Linux-Binaries sind ohne cgo gebaut."
   artifacts:
     paths: [bin/]
     expire_in: 1 month
@@ -717,9 +801,7 @@ images:
     - job: release
       optional: true
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "enterprise"
     - if: $CI_COMMIT_BRANCH == "develop"
@@ -833,9 +915,7 @@ upgrade-test:
     # Assets nicht den Job bricht, sondern eine Zeile Aenderung kostet.
     ALT_VERSION: "1.11.0"
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     # Vor dem Enterprise-Zug Pflicht.
     - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "enterprise"
@@ -866,9 +946,7 @@ install-doc-test:
     matrix:
       - INSTALL_IMAGE: ["debian:12-slim", "debian:13-slim", "ubuntu:22.04", "ubuntu:24.04", "ubuntu:26.04"]
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - changes:
         - docs/getting-started/installation.md
@@ -967,9 +1045,7 @@ deploy:apt:
     - e2e
     - release
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_COMMIT_BRANCH == "community"
       variables:
@@ -1014,9 +1090,7 @@ deploy:pkgs:
     - e2e
     - release
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_COMMIT_BRANCH == "community"
       variables:
@@ -1048,9 +1122,7 @@ release:public:
   image: alpine:3.24
   needs: [version, binaries, packages:deb, release, mirror:public]
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_COMMIT_BRANCH == "beta" || $CI_COMMIT_BRANCH == "community"
   script:
@@ -1146,9 +1218,7 @@ mirror:public:
     - e2e
     - release
   rules:
-    - if: $RENOVATE_BOT == "true"
-      when: never
-    - if: $GITHUB_ISSUE_SYNC == "true"
+    - if: $RENOVATE_BOT == "true" || $GITHUB_ISSUE_SYNC == "true" || $RELEASE_PATCH == "true" || $MERGE_UP == "true"
       when: never
     - if: $CI_COMMIT_BRANCH == "community" || $CI_COMMIT_BRANCH == "beta"
   script:
@@ -1248,11 +1318,14 @@ docs-deploy:
 
 ## ---- maintenance ---------------------------------------------------------------
 
-# Dependency-Bot: Renovate prüft Go-Module (gomod) und npm-Pakete auf neuere
-# Versionen und legt die Aktualisierungen automatisch als Merge Requests nach
-# develop an (Konfiguration: renovate.json im Repo-Root). Sicherheitsupdates und
-# Patch-Updates vertrauenswürdiger Herausgeber werden nach grüner Pipeline
-# automatisch gemergt; alles andere bleibt zur Review offen.
+# Dependency-Bot: Renovate prüft Go-Module (gomod), npm-Pakete, Images und CI-
+# Werkzeuge auf neuere Versionen und legt die Aktualisierungen als Merge
+# Requests nach develop, community und enterprise an (Konfiguration:
+# renovate.json auf dem Default-Branch). Minor- und Patch-Updates mergen nach
+# grüner Pipeline von selbst (enterprise: nur Patch und Sicherheit), Majors
+# warten auf die Freigabe im Dependency Dashboard. Der Zeitplan steht in
+# renovate.json (normale Updates montags, Sicherheit jederzeit); die geplante
+# Pipeline läuft täglich um 8:30 Uhr.
 #
 # Der Job läuft NICHT bei normalen Pushes, sondern nur:
 #   - über eine geplante Pipeline (Scheduler) mit der Variable RENOVATE_BOT=true
@@ -1317,3 +1390,61 @@ renovate:
         exit 1
       fi
     - renovate
+
+# Wochen-Release: Aus den Abhängigkeits-Updates von Renovate entsteht je Linie
+# (community, enterprise) ein Patch-Release, ohne dass jemand etwas anstoßen
+# muss. Die Entscheidung und der Ablauf stehen in tools/autorelease; Einzelheiten
+# und Pausieren in docs/reference/ci-release.md ("Automatische Wochen-Releases").
+#
+# release:patch   geplante Pipeline auf develop mit RELEASE_PATCH=true, täglich
+#                 6:00 Uhr. Releast dienstags (Europe/Berlin), wenn seit dem
+#                 letzten Tag der Linie etwas mit Release-Anlass dazukam - oder
+#                 sofort, wenn dieser Anlass ein Sicherheitsupdate ([security])
+#                 ist. Legt hotfix/auto-<version> an und öffnet den MR mit
+#                 Automerge; der Merge taggt und rollt aus wie jedes Release.
+# merge:up        führt community nach beta und beta nach develop zurück. Läuft
+#                 nach jedem community-Release (Push-Pipeline) und als
+#                 Nachzügler per geplanter Pipeline auf develop mit
+#                 MERGE_UP=true, täglich 7:00 Uhr.
+#
+# Beide arbeiten mit dem Projekt-Token RENOVATE_TOKEN: Mit dem CI_JOB_TOKEN
+# angelegte Pushes und MRs lösen keine Pipelines aus. Beide halten an, solange
+# die CI-Variable AUTO_RELEASE_PAUSE=true gesetzt ist.
+release:patch:
+  stage: maintenance
+  image: $GO_IMAGE
+  timeout: 20m
+  parallel:
+    matrix:
+      - LINE: [community, enterprise]
+  rules:
+    - if: $AUTO_RELEASE_PAUSE == "true"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $RELEASE_PATCH == "true" && $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_PIPELINE_SOURCE == "web" && $RELEASE_PATCH == "true" && $CI_COMMIT_BRANCH == "develop"
+  script:
+    # bash: packaging/prepare-release.sh. git: Worktrees, Push und Tags.
+    - apk add --no-cache git bash
+    - go run ./tools/autorelease patch -line "$LINE"
+
+merge:up:
+  stage: maintenance
+  image: $GO_IMAGE
+  timeout: 20m
+  rules:
+    - if: $AUTO_RELEASE_PAUSE == "true"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $MERGE_UP == "true" && $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_PIPELINE_SOURCE == "web" && $MERGE_UP == "true" && $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "community"
+  script:
+    # Auf community nur nach einem Release: RELEASE_NEEDED kommt als dotenv vom
+    # Job version. Renovate-Merges nach community lösen keinen Aufwärtsmerge aus,
+    # sie reisen mit dem nächsten Release (oder dem täglichen Lauf).
+    - |
+      if [ "$CI_PIPELINE_SOURCE" = "push" ] && [ "${RELEASE_NEEDED:-}" != "true" ]; then
+        echo "Kein Release in dieser Pipeline - nichts zurückzuführen."
+        exit 0
+      fi
+    - apk add --no-cache git
+    - go run ./tools/autorelease merge-up

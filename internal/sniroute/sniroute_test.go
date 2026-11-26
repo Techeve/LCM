@@ -205,7 +205,7 @@ func TestStummeVerbindungWirdNachDemZeitlimitGeschlossen(t *testing.T) {
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Read(make([]byte, 1)); err == nil {
 		t.Fatal("der Router hat Daten gesendet, erwartet war das Schließen")
-	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+	} else if ne := net.Error(nil); errors.As(err, &ne) && ne.Timeout() {
 		t.Fatal("der Router hat die stumme Verbindung nicht geschlossen")
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {

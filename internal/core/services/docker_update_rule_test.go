@@ -218,7 +218,88 @@ func TestDockerContainerUpdateRuleFailureIsReported(t *testing.T) {
 		Status, Output string
 	}
 	env.DB().Raw("select status, output from jobs where type = ? order by created_at desc limit 1", domain.RuleTypeDockerContainerUpdate).Scan(&out)
-	if out.Status != string(domain.JobStatusFailed) || !strings.Contains(out.Output, "edge") {
+	if out.Status != domain.JobStatusFailed || !strings.Contains(out.Output, "edge") {
 		t.Errorf("fehlschlag muss gemeldet werden: status=%q output=%q", out.Status, out.Output)
+	}
+}
+
+// restrictDockerServer legt den Server im eingeschränkten Modus an und räumt die
+// Befehlsliste, damit nur der folgende Lauf darin steht.
+func restrictDockerServer(t *testing.T, env *testEnv, id uint) {
+	t.Helper()
+	setServerFields(t, env, id, map[string]any{"restricted_sudo": true})
+	env.Dialer.Commands = nil
+}
+
+// TestDockerComposeUpdateRuleRunsRestricted: Auf einem eingeschränkten Server
+// läuft die Compose-Regel als Service-User über den docker-Shim - ohne sudo sh
+// und ohne cd ins Projektverzeichnis, denn das darf der Service-User womöglich
+// nicht betreten.
+func TestDockerComposeUpdateRuleRunsRestricted(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinDockerServerWith(t, env, "docker01", standaloneResponses())
+	updateNginx(t, env, id)
+	rule := scheduledRule(t, env, id, domain.RuleTypeDockerComposeUpdate, "")
+	restrictDockerServer(t, env, id)
+
+	env.Executor.RunRule(rule, "admin")
+
+	all := strings.Join(env.Dialer.Commands, "\n")
+	for _, want := range []string{"/.lcm/sudo-bin:", "--project-directory", "/opt/webshop", "compose.yaml", "up -d", "docker image prune -f"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("%q fehlt:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "cd '/opt/webshop'") || strings.Contains(all, "cd '\\''/opt/webshop") {
+		t.Errorf("kein cd ins Projektverzeichnis im eingeschränkten Modus:\n%s", all)
+	}
+	for _, c := range env.Dialer.Commands {
+		if strings.Contains(c, "docker compose") && strings.Contains(c, "sudo sh -c") {
+			t.Errorf("im eingeschränkten Modus darf kein sudo sh laufen: %s", c)
+		}
+	}
+	job := latestJob(t, env, id, domain.RuleTypeDockerComposeUpdate)
+	if job.Status != domain.JobStatusSuccess {
+		t.Errorf("job nicht erfolgreich: %q %q", job.Status, job.Output)
+	}
+}
+
+// TestDockerContainerUpdateRuleSkippedRestricted: Die Container-Regel braucht
+// curl am Docker-Socket und bleibt im eingeschränkten Modus gesperrt - sie
+// fasst nichts an und sagt im Job warum.
+func TestDockerContainerUpdateRuleSkippedRestricted(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinDockerServerWith(t, env, "docker01", standaloneResponses())
+	updateNginx(t, env, id)
+	rule := scheduledRule(t, env, id, domain.RuleTypeDockerContainerUpdate, "")
+	restrictDockerServer(t, env, id)
+
+	env.Executor.RunRule(rule, "admin")
+
+	all := strings.Join(env.Dialer.Commands, "\n")
+	for _, forbidden := range []string{"docker stop", "docker pull", "--unix-socket"} {
+		if strings.Contains(all, forbidden) {
+			t.Errorf("%q darf im eingeschränkten Modus nicht laufen:\n%s", forbidden, all)
+		}
+	}
+	job := latestJob(t, env, id, domain.RuleTypeDockerContainerUpdate)
+	if !strings.Contains(job.Output, "übersprungen") || !strings.Contains(job.Output, "Docker-Socket") {
+		t.Errorf("job nennt den grund nicht: %q", job.Output)
+	}
+}
+
+// TestDockerPruneRuleRunsRestricted: Prune läuft im eingeschränkten Modus über
+// den docker-Shim.
+func TestDockerPruneRuleRunsRestricted(t *testing.T) {
+	env := newTestEnv(t)
+	id := joinDockerServerWith(t, env, "docker01", standaloneResponses())
+	rule := scheduledRule(t, env, id, domain.RuleTypeDockerPrune, "")
+	restrictDockerServer(t, env, id)
+
+	env.Executor.RunRule(rule, "admin")
+
+	all := strings.Join(env.Dialer.Commands, "\n")
+	if !strings.Contains(all, "/.lcm/sudo-bin:") || !strings.Contains(all, "docker image prune -af") {
+		t.Errorf("prune läuft nicht über den Shim:\n%s", all)
 	}
 }

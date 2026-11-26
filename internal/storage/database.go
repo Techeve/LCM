@@ -678,6 +678,7 @@ var migratedModels = []any{
 	&domain.APIKey{},
 	&domain.Server{},
 	&domain.ServerGroup{},
+	&domain.AgentUpdatePolicy{},
 	&domain.Schedule{},
 	&domain.Rule{},
 	&domain.Job{},

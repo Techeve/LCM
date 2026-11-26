@@ -77,6 +77,34 @@ import { Steps } from '@astrojs/starlight/components';
      Eintrag darin ohne das Programm ins Leere zeigen würde. Was installiert
      wurde, steht im Protokoll der Aufnahme.
 
+   Alle Zugangsvarianten (root, sudo, su), den eingeschränkten Modus und die
+   Fallstricke je Distribution erklärt [SSH-Anbindung](/guides/ssh/).
+
+   **Statt SSH: Modus Agent.** Für Server hinter NAT oder ohne eingehenden
+   SSH-Zugang wählst du im Dialog den Modus **Agent** und vergibst nur einen
+   Namen. LCM legt den Server an und zeigt drei Befehle, die du auf dem Server
+   ausführst (den Installationsbefehl wählt der Dialog ab LCM 2.4 passend zum System):
+
+   ```sh
+   # 1. Paketquelle einrichten (erkennt apt, dnf, zypper, apk und pacman)
+   curl -fsSL https://repo.techeve.de/setup.sh | sudo sh
+
+   # 2. Agent installieren - der Befehl hängt von der Paketverwaltung ab
+   sudo apt install lcm-agent                                         # Debian, Ubuntu
+   sudo dnf install --setopt=disable_excludes=techeve-lcm lcm-agent   # RHEL, Fedora, Rocky, Alma
+   sudo zypper install lcm-agent                                      # openSUSE
+   sudo apk add lcm-agent                                             # Alpine
+   sudo pacman -Syu lcm-agent                                         # Arch Linux
+
+   # 3. Mit LCM verbinden (Agent-Port, Token aus dem Dialog)
+   sudo lcm-agent enroll https://lcm.example.com:9320 <token>
+   ```
+
+   Danach geht der Server online und der erste Scan startet von selbst. Der Agent
+   aktualisiert sich nie nebenbei: Ein Systemupdate lässt ihn auf seiner
+   Version, neue Versionen kommen auf Knopfdruck oder per Gruppenregel aus LCM
+   (ab LCM 2.4). Mehr dazu unter [LCM Remote](/guides/remote/).
+
 3. **Ampel & Details ansehen.**
 
    Der Server erscheint mit Status 🟢🟡🔴 in der Übersicht. Ein Klick öffnet die
@@ -103,7 +131,8 @@ import { Steps } from '@astrojs/starlight/components';
 ## Was im Hintergrund passiert
 
 Beim Onboarding und bei jedem Health-Check baut LCM eine **kurzlebige
-SSH-Verbindung** auf, liest den Zustand aus und protokolliert jede Aktion als
+SSH-Verbindung** auf (bei einem Agent-Server schickt es die Aufträge über die
+Verbindung des Agenten), liest den Zustand aus und protokolliert jede Aktion als
 **Job** mit exaktem Konsolen-Output. Die System-Gruppe bringt dafür bereits
 zwei Basis-Zeitpläne mit: einen **Health-Check** alle 15 Minuten und einen
 täglichen **System-Sync** (Hardware, Pakete, Docker-Check).
@@ -111,5 +140,6 @@ täglichen **System-Sync** (Hardware, Pakete, Docker-Check).
 ## Nächste Schritte
 
 - [Monitoring verstehen](/guides/monitoring/)
+- [LCM Remote: Server mit Agent](/guides/remote/)
 - [Beispiele: typische Arbeitsabläufe](/examples/)
 - [Backups einrichten](/guides/backups/)

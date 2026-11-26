@@ -8,10 +8,12 @@ import (
 	"github.com/google/uuid"
 
 	"LCM/internal/config"
+	"LCM/internal/core/agentcaps"
 	"LCM/internal/core/domain"
 	"LCM/internal/infrastructure/sshx"
 	"LCM/internal/remote/wire"
 	"LCM/internal/storage/repositories"
+	"LCM/internal/version"
 )
 
 // LCM Remote: Enrollment und Token-Verwaltung für Agent-Server.
@@ -44,6 +46,26 @@ func ensureSSHTransport(server *domain.Server) error {
 	return nil
 }
 
+// agentReport ordnet den Agent des Servers gegenüber diesem LCM ein (zu alt,
+// veraltet, neuer als LCM, was er kann). Nil bei SSH-Servern.
+func agentReport(server *domain.Server) *agentcaps.Report {
+	if !server.IsAgent() {
+		return nil
+	}
+	report := agentcaps.Assess(server.Agent(), version.Version)
+	return &report
+}
+
+// agentLink liefert die Verbindungsbilanz des Agents aus dem Hub; nil bei
+// SSH-Servern und ohne verdrahteten Hub.
+func (s *ServerService) agentLink(server *domain.Server) *domain.AgentLink {
+	if !server.IsAgent() || s.agents == nil {
+		return nil
+	}
+	link := s.agents.LinkStats(server.AgentID)
+	return &link
+}
+
 // AgentConnector ist die Sicht des ServerService auf den MQTT-AgentHub
 // (internal/remote) - als Interface, damit services nicht von remote
 // abhängt und schlanke Tests einen Fake einsetzen können.
@@ -55,6 +77,8 @@ type AgentConnector interface {
 	Online(agentID string) bool
 	// Disconnect trennt eine aktive Agent-Session (Token-Revocation).
 	Disconnect(agentID string)
+	// LinkStats liefert die Verbindungsbilanz des Agents seit dem Start von LCM.
+	LinkStats(agentID string) domain.AgentLink
 }
 
 // WithAgentHub verdrahtet den MQTT-AgentHub für den Agent-Transport.

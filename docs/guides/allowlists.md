@@ -49,8 +49,8 @@ zuordnen - die Auswahl ergibt die Vereinigung der IPs:
 
 - **Firewall-Regel** (Server-Firewall-Dialog / Gruppen-Regel): Wird an einer
   Regel eine Allowlist gewählt, gibt die Regel den Port **nur für die Quell-IPs
-  dieser Listen** frei - sonst niemand. Ohne Allowlist gilt die Regel wie
-  bisher für alle Quellen. Umgesetzt als `ufw allow … from …`, firewalld
+  dieser Listen** frei - sonst niemand. Ohne Allowlist gilt die Regel für
+  alle Quellen. Umgesetzt als `ufw allow … from …`, firewalld
   `source address="…"` bzw. nftables `ip/ip6 saddr { … }`. An derselben Regel
   lassen sich zusätzlich **eigene IPs/Netze** direkt eintragen - sie werden mit
   den Allowlist-IPs vereinigt (siehe [Firewall](/guides/firewall)).

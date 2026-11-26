@@ -46,6 +46,7 @@ type Server struct {
 	app      *fiber.App
 	addr     string       // aktuelle Listen-Adresse, "" = aus
 	tls      bool         // spricht der eigene Listener TLS
+	ln       net.Listener // eigener Listener, solange der Server läuft
 	sharedLn net.Listener // Listener am gemeinsamen Port, solange der Server läuft
 }
 
@@ -154,6 +155,10 @@ var (
 	// gebunden werden darf, bevor das Binden als gescheitert gilt.
 	rebindFor   = 2 * time.Second
 	rebindEvery = 50 * time.Millisecond
+
+	// afterRelease läuft in Tests zwischen Freigabe und erneutem Binden des
+	// Ports; in Produktion ist es nil.
+	afterRelease func(addr string)
 )
 
 // retune wechselt TLS auf der laufenden Adresse (siehe retuneLocked).
@@ -171,6 +176,9 @@ func (s *Server) retune(addr string, useTLS bool) {
 func (s *Server) retuneLocked(addr string, useTLS bool) error {
 	oldTLS := s.tls
 	<-s.stopLocked()
+	if afterRelease != nil {
+		afterRelease(addr)
+	}
 	err := s.rebindLocked(addr, useTLS)
 	if err == nil {
 		return nil
@@ -214,7 +222,7 @@ func (s *Server) startLocked(ln net.Listener, addr string, useTLS bool, after <-
 	}
 
 	app := s.buildApp()
-	s.app, s.addr, s.tls = app, addr, useTLS
+	s.app, s.addr, s.tls, s.ln = app, addr, useTLS, ln
 	s.logger.Info("MCP listener started", "address", scheme+"://"+addr+"/mcp")
 	safego.Go("mcp-listener", func() {
 		if after != nil {
@@ -289,6 +297,10 @@ func (s *Server) stopLocked() <-chan struct{} {
 	app := s.app
 	s.app = nil
 	s.addr = ""
+	// Selbst schließen: Hat die Listen-Goroutine ln noch nicht an die App
+	// übergeben, fände ShutdownWithTimeout ihn nicht, und er bliebe offen.
+	_ = s.ln.Close()
+	s.ln = nil
 	if s.sharedLn != nil {
 		// Auch wenn die App ihn noch nicht bedient: Sonst bliebe er als Ziel
 		// angeschlossen, und niemand nähme die Verbindungen an.

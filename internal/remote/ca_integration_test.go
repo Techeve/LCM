@@ -127,7 +127,8 @@ func startAgent(t *testing.T, hub *remote.Hub, server *domain.Server, addr, cert
 		AgentID: server.AgentID, Secret: "tls-secret", CertFingerprint: certFP,
 	}
 	path := filepath.Join(t.TempDir(), "agent.json")
-	go func() { _ = agent.NewClient(cfg, slog.Default(), "test").WithConfigPath(path).Run() }()
+	jobs := t.TempDir()
+	go func() { _ = agent.NewClient(cfg, slog.Default(), "test").WithConfigPath(path).WithJobsDir(jobs).Run() }()
 	waitFor(t, 10*time.Second, "agent online", func() bool { return hub.Online(server.AgentID) })
 }
 

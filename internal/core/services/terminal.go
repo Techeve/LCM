@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"LCM/internal/core/agentcaps"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/events"
 	"LCM/internal/infrastructure/sshx"
-	"LCM/internal/remote/wire"
 	"LCM/internal/storage/repositories"
 )
 
@@ -173,6 +173,10 @@ func (s *ServerService) SetConsoleDisabled(scope repositories.AccessScope, id ui
 
 // terminalPossible prüft, ob dieser Servertyp überhaupt eine Shell hat.
 func terminalPossible(server *domain.Server) error {
+	var agentErr error
+	if server.IsAgent() {
+		agentErr = agentConsoleError(server)
+	}
 	switch {
 	case server.ConsoleDisabled:
 		// Für diesen Server ausdrücklich abgeschaltet. Die Prüfung steht hier
@@ -186,13 +190,8 @@ func terminalPossible(server *domain.Server) error {
 		// DSM verwaltet LCM über die Web-API; eine Shell ist dort nicht
 		// vorgesehen und wäre auch nicht die Art, ein DSM zu bedienen.
 		return ErrTerminalNotPossible
-	case server.IsAgent() && server.AgentHas(wire.CapabilityTTYOff):
-		// Der Betreiber des Servers hat es dort abgeschaltet.
-		return ErrTerminalAgentDisabled
-	case server.IsAgent() && !server.AgentHas(wire.CapabilityTTY):
-		// Älterer Agent: Er bekäme Rahmen, die er nicht kennt, und LCM
-		// wartete ins Leere.
-		return ErrTerminalAgentOutdated
+	case agentErr != nil:
+		return agentErr
 	case server.InMaintenance():
 		// In Wartung heißt: bewusst außer Betrieb. Wer trotzdem heranwill,
 		// beendet erst die Wartung - sonst hebelt die Konsole eine
@@ -200,6 +199,24 @@ func terminalPossible(server *domain.Server) error {
 		return ErrTerminalNotPossible
 	}
 	return nil
+}
+
+// agentConsoleError sagt, warum der Agent des Servers keine Konsole öffnet
+// (nil, wenn er es kann). Die Frage beantwortet agentcaps an einer Stelle:
+// Fähigkeit, Mindestversion, vom Betreiber abgeschaltet.
+func agentConsoleError(server *domain.Server) error {
+	support := server.Agent().Check(agentcaps.FeatureConsole)
+	switch {
+	case support.Supported:
+		return nil
+	case support.Reason == agentcaps.ReasonDisabled:
+		// Der Betreiber des Servers hat es dort abgeschaltet.
+		return ErrTerminalAgentDisabled
+	default:
+		// Älterer Agent: Er bekäme Rahmen, die er nicht kennt, und LCM
+		// wartete ins Leere.
+		return ErrTerminalAgentOutdated
+	}
 }
 
 // serverTerminal schließt beim Beenden auch die Verbindung - und damit den

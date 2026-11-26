@@ -96,7 +96,7 @@ func TestMCPMitTLSOhnePoolStartetNichtImNetz(t *testing.T) {
 // Wechselt nur TLS und lässt sich die Adresse nicht wieder binden, kommt der
 // Fehler beim Aufrufer an (nicht nur im Log).
 func TestMCPUmschaltenAufTLSMeldetBindFehler(t *testing.T) {
-	defer mcp.SetRebindForTest(200 * time.Millisecond)()
+	defer mcp.SetRebindForTest(50 * time.Millisecond)()
 	server := newServer().WithTLS(newPool(t).TLSConfig)
 	port := freePort(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
@@ -107,21 +107,22 @@ func TestMCPUmschaltenAufTLSMeldetBindFehler(t *testing.T) {
 	waitUntilServing(t, addr)
 
 	// Ein anderer Prozess nimmt den Port, sobald der Listener ihn freigibt.
-	squatter := make(chan net.Listener, 1)
-	go func() {
-		for {
-			if ln, err := net.Listen("tcp", addr); err == nil {
-				squatter <- ln
-				return
-			}
-			time.Sleep(time.Millisecond)
+	var squatter net.Listener
+	defer mcp.SetAfterReleaseForTest(func(addr string) {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Errorf("Port nach der Freigabe nicht zu belegen: %v", err)
+			return
 		}
-	}()
+		squatter = ln
+	})()
 	err := server.Apply(true, "127.0.0.1", port, true)
+	if squatter != nil {
+		_ = squatter.Close()
+	}
 	if err == nil {
 		t.Fatal("kein Fehler, obwohl die Adresse nicht mehr zu binden war")
 	}
-	_ = (<-squatter).Close()
 }
 
 // Gelingt das Binden, meldet der Wechsel von TLS keinen Fehler.
@@ -135,5 +136,24 @@ func TestMCPUmschaltenAufTLSOhneFehler(t *testing.T) {
 	waitUntilServing(t, fmt.Sprintf("127.0.0.1:%d", port))
 	if err := server.Apply(true, "127.0.0.1", port, true); err != nil {
 		t.Errorf("Wechsel auf TLS: %v", err)
+	}
+}
+
+// Hält der Server gleich nach dem Start an, gibt er den Port trotzdem frei,
+// auch wenn die Listen-Goroutine den Listener noch nicht übernommen hat.
+func TestMCPGibtPortFreiWennGleichNachDemStartGestoppt(t *testing.T) {
+	for range 20 {
+		server := newServer()
+		port := freePort(t)
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		if err := server.Apply(true, "127.0.0.1", port, false); err != nil {
+			t.Fatal(err)
+		}
+		server.Shutdown()
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Fatalf("Port nach dem Stoppen noch belegt: %v", err)
+		}
+		_ = ln.Close()
 	}
 }

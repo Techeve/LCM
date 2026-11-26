@@ -16,9 +16,11 @@ func NewPendingUserSyncRepository(db *gorm.DB) *PendingUserSyncRepository {
 	return &PendingUserSyncRepository{db: db}
 }
 
-// Queue legt einen Eintrag an - oder lässt ihn, wenn derselbe Auftrag für
-// denselben Server schon offen ist. Ein zweites „alle Konten verteilen" bringt
-// nichts Neues, und zweimal dasselbe Konto zu entfernen erst recht nicht.
+// Queue legt einen Eintrag an - oder, wenn derselbe Auftrag für denselben
+// Server schon offen ist, zählt dessen Revision hoch. Ein zweites „alle Konten
+// verteilen" bringt nichts Neues, und zweimal dasselbe Konto zu entfernen erst
+// recht nicht. Die Revision sorgt dafür, dass ein gerade laufender Abgleich den
+// Eintrag danach nicht löscht (siehe Clear).
 func (r *PendingUserSyncRepository) Queue(serverID uint, username string) error {
 	q := r.db.Model(&domain.PendingUserSync{}).Where("server_id = ?", serverID)
 	if username == "" {
@@ -26,12 +28,9 @@ func (r *PendingUserSyncRepository) Queue(serverID uint, username string) error 
 	} else {
 		q = q.Where("username_bidx = ?", domain.UserBlindIndex(username))
 	}
-	var count int64
-	if err := q.Count(&count).Error; err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
+	res := q.Update("revision", gorm.Expr("revision + 1"))
+	if res.Error != nil || res.RowsAffected > 0 {
+		return res.Error
 	}
 	return r.db.Create(&domain.PendingUserSync{ServerID: serverID, Username: username}).Error
 }
@@ -50,8 +49,11 @@ func (r *PendingUserSyncRepository) ServerIDs() ([]uint, error) {
 	return ids, err
 }
 
-func (r *PendingUserSyncRepository) Delete(id uint) error {
-	return r.db.Delete(&domain.PendingUserSync{}, id).Error
+// Clear löscht einen erledigten Eintrag - aber nur, wenn er seit dem Lesen
+// nicht erneut eingestellt wurde. Sonst bleibt er für den nächsten Abgleich.
+func (r *PendingUserSyncRepository) Clear(entry *domain.PendingUserSync) error {
+	return r.db.Where("id = ? AND revision = ?", entry.ID, entry.Revision).
+		Delete(&domain.PendingUserSync{}).Error
 }
 
 // DeleteForServer räumt den Rückstand eines Servers ab - etwa wenn der Server

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"LCM/internal/core/agentcaps"
 )
 
 // ServerBlindIndex berechnet den deterministischen Blindindex des Server-
@@ -78,20 +80,6 @@ const MaxNTPServers = 4
 // TOTP-Codes schon deutlich früher, und Protokolle mehrerer Server lassen
 // sich nicht mehr sinnvoll nebeneinanderlegen.
 const ClockOffsetWarnSeconds = 30
-
-// splitCSVList zerlegt eine komma-/whitespace-getrennte Liste in bereinigte,
-// nicht-leere Einträge.
-func splitCSVList(raw string) []string {
-	var out []string
-	for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == '\n' || r == ' ' || r == '\t'
-	}) {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
 
 // DefaultServiceUser ist der Management-Benutzer, den LCM beim Join
 // auf dem Zielsystem anlegt.
@@ -197,9 +185,31 @@ type Server struct {
 	// Connect gemeldet hat (wire.Inventory.Capabilities, kommagetrennt; leer
 	// bei älteren Agents). Die Oberfläche bietet danach z.B. die Konsole an.
 	AgentCapabilities string `json:"agent_capabilities,omitempty"`
+	// AgentProtocol ist die Protokollversion, die der Agent beim letzten
+	// Connect gemeldet hat (wire.Inventory.ProtocolVersion; ältere Agents
+	// schicken nichts und gelten als Protokoll 1). 0 = noch nie gemeldet.
+	AgentProtocol int `gorm:"default:0" json:"agent_protocol,omitempty"`
+	// AgentRollback ist die Agent-Version, von der der Agent beim letzten
+	// Connect gemeldet hat, auf das vorige Binary zurückgerollt zu sein
+	// (wire.Inventory.RolledBack): Ein Update ist fehlgeschlagen. Leer, wenn
+	// der Agent keinen Rollback meldet; der nächste Connect ohne Meldung leert
+	// den Wert wieder.
+	AgentRollback string `json:"agent_rollback,omitempty"`
+	// AgentRollbackReason ist der Grund, den der Agent nennt (crash-loop, not-ready).
+	AgentRollbackReason string `json:"agent_rollback_reason,omitempty"`
+	// AgentReportedAt ist der Zeitpunkt des letzten Inventars des Agents. Ein
+	// Update-Job liest daran, ob sich der Agent NACH dem Start gemeldet hat.
+	AgentReportedAt *time.Time `json:"-"`
+	// AgentSupport ordnet den Agent gegenüber diesem LCM ein (zu alt, zu neu,
+	// was er kann) - abgeleitet aus Version, Protokoll und Fähigkeiten, nicht
+	// persistiert; vom Service vor der Auslieferung befüllt. Nil bei SSH-Servern.
+	AgentSupport *agentcaps.Report `gorm:"-" json:"agent_support,omitempty"`
 	// AgentConnected ist der Laufzeitzustand aus dem AgentHub (nicht
 	// persistiert) - vom Controller vor der Auslieferung befüllt.
 	AgentConnected bool `gorm:"-" json:"agent_connected"`
+	// AgentLink ist die Verbindungsbilanz aus dem AgentHub (nicht persistiert,
+	// nur seit dem Start von LCM) - vom Service vor der Auslieferung befüllt.
+	AgentLink *AgentLink `gorm:"-" json:"agent_link,omitempty"`
 
 	// Ergebnisse des System-Scans (initial + System-Sync).
 	// OS-/Kernel-/CPU-Profil at rest verschlüsselt (`aesgcm`): so verrät die per
@@ -336,9 +346,10 @@ type Server struct {
 	// "qemu", "vmware", …). Leer = unbekannt.
 	Virtualization string `json:"virtualization"`
 	// PackageManager ist die auf dem Zielsystem erkannte Paketverwaltung
-	// ("apt", "dnf", "yum" oder "zypper"). Sie steuert die Scan- und
-	// Update-Kommandos - LCM unterstützt so Debian/Ubuntu ebenso wie die
-	// RHEL-Familie und SUSE. Leer = unbekannt/nicht ermittelt.
+	// ("apt", "dnf", "yum", "zypper", "pacman" oder "apk"). Sie steuert die Scan-
+	// und Update-Kommandos und den Weg des Agent-Updates - LCM unterstützt so
+	// Debian/Ubuntu ebenso wie die RHEL-Familie, SUSE, Arch und Alpine.
+	// Leer = unbekannt/nicht ermittelt.
 	PackageManager string `json:"package_manager"`
 	// HasACL meldet, ob setfacl/getfacl vorhanden sind, ACLUsable zusätzlich,
 	// ob das Dateisystem sie wirklich trägt. Verzeichnisrechte aus den
@@ -586,14 +597,13 @@ const (
 // IsAgent meldet, ob der Server über den lcm-agent (MQTT) verwaltet wird.
 func (s *Server) IsAgent() bool { return s.Transport == TransportAgent }
 
-// AgentHas meldet, ob der Agent die Fähigkeit beim letzten Connect gemeldet hat.
-func (s *Server) AgentHas(capability string) bool {
-	for _, c := range strings.Split(s.AgentCapabilities, ",") {
-		if c == capability {
-			return true
-		}
-	}
-	return false
+// Agent liefert, was LCM über den Agent des Servers weiß (Version, Protokoll,
+// Fähigkeiten vom letzten Connect). Wer wissen will, ob der Agent etwas kann,
+// fragt darüber (Agent().Check/Supports), nicht über die Rohwerte.
+func (s *Server) Agent() agentcaps.Agent {
+	a := agentcaps.FromStored(s.AgentVersion, s.AgentProtocol, s.AgentCapabilities)
+	a.RolledBack, a.RolledBackReason = s.AgentRollback, s.AgentRollbackReason
+	return a
 }
 
 // Proxmox-Produkttypen (Server.ProxmoxType).
@@ -853,6 +863,13 @@ type TrafficLightInput struct {
 	// LCM-Hosts, und alle Server deswegen einzufärben würde eine einzige
 	// Ursache vielfach als Server-Problem ausgeben.
 	CVEDB CVEDBStatus
+	// Agent ist die Einordnung des lcm-agent dieses Servers (nil bei SSH-Servern
+	// und ohne Angabe): zu alt, veraltet oder neuer als LCM. Sie fließt in die
+	// EINE Status-Pille ein, statt eine zweite Anzeige daneben zu setzen.
+	Agent *agentcaps.Report
+	// AgentLink ist die Verbindungsbilanz des Agents (nil bei SSH-Servern und
+	// ohne Hub): Reißt sie oft ab, ist das ein Befund derselben Pille.
+	AgentLink *AgentLink
 }
 
 // OfflineAfterFailedChecks: ab so vielen aufeinanderfolgenden fehlgeschlagenen
@@ -1103,6 +1120,14 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 				"alle privilegierten Aktionen über ihn, Korrekturen aus neueren LCM-Fassungen wirken "+
 				"hier nicht. Über „Neu verbinden“ (Admin-Login) wird er erneuert.", nil))
 	}
+	// Der Agent ist zu alt, veraltet oder neuer als LCM.
+	agentNote, agentCritical := agentInsight(in.Agent)
+	if agentNote != nil {
+		insights = append(insights, *agentNote)
+	}
+	if linkNote := agentLinkInsight(in.AgentLink); linkNote != nil {
+		insights = append(insights, *linkNote)
+	}
 	// Das System fordert selbst einen Neustart an (z. B. nach Kernel-Update).
 	if s.RebootRequired {
 		insights = append(insights, insight("warning", "rebootRequired",
@@ -1188,7 +1213,7 @@ func (s *Server) TrafficLight(in TrafficLightInput) (string, []StatusInsight) {
 	// Kritische CVEs oder ein (bald) nicht mehr unterstütztes Betriebssystem
 	// machen den Server rot (stärkstes Signal, gleichrangig mit „nicht
 	// erreichbar"). Ebenso, wenn LCM ihn nicht mehr pflegen kann.
-	if in.CriticalVulns > 0 || osCritical || capCritical || in.PackagesStale == PackagesStaleCritical {
+	if in.CriticalVulns > 0 || osCritical || capCritical || agentCritical || in.PackagesStale == PackagesStaleCritical {
 		return ServerStatusRed, withInfos(insights, infos)
 	}
 	// Nur Befunde mit Handlungsbedarf färben gelb - reine Hinweise nicht.

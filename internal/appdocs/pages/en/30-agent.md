@@ -41,14 +41,29 @@ the address and token already filled in.
 Sign in to the server you want to manage. There are two routes - follow the
 commands LCM shows you; here they are for context:
 
-**With the package repository (recommended)** - the agent then gets updates
-like any other package:
+**With the package repository (recommended)** - LCM can then update the agent
+(**Update agent** on the server or a rule of the group; a plain system update
+leaves it alone). Set up the repository once with the same command, then install
+with the server's package manager:
 
 ```bash
 # set up the TechEve repository once (skip if already present)
 curl -fsSL https://repo.techeve.de/setup.sh | sudo sh
-sudo apt install lcm-agent
 ```
+
+| System | Install |
+| --- | --- |
+| Debian, Ubuntu (apt) | `sudo apt install lcm-agent` |
+| RHEL, AlmaLinux, Rocky, Fedora (dnf) | `sudo dnf install --setopt=disable_excludes=techeve-lcm lcm-agent` |
+| openSUSE Leap and Tumbleweed (zypper) | `sudo zypper install lcm-agent` |
+| Alpine Linux (apk) | `sudo apk add lcm-agent` |
+| Arch Linux (pacman) | `sudo pacman -Syu lcm-agent` |
+
+The agent stays put during a system update: on dnf through an `exclude` in the
+repository (hence the exception for the first install), on zypper through a package
+lock, on pacman through `IgnorePkg`. On apk `apk add lcm-agent` does not fix a
+version; after the install the package prints the command for it
+(`apk add lcm-agent=<version>`), and LCM keeps the agent held on every update.
 
 **Without the repository** - download the binary straight from the LCM server.
 Handy for a quick test, but you then have to apply updates yourself.

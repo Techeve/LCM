@@ -41,6 +41,11 @@ const (
 	JobTypeJoin      = "join"       // Server aufnehmen (alle Arten: SSH, Agent, RouterOS, DSM)
 	JobTypeReconnect = "reconnect"  // Zugang eines Servers neu einrichten
 	JobTypeHardenSSH = "harden-ssh" // SSH-Härtung (steht im Verlauf der Demo-Daten)
+	// JobTypeAgentUpdate aktualisiert den lcm-agent eines Agent-Servers auf die
+	// Version, die LCM bestimmt (nie höher als LCM selbst). Bewusst kein
+	// Regel-Typ: Der Auftrag kommt vom Knopf oder von der Agent-Update-Regel
+	// einer Gruppe, nicht aus einem Zeitplan.
+	JobTypeAgentUpdate = "agent-update"
 )
 
 // RoutineJobTypes sind die Job-Typen, deren Ausgabe nur kurz aufbewahrt wird
@@ -89,6 +94,14 @@ type Job struct {
 
 	StartedAt  *time.Time `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
+
+	// AgentRequestID ist die Kennung des Kommandos, das dieser Job zuletzt an
+	// einen Agent mit Jobs geschickt hat und dessen Ergebnis noch aussteht.
+	// Kommt es erst an, nachdem der Job schon beendet war (LCM-Neustart,
+	// aufgegebenes Warten), findet der Hub darüber den Job und trägt es nach.
+	// Intern: wird nie ausgeliefert und nur über eigene Repository-Methoden
+	// geschrieben, nicht von JobRepository.Update.
+	AgentRequestID string `gorm:"index" json:"-"`
 }
 
 // BeforeCreate vergibt eine UUID, falls noch keine gesetzt ist.

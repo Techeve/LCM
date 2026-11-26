@@ -74,8 +74,11 @@ journalctl -u lcm -f      # Logs live
 
 ### Konfiguration
 
-Alle Einstellungen stehen in `/etc/lcm/config.json` - nach Änderungen den
-Dienst neu starten (`systemctl restart lcm`). Wichtige Werte:
+In `/etc/lcm/config.json` stehen die Start- und Betriebsparameter von LCM. Die
+meisten Einstellungen liegen in der Datenbank und in der Oberfläche. Nach
+Änderungen an der Datei den Dienst neu starten (`systemctl restart lcm`). Alle
+Felder und das Zusammenspiel mit der Oberfläche:
+[Konfigurationsdatei config.json](/guides/config-json/). Wichtige Werte:
 
 - `host` (Default `0.0.0.0`): Bind-Adresse. **Sicherheitshinweis:** In der
   Voreinstellung ist die Oberfläche im Netz erreichbar (HTTPS, self-signed).
@@ -84,8 +87,7 @@ Dienst neu starten (`systemctl restart lcm`). Wichtige Werte:
   Betrieb `host` auf `127.0.0.1` setzen.
 - `port` (Default `9310`).
 - Ein Geheimnis steht nicht in der Datei: Der Signaturschlüssel der
-  2FA-Challenge entsteht bei jedem Start neu im Speicher. Ein `jwt_secret` aus
-  älteren Fassungen wird ignoriert und beim nächsten Schreiben entfernt.
+  2FA-Challenge entsteht bei jedem Start neu im Speicher.
 
 ### Aktualisieren
 
@@ -115,7 +117,7 @@ sudo apt purge  lcm     # alles, was LCM angelegt hat, entfernen
 - das Verwaltungskonto `lcm-svc` (nur wenn sein Schlüssel den LCM-Kommentar
   trägt)
 - die Host-Einstellungen: apt-Cache-Drop-in, die SSH-Drop-ins
-  `00-lcm-hardening`, `10-lcm-ssh`, `40-lcm-2fa` (früher `55-lcm-2fa`), `60-lcm-hardening`,
+  `00-lcm-hardening`, `10-lcm-ssh`, `40-lcm-2fa`, `60-lcm-hardening`,
   der PAM-Umbau der SSH-2FA in `/etc/pam.d/sshd`, die nftables-Tabelle `lcm`
   samt `/etc/nftables.d/lcm.nft`
 - den Include in der `sshd_config`: die Originaldatei wird aus
@@ -234,14 +236,12 @@ Das Token schützt den Sidecar; er führt Prozesse aus und lädt Images aus frem
 Veröffentlicht wird er als `…/trivyd:<trivy-version>` (heute `0.74.0`) plus dem
 beweglichen Kanal-Zeiger (`:beta`, `:latest`). Bewusst **nicht** mit der
 LCM-Version: Er ändert sich nur, wenn Trivy hochgezogen oder der Adapter
-angefasst wird. Mit der LCM-Version im Tag entstünde bei jedem Release ein
-neuer Digest für unveränderten Inhalt - die Registry füllte sich mit Kopien,
-und die Tag-Liste sähe aus, als hätte sich am Scanner etwas bewegt.
+angefasst wird.
 
 Für die eigene Compose-Datei heißt das: den Sidecar über den Kanal-Zeiger
 beziehen (`:beta` bzw. `:latest`) oder die Trivy-Version ausdrücklich nennen.
 
-Ohne Sidecar läuft LCM weiterhin - dann eben ohne CVE-Scan, genau wie bisher im Docker-Betrieb. Ein **konfigurierter, aber unerreichbarer** Sidecar ist dagegen ein Fehler und wird als solcher gemeldet: Sonst sähe ein Ausfall aus wie ein abgeschalteter Scan, und eine leere Fundliste wie Entwarnung.
+Ohne Sidecar läuft LCM weiterhin - dann eben ohne CVE-Scan. Ein **konfigurierter, aber unerreichbarer** Sidecar ist dagegen ein Fehler und wird als solcher gemeldet: Sonst sähe ein Ausfall aus wie ein abgeschalteter Scan, und eine leere Fundliste wie Entwarnung.
 
 ### Was der Container NICHT kann
 

@@ -58,10 +58,7 @@ SSH-Verbindungen; die verwalteten Server brauchen keinen Agent.
   Sicherungskopien der Quellen-Dateien unter `/var/backups/lcm-apt-https` auf
   und weiß dadurch später noch, welche Quelle vorher http war. Die
   Rückstellung betrifft **nur diese** - eine Fremdquelle, die von sich aus
-  https spricht, bleibt unangetastet. Auf Servern, die vor LCM&nbsp;1.27
-  umgestellt wurden, gibt es kein solches Protokoll mehr; dort bietet LCM die
-  Spiegel der Distribution (`*.debian.org`, `*.ubuntu.com`,
-  `*.raspberrypi.org`) zur Rückstellung an. Welche Quellen betroffen sind,
+  https spricht, bleibt unangetastet. Welche Quellen betroffen sind,
   zeigt die Bestätigung vor dem Ausführen.
 - **Docker** - Container (inkl. Compose-Projekten) und Images, siehe
   [Docker-Monitoring](/guides/docker/).
@@ -245,9 +242,7 @@ zurück, zählen ihn die nächsten Health-Pings ohnehin.
 :::note[Unabhängig von der Ampel]
 Das Kennzeichen sagt nur, dass der Server nicht antwortet - nicht, wie schlimm
 das ist. Ob die Nichterreichbarkeit toleriert wird, steuert die **Farbe**
-(siehe unten), nicht die Tatsache. Früher hing das Kennzeichen an dieser
-Einstellung und erschien ausgerechnet bei ganz normal ausgefallenen Servern
-nicht.
+(siehe unten), nicht die Tatsache.
 :::
 
 ## Nichterreichbarkeit unkritisch
@@ -284,8 +279,7 @@ Maschine, deren Ressourcen gerade woanders gebraucht werden.
 
 :::note[Warum das nicht nur Kosmetik ist]
 Ohne diesen Zustand zählt „aus" als „gestört". Ein einziges stillgelegtes System
-erzeugt so alle 15 Minuten eine Unerreichbar-Warnung - im Betrieb waren das
-binnen einer Woche über tausend Zeilen für einen einzigen Server, und in dem
+erzeugt so alle 15 Minuten eine Unerreichbar-Warnung, und in dem
 Rauschen gehen die echten Störungen unter.
 :::
 
@@ -325,7 +319,7 @@ einen frischen Kontakt.
 
 Auf einem Server läuft immer höchstens **ein** Job - zwei gleichzeitige Zugriffe
 auf dieselbe Paketverwaltung wären ein Systemkonflikt. Trifft ein Zeitplan auf
-einen belegten Server, wird sein Lauf deshalb nicht mehr verworfen, sondern
+einen belegten Server, wird sein Lauf deshalb
 **eingereiht**: Er steht als `pending` in der Job-Liste und startet, sobald der
 laufende Job fertig ist.
 
@@ -396,9 +390,7 @@ so hält ein Zeitplan den Paketbestand ganzer Servergruppen dauerhaft schlank
 
 ### Snaps aktualisieren und entfernen
 
-Snaps waren lange nur eine Liste - die Spalte „Update" zeigte, dass eines
-bereitliegt, einspielen ließ es sich nur auf der Konsole. Der Reiter **Snaps**
-bietet jetzt dieselben Aktionen wie die Paket-Ansicht: **alle aktualisieren**
+Der Reiter **Snaps** bietet dieselben Aktionen wie die Paket-Ansicht: **alle aktualisieren**
 (`snap refresh`), ein **einzelnes aktualisieren** und **entfernen**.
 
 Zwei Unterschiede zu apt, beide beabsichtigt:
@@ -413,6 +405,16 @@ Zwei Unterschiede zu apt, beide beabsichtigt:
 
 Entfernt wird ohne `--purge` - snapd legt vorher eine Momentaufnahme der
 Snap-Daten an, die sich mit `snap restore` zurückholen lässt.
+
+Läuft gerade eine Anwendung aus einem Snap, verschiebt snapd dessen Update und
+meldet bei „alle aktualisieren" trotzdem Erfolg. LCM prüft deshalb (ab LCM 2.4) nach jedem
+Lauf mit `snap refresh --list`, ob noch etwas aussteht, und lässt den Lauf mit
+dem Namen des Snaps scheitern. Anwendung beenden und erneut aktualisieren.
+Zurückgehaltene Snaps (`snap refresh --hold`) zählen nicht. Nach jedem
+Paketlauf liest LCM den Snap-Bestand neu ein (ab LCM 2.4).
+
+Snaps werden nicht auf CVEs geprüft: Für Snaps gibt es keine
+Schwachstellen-Datenbank, die Trivy auswerten könnte.
 
 ### Alte Kernel entfernen
 
@@ -435,13 +437,6 @@ laufende Kernel wird im Skript ein zweites Mal ausgeschlossen, falls seit der
 letzten Erfassung neu gestartet wurde. Derzeit nur auf apt-Systemen
 (Debian, Ubuntu, Proxmox); der eingeschränkte Sudo-Modus genügt, weil das Skript
 nur liest und `apt-get purge` ausführt.
-
-:::note[Die Kernel-Liste war früher zu kurz]
-Bis 1.26 wurde das Kernel-Inventar nur beim **vollen** Server-Scan
-aktualisiert. Auf regelmäßig aktualisierten Servern zeigte die Karte deshalb
-dauerhaft zu wenige Kernel - die dazwischen installierten fehlten. Seit 1.27
-zieht jede Paket-Aktion das Inventar mit nach.
-:::
 
 ### Paket-Pins: was das Aufräumen NICHT anfassen darf
 

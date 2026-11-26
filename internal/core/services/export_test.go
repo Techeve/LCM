@@ -75,3 +75,7 @@ func (e *Executor) RunSpreadForTest(rules []domain.Rule, window time.Duration) {
 
 // RunNamesForTest macht die Namen eines Laufs für Black-Box-Tests lesbar.
 func (s *ACMEService) RunNamesForTest(st *domain.GlobalSettings) []string { return s.runNames(st) }
+
+// WaitReconcilesForTest wartet, bis alle Benutzer-Abgleiche im Hintergrund
+// fertig sind - statt auf ihr Ergebnis zu pollen.
+func (s *ProvisioningService) WaitReconcilesForTest() { s.reconciles.Wait() }

@@ -140,6 +140,11 @@ type Scheduler struct {
 	system map[string]cron.EntryID
 	// updateCheck führt die Update-Prüfung aus (optional verdrahtet).
 	updateCheck func()
+	// agentUpdates liefert die eingeschalteten Agent-Update-Regeln der Gruppen,
+	// runAgentUpdate führt den Lauf einer Gruppe aus (optional verdrahtet, siehe
+	// WithAgentUpdates).
+	agentUpdates   func() ([]domain.AgentUpdatePolicy, error)
+	runAgentUpdate func(groupID uint)
 	// subscriptionCheck führt das tägliche Subscription-Lebenszeichen aus
 	// (optional verdrahtet; prüft selbst, ob eine Subscription hinterlegt ist).
 	subscriptionCheck func()
@@ -154,6 +159,13 @@ type Scheduler struct {
 // ohne sie wird kein Update-Schedule registriert.
 func (s *Scheduler) WithUpdateCheck(fn func()) *Scheduler {
 	s.updateCheck = fn
+	return s
+}
+
+// WithAgentUpdates verdrahtet die Fenster der Agent-Update-Regeln: Zu Beginn
+// jedes Fensters startet run den Lauf der Gruppe. Optional.
+func (s *Scheduler) WithAgentUpdates(policies func() ([]domain.AgentUpdatePolicy, error), run func(groupID uint)) *Scheduler {
+	s.agentUpdates, s.runAgentUpdate = policies, run
 	return s
 }
 
@@ -228,6 +240,15 @@ func (s *Scheduler) Reload() error {
 		s.entries[sched.ID] = entryID
 	}
 
+	// 1b. Fenster der Agent-Update-Regeln. Der Lauf dauert so lang wie das
+	// Fenster; er hängt deshalb nicht am Cron-Eintrag (dessen Stop auf laufende
+	// Läufe wartet), sondern in einer eigenen Goroutine.
+	if s.agentUpdates != nil && s.runAgentUpdate != nil {
+		if err := s.addAgentUpdateWindows(); err != nil {
+			return err
+		}
+	}
+
 	// 2. System-Schedules aus den Einstellungen (Backup + Cleanup).
 	settings, err := s.settings.Get()
 	if err != nil {
@@ -270,6 +291,26 @@ func (s *Scheduler) Reload() error {
 	// nach Neustarts holt CheckOnStartupIfStale nach.
 	if s.subscriptionCheck != nil {
 		s.addSystem("subscription-check", subscriptionCheckCron, s.subscriptionCheck)
+	}
+	return nil
+}
+
+// addAgentUpdateWindows legt für jede eingeschaltete Agent-Update-Regel den
+// Beginn ihres Fensters an. Erwartet den gehaltenen Mutex (läuft aus Reload).
+func (s *Scheduler) addAgentUpdateWindows() error {
+	policies, err := s.agentUpdates()
+	if err != nil {
+		return err
+	}
+	for i := range policies {
+		groupID, expr := policies[i].GroupID, policies[i].CronExpr
+		_, err := s.cron.AddFunc(expr, func() {
+			safego.Go("agent-update-window", func() { s.runAgentUpdate(groupID) })
+		})
+		if err != nil {
+			slog.Error("invalid cron expression - agent update window skipped",
+				"group_id", groupID, "expr", expr, "error", err)
+		}
 	}
 	return nil
 }

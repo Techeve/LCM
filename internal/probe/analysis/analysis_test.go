@@ -66,10 +66,10 @@ func TestBerichtFindetDenStillstandUndWasDavorLief(t *testing.T) {
 
 func TestPauseDerVM(t *testing.T) {
 	at := time.Date(2026, 11, 8, 4, 0, 0, 0, time.Local)
-	host := func(wall time.Time, mono int64) journal.HostLine {
+	hostLine := func(wall time.Time, mono int64) journal.HostLine {
 		return journal.HostLine{Head: journal.Head{Type: journal.TypeHost, Wall: wall.UnixMilli(), Mono: mono}}
 	}
-	d := &Data{Hosts: []journal.HostLine{host(at, 1000), host(at.Add(2*time.Second), 3000), host(at.Add(92*time.Second), 5000)}}
+	d := &Data{Hosts: []journal.HostLine{hostLine(at, 1000), hostLine(at.Add(2*time.Second), 3000), hostLine(at.Add(92*time.Second), 5000)}}
 	gaps, jumps := findGaps(d, 2*time.Second)
 	if len(gaps) != 1 || gaps[0].Duration != 90*time.Second || len(jumps) != 0 {
 		t.Fatalf("Lücken %+v, Sprünge %+v", gaps, jumps)

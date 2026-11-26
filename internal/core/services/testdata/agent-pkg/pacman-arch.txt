@@ -1,0 +1,21 @@
+LCM_AGENT_INSTALLED=2.3.0-1
+LCM_AGENT_VERSIONS
+Repository      : techeve
+Name            : lcm-agent
+Version         : 2.4.0beta.2-1
+Description     : LCM Remote Agent - verbindet diesen Server AUSGEHEND mit einem LCM-Server (MQTT über WebSocket auf dem HTTPS-Port des LCM). Für Server hinter NAT, ohne feste IP oder unterwegs. Einrichtung nach der Installation: sudo lcm-agent enroll <lcm-server-url> <token> (Token aus dem LCM-Onboarding, Modus "Agent".)
+Architecture    : x86_64
+URL             : https://gitlab.techeve.de/techeve/lcm
+Licenses        : proprietary
+Groups          : None
+Provides        : None
+Depends On      : None
+Optional Deps   : None
+Conflicts With  : None
+Replaces        : None
+Download Size   : 11.16 KiB
+Installed Size  : 9.03 KiB
+Packager        : Unknown Packager
+Build Date      : Wed Nov 25 07:12:19 2026
+Validated By    : SHA-256 Sum
+

@@ -14,6 +14,7 @@ import { I18nController } from '../../lib/controllers';
 import { formatDate } from '../../lib/format';
 import { errorText, t } from '../../lib/i18n';
 import { store } from '../../lib/store';
+import './agent-updates';
 import { aclStatus } from './group-model';
 import { groupPath } from './url-state';
 
@@ -258,6 +259,7 @@ export class LcmGroupsOverview extends LitElement {
   override render() {
     if (!this.group) return nothing;
     return html`${this.#facts()} ${this.#content()} ${this.#managers()}
+      <lcm-groups-agent-updates group-id=${this.group.id}></lcm-groups-agent-updates>
       <lcm-dialog
         ?open=${this._remove !== null}
         heading=${t('groups.managers.removeTitle', { name: this._remove?.username ?? '' })}

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_SYSTEMS,
   agentCommands,
+  agentSystemOf,
   dsmBody,
   dsmProblems,
   duplicateOf,
@@ -128,6 +130,27 @@ describe('helpers', () => {
     const commands = agentCommands(where, { port: 9333, url: 'https://agent.example.com' }, 'tok');
     expect(commands.enroll).toBe('sudo lcm-agent enroll https://agent.example.com tok');
     expect(commands.manual).toContain('https://lcm.example.com/api/v1/agent/download/amd64');
+  });
+
+  it('installs the package with the manager of each system, after the same repository setup', () => {
+    const where = { origin: 'https://lcm.example.com', protocol: 'https:', hostname: 'lcm.example.com' };
+    const install = (system: (typeof AGENT_SYSTEMS)[number]) => agentCommands(where, { port: 0, url: '' }, 'tok', '', system);
+    expect(install('apt').install).toBe('sudo apt install lcm-agent');
+    expect(agentCommands(where, { port: 0, url: '' }, 'tok').install).toBe('sudo apt install lcm-agent');
+    expect(install('dnf').install).toBe('sudo dnf install --setopt=disable_excludes=techeve-lcm lcm-agent');
+    expect(install('zypper').install).toBe('sudo zypper install lcm-agent');
+    expect(install('apk').install).toBe('sudo apk add lcm-agent');
+    expect(install('pacman').install).toBe('sudo pacman -Syu lcm-agent');
+    for (const system of AGENT_SYSTEMS) {
+      expect(install(system).repo).toBe('curl -fsSL https://repo.techeve.de/setup.sh | sudo sh');
+      expect(install(system).enroll).toBe('sudo lcm-agent enroll https://lcm.example.com tok');
+    }
+  });
+
+  it('falls back to apt for an unknown system', () => {
+    expect(agentSystemOf('pacman')).toBe('pacman');
+    expect(agentSystemOf('yum')).toBe('apt');
+    expect(agentSystemOf('')).toBe('apt');
   });
 
   it('accepts the self-signed certificate only together with the key pin of this LCM', () => {

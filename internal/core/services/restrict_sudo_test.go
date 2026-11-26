@@ -1,6 +1,7 @@
 package services_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -87,7 +88,7 @@ func TestRestrictSudoAlreadyRestrictedBlocked(t *testing.T) {
 	id := joinTestServer(t, env, "web01")
 	env.DB().Model(&domain.Server{}).Where("id = ?", id).Update("restricted_sudo", true)
 
-	if _, err := env.Servers.RestrictSudo(repositories.ScopeAll(), id, "admin"); err != services.ErrRestrictedSudo {
+	if _, err := env.Servers.RestrictSudo(repositories.ScopeAll(), id, "admin"); !errors.Is(err, services.ErrRestrictedSudo) {
 		t.Errorf("erwartet ErrRestrictedSudo, bekam %v", err)
 	}
 }

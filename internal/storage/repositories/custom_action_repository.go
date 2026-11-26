@@ -1,6 +1,8 @@
 package repositories
 
 import (
+	"strconv"
+
 	"gorm.io/gorm"
 
 	"LCM/internal/core/domain"
@@ -53,10 +55,10 @@ func (r *CustomActionRepository) FindAll() ([]domain.CustomAction, error) {
 
 // CountRulesUsing zählt Gruppen-Rules, die eine bestimmte Custom-Aktion
 // referenzieren (Command trägt die Action-ID) - für den Löschschutz.
-func (r *CustomActionRepository) CountRulesUsing(id uint, actionIDStr string) (int64, error) {
+func (r *CustomActionRepository) CountRulesUsing(id uint) (int64, error) {
 	var n int64
 	err := r.db.Model(&domain.Rule{}).
-		Where("type = ? AND command = ?", domain.RuleTypeCustom, actionIDStr).
+		Where("type = ? AND command = ?", domain.RuleTypeCustom, strconv.FormatUint(uint64(id), 10)).
 		Count(&n).Error
 	return n, err
 }

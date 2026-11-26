@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,8 @@ type localConn struct{}
 
 func (localConn) Run(cmd string) (string, int, error) {
 	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
-	if exit, ok := err.(*exec.ExitError); ok {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
 		return string(out), exit.ExitCode(), nil
 	}
 	return string(out), 0, err

@@ -500,7 +500,9 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 
 	// LCM Remote: eingebetteter MQTT-Broker + AgentHub für Server, die sich
 	// per lcm-agent AUSGEHEND verbinden (NAT/Roaming). Kommandos laufen dort
-	// über MQTT statt SSH - mit derselben erlaubten Stille wie der
+	// über MQTT statt SSH. Anders als bei SSH hält LCM bei einem Agent mit Jobs
+	// nichts nach Zeit an: Ob ein Kommando noch läuft, beurteilt der Agent
+	// (siehe wire). Ältere Agenten behalten die erlaubte Stille wie der
 	// Job-Watchdog (plus Puffer, damit immer zuerst der Watchdog abbricht).
 	// Maßgeblich ist der größere der beiden Werte: Auf welcher Hardware das
 	// Kommando landet, weiß erst der Watchdog anhand des Ziel-Servers.
@@ -513,6 +515,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 			minutes := max(st.JobIdleTimeoutMinutes, st.JobIdleTimeoutSlowMinutes)
 			return time.Duration(domain.ClampJobIdleTimeout(minutes))*time.Minute + 10*time.Minute
 		}).
+		WithJobTracker(jobService). // späte Ergebnisse landen im Job, der das Kommando schickte
 		WithOnAgentOnline(func(server *domain.Server) {
 			// Erst-Scan beim allerersten Kontakt eines frisch enrollten
 			// Servers (noch kein OS erfasst) - danach übernehmen die
@@ -588,6 +591,13 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 			return res.String(), err
 		})
 	scheduler := services.NewScheduler(groupRepo, settingsRepo, executor)
+	// Agent-Updates der Gruppen: Der Zeitplaner startet die Läufe zu Beginn der
+	// Fenster, die Regel legt der Betreiber in den Gruppen fest.
+	agentUpdateRepo := repositories.NewAgentUpdateRepository(db)
+	agentUpdates := services.NewAgentUpdateService(agentUpdateRepo, groupRepo, serverRepo, serverService, auditService, scheduler.Reload)
+	scheduler.WithAgentUpdates(agentUpdateRepo.Enabled, func(groupID uint) {
+		agentUpdates.RunWindow(groupID, services.ActorScheduler)
+	})
 	// Nach Container-/Image-Updates die Docker-CVE-Bewertung sofort
 	// auffrischen: der zentrale Docker-Check läuft als eigener System-Job.
 	serverService.WithDockerCheckTrigger(executor.RunDockerCheck)
@@ -962,6 +972,12 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 	}
 	defer scheduler.Stop()
 
+	// Mit einer neuen LCM-Version dürfen die Agenten nachziehen: Läuft gerade ein
+	// Fenster einer Agent-Update-Regel, beginnt der Lauf nach kurzer Wartezeit.
+	if updateResult.Updated && !demo {
+		agentUpdates.OnLCMUpdated()
+	}
+
 	frontendFS, err := ui.FS()
 	if err != nil {
 		return err
@@ -1052,6 +1068,7 @@ func run(configPath, dataDir string, debug, demo, dev, demoPublic bool) error {
 		Audit:                    auditService,
 		Groups:                   groupService,
 		Scheduler:                scheduler,
+		AgentUpdates:             agentUpdates,
 		Backups:                  backupService,
 		Packages:                 packageService,
 		Settings:                 settingsService,

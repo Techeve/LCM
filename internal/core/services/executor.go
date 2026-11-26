@@ -587,8 +587,9 @@ func (e *Executor) runStarted(job *domain.Job, server *domain.Server, rule *doma
 	}
 
 	// Eingeschränkter Service-User: Aktionstypen außerhalb der Whitelist
-	// (script/custom) sauber überspringen, statt mit einem
-	// kryptischen sudo-Fehler zu enden - so bleibt ein gemischter Schedule grün.
+	// (script/custom, docker-container-update - siehe restrictedAllowsRule)
+	// sauber überspringen, statt mit einem kryptischen sudo-Fehler zu enden -
+	// so bleibt ein gemischter Schedule grün.
 	if server.RestrictedSudo && !restrictedAllowsRule(rule.Type) {
 		e.jobs.CompleteSkipped(job, restrictedSkipNote(rule.Type))
 		return
