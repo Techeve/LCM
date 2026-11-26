@@ -26,10 +26,9 @@ verwalten.
 
 ## Berechtigungsprofile
 
-Ein Linux-Benutzer kannte lange nur zwei Zustände: **sudo** oder **kein sudo**.
-Wer auch nur einen Dienst neu starten können musste, bekam volles
-`NOPASSWD:ALL` - und damit tragen in der Praxis viel zu viele Konten
-Root-Rechte.
+Nur **sudo** oder **kein sudo** zu unterscheiden heißt: Wer auch nur einen
+Dienst neu starten können muss, bekommt volles `NOPASSWD:ALL` - und damit
+tragen in der Praxis viel zu viele Konten Root-Rechte.
 
 Ein **Berechtigungsprofil** (Linux-Benutzer → Berechtigungsprofile) beschreibt
 stattdessen genau, was jemand darf:
@@ -40,8 +39,7 @@ stattdessen genau, was jemand darf:
 | **Datei bearbeiten** | `/etc/nginx/sites-available/kunde.conf` | Bearbeiten als root über `sudoedit` |
 | **Verzeichnisrecht** | `/srv/www` - lesen und schreiben | zusätzliches Recht über eine POSIX-ACL |
 
-Mitgeliefert sind zwei nicht änderbare Profile, die den bisherigen Zustand
-abbilden: **Voll-Administrator** (uneingeschränkte Root-Rechte) und
+Mitgeliefert sind zwei nicht änderbare Profile: **Voll-Administrator** (uneingeschränkte Root-Rechte) und
 **Standardbenutzer** (keine).
 
 :::caution[Das Argument ist Teil der Regel]
@@ -342,10 +340,9 @@ kompromittiertes LCM dem eingeschränkten Service-User über eine Profil-Datei
 volle Rechte zurückgeben - genau das, was der eingeschränkte Modus verhindern
 soll.
 
-:::note[Was noch aussteht]
-Die **mitgelieferten** Profile laufen weiterhin über den bisherigen Weg (ein
-per-Benutzer-Eintrag mit `NOPASSWD:ALL` bzw. keiner) - dadurch ändert das
-Update auf bestehenden Servern nichts.
+:::note[Mitgelieferte Profile]
+Die **mitgelieferten** Profile laufen nicht über eine Profilgruppe, sondern über
+einen Eintrag je Benutzer (`NOPASSWD:ALL` bzw. keiner).
 :::
 
 ## Self-Service-Aktivierung

@@ -157,7 +157,9 @@ func TestDemoSkriptJobHebtKeinePakete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc.servers.ReplacePackages(id, []domain.Package{{Name: "openssl", Version: "3.0.11-1", CandidateVersion: "3.0.14-1"}})
+	if err := svc.servers.ReplacePackages(id, []domain.Package{{Name: "openssl", Version: "3.0.11-1", CandidateVersion: "3.0.14-1"}}); err != nil {
+		t.Fatal(err)
+	}
 	demoPackageJobOutput(svc.servers, server, domain.RuleTypeScript)
 	pkgs, _ := svc.servers.FindPackages(id)
 	if len(pkgs) != 1 || pkgs[0].CandidateVersion == "" {

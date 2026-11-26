@@ -65,9 +65,8 @@ Proxy ist, gilt als Client. Was ein Client selbst links in die Kopfzeile
 schreibt, zählt damit nicht, auch hinter mehreren Proxys.
 
 :::caution[Leere Liste heißt: niemandem glauben]
-Seit 2.0 glaubt `trust_proxy_header: true` ohne `trusted_proxies` die Kopfzeile
-**keinem** Peer, LCM warnt beim Start. Ältere Versionen glaubten in diesem Fall
-jedem. Steht LCM hinter einem Proxy, gehört dessen Adresse in die Liste. Sonst
+`trust_proxy_header: true` ohne `trusted_proxies` glaubt die Kopfzeile
+**keinem** Peer, LCM warnt beim Start. Steht LCM hinter einem Proxy, gehört dessen Adresse in die Liste. Sonst
 sehen Allowlist, Anmeldesperre und Protokolle nur die Adresse des Proxys, alle
 Clients teilen sich eine Anmeldesperre, und LCM erkennt HTTPS über
 `X-Forwarded-Proto` nicht mehr.

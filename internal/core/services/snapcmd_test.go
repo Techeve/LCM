@@ -56,10 +56,10 @@ func TestSnapEntfernenBehaeltDieDaten(t *testing.T) {
 	if script != "snap remove firefox" {
 		t.Errorf("unerwartetes Kommando: %q", script)
 	}
-	if got := snapRefreshScript([]string{"firefox", "chromium"}); got != "snap refresh firefox chromium" {
+	if got := snapRefreshScript([]string{"firefox", "chromium"}); !strings.HasPrefix(got, "snap refresh firefox chromium\n") {
 		t.Errorf("unerwartetes Kommando: %q", got)
 	}
-	if got := snapRefreshAllScript(); got != "snap refresh" {
+	if got := snapRefreshAllScript(); !strings.HasPrefix(got, "snap refresh\n") {
 		t.Errorf("unerwartetes Kommando: %q", got)
 	}
 }

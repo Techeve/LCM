@@ -62,9 +62,8 @@ trusted proxy counts as the client. Whatever a client writes into the left part
 of the header itself does not count, also behind several proxies.
 
 :::caution[An empty list means: believe no one]
-Since 2.0, `trust_proxy_header: true` without `trusted_proxies` believes the
-header from **no** peer, and LCM warns at startup. Older versions believed every
-peer in that case. If LCM runs behind a proxy, put its address in the list.
+`trust_proxy_header: true` without `trusted_proxies` believes the
+header from **no** peer, and LCM warns at startup. If LCM runs behind a proxy, put its address in the list.
 Otherwise the allowlist, the login lockout and the logs only see the proxy's
 address, all clients share one login lockout, and LCM no longer recognises
 HTTPS via `X-Forwarded-Proto`.

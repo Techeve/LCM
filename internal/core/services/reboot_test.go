@@ -1,6 +1,7 @@
 package services_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -184,7 +185,7 @@ func TestRebootRefusedOnAPIDevices(t *testing.T) {
 			t.Fatal(err)
 		}
 		env.Dialer.Commands = nil
-		if _, err := env.Servers.Reboot(repositories.ScopeAll(), id, "admin"); err != want {
+		if _, err := env.Servers.Reboot(repositories.ScopeAll(), id, "admin"); !errors.Is(err, want) {
 			t.Errorf("%s: erwartet %v, bekam %v", osID, want, err)
 		}
 		if len(env.Dialer.Commands) != 0 {

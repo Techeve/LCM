@@ -117,8 +117,8 @@ build-all: build build-linux build-linux-arm64 build-windows build-macos build-m
 # Kein Frontend/Audit nötig, das Binary ist schlank (stdlib + paho + wire).
 build-agent: bump-build
 	mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/lcm-agent-linux-amd64 ./cmd/agent
-	GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/lcm-agent-linux-arm64 ./cmd/agent
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/lcm-agent-linux-amd64 ./cmd/agent
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(BUILD_DIR)/lcm-agent-linux-arm64 ./cmd/agent
 
 # lcm-probe: Messung des LCM-Hosts und der Datenbank (läuft neben LCM).
 # Die Auswertung läuft auch auf dem Mac: go run ./cmd/probe report --dir <kopie>

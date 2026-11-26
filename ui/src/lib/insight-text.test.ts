@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { i18n } from './i18n';
-import { causeText, durationSince, insightText } from './insight-text';
+import { causeText, disconnectText, durationSince, insightText } from './insight-text';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 
@@ -33,6 +33,20 @@ describe('insightText', () => {
       NOW,
     );
     expect(text).toBe('Regeln und Aktionen schlagen seit 2 Tagen fehl (3×): Kein Speicherplatz mehr auf /var - Job: Updates');
+  });
+});
+
+describe('unstable agent connection', () => {
+  it('names the count and the translated last cause', () => {
+    const text = insightText({ message: 'x', key: 'agentLinkUnstable', params: { count: '7', disconnect: 'network' } });
+    expect(text).toBe(
+      'Verbindung instabil: Der Agent wurde in der letzten Stunde 7-mal ungewollt getrennt, zuletzt: Verbindungs- oder Netzfehler. Prüfe Netz, Proxy und das Journal des Servers (lcm-agent status).',
+    );
+  });
+
+  it('keeps an unknown cause as it comes', () => {
+    expect(disconnectText('ping')).toBe('Lebenszeichen blieb aus');
+    expect(disconnectText('something-new')).toBe('something-new');
   });
 });
 

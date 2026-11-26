@@ -2,90 +2,367 @@
 sidebar:
   order: 90
 title: Examples
-description: Typical workflows step by step - from server onboarding to using the API.
+description: Configuration examples for typical server types - groups, schedules and rules for updates, restarts, Docker, firewall and APT cache.
 ---
-
-A collection of typical workflows. They assume a running LCM instance
-(see [Installation](/en/getting-started/installation/)).
-
-## Onboard a server and update it daily
 
 import { Steps } from '@astrojs/starlight/components';
 
-<Steps>
+This page shows configurations for typical server types that you set up after
+connecting the servers. How to connect a server is described in the
+[Quickstart](/en/getting-started/quickstart/). The examples assume a running LCM
+instance with connected servers.
 
-1. **Add the onboarding key:** Enter the public key from *Settings → General*
-   into `~/.ssh/authorized_keys` for `root` on the target server.
-2. **Join:** Dashboard → “+ Add server”, enter host/credentials, confirm the
-   host key fingerprint.
-3. **Group:** Under *Groups*, create a group “Production” and assign the
-   server.
-4. **Schedule + rule:** Create a schedule “Nightly” with `0 2 * * *`, then add a
-   rule of type **Update**.
-5. Done - the updates run every night and appear as jobs with console output.
+## How to read the examples
 
-</Steps>
+Everything runs through **groups**: A group bundles servers, a **schedule**
+defines when something runs, and **rules** define what runs. The examples all
+follow the same pattern:
 
-## Enforce a firewall as a baseline rule
+- **Starting point:** which server type the example is meant for.
+- **Group and schedules:** what you create, with cron expression and time
+  window. The rules of a schedule run in the order given.
+- **What happens:** the sequence in words.
+- **What to watch for:** quirks you notice in operation.
 
-Goal: On all web servers, only 80, 443 (and SSH) are permanently open.
+Names, times and window lengths are suggestions. Adapt them to your servers.
+Times apply in the time zone of the LCM server. The examples can be combined: A
+server may be in several groups, for example in “Standard servers” for the
+updates and in “Docker hosts” for the containers.
 
-<Steps>
+A cron expression has five fields: minute, hour, day of month, month, weekday.
+For the weekday, `0` is Sunday, `1` is Monday up to `6` for Saturday.
+`0 2 * * 2,4,6` means “at 02:00, on Tuesdays, Thursdays and Saturdays”.
 
-1. Create a group “Web servers”, assign the servers.
-2. In the group's *Rules* tab, add a new rule on the **Baseline rules** card:
-   type **Firewall**, ports `80,443`.
-3. On the next health ping, ufw is checked and - if it deviates - applied. If
-   someone later changes the firewall on the server, the next ping restores the
-   desired state.
+The **time window** (field *Time window in minutes* on the schedule) turns the
+start time into a period: `0 2 * * 2,4,6` with 120 minutes means “between 02:00
+and 04:00”. The servers start evenly spread over the window, and each one works
+through all rules of the schedule one after the other. The window must be
+shorter than the gap between two runs. More in
+[Groups, schedules & rules](/en/guides/groups-rules/#a-time-window-instead-of-a-fixed-start-time).
 
-</Steps>
-
-## Set up a central APT cache
-
-<Steps>
-
-1. Install `apt-cacher-ng` on the LCM host and set `PassThroughPattern: .*`
-   in `acng.conf` (see [APT cache](/en/guides/apt-cache/)).
-2. In LCM under *Settings → APT cache*, enter the URL
-   `http://<host>:3142` and click “Check”.
-3. Add “**Use APT cache**” as a group rule (as a baseline rule the connection
-   is restored on deviation) - all servers in the group route their APT
-   requests through the cache from now on.
-
-</Steps>
-
-## Create a backup and restore it on a fresh instance
+## Basic flow: group, schedule, rule
 
 <Steps>
 
-1. Set `LCM_BACKUP_PASSPHRASE` and create a backup under *Settings → Backups*
-   (or enable an interval).
-2. Download the `.lcmbak` and store it safely.
-3. On a **new** instance, upload the archive under *Settings → Backups →
-   Restore from file* and apply it (with the same passphrase) - the instance takes over data, keys,
-   configuration and certificate.
+1. **Create the group:** *Groups* → **Create group**, enter a name.
+2. **Assign servers:** in the group's *Servers* tab.
+3. **Create a schedule:** in the *Schedules* tab, **Create schedule** with a
+   name, a cron expression and optionally *Time window in minutes*.
+4. **Add rules:** in the *Rules* tab, on the schedule's card, **Add rule**. You
+   change the order by dragging or with the arrows.
+5. **Try it:** **Run now** on the schedule starts the run immediately. The time
+   window does not apply then. The result appears under *Jobs*.
 
 </Steps>
 
-## Use the API with a read-only key
+## Example 1: standard rhythm for Linux servers
+
+**Starting point:** Several Debian or Ubuntu servers. Security updates should
+arrive daily, all other updates only two to three times a week. A restart
+should only happen if an update needs it, and only inside the planned time
+window.
+
+**Group:** “Standard servers”.
+
+| Schedule | Cron | Time window | Rules in order |
+|---|---|---|---|
+| Security updates | `0 1 * * *` (daily 01:00) | 60 min | **Security updates** |
+| Full updates | `0 2 * * 2,4,6` (Tue, Thu, Sat 02:00) | 120 min | **Update all packages**, then **Restart if needed** |
+
+**What happens:**
+
+- Every night between 01:00 and 02:00, LCM installs the security updates.
+- On Tuesdays, Thursdays and Saturdays between 02:00 and 04:00, each server
+  gets the full update first, then **Restart if needed**. LCM asks the server
+  only at that moment whether it requests a restart. If none is needed, the job
+  ends with “no reboot needed - skipped”. Otherwise the server restarts, and
+  the job stays open until it answers again (up to 10 minutes, otherwise the
+  job fails).
+- The window ends before 04:00, the default time of the system sync.
+
+**What to watch for:**
+
+- **Between the full runs the server is yellow.** Every open update on a
+  package that is not on hold counts as an “overdue package update”. “System
+  requests a reboot” is a yellow criterion too, until the restart has happened
+  in the next window (see [Status calculation](/en/guides/status/)). That is to
+  be expected with this rhythm. If you want a server green all the time, run the
+  full updates daily.
+- The rules of a schedule run independently of each other. If the update
+  fails, **Restart if needed** runs anyway, and a restart that was already
+  requested takes place.
+- Updates on hold (`apt-mark hold`), held back or phased stay behind. LCM names
+  them at the end of the job log (see
+  [What an update leaves out](/en/guides/groups-rules/#what-an-update-leaves-out-apt)).
+- pacman and apk systems have no separate channel for security updates. The
+  **Security updates** rule installs all updates there.
+- If a server is missing during the run (offline), its job ends with a
+  connection error. The next scheduled run tries again.
+- If many servers update through the same APT cache, the time window spreads
+  the load instead of hitting the cache all at once.
+
+## Example 2: Docker host
+
+**Starting point:** Servers running containers. New images should be installed
+regularly, unused images should disappear. The operating system follows
+example 1; the servers are additionally in the group “Docker hosts”.
+
+**What LCM does on its own:** The **Docker check** runs daily in the system sync
+(04:00). It records containers and images and asks the registry whether a newer
+version sits behind the tag. The result appears on the *Containers* page in the
+*Images* tab and in the *Containers* tab of the server. You need no rule for
+this.
+
+**Group:** “Docker hosts”.
+
+| Schedule | Cron | Time window | Rules in order |
+|---|---|---|---|
+| Container updates | `30 5 * * 1,4` (Mon, Thu 05:30) | 60 min | **Docker: update compose projects**, **Docker: update standalone containers**, **Docker: prune unused images** |
+
+**What happens:**
+
+- Both update rules only act on images for which the Docker check reports an
+  update. That is why the schedule comes after the system sync.
+- **Compose projects:** `docker compose pull && up -d` in the project
+  directory, afterwards untagged old images are removed.
+- **Standalone containers** (without Compose): LCM pulls the image and
+  recreates the container with the same configuration. The old container is
+  only renamed first and deleted once the new one runs. If creating or starting
+  fails, the old one keeps running under its name.
+- **Pruning:** deletes unused images (`docker image prune -af`).
+- In the field *Selection (optional)* of the update rules you name a single
+  Compose project or container. Empty means: all with an update. That way you
+  can update an important project in a rule of its own at a different time.
+
+**What to watch for:**
+
+- While recreating, the container is briefly down. Only **running** containers
+  are updated.
+- The check compares the digest behind the tag. A new tag (for example `1.26`
+  instead of `1.25`) does not show up as an update. It does not check private
+  registries and locally built images; the rules leave them alone.
+- The result of the check can be up to a day old. You can see how long the
+  system sync runs in its job log.
+- The Compose rule also runs in [restricted mode](/en/guides/ssh/#restricted-mode).
+  The container rule runs in full mode only and needs `curl` on the server; on
+  restricted servers LCM skips it and names the reason in the job.
+  Special cases such as the host PID namespace or GPU access
+  are untested: try them on a test server first (see
+  [Docker monitoring](/en/guides/docker/#superseded-images-and-update-rules)).
+- **Prune unused images** deletes all images without a container, including
+  those you keep for a later start.
+- Containers maintained elsewhere (own CI/CD pipeline, a provider) you take out
+  per server: *Server settings → Operation → **Do not apply Docker updates**.*
+  Monitoring stays complete, only installing is switched off.
+- A server turns yellow as soon as a **used** image has an update. It stays so
+  until the next run (see [Status calculation](/en/guides/status/)).
+- Docker ports bypassing the host firewall: see
+  [Docker and the host firewall](/en/guides/docker/#docker-and-the-host-firewall-ufw).
+
+## Example 3: database server
+
+**Starting point:** Database servers where an unplanned restart or a version
+jump has consequences. Security updates should still arrive daily. Restarts
+should only happen in an announced maintenance window.
+
+**Group:** “Database”.
+
+| Schedule | Cron | Time window | Rules in order |
+|---|---|---|---|
+| Security updates | `0 1 * * *` (daily 01:00) | none | **Security updates** |
+| Full updates | `0 2 * * 0` (Sundays 02:00) | none | **Update all packages** |
+| Restart in maintenance window | `0 3 * * 0` (Sundays 03:00) | 60 min | **Restart if needed** |
+
+**What happens:**
+
+- Security updates arrive every night, full updates on Sundays. Neither
+  schedule starts a restart.
+- A restart that an update requests (for example after a kernel update) waits
+  until Sunday at 03:00. Then LCM checks during the run whether it is still
+  needed and only restarts if it is. With several servers, the window spreads
+  the restarts over 60 minutes.
+- If you want to trigger every restart yourself, switch the schedule *Restart
+  in maintenance window* **off**. A switched-off schedule does not run by
+  itself, but can be started with **Run now** once the window is agreed.
+
+**What to watch for:**
+
+- Until the restart, the server shows “System requests a reboot” and is yellow.
+  It is also yellow between the full updates while non-security updates are
+  open (see example 1).
+- Packages that should not move along you can hold in the server's *Packages*
+  tab with **Freeze version**. Then that package gets no updates at all, not
+  even security updates. That is a deliberate decision (see
+  [Package pins](/en/guides/monitoring/#package-pins-what-the-cleanup-must-not-touch)).
+- Databases are among the packages whose CVE findings LCM weights one level
+  higher (list under *Settings → Security*). Open security vulnerabilities show
+  up sooner here.
+- The restart job waits up to 10 minutes for the server to come back. After
+  that it fails and the server shows up as an incident.
+- No schedule controls the order in which services shut down and start up.
+  Where that matters, first check on a test server that the service survives
+  the restart on its own.
+
+## Example 4: test servers first, production afterwards
+
+**Starting point:** Test servers get updates right away and aggressively.
+Production servers get full updates later, once the test servers have survived
+them.
+
+**Groups and schedules:**
+
+| Group | Schedule | Cron | Time window | Rules in order |
+|---|---|---|---|---|
+| Test servers | Full daily | `0 1 * * *` (daily 01:00) | 60 min | **Update all packages**, **Remove unneeded packages**, **Restart if needed** |
+| Production | Security updates | `0 1 * * *` (daily 01:00) | 60 min | **Security updates** |
+| Production | Full updates | `0 2 * * 4` (Thursdays 02:00) | 120 min | **Update all packages**, **Restart if needed** |
+
+**What happens:**
+
+- Test servers are up to date every night. In the days leading up to Thursday
+  it becomes clear whether an update breaks something.
+- Production gets security updates daily, all other updates only on Thursdays.
+- If an update breaks something on the test servers, you switch the
+  production schedule *Full updates* **off** with the switch on the schedule.
+  It then no longer runs by itself until you switch it back on.
+- For redundant pairs you create two production groups that run on different
+  days (group “Production A” on Thursdays, “Production B” on Fridays). That way
+  both servers are never updating and restarting at the same time.
+
+**What to watch for:**
+
+- Test and production never see the same package state, because updates appear
+  continuously. The method catches gross errors but guarantees nothing.
+- **Remove unneeded packages** also removes older kernels. If you want to keep
+  a fallback, protect the kernels first with **Protect kernels** (see
+  [Package pins](/en/guides/monitoring/#package-pins-what-the-cleanup-must-not-touch)).
+- Assign each server to exactly one of the two groups. In both groups it would
+  get both rhythms.
+
+## Example 5: servers behind NAT with an agent
+
+**Starting point:** Servers at branch offices or in customer networks that LCM
+cannot reach over SSH. They are connected with **lcm-agent** and connect
+outbound to LCM (see [LCM Remote](/en/guides/remote/)). Updates and agent
+updates should run on a fixed plan.
+
+**Group:** “Branch offices”. The package rules are the same as for SSH servers.
+
+| Schedule | Cron | Time window | Rules in order |
+|---|---|---|---|
+| Security updates | `0 1 * * *` (daily 01:00) | 60 min | **Security updates** |
+| Full updates | `0 2 * * 0` (Sundays 02:00) | 120 min | **Update all packages**, **Restart if needed** |
+
+**Agent updates:** The agent never updates itself, not even through the updates
+of the schedules. Under *Groups → Overview → **Agent updates*** you switch on
+**Update agents automatically**. You set the start (cron) and the length of the
+time window, for example `0 5 * * *` with 60 minutes. **Staged** is the default:
+One server of the group updates first, the others follow only once it has
+reported back with the new version.
+
+**What to watch for:**
+
+- If a server is not reachable at run time, its job ends with a connection
+  error. The next run tries again.
+- For devices that are intentionally offline at times, set **Unreachability not
+  critical** under *Server settings → Operation*. The server then keeps its
+  last status and only turns red after the **Grace period** (default 28 days).
+- If, with a staged rule, the agent update fails on the first server, the rule
+  stops. **Resume** lets it continue (see
+  [Group rule: update automatically](/en/guides/remote/#group-rule-update-automatically)).
+
+## Standard configurations (baseline rules)
+
+The examples above run at fixed times. **Baseline rules**, in contrast,
+describe a target state. LCM checks it on every connection (at least on the
+health check every 15 minutes) and steps in only if the server deviates. Every
+intervention appears in the log. They are possible for **Firewall**, **Use APT
+cache**, **Set up ACL** and **Keep permission baseline** (the last two belong to
+the [permission profiles](/en/guides/linux-users/)). You create them in the
+group's *Rules* tab on the **Baseline rules** card.
+
+### Firewall for web servers
+
+**Group:** “Web servers”. **Baseline rule:** type **Firewall** with the allowed
+ports 80 (TCP) and 443 (TCP).
+
+The SSH port always stays open. The firewall closes everything else. If someone
+changes the firewall on the server, the next health check restores the target
+state.
+
+:::caution[Without ports the rule is rejected]
+A firewall baseline rule must say which ports should be open. If only SSH
+should be open, give the empty list `[]` (see
+[Groups, schedules & rules](/en/guides/groups-rules/)).
+:::
+
+### Firewall for database servers
+
+**Group:** “Database” (the group from example 3). **Baseline rule:** type
+**Firewall**, allowed port 5432 (TCP, PostgreSQL) or 3306 (TCP, MySQL and
+MariaDB), under **Allowed sources** the IP allowlist “App servers”.
+
+You create the allowlist once under *Settings → Allowlists*. Instead of an
+allowlist you can also enter **Own IPs or networks**. The port is then only
+open for those sources. If an allowlist becomes empty, LCM skips the rule: The
+port stays closed and never silently opens. Details in
+[Firewall](/en/guides/firewall/#source-restriction-allowlists-and-custom-ips).
+
+:::note[One firewall group per server]
+Rules of the same type from several groups collide. The group with the smaller
+**priority** wins (default 100). So give each server only one group with a
+firewall rule. Docker ports that a container publishes bypass the host firewall
+(see [Docker monitoring](/en/guides/docker/#docker-and-the-host-firewall-ufw)).
+:::
+
+### APT cache for all apt servers
+
+**Goal:** All Debian and Ubuntu servers load packages through a central cache.
+
+<Steps>
+
+1. Set up the cache (apt-cacher-ng) as described under
+   [APT cache](/en/guides/apt-cache/).
+2. In LCM under *Settings → APT cache*, **Add cache**, enter the URL
+   (`http://<host>:3142`) and **Check**.
+3. Create the group “All apt servers” and assign only servers with **apt**.
+4. Add the type **Use APT cache** as a **baseline rule** and choose the cache.
+   If there is only one, it applies without a selection.
+
+</Steps>
+
+LCM writes a drop-in on each server and runs a functional test. On deviation
+(for example after a changed URL), the baseline rule restores the connection.
+If you disconnect a server without switching the rule off, you will find it
+connected again after the next health check.
+
+## Backing up LCM
+
+LCM backs up its **own** state (database, master key, configuration,
+certificate) into an encrypted `.lcmbak` archive. The archive can be restored on
+a fresh instance. The data of the managed servers, such as database dumps, is
+not part of it. Setup, recipient keys, automatic backups and restore are
+described on the page [Backups](/en/guides/backups/).
+
+## Using the API with a read-only key
 
 For monitoring scripts that may only read:
 
 <Steps>
 
-1. *Settings → API keys* → create a new key with scope **read**. The plaintext
-   key (`lcm_…`) appears **only once** - copy it.
-2. Query using the `X-API-Key` header:
+1. *Settings → API keys* → create a new key with the rights **Read only**. The
+   plaintext key (`lcm_…`) appears **only once**: copy it.
+2. Query with the `X-API-Key` header (the default port of the web interface and
+   REST API is `9310`):
 
    ```sh
    curl -s https://<host>:9310/api/v1/servers \
-     -H "X-API-Key: lcm_dein_key" | jq '.items[].name'
+     -H "X-API-Key: lcm_your_key" | jq '.items[].name'
    ```
 
-3. Writing requests (POST/PUT/DELETE) are rejected server-side with **403** when
-   using a read key - the key cannot change anything, even in an admin context.
+3. LCM rejects writing requests (POST/PUT/DELETE) made with a read key with
+   **403**. The key cannot change anything, even in an admin context.
 
 </Steps>
 
-More on endpoints and auth: [Frontend & API reference](/en/reference/api/).
+More on endpoints and authentication: [REST API](/en/reference/rest-api/).

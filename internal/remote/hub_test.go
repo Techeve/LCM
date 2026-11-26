@@ -2,6 +2,7 @@ package remote
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -18,6 +19,13 @@ import (
 // newTestHub baut Hub + gestarteten Broker auf einer In-Memory-DB und legt
 // einen Agent-Server mit bekanntem Secret an.
 func newTestHub(t *testing.T) (*Hub, *domain.Server, string) {
+	t.Helper()
+	return newTestHubWith(t, func(*Hub) {})
+}
+
+// newTestHubWith wie newTestHub, setup läuft vor Start (Einstellungen wie
+// WithPingInterval dürfen den laufenden Hub nicht mehr ändern).
+func newTestHubWith(t *testing.T, setup func(*Hub)) (*Hub, *domain.Server, string) {
 	t.Helper()
 	db, err := storage.Open(":memory:")
 	if err != nil {
@@ -36,6 +44,7 @@ func newTestHub(t *testing.T) (*Hub, *domain.Server, string) {
 		t.Fatalf("server anlegen: %v", err)
 	}
 	hub := New(servers, slog.Default())
+	setup(hub)
 	if err := hub.Start(); err != nil {
 		t.Fatalf("hub starten: %v", err)
 	}
@@ -201,12 +210,12 @@ func TestConnCloseUnblocks(t *testing.T) {
 	}
 }
 
-// TestIdleTimeoutSendsCancel: Gibt LCM ein Kommando wegen Stille auf, bekommt
-// der Agent den Abbruch für genau diese Befehls-ID - sonst liefe es dort
-// weiter, während der Job längst als gescheitert gilt.
-func TestIdleTimeoutSendsCancel(t *testing.T) {
+// TestSilenceBoundGivesUpWithoutCancel: Meldet sich der Agent über die
+// Obergrenze hinaus nicht, endet der Aufruf mit ErrResultUnknown - aber LCM
+// hält das Kommando nicht an: Es geht kein Abbruch hinaus.
+func TestSilenceBoundGivesUpWithoutCancel(t *testing.T) {
 	hub, server, _ := newTestHub(t)
-	hub.WithIdleTimeout(func() time.Duration { return 100 * time.Millisecond })
+	hub.WithMaxSilence(150 * time.Millisecond)
 	cl := hub.broker.NewClient(nil, "test", server.AgentID, false)
 	hub.agentConnected(cl)
 
@@ -224,12 +233,14 @@ func TestIdleTimeoutSendsCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if _, _, err := conn.Run("hängt"); err == nil {
-		t.Fatal("Run muss nach der Stille-Frist mit Fehler enden")
+	if _, _, err := conn.Run("hängt"); !errors.Is(err, ErrResultUnknown) {
+		t.Fatalf("Run muss nach der Obergrenze mit ErrResultUnknown enden, got %v", err)
 	}
-	first, second := nextCommand(t, sent), nextCommand(t, sent)
-	if first.Cancel || !second.Cancel || second.ID != first.ID {
-		t.Fatalf("erwartet Kommando und Abbruch mit gleicher ID, got %+v und %+v", first, second)
+	nextCommand(t, sent)
+	select {
+	case cmd := <-sent:
+		t.Fatalf("nach der Obergrenze ging noch etwas an den Agenten: %+v", cmd)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
@@ -262,7 +273,7 @@ func TestDisconnectFailsPending(t *testing.T) {
 		done <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
-	hub.agentDisconnected(cl)
+	hub.agentDisconnected(cl, nil)
 	select {
 	case err := <-done:
 		if err == nil {
@@ -285,9 +296,8 @@ func TestDisconnectFailsPending(t *testing.T) {
 // bis zum Watchdog fest.
 func TestDisconnectFailsSubsequentCommandFast(t *testing.T) {
 	hub, server, _ := newTestHub(t)
-	// Sehr großzügige Stille-Frist: Ein hängendes Folge-Kommando würde so
-	// lange warten - der Test muss trotzdem in Millisekunden zurückkehren.
-	hub.WithIdleTimeout(func() time.Duration { return time.Hour })
+	// Ein hängendes Folge-Kommando würde bis zur Obergrenze warten - der Test
+	// muss trotzdem in Millisekunden zurückkehren.
 	cl := hub.broker.NewClient(nil, "test", server.AgentID, false)
 	hub.agentConnected(cl)
 
@@ -298,7 +308,7 @@ func TestDisconnectFailsSubsequentCommandFast(t *testing.T) {
 	defer conn.Close()
 
 	// Agent trennt sich, während die Conn offen ist (kein Kommando läuft).
-	hub.agentDisconnected(cl)
+	hub.agentDisconnected(cl, nil)
 
 	done := make(chan error, 1)
 	go func() {
@@ -323,11 +333,11 @@ func TestTakeoverKeepsOnline(t *testing.T) {
 	newCl := hub.broker.NewClient(nil, "test", server.AgentID, false)
 	hub.agentConnected(oldCl)
 	hub.agentConnected(newCl)
-	hub.agentDisconnected(oldCl) // Takeover: alter Client geht nachträglich
+	hub.agentDisconnected(oldCl, nil) // Takeover: alter Client geht nachträglich
 	if !hub.Online(server.AgentID) {
 		t.Fatal("takeover hat den neuen client ausgetragen")
 	}
-	hub.agentDisconnected(newCl)
+	hub.agentDisconnected(newCl, nil)
 	if hub.Online(server.AgentID) {
 		t.Fatal("echter disconnect nicht verbucht")
 	}

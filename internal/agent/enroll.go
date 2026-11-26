@@ -47,15 +47,25 @@ After=network-online.target
 Wants=network-online.target
 # Ohne Enrollment (Konfiguration) startet der Dienst nicht.
 ConditionPathExists=%s
+# Nie aufgeben: systemd startet den Agent nach beliebig vielen Abstürzen neu.
+StartLimitIntervalSec=0
 
 [Service]
+# Der Agent richtet den Wächter zur Laufzeit selbst ein und füttert ihn nur,
+# solange seine Hauptschleife vorankommt; hängt er, startet systemd ihn neu.
+# Kein WatchdogSec= hier (Begründung in packaging/lcm-agent.service).
 Type=simple
+NotifyAccess=main
 ExecStart=%s run
 Restart=always
 RestartSec=10
 # Der Agent führt Verwaltungs-Kommandos des LCM-Servers als root aus
 # (Paketverwaltung, Docker, Firewall) - wie eine SSH-Root-Session.
 User=root
+# Zustandsdatei für lcm-agent status (/run/lcm-agent/status.json).
+RuntimeDirectory=lcm-agent
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=restart
 ProtectHostname=no
 NoNewPrivileges=no
 

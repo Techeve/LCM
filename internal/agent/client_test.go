@@ -122,3 +122,22 @@ func TestHandleCommandZaehltArbeitBisZurZustellung(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// TestInventarMeldetProtokollUndAlleFaehigkeiten: LCM erkennt am Inventar, was
+// dieser Agent kann (Paket E): Protokollversion und die vollständige Liste.
+func TestInventarMeldetProtokollUndAlleFaehigkeiten(t *testing.T) {
+	c, _ := testClient()
+	inv := c.inventory()
+	if inv.ProtocolVersion != wire.ProtocolVersion || inv.AgentVersion != "test" {
+		t.Errorf("Protokoll %d, Version %q", inv.ProtocolVersion, inv.AgentVersion)
+	}
+	for _, want := range []string{wire.CapabilityTTY, wire.CapabilityPing, wire.CapabilityJobs} {
+		found := false
+		for _, got := range inv.Capabilities {
+			found = found || got == want
+		}
+		if !found {
+			t.Errorf("Fähigkeit %q fehlt in %v", want, inv.Capabilities)
+		}
+	}
+}

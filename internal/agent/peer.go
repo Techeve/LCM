@@ -51,7 +51,10 @@ func checkPeer(rawCerts [][]byte, p pins, hostname string) (learned pins, err er
 		return learnFrom(leaf, chain), nil
 	}
 	// Fallback: reguläres Zertifikat (z.B. Let's Encrypt) - dann muss die
-	// Kette samt Hostname stimmen.
+	// Kette samt Hostname stimmen. Ohne Namen überspränge x509 die Prüfung.
+	if hostname == "" {
+		return pins{}, errors.New("server-adresse ohne namen: nur ein pin kann das zertifikat bestätigen")
+	}
 	inter := x509.NewCertPool()
 	for _, c := range chain {
 		inter.AddCert(c)

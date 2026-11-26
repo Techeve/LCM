@@ -33,7 +33,7 @@ Veröffentlichungsprozess zu bekommen?
 | 4 | Organisation mit mehreren aktiven Maintainern und Release-Prozess | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `@xterm/xterm` |
 | 3 | Kleine Organisation oder renommierte Einzelperson, nachweislich aktiv | `mochi-mqtt/server`, `fasthttp/websocket`, `simple-icons`, `filippo.io/age`, `go-landlock`, `klauspost/compress`, `modernc.org/sqlite` |
 | 2 | Einzelperson, sporadische Releases, Bus-Faktor 1 | `glebarez/sqlite`, `alexedwards/argon2id`; transitiv `molecule-man/go-brrr` (über fasthttp) |
-| 1 | Einzelperson, seit Jahren inaktiv, kein Release-Prozess, ungetaggte Versionen | - (leer, der letzte Eintrag wurde abgelöst, siehe unten) |
+| 1 | Einzelperson, seit Jahren inaktiv, kein Release-Prozess, ungetaggte Versionen | - (leer) |
 
 Stufe 1 wird nicht aufgenommen, und bestehende Einträge werden abgelöst.
 
@@ -91,9 +91,13 @@ Version.** Daraus folgen drei Regeln, die im Repo verankert sind:
 - **Karenzzeit.** [renovate.json](https://gitlab.techeve.de/techeve/lcm/-/blob/community/renovate.json?mtm_campaign=linking&mtm_kwd=doc)
   setzt `minimumReleaseAge` auf sieben Tage. Das ist das Fenster, in dem
   kompromittierte Pakete üblicherweise entdeckt und zurückgezogen werden.
-- **Automerge nur für Stufe 4 und 5.** Patch-Updates mergen selbsttätig nur bei
-  Herausgebern mit belastbarem Release-Prozess. Alles andere braucht einen
-  Menschenblick - auch Patches.
+- **Automerge nach Karenzzeit und grüner Pipeline.** Minor- und Patch-Updates
+  mergen selbsttätig, sobald die sieben Tage um sind und die volle MR-Pipeline
+  grün ist - unabhängig von der Trägerschaft; die Karenzzeit ist die Hürde gegen
+  einen frischen Angriff. Major-
+  Updates kommen erst nach Freigabe im Dependency Dashboard, und auf `enterprise`
+  gibt es nur Patch- und Sicherheitsupdates. Die Trägerschaft entscheidet damit
+  nur darüber, ob eine Abhängigkeit überhaupt aufgenommen wird.
 - **Sicherheitsupdates mergen selbsttätig.** Für Updates, die eine bekannte
   Lücke schließen (`vulnerabilityAlerts`), entfällt die Karenzzeit, und sie
   mergen automatisch, sobald die volle MR-Pipeline grün ist. Die offene,
@@ -136,25 +140,13 @@ bleibt unberührt. Vor einem Wechsel Migrationen und Backup/Restore gegen eine
 bestehende Datenbank testen - die Treiber unterscheiden sich in Details der
 Typkonvertierung.
 
-**2026-11-09: `robfig/cron` (Stufe 1, letzter Tag v3.0.1 von 2020) abgelöst.**
-An seiner Stelle steht das eigene Paket `internal/cron`: ein Parser für fünf
-Felder plus Deskriptoren (`@daily`, `@every 1h`, Präfix `CRON_TZ=`) und ein
-kleiner Scheduler. Die Aufgabe fiel in die Eigenbau-Kategorie: keine
-Kryptographie, die Ausdrücke kommen vom Administrator, ein Fehler fällt im
-Zeitplan sofort auf. Gespeicherte Ausdrücke gelten unverändert weiter: Ein
-Golden-Test hält das Verhalten der alten Bibliothek für alle Ausdrucksformen
-fest, Fehlertexte und Zeitumstellungen eingeschlossen. Sein Generator liegt als
-eigenes Modul unter `internal/cron/testdata/gen` und gehört nicht zum
-Abhängigkeitsgraphen von LCM. Einzige Abweichung: Ein Zonen-Präfix ohne
-folgendes Leerzeichen (`TZ=UTC`) ist ein Fehler statt eines Panics.
-
 **`mochi-mqtt/server` beobachten:** Der Broker ist für die Agent-Anbindung
 unverzichtbar und Protokoll-Parsing, also kein Eigenbau. Letztes Release
 03/2025, viele offene Issues - Tendenz Richtung Stufe 2. Ausweg wäre ein
 Agent-Kanal über WebSocket (`fasthttp/websocket` ist ohnehin im Bestand).
 
-**`molecule-man/go-brrr` beobachten:** kommt seit fasthttp 1.75 transitiv
-(ersetzt `andybalholm/brotli`). Reines Go, fuzz-getestet, vom
+**`molecule-man/go-brrr` beobachten:** kommt transitiv über fasthttp.
+Reines Go, fuzz-getestet, vom
 fasthttp-Maintainer mitgepflegt, aber jung und mit Bus-Faktor 1.
 
 **uPlot steckt als Datei in `lcm-probe`** (1.6.32, MIT, Leon Sorokin, Stufe 3):

@@ -93,6 +93,9 @@ func (r *GroupRepository) Disband(id uint) error {
 		if err := tx.Where("group_id = ?", id).Delete(&domain.Schedule{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("group_id = ?", id).Delete(&domain.AgentUpdatePolicy{}).Error; err != nil {
+			return err
+		}
 		res := tx.Delete(&domain.ServerGroup{}, id)
 		if res.Error != nil {
 			return res.Error

@@ -144,6 +144,12 @@ func volumeMountsMissingFromBinds(hostConfig map[string]json.RawMessage, mounts 
 // wird er entfernt. Scheitert ein Schritt, kommt der alte zurück und läuft
 // wieder. Das überholte Image löscht `docker image rm` ohne -f: Ist es noch
 // von einem anderen Container genutzt oder noch getaggt, bleibt es stehen.
+//
+// Das Create geht per curl an den Docker-Socket. Das braucht Root-Zugriff auf den
+// Socket und läuft deshalb nicht im eingeschränkten Modus: curl steht dort nicht
+// auf der sudo-Whitelist (siehe restrictedAllowsRule). `docker system dial-stdio`
+// als Ersatz taugt nicht: Schließt stdin nach der Anfrage, bricht der Daemon sie
+// ab (HTTP 500 ohne Inhalt), und der Kanal müsste bis zur Antwort offen bleiben.
 func recreateScript(name, ref, oldImageID string, body []byte) string {
 	n := shellQuote(name)
 	old := shellQuote(name + ".lcm-old")

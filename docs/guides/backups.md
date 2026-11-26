@@ -72,12 +72,10 @@ age -d -i schluessel.txt lcm-backup-20260910-033000.lcmbak > backup.zip
 bsdtar -xf backup.zip        # Debian/Ubuntu: apt install libarchive-tools
 ```
 
-Seit 1.43 komprimiert das ZIP im Archiv mit zstd statt Deflate. Die großen
-Felder der Datenbank liegen verschlüsselt als Base64 vor; Deflate holt davon
-nichts zurück, zstd ein Viertel. Das klassische `unzip` kennt dieses
-Verfahren nicht, `bsdtar` aus `libarchive-tools` schon. Aus demselben Grund
-lässt sich ein Archiv ab 1.43 nicht mit einer älteren LCM-Version
-wiederherstellen - ältere Archive dagegen liest jede neuere Version.
+Das ZIP im Archiv ist mit zstd komprimiert. Die großen Felder der Datenbank
+liegen verschlüsselt als Base64 vor; Deflate holt davon nichts zurück, zstd
+ein Viertel. Das klassische `unzip` kennt dieses Verfahren nicht, `bsdtar` aus
+`libarchive-tools` schon.
 
 ## Automatische Backups
 
@@ -136,7 +134,8 @@ Weitere Einstellungen:
   Intervall 12&nbsp;h und Uhrzeit 03:30 → Läufe um 03:30 und 15:30. Andere
   Intervalle laufen relativ; dort sichert der Nachhol-Watchdog den Takt ab.
 - **Verzeichnis** - ist immer gesetzt und mit dem Standard vorbelegt
-  (`backup_dir` aus config.json, sonst `<Datenverzeichnis>/backups`). Es lässt
+  (`backup_dir` aus config.json, sonst `<Datenverzeichnis>/backups`). Die Datei
+  liefert nur die Vorgabe beim Start; danach gilt der Wert hier in der Oberfläche. Es lässt
   sich frei ändern - praktisch für ein persistentes/externes Volume; ein
   geleertes Feld setzt beim Speichern den Standard wieder ein.
 

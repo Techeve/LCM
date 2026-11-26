@@ -115,10 +115,3 @@ permissions match the current state exactly. Open it in any OpenAPI tool (e.g.
 [Swagger Editor](https://editor.swagger.io/), Postman import, Insomnia,
 Bruno) for a searchable, interactive view grouped by area (servers, server
 groups, Docker, security, jobs, users, settings, …).
-
-:::note[Browsable API reference]
-A browsable API reference embedded directly in this documentation is
-prepared (the docs builder supports this via `starlight-openapi`), but is
-waiting on a small fix in the shared docs building block - until then, open
-the file above locally.
-:::

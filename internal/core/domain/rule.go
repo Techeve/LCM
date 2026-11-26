@@ -45,7 +45,8 @@ const (
 
 	// RuleTypeDockerContainerUpdate aktualisiert laufende Standalone-Container:
 	// neues Image ziehen, Container mit gleicher Konfiguration neu erstellen,
-	// altes Image entfernen. Command = optional ein Containername.
+	// altes Image entfernen. Command = optional ein Containername. Im
+	// eingeschränkten Sudo-Modus gesperrt (siehe restrictedAllowsRule).
 	RuleTypeDockerContainerUpdate = "docker-container-update"
 
 	// RuleTypeAptProxy bindet die Server der Gruppe an den zentralen

@@ -971,10 +971,10 @@ func (s *ServerService) establishAccess(conn sshx.Conn, host string, port int, f
 	// Automatische Rechte-Erkennung: WIE wird der Login-Benutzer root?
 	// Direkt (root), per sudo (mit/ohne Passwort) oder per su (ohne
 	// Passwort bzw. mit dem Login-Passwort - z. B. Debian ohne sudo,
-	// wenn der Benutzer das root-Passwort kennt).
+	// wenn der Benutzer das root-Passwort kennt) oder per login.
 	esc := detectRootEscalation(conn, loginUser, loginPassword, &log)
 	if esc == nil {
-		return nil, fmt.Errorf("keine Root-Rechte für die Provisionierung: der Login-Benutzer %q ist nicht root, hat keine sudo-Rechte, kann auch nicht per su zu root wechseln (weder ohne Passwort noch mit dem Login-Passwort) und auch login root ohne Passwort schlug fehl. Trage den Benutzer in sudoers ein, verwende root, einen Benutzer, dessen Passwort auch für root gilt, oder stelle sicher, dass root ohne gesetztes Passwort per login erreichbar ist", loginUser)
+		return nil, fmt.Errorf("keine Root-Rechte für die Provisionierung: der Login-Benutzer %q ist nicht root, hat keine sudo-Rechte, kann auch nicht per su zu root wechseln (weder ohne Passwort noch mit dem Login-Passwort) und auch login root schlug fehl (weder ohne Passwort noch mit dem Login-Passwort). Trage den Benutzer in sudoers ein, verwende root, einen Benutzer, dessen Passwort auch für root gilt, oder stelle sicher, dass root ohne gesetztes Passwort per login erreichbar ist", loginUser)
 	}
 	if esc.method != "root" {
 		log.WriteString("### Rechte-Erkennung\nProvisionierung läuft per " + esc.method + "\n")
@@ -1333,6 +1333,8 @@ type rootEscalation struct {
 //     pam_wheel/Gruppen-Mitgliedschaft gesperrt), aber das login-Programm
 //     (eigene PAM-Policy /etc/pam.d/login, meist ohne Gruppen-Restriktion)
 //     lässt root ohne Passwort herein, weil root keines gesetzt hat.
+//  7. login mit dem LOGIN-Passwort - su ist gesperrt, root hat aber dasselbe
+//     Passwort wie der Login-Benutzer, und die PAM-Policy von login lässt es zu.
 //
 // Jede Probe führt ein harmloses `true` aus; entscheidend ist der Exit-Code.
 // nil = kein Weg funktioniert (der Aufrufer formuliert die Fehlermeldung).
@@ -1370,14 +1372,23 @@ func detectRootEscalation(conn sshx.Conn, loginUser, password string, log *strin
 	}
 	// login kennt kein "-c <kommando>" wie su - es startet nach erfolgreicher
 	// Anmeldung eine Login-Shell für root, die (ohne TTY) das restliche stdin
-	// als Skript abarbeitet. Der Aufbau ist deshalb immer gleich: eine leere
-	// Zeile für den Passwort-Prompt, danach das eigentliche Kommando, danach
-	// ein explizites exit (dessen Code der Root-Shell nach außen durchreicht).
-	loginWrap := func(cmd string) (string, string) {
-		return "login root", "\n" + cmd + "\nexit\n"
+	// als Skript abarbeitet. Der Aufbau ist deshalb immer gleich: eine Zeile
+	// für den Passwort-Prompt (leer oder das Login-Passwort), danach das
+	// eigentliche Kommando, danach ein explizites exit (dessen Code der
+	// Root-Shell nach außen durchreicht). Das Passwort steht nur im stdin.
+	loginWrap := func(pass string) func(cmd string) (string, string) {
+		return func(cmd string) (string, string) {
+			return "login root", pass + "\n" + cmd + "\nexit\n"
+		}
 	}
-	if probeCmd, probeStdin := loginWrap("true"); probe("login ohne Passwort", probeCmd, probeStdin) {
-		return &rootEscalation{method: "login", wrap: loginWrap}
+	if probeCmd, probeStdin := loginWrap("")("true"); probe("login ohne Passwort", probeCmd, probeStdin) {
+		return &rootEscalation{method: "login", wrap: loginWrap("")}
+	}
+	if password == "" {
+		return nil
+	}
+	if probeCmd, probeStdin := loginWrap(password)("true"); probe("login mit Login-Passwort", probeCmd, probeStdin) {
+		return &rootEscalation{method: "login", wrap: loginWrap(password)}
 	}
 	return nil
 }
@@ -2087,6 +2098,9 @@ func (s *ServerService) runPackageJob(job *domain.Job, server *domain.Server, sc
 
 	output, code, runErr := conn.Run(privRun(server, script))
 	code, runErr = packageRunResult(job.Type, server.PackageManager, output, code, runErr)
+	// Auch nach einem gescheiterten Lauf: „Alle Snaps aktualisieren" kann
+	// einen Teil eingespielt haben, bevor ein Snap hängen blieb.
+	rescanSnapsInto(s.servers, conn, server)
 	if runErr == nil {
 		rescanPackagesInto(s.servers, conn, server)
 		_ = s.servers.UpdateFields(server.ID, map[string]any{
@@ -2129,11 +2143,15 @@ func (s *ServerService) Get(scope repositories.AccessScope, id uint) (*domain.Se
 }
 
 // fillAgentState befüllt den Laufzeitzustand AgentConnected aus dem Hub
-// (nicht persistiert; false ohne verdrahteten Hub oder für SSH-Server).
+// (nicht persistiert; false ohne verdrahteten Hub oder für SSH-Server) und die
+// Einordnung des Agents gegenüber diesem LCM (AgentSupport) und die
+// Verbindungsbilanz (AgentLink).
 func (s *ServerService) fillAgentState(server *domain.Server) {
 	if server.IsAgent() && s.agents != nil {
 		server.AgentConnected = s.agents.Online(server.AgentID)
 	}
+	server.AgentSupport = agentReport(server)
+	server.AgentLink = s.agentLink(server)
 }
 
 // ActiveJob liefert den aktuell laufenden Job eines Servers (nil, wenn keiner

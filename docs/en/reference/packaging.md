@@ -73,8 +73,11 @@ journalctl -u lcm -f      # logs live
 
 ### Configuration
 
-All settings live in `/etc/lcm/config.json` - after changes restart the service
-(`systemctl restart lcm`). Important values:
+`/etc/lcm/config.json` holds the start-up and operating parameters of LCM. Most
+settings live in the database and the interface. After changes to the file
+restart the service (`systemctl restart lcm`). All fields and how the file works
+together with the interface: [Configuration file config.json](/en/guides/config-json/).
+Important values:
 
 - `host` (default `0.0.0.0`): bind address. **Security note:** by default the
   interface is reachable on the network (HTTPS, self-signed). For production,
@@ -82,8 +85,7 @@ All settings live in `/etc/lcm/config.json` - after changes restart the service
   certificate in front. For purely local operation set `host` to `127.0.0.1`.
 - `port` (default `9310`).
 - No secret lives in the file: the signing key of the 2FA challenge is generated in memory
-  on every start. A `jwt_secret` from older versions is ignored and removed the
-  next time the file is written.
+  on every start.
 
 ### Updating
 
@@ -100,12 +102,33 @@ migrations run automatically at startup.
 
 ```sh
 sudo apt remove lcm     # remove service + program, keep data
-sudo apt purge  lcm     # additionally delete /etc/lcm, /var/lib/lcm and the lcm user
+sudo apt purge  lcm     # remove everything LCM created
 ```
 
+`purge` deletes:
+
+- `/var/lib/lcm` (database, master key `lcm.key`, TLS certificate, backups,
+  logs, Trivy cache) and `/etc/lcm`
+- the encrypted credential `/etc/credstore.encrypted/lcm.key` and the unit
+  drop-in `/etc/systemd/system/lcm.service.d/`
+- the helper `/usr/local/sbin/lcm-helper` and the sudo rule `lcm-svc`
+- the management account `lcm-svc` (only if its key carries the LCM comment)
+- the host settings: apt cache drop-in, the SSH drop-ins `00-lcm-hardening`,
+  `10-lcm-ssh`, `40-lcm-2fa`, `60-lcm-hardening`, the PAM change of the SSH 2FA
+  in `/etc/pam.d/sshd`, the nftables table `lcm` including
+  `/etc/nftables.d/lcm.nft`
+- the include in `sshd_config`: the original file is restored from
+  `sshd_config.lcm-backup`, then sshd is restarted
+- the user `lcm` and the group `lcm`
+
+Not removed: Linux users that LCM distributed to other servers (including
+their home directories), ufw rules and the programs Trivy, bubblewrap and
+apt-cacher-ng.
+
 :::caution
-`purge` deletes the encrypted database **and** the master key irreversibly.
-Back up `/var/lib/lcm` beforehand if needed.
+`purge` deletes the encrypted database **and** the master key irreversibly,
+along with the backups. Back up `/var/lib/lcm` beforehand if needed. `apt
+remove` shows a note about this when backups exist.
 :::
 
 ### Building it yourself
@@ -207,15 +230,12 @@ The token protects the sidecar; it runs processes and pulls images from foreign 
 
 It is published as `…/trivyd:<trivy-version>` (currently `0.74.0`) plus the
 moving channel tag (`:beta`, `:latest`) - deliberately **not** with the LCM
-version. It only changes when Trivy is bumped or our adapter is touched. With
-the LCM version in the tag, every release would produce a new digest for
-unchanged content: the registry would fill up with copies, and the tag list
-would look as if the scanner had moved.
+version. It only changes when Trivy is bumped or our adapter is touched.
 
 For your own compose file that means: pull the sidecar via the channel tag
 (`:beta` or `:latest`), or name the Trivy version explicitly.
 
-LCM still runs without the sidecar - just without a CVE scan, exactly as before in Docker mode. A **configured but unreachable** sidecar, however, is an error and is reported as one: otherwise an outage would look like a disabled scan, and an empty findings list like an all-clear.
+LCM still runs without the sidecar - just without a CVE scan. A **configured but unreachable** sidecar, however, is an error and is reported as one: otherwise an outage would look like a disabled scan, and an empty findings list like an all-clear.
 
 ### What the container cannot do
 

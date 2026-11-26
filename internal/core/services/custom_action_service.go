@@ -35,9 +35,9 @@ func NewCustomActionService(repo *repositories.CustomActionRepository, audit *Au
 func auditCommandSummary(commands string) string {
 	cmds := parseActionCommands(commands)
 	joined := strings.Join(cmds, " | ")
-	const max = 300
-	if len(joined) > max {
-		joined = joined[:max] + " …"
+	const maxLen = 300
+	if len(joined) > maxLen {
+		joined = joined[:maxLen] + " …"
 	}
 	return joined
 }
@@ -128,7 +128,7 @@ func (s *CustomActionService) Delete(id uint, actor string) error {
 		return err
 	}
 	// Nicht löschbar, solange eine Rule sie referenziert.
-	n, err := s.repo.CountRulesUsing(id, strconv.FormatUint(uint64(id), 10))
+	n, err := s.repo.CountRulesUsing(id)
 	if err != nil {
 		return err
 	}

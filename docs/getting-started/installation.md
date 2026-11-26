@@ -11,11 +11,13 @@ in Betrieb zu nehmen. Für Produktivsysteme empfiehlt sich das **`.deb`-Paket**
 
 ## Voraussetzungen
 
-- Einen Host für LCM: **Debian 12/13 oder Ubuntu 22.04/24.04** (amd64 oder
-  arm64). Andere Linux-Distributionen laufen erfahrungsgemäß, sind aber nicht
-  Teil unserer Tests.
-- SSH-Zugriff (Passwort oder Key) auf die zu verwaltenden Server - LCM legt
-  dort beim Onboarding einen eigenen Service-User an.
+- Einen Host für LCM: **Debian 12/13 oder Ubuntu 22.04/24.04/26.04** (amd64 oder
+  arm64), oder Docker auf einem beliebigen Linux-System. Was getestet ist,
+  steht unter [Unterstützte Systeme](/reference/supported-systems/).
+- Die zu verwaltenden Server brauchen entweder SSH-Zugriff (Passwort oder Key) -
+  LCM legt dort beim Onboarding einen eigenen Service-User an - oder den
+  `lcm-agent`, der sich ausgehend mit LCM verbindet. Verwalten lassen sich
+  Debian, Ubuntu, die RHEL-Familie, openSUSE, Arch Linux und Alpine.
 - Optional **Trivy** auf dem LCM-Host für den CVE-Scan. Fehlt es, deaktiviert
   sich das Feature sauber. Mitinstalliert wird dabei **bubblewrap** - die
   Sandbox, in der LCM den Scanner startet (siehe
@@ -48,9 +50,15 @@ sudo apt install lcm
 sudo apt update && sudo apt upgrade
 ```
 
-`setup.sh` legt die Paketquelle und den GPG-Schlüssel an (Debian/Ubuntu, amd64 &
-arm64); danach ist `lcm` ein normales apt-Paket. So kommen Updates automatisch
-mit dem System.
+`setup.sh` erkennt die Paketverwaltung des Systems (apt, dnf, zypper, apk oder
+pacman) und legt Paketquelle und Signaturschlüssel an (amd64 und arm64). Auf dem
+LCM-Host ist das apt; `lcm` ist danach ein normales apt-Paket, und Updates kommen
+automatisch mit dem System. Auf verwalteten Servern richtet dasselbe Skript die
+Quelle für den `lcm-agent` ein (siehe [Schnellstart](/getting-started/quickstart/)).
+`--beta` wählt den Beta-Kanal, `--uninstall` entfernt Quelle und Schlüssel wieder.
+
+Das Paket `lcm` gibt es nur für apt. Auf den anderen Systemen läuft LCM im
+Docker-Container (Variante 2).
 
 Die Quelle zeigt auf den Community-Kanal (`https://repo.techeve.de community main`).
 Ältere Installationen mit der Suite `stable` laufen weiter, das Paket stellt sie
@@ -123,6 +131,10 @@ Installation aus dem Debian-Paket, deren Host als apt-Server in der
 Verwaltung steht. Andernfalls nennt der Balken den Grund. Im Container wird
 statt dessen das Image getauscht.
 
+Die `lcm-agent`-Pakete auf verwalteten Servern gehören nicht dazu: Sie
+aktualisiert LCM auf Anweisung, per Knopf oder Gruppenregel
+([Agent aktualisieren](/guides/remote/#agent-aktualisieren)).
+
 Der Dialog *Über LCM* (Kontomenü oben rechts) hat außerdem
 **Jetzt prüfen**: Das fragt den Paketkanal sofort ab und zeigt das Ergebnis
 direkt neben dem Knopf an - auch dann, wenn LCM bereits aktuell ist.
@@ -153,9 +165,8 @@ sudo apt update && sudo apt install trivy
 ```
 
 Die Schritte gelten unverändert für Debian und Ubuntu; getestet auf Debian 12
-und 13 sowie Ubuntu 22.04, 24.04 und 26.04. **Debian 11** wird nicht mehr
-unterstützt: Die Distribution ist aus dem Support gelaufen, ihre Paketquellen
-liefern nicht mehr alles aus, und `apt` scheitert schon an `gnupg` oder `sudo`.
+und 13 sowie Ubuntu 22.04, 24.04 und 26.04 (Übersicht: [Unterstützte Systeme](/reference/supported-systems/)). **Debian 11** wird nicht mehr
+unterstützt (aus dem Support gelaufen).
 
 Läuft LCM auf demselben Host, geht es auch per Klick: *Server-Detail des
 LCM-Hosts → Trivy einrichten*. Wurde Trivy ohne bubblewrap eingerichtet, rüstet
@@ -262,7 +273,9 @@ Eine reguläre Neuinstallation startet leer.
 
 ## Kommandozeilen-Optionen
 
-Das Binary kennt nur wenige Flags - alles Weitere steht in der `config.json`:
+Das Binary kennt nur wenige Flags. Start- und Betriebsparameter stehen in der
+`config.json`, die übrigen Einstellungen in der Datenbank und in der Oberfläche
+(alle Felder der Datei: [Konfigurationsdatei config.json](/guides/config-json/)):
 
 | Flag | Wirkung |
 |------|---------|
@@ -291,7 +304,9 @@ Zusätzlich gibt es ein Unterkommando zur **Master-Key-Rotation** (siehe
 ## Umgebungsvariablen
 
 Praktisch im Container-/Dienst-Betrieb, um Werte zu übersteuern, ohne die
-(evtl. read-only gemountete) `config.json` anzufassen:
+(evtl. read-only gemountete) `config.json` anzufassen. Wer gewinnt, wenn Datei,
+Oberfläche und Umgebung etwas anderes sagen, steht unter
+[Konfigurationsdatei config.json](/guides/config-json/#datei-oberfläche-und-umgebung):
 
 | Variable | Wirkung |
 |----------|---------|
@@ -300,6 +315,9 @@ Praktisch im Container-/Dienst-Betrieb, um Werte zu übersteuern, ohne die
 | `LCM_PORT` | Port der Weboberfläche/REST-API (überschreibt `port`). |
 | `LCM_AGENT_HOST` | Bind-Adresse des Agent-Listeners (überschreibt `agent_host`). |
 | `LCM_AGENT_PORT` | Port des Agent-Listeners (überschreibt `agent_port`); `0` schaltet ihn ab. Eine gesetzte Umgebungsvariable sperrt das Feld in der Oberfläche. |
+| `LCM_TRIVY_URL` | Adresse eines Trivy-Sidecars für den CVE-Scan (überschreibt `trivy_url`), siehe [Paketierung](/reference/packaging/#trivy-im-container-betrieb). |
+| `LCM_TRIVY_TOKEN` | Token für den Sidecar (überschreibt `trivy_token`); Pflicht, sobald eine Adresse gesetzt ist. |
+| `LCM_ENCRYPTION_KEY` | Master-Key (Base64, 32 Byte). Gewinnt gegen `lcm.key` und das systemd-Credential, siehe [Sicherheitsmodell](/reference/security-model/). |
 | `LCM_BACKUP_PASSPHRASE` | Passphrase für **automatische** Backups (siehe [Backups](/guides/backups/)). |
 | `LCM_RESTORE_AUTO_RESTART` | `1`/`true` = nach einem vorbereiteten Restore automatisch neu starten. |
 | `TZ` | Zeitzone, z.&nbsp;B. `Europe/Berlin` - die tzdata sind ins Binary eingebettet, funktioniert also auch in minimalen Containern. |

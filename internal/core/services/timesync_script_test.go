@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +57,8 @@ func (sb timeSandbox) run(t *testing.T, script string) (string, int) {
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Env = []string{"PATH=" + sb.bin + ":/usr/bin:/bin"}
 	out, err := cmd.CombinedOutput()
-	if exit, ok := err.(*exec.ExitError); ok {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
 		return string(out), exit.ExitCode()
 	} else if err != nil {
 		t.Fatal(err)

@@ -52,7 +52,7 @@ func TestBackupCreateBundlesAndEncrypts(t *testing.T) {
 	bs := NewBackupService(repositories.NewDatabaseRepository(db), repositories.NewSettingsRepository(db), dataDir, dbFile, configPath)
 
 	// Ohne Passphrase (kein Env) muss Create klar fehlschlagen.
-	if _, err := bs.Create("test", ""); err != ErrBackupNoPassphrase {
+	if _, err := bs.Create("test", ""); !errors.Is(err, ErrBackupNoPassphrase) {
 		t.Fatalf("ohne Passphrase erwartet ErrBackupNoPassphrase, bekam %v", err)
 	}
 
@@ -141,11 +141,11 @@ func TestBackupDelete(t *testing.T) {
 	}
 
 	// Pfad-Traversal / falsche Endung abgelehnt.
-	if err := bs.Delete("../etc/passwd"); err != ErrBackupNotFound {
+	if err := bs.Delete("../etc/passwd"); !errors.Is(err, ErrBackupNotFound) {
 		t.Errorf("Traversal: erwartet ErrBackupNotFound, bekam %v", err)
 	}
 	// Unbekannter Name.
-	if err := bs.Delete("nicht-da.lcmbak"); err != ErrBackupNotFound {
+	if err := bs.Delete("nicht-da.lcmbak"); !errors.Is(err, ErrBackupNotFound) {
 		t.Errorf("unbekannt: erwartet ErrBackupNotFound, bekam %v", err)
 	}
 

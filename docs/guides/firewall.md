@@ -37,16 +37,6 @@ Server-Detail → **Firewall**. Jede Regel besteht aus:
   Kommentare kennt (ufw, nftables), steht sie auch im Regelsatz auf dem
   Zielsystem.
 
-:::note[Keine Bind-/Zieladresse mehr]
-Bis LCM 1.13.0 gab es zusätzlich eine Bind-/Zieladresse: „auf welcher lokalen
-Adresse ist der Port offen". Neben den erlaubten Quellen („von wo darf jemand
-zugreifen") stiftete das mehr Verwirrung als Nutzen - beide Felder klangen
-gleich und meinten Verschiedenes. Das Feld ist entfallen; die Frage, die man
-in der Praxis beantworten will, beantworten die Quellen. Ein „bind" aus einem
-älteren gespeicherten Regelsatz wird beim Lesen ignoriert: der Port ist danach
-auf allen lokalen Adressen offen, für die Quellen gilt weiter, was dort steht.
-:::
-
 Der **SSH-Port ist immer freigegeben** (Aussperr-Schutz); alles andere wird
 beim Aktivieren geblockt. Die Anwendung läuft als Job - inklusive
 Installation des Werkzeugs, falls nötig, und Verifikation, dass die Firewall
@@ -112,8 +102,6 @@ Unter **Gruppen** lässt sich die Firewall als **Grundsatz-Regel** (Enforce)
 definieren - mit demselben Regel-Editor. Bei jeder Verbindung prüft LCM den
 Ist-Zustand (billiger Hash-/Set-Vergleich je Backend) und wendet den Regelsatz
 nur bei Abweichung neu an; ein fehlendes Werkzeug wird dabei installiert.
-Bestehende Regeln im alten Format (Portliste `80,443`) laufen unverändert
-weiter.
 
 :::note[Docker & Proxmox]
 Von Docker **veröffentlichte Container-Ports** laufen an der Host-Firewall
@@ -135,7 +123,7 @@ die sich frei kombinieren lassen:
 
 Ist mindestens eine Quelle gesetzt, gibt die Regel den Port **nur für die
 Vereinigung dieser Quell-IPs** frei - alle anderen Quellen werden geblockt.
-Ohne Quellen gilt die Regel wie bisher für alle. Umgesetzt als
+Ohne Quellen gilt die Regel für alle. Umgesetzt als
 `ufw allow … from …`, firewalld `source address="…"` bzw. nftables
 `ip/ip6 saddr { … }`. Ändern sich die Listeninhalte, wendet die Firewall-
 Grundsatz-Regel den Regelsatz beim nächsten Lauf automatisch neu an.
@@ -214,11 +202,11 @@ verwechselt:
 - **Quelle** (`from …` / `source address` / `saddr`): **wer** (welche
   Absender-IP, welches Absender-Netz) auf den Port zugreifen darf.
 
-LCM bietet nur noch die Quelle an. Der Grund ist die Praxis: Wer einen Dienst
+LCM bietet nur die Quelle an. Der Grund ist die Praxis: Wer einen Dienst
 „nur intern" erreichbar machen will, meint fast immer „nur aus dem internen
-Netz" - also die Quelle. Zwei ähnlich klingende Felder nebeneinander führten
-regelmäßig dazu, dass das falsche gefüllt wurde, mit dem Ergebnis, dass ein
-Port für alle offen stand, obwohl er eingeschränkt aussah.
+Netz" - also die Quelle. Zwei ähnlich klingende Felder nebeneinander verleiten
+dazu, das falsche zu füllen, mit dem Ergebnis, dass ein Port für alle offen
+steht, obwohl er eingeschränkt aussieht.
 
 Wirklich verloren geht dabei nur ein Sonderfall: derselbe Absender darf einen
 Dienst auf der einen lokalen Adresse erreichen, auf der anderen nicht. Wer das

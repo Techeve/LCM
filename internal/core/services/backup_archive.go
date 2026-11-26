@@ -51,7 +51,6 @@ var (
 	backupMagicV1 = []byte("LCMBAK1\n") // scrypt N=2^15, ein Siegel - nur noch lesen
 	backupMagicV2 = []byte("LCMBAK2\n") // scrypt N=2^17, ein Siegel - nur noch lesen
 	backupMagicV3 = []byte("LCMBAK3\n") // scrypt N=2^16, blockweise - aktuelles Schreibformat
-	backupMagic   = backupMagicV3       // Schreibformat
 )
 
 const (

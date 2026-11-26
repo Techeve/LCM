@@ -66,7 +66,7 @@ to the preceding run:
 | **Tools used** | a run without Lynis covers far less; this explains jumps in the finding count |
 
 Clicking a run opens its findings, grouped by category, with new findings marked
-individually as **new**. That answers what a flat list never could: *have I made
+individually as **new**. That answers: *have I made
 progress since last time?* For the very first run both markers stay empty -
 there is nothing to compare against.
 
@@ -94,7 +94,7 @@ drop-in (`10-lcm-ssh.conf`) stays without effect, even though it was written
 correctly and accepted by `sshd -t`. Many cloud and hosting images ship exactly
 that line.
 
-**LCM now resolves this itself.** When disabling the root login it verifies the
+**LCM resolves this itself.** When disabling the root login it verifies the
 effect; if the setting does not take hold, it silences the offending lines in
 the main file with a marker:
 

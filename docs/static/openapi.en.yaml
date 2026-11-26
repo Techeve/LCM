@@ -3486,6 +3486,131 @@ paths:
           description: Not signed in.
         '403':
           description: No permission.
+  /api/v1/server-groups/{id}/agent-updates:
+    get:
+      tags:
+      - Server groups
+      summary: Reads the agent update rule of the group.
+      operationId: agentUpdateCtrl_Get
+      description: |-
+        The agent update rule of the group (off by default) with the next window, the number of agent servers and how many are behind LCM, and the state of the last run.
+
+        Required permission: `groups:read`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: The rule.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+    put:
+      tags:
+      - Server groups
+      summary: Saves the agent update rule of the group.
+      operationId: agentUpdateCtrl_Save
+      description: |-
+        Switches automatic agent updates of the group on or off. In a time window (start as a cron expression, length in minutes, servers spread evenly) LCM brings the agents of the group to the version that fits LCM - never higher than LCM itself. With staged set, one server goes first and the rest follows after it reported back with the new version and answers commands. Saving lifts a pause after a failed run.
+
+        Required permission: `rules:manage`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [off, auto]
+                staged:
+                  type: boolean
+                cron_expr:
+                  type: string
+                  example: 0 3 * * *
+                window_minutes:
+                  type: integer
+                  example: 120
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: The rule.
+        '422':
+          description: Invalid mode, cron expression or window.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+  /api/v1/server-groups/{id}/agent-updates/run:
+    post:
+      tags:
+      - Server groups
+      summary: Runs the agent update rule now.
+      operationId: agentUpdateCtrl_Run
+      description: |-
+        Starts a run in the background, regardless of the time window and of whether the rule is on. The update jobs appear under Jobs.
+
+        Required permission: `rules:manage`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Run started.
+        '409':
+          description: A run is already active for this group.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+  /api/v1/server-groups/{id}/agent-updates/resume:
+    post:
+      tags:
+      - Server groups
+      summary: Lifts the pause of the agent update rule.
+      operationId: agentUpdateCtrl_Resume
+      description: |-
+        A failed first server or a rollback pauses the rule for the current LCM version. This lifts the pause; the next run tries again.
+
+        Required permission: `rules:manage`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: The rule.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
   /api/v1/server-groups/{id}/rules/order:
     put:
       tags:
@@ -6674,6 +6799,61 @@ paths:
       responses:
         '200':
           description: Successful.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+  /api/v1/servers/{id}/agent-update:
+    get:
+      tags:
+      - Server
+      summary: Shows what an agent update would do.
+      operationId: serverCtrl_AgentUpdatePlan
+      description: |-
+        What an agent update would do on this server: installed version, target version (the highest one the server's package source offers that is not above LCM), the available versions and whether an update is possible at all. Asks the agent live and changes nothing.
+
+        Required permission: `servers:read`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: 'The plan: action (update, current, newer, none, unsupported), installed, target, server_version, available.'
+        '409':
+          description: The agent is not connected or this is not an agent server.
+        '401':
+          description: Not signed in.
+        '403':
+          description: No permission.
+    post:
+      tags:
+      - Server
+      summary: Updates the agent of the server.
+      operationId: serverCtrl_StartAgentUpdate
+      description: |-
+        Updates the lcm-agent to the version LCM determines (never higher than LCM itself) and returns the job. The job ends when the agent reports back with the new version and answers commands, or fails with the reason (also when the agent rolled back).
+
+        Required permission: `servers:write`.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      security:
+      - sessionAuth: []
+      - apiKeyAuth: []
+      responses:
+        '202':
+          description: Job started.
+        '409':
+          description: A job is already running, the agent is not connected, or the server has no apt.
         '401':
           description: Not signed in.
         '403':

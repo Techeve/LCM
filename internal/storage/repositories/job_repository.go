@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -21,8 +22,45 @@ func (r *JobRepository) Create(job *domain.Job) error {
 	return r.db.Create(job).Error
 }
 
+// Update speichert den Job. Die Agent-Kommando-Kennung bleibt bewusst außen
+// vor: Sie gehört dem Hub (SetAgentRequestID, ClearAgentRequestID), und ein
+// Job im Speicher kennt sie nicht - sein Abschluss würde sie sonst löschen,
+// obwohl das Ergebnis des Agents noch nachkommen soll.
 func (r *JobRepository) Update(job *domain.Job) error {
-	return r.db.Save(job).Error
+	return r.db.Omit("agent_request_id").Save(job).Error
+}
+
+// SetAgentRequestID hält das Kommando fest, auf dessen Ergebnis der Job wartet.
+func (r *JobRepository) SetAgentRequestID(jobID, reqID string) error {
+	return r.db.Model(&domain.Job{}).Where("id = ?", jobID).
+		UpdateColumn("agent_request_id", reqID).Error
+}
+
+// ClearAgentRequestID löscht die Kennung, wenn sie noch reqID ist - ein
+// späteres Kommando desselben Jobs bleibt unberührt. Gibt zurück, ob sie
+// gelöscht wurde.
+func (r *JobRepository) ClearAgentRequestID(jobID, reqID string) (bool, error) {
+	// Eine leere Kennung heißt „keine“ und trifft nie einen Job.
+	if reqID == "" {
+		return false, nil
+	}
+	res := r.db.Model(&domain.Job{}).Where("id = ? AND agent_request_id = ?", jobID, reqID).
+		UpdateColumn("agent_request_id", "")
+	return res.RowsAffected > 0, res.Error
+}
+
+// FindByAgentRequestID liefert den Job (mit Server), der auf das Ergebnis des
+// Agent-Kommandos reqID wartet.
+func (r *JobRepository) FindByAgentRequestID(reqID string) (*domain.Job, error) {
+	// Jobs ohne Kommando haben eine leere Kennung: sie dürfen nie zutreffen.
+	if reqID == "" {
+		return nil, ErrNotFound
+	}
+	var job domain.Job
+	if err := r.db.Preload("Server").First(&job, "agent_request_id = ?", reqID).Error; err != nil {
+		return nil, translate(err)
+	}
+	return &job, nil
 }
 
 func (r *JobRepository) FindByID(scope AccessScope, id string) (*domain.Job, error) {
@@ -188,7 +226,7 @@ func (r *JobRepository) RunningForServer(serverID uint) (*domain.Job, error) {
 	err := r.db.Where("server_id = ? AND status = ?", serverID, domain.JobStatusRunning).
 		Order("created_at DESC, rowid DESC").First(&job).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, err

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,7 +82,8 @@ exit "$STUB_RC"
 	}
 	out, runErr := cmd.CombinedOutput()
 	run := repoScriptRun{output: string(out)}
-	if exit, ok := runErr.(*exec.ExitError); ok {
+	var exit *exec.ExitError
+	if errors.As(runErr, &exit) {
 		run.exitCode = exit.ExitCode()
 	} else if runErr != nil {
 		t.Fatal(runErr)

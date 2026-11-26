@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"LCM/internal/core/agentcaps"
 )
 
 // Die Ampel-Befunde standen als fertige deutsche Sätze im Code und erschienen
@@ -78,6 +80,12 @@ func insightScenarios() []struct {
 		}, base},
 		{"Red Hat nicht registriert", Server{Reachable: true, RHSMStatus: RHSMUnregistered}, base},
 		{"Red Hat ohne Berechtigung", Server{Reachable: true, RHSMStatus: RHSMInvalid}, base},
+		{"Agent zu alt", Server{Reachable: true}, TrafficLightInput{Now: now, Agent: &agentcaps.Report{
+			State: agentcaps.StateUnsupported, AgentVersion: "1.40.0", ServerVersion: "2.4.0", MinVersion: agentcaps.MinAgentVersion}}},
+		{"Agent veraltet", Server{Reachable: true}, TrafficLightInput{Now: now, Agent: &agentcaps.Report{
+			State: agentcaps.StateOutdated, AgentVersion: "2.0.0", ServerVersion: "2.4.0", MinVersion: agentcaps.MinAgentVersion, NeedsVersion: "2.4.0"}}},
+		{"Agent neuer als LCM", Server{Reachable: true}, TrafficLightInput{Now: now, Agent: &agentcaps.Report{
+			State: agentcaps.StateNewer, AgentVersion: "2.5.0", ServerVersion: "2.4.0", MinVersion: agentcaps.MinAgentVersion}}},
 		{"OK, aber nicht Sehr gut", Server{Reachable: true, FirewallTool: "ufw"}, TrafficLightInput{Now: now, TotalVulns: 2}},
 		{"OK ohne bekanntes Firewall-Werkzeug", Server{Reachable: true}, base},
 	}

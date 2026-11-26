@@ -26,6 +26,9 @@ var (
 	errInvalidAptCacheChoice = apierr.Define(422, "group.invalid_apt_cache", "invalid APT cache selection")
 	errInvalidDockerScope    = apierr.Define(422, "group.invalid_docker_scope", "invalid selection, expected a compose project or container name or empty")
 	errRuleOrderInvalid      = apierr.Define(422, "group.invalid_rule_order", "invalid order, all rules of exactly one trigger of this group are expected, each once")
+	errAgentUpdateMode       = apierr.Define(422, "group.invalid_agent_update_mode", "invalid mode, expected off or auto")
+	errAgentUpdateWindow     = apierr.Define(422, "group.invalid_agent_update_window", "the time window must be between 0 and 1440 minutes")
+	errAgentUpdateRunning    = apierr.Define(409, "group.agent_update_running", "an agent update is already running for this group")
 )
 
 // groupErrors ordnet die Fehler des Gruppen-Dienstes ihren API-Fehlern zu.
@@ -49,4 +52,8 @@ var groupErrors = []sentinelCode{
 	{services.ErrRuleOrderInvalid, errRuleOrderInvalid},
 	{services.ErrNoPackages, errNoPackages},
 	{services.ErrInvalidPackage, errInvalidPackage},
+	{services.ErrAgentUpdateMode, errAgentUpdateMode},
+	{services.ErrAgentUpdateCron, errInvalidCron},
+	{services.ErrAgentUpdateWindow, errAgentUpdateWindow},
+	{services.ErrRolloutRunning, errAgentUpdateRunning},
 }

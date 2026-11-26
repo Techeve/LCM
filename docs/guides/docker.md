@@ -124,7 +124,15 @@ er erst, wenn der neue läuft.
   Host-PID-Namensraum oder GPU-Zugriff sind nicht getestet - dafür vorher auf
   einem Testserver prüfen.
 - Die Container-Regel braucht `curl` auf dem Server (Zugriff auf den
-  Docker-Socket) und läuft nicht auf Servern mit eingeschränktem Sudo.
+  Docker-Socket) und läuft nur im Voll-Modus. Auf Servern mit
+  [eingeschränktem Sudo](/guides/ssh/#eingeschränkter-modus) überspringt LCM sie
+  und nennt den Grund im Job: `curl` darf der eingeschränkte Benutzer nicht über
+  `sudo` starten, und ohne Root-Zugriff auf den Socket gibt es kein Neuerstellen.
+- Die Compose-Regel läuft auch im eingeschränkten Modus. Das gilt ebenso für
+  das Compose-Update, den Image-Pull und das Aufräumen im Reiter *Container*.
+  LCM übergibt Docker das Projektverzeichnis und die Compose-Dateien als
+  Argumente, statt ins Verzeichnis zu wechseln. So klappt es auch, wenn
+  der eingeschränkte Benutzer es nicht betreten darf.
 - Beide Regeln respektieren den Schalter „Keine Docker-Updates einspielen“.
 
 ## Server-Schalter: zusehen statt eingreifen

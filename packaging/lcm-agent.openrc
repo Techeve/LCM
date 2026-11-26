@@ -11,7 +11,10 @@
 name="lcm-agent"
 description="LCM Remote Agent (verbindet diesen Server ausgehend mit dem LCM-Server)"
 
-command="/usr/bin/lcm-agent"
+# Not the binary itself but the guard script: it counts starts and falls back to
+# the previous binary if a new one does not come up (packaging/lcm-agent-start.sh).
+# It ends in exec, so supervise-daemon sees the agent itself (same PID).
+command="/usr/lib/lcm-agent/lcm-agent-start"
 command_args="run"
 command_user="root"
 output_log="/var/log/lcm-agent.log"
@@ -38,4 +41,6 @@ start_pre() {
 		return 1
 	fi
 	checkpath --directory --mode 0755 /run
+	# status.json fuer `lcm-agent status`
+	checkpath --directory --mode 0755 --owner root /run/lcm-agent
 }

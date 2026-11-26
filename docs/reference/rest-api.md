@@ -120,10 +120,3 @@ In einem beliebigen OpenAPI-Werkzeug öffnen (z. B.
 Bruno) für eine durchsuchbare, interaktive Ansicht mit allen Endpunkten nach
 Bereich gruppiert (Server, Servergruppen, Docker, Sicherheit, Jobs,
 Benutzer, Einstellungen, …).
-
-:::note[Browsable API-Referenz]
-Eine direkt in diese Doku eingebettete, browsbare API-Referenz ist
-vorbereitet (der Doku-Builder unterstützt das über `starlight-openapi`),
-wartet aber noch auf eine kleine Korrektur im gemeinsam genutzten
-Doku-Baustein - bis dahin die Datei oben lokal öffnen.
-:::

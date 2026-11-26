@@ -493,7 +493,7 @@
         "title": "Monitoring",
         "subtitle": "When LCM treats a run as stuck and the packages of a server as outdated.",
         "idle": "Allowed silence (minutes)",
-        "idleHint": "If there is no output for this long, LCM aborts the run and frees the server. 0 turns the monitoring off.",
+        "idleHint": "Applies to servers over SSH and to older agents without durable jobs: if there is no output for this long, LCM aborts the run and frees the server. 0 turns the monitoring off. Over an agent with durable jobs, LCM never aborts; the agent itself judges whether a command is still working.",
         "idleSlow": "Allowed silence on weak hardware (minutes)",
         "idleSlowHint": "For Raspberry Pi and servers with at most 2 cores and 2 GB RAM, where long silent phases are normal.",
         "staleWarn": "Package state yellow after (hours)",
@@ -2345,6 +2345,9 @@
       "invalid_rules": "Invalid firewall rules"
     },
     "group": {
+      "agent_update_running": "An agent update is already running for this group",
+      "invalid_agent_update_mode": "Invalid mode – expected off or automatic",
+      "invalid_agent_update_window": "The time window must be between 0 and 1440 minutes",
       "custom_action_not_selected": "A custom rule needs a valid custom action",
       "enforce_firewall_spec": "A firewall baseline rule needs an explicit target state",
       "enforce_rule_type": "Baseline rules only exist for the types firewall, apt-proxy, acl-setup and perm-sync",
@@ -2668,6 +2671,11 @@
     "noNtp": "no time service active (NTP) - the clock runs unregulated",
     "ntpNotSynced": "Time service {service} is running but does not report the clock as synchronised",
     "helperOutdated": "The LCM helper on this server is outdated - in restricted mode every privileged action goes through it, so fixes from newer LCM versions do not take effect here. “Reconnect” (admin login) renews it.",
+    "agentUnsupported": "Agent too old: lcm-agent {version} is below the minimum version {min}. LCM only offers “Update agent” for this server.",
+    "agentOutdated": "Agent outdated: lcm-agent {version} does not know everything LCM offers (needs agent ≥ {needs}). Update the agent.",
+    "agentNewer": "Agent newer than LCM: lcm-agent {version} is newer than this LCM ({server}). LCM only offers features it knows itself. Update LCM.",
+    "agentRolledBack": "Agent update failed: lcm-agent {failed} could not connect, the agent rolled back to {version}. Check the server journal before you try again.",
+    "agentLinkUnstable": "Connection unstable: the agent was disconnected unintentionally {count} times in the last hour, most recently: {reason}. Check the network, proxy and the server journal (lcm-agent status).",
     "rebootRequired": "Reboot required to fully activate installed updates",
     "deepScanWarnings": {
       "one": "1 deep scan warning (hardening/configuration)",
@@ -2720,6 +2728,11 @@
         "one": "1 day",
         "other": "{count} days"
       }
+    },
+    "disconnect": {
+      "ping": "keepalive missing",
+      "network": "connection or network error",
+      "takeover": "agent reconnected before the old connection was recognised as dead"
     },
     "cause": {
       "anonymousProcess": "another process",
@@ -3058,7 +3071,8 @@
       "repair-deps": "Repair dependencies",
       "join": "Set up server",
       "harden-ssh": "Harden SSH",
-      "dsm-apply": "Set DSM targets"
+      "dsm-apply": "Set DSM targets",
+      "agent-update": "Update agent"
     },
     "palette": {
       "running": "Show running jobs",
@@ -3699,7 +3713,7 @@
       },
       "dockerContainerUpdate": {
         "label": "Docker: update standalone containers",
-        "help": "Pulls new images and recreates running containers with the same configuration."
+        "help": "Pulls new images and recreates running containers with the same configuration. Does not run on servers with restricted sudo."
       },
       "dockerUpdateUnused": {
         "label": "Docker: update unused images",
@@ -3930,6 +3944,7 @@
       "lastSeen": "last seen {when}",
       "agentOnline": "Agent connected",
       "agentOffline": "Agent disconnected",
+      "agentDrops": "Disconnects (1 h): {count}, most recently: {reason}",
       "kernel": "Kernel {version}"
     },
     "bar": {
@@ -4380,6 +4395,11 @@
     "agent": "Agent",
     "agentOn": "Connects on its own through the lcm-agent and is connected right now.",
     "agentOff": "Connects on its own through the lcm-agent, but is not connected right now.",
+    "agentState": {
+      "outdated": "Agent outdated: it needs version {needs} or newer for everything LCM offers.",
+      "unsupported": "Agent too old: it is below the minimum version {min}. LCM only offers “Update agent” for it.",
+      "newer": "Agent newer than LCM (LCM {server}). LCM only offers what it knows itself."
+    },
     "osAll": "All",
     "kernelPlaceholder": "e.g. 6.1",
     "count": {
@@ -5481,6 +5501,21 @@
       "repo": "1. Set up the package source (once)",
       "repoHint": "Sets up the Techeve package source with its signing key – not needed if it is already there.",
       "install": "2. Install the agent",
+      "systemLabel": "Operating system of the server",
+      "system": {
+        "apt": "Debian, Ubuntu (apt)",
+        "dnf": "RHEL, AlmaLinux, Rocky, Fedora (dnf)",
+        "zypper": "openSUSE Leap and Tumbleweed (zypper)",
+        "apk": "Alpine Linux (apk)",
+        "pacman": "Arch Linux (pacman)"
+      },
+      "installHint": {
+        "apt": "The package keeps itself out of apt upgrade (pin on the installed version). LCM updates the agent on purpose.",
+        "dnf": "A system update leaves the agent alone (exclude in the package source), so the command lifts it for this one source. LCM updates the agent on purpose.",
+        "zypper": "The package locks itself against zypper update. LCM lifts the lock for its update.",
+        "apk": "apk upgrade would take the agent along: after the install the package prints the command that keeps the version. LCM does this itself on every update.",
+        "pacman": "The package adds itself to IgnorePkg, so pacman -Syu leaves the agent alone. LCM updates it on purpose."
+      },
       "enroll": "3. Connect to LCM and start as a service",
       "enrollHint": "The token is valid for this server only.",
       "portHint": "The token is valid for this server only. The agent connects on port {port}; the server must be able to reach it.",
@@ -6471,6 +6506,68 @@
       "more": "More on “{label}”"
     }
   },
+  "agentUpdate": {
+    "label": "Update agent",
+    "planFailed": "Could not read what an update would do on {name}",
+    "dialog": {
+      "heading": "Update the agent of {name}",
+      "agent": "lcm-agent",
+      "fromTo": "{from} → {to}",
+      "lcm": "LCM",
+      "effect": "Effect",
+      "effectValue": "The agent installs the new version and switches to it on its own. If it does not report back, it rolls back. The job ends only when it reports back and answers commands.",
+      "confirm": "Update agent",
+      "close": "Close"
+    },
+    "plan": {
+      "update": "LCM updates the agent to the highest version the server's package source offers within LCM's feature line (bug fixes included): {from} → {to}.",
+      "current": "The agent is already on {from}, the highest version that fits this LCM ({server}). There is nothing to update.",
+      "newer": "The agent ({from}) is newer than this LCM ({server}). LCM does not downgrade agents – update LCM.",
+      "noManager": "LCM finds no package manager on this server that it can update the agent with (apt, dnf, zypper, apk or pacman). Update the lcm-agent package there yourself.",
+      "notPackaged": "The agent is not installed as a package on this server (for example copied by hand). It cannot be updated through the package manager – install it as a package (package source repo.techeve.de, see the setup) or replace the program by hand.",
+      "noVersion": "The server's package sources offer no lcm-agent version that fits this LCM ({server}).",
+      "unknownLcm": "This LCM is a development build without a version number. LCM cannot determine a matching agent version."
+    },
+    "warn": {
+      "enterprisePin": "An older enterprise channel setup also blocks lcm-agent on this server. The update may fail because of it – remove lcm-agent from /etc/apt/preferences.d/lcm-enterprise.pref."
+    },
+    "policy": {
+      "title": "Agent updates",
+      "subtitle": "Should LCM bring the agents of this group to the version that fits LCM on its own?",
+      "saved": "Agent updates saved",
+      "noAgents": "This group has no agent servers.",
+      "outdated": {
+        "one": "1 of {total} agent servers is below LCM {version}",
+        "other": "{count} of {total} agent servers are below LCM {version}"
+      },
+      "upToDate": {
+        "one": "The agent server of the group is on the LCM version",
+        "other": "All {count} agent servers of the group are on the LCM version"
+      },
+      "nextRun": "Next window",
+      "lastRun": "Last run",
+      "never": "Has never run",
+      "proven": "Verified up to agent version",
+      "offText": "Off. You update agents on the server with “Update agent”.",
+      "auto": "Update agents automatically",
+      "autoHint": "Off (default): nothing happens on its own. On: LCM brings the group's agents up to date within the time window, including new agent bug fixes, but never into a feature line above LCM.",
+      "staged": "Staged",
+      "stagedHint": "One server of the group first. The rest follows only after it has reported back with the new version and answers commands.",
+      "yes": "Yes",
+      "no": "No",
+      "window": "Length of the time window in minutes",
+      "windowHint": "Servers start evenly spread within this window; 0 = all at the start time.",
+      "windowRange": "Allowed: 0 to 1440 minutes",
+      "windowRead": "Time window",
+      "windowMinutes": "{minutes} minutes long",
+      "blockedTitle": "Paused",
+      "blocked": "The first server failed with LCM {version} or reported a rollback. The rule does not continue for this LCM version until you resume it – or LCM gets a new version.",
+      "resume": "Resume",
+      "resumed": "The rule is running again",
+      "runNow": "Run now",
+      "started": "Run started – the jobs appear under “Jobs”"
+    }
+  },
   "serverDetail": {
     "facts": {
       "hardwareTitle": "Hardware",
@@ -6733,6 +6830,27 @@
       "consoleOpenTitle": "Open console: {who}",
       "consoleSince": "{actor} since {time}",
       "agentVersion": "lcm-agent {version}"
+    },
+    "agent": {
+      "needs": "Needs agent ≥ {version} – update it now",
+      "disabled": "Switched off on the agent",
+      "retry": "Try again",
+      "rolledBack": {
+        "heading": "Agent update failed",
+        "text": "lcm-agent {failed} could not connect, the agent rolled back to {version}. Check the server journal (journalctl -u lcm-agent) before you try again."
+      },
+      "outdated": {
+        "heading": "Agent outdated",
+        "text": "lcm-agent {version} does not know everything LCM offers. What it cannot do is greyed out. Update it to version {needs} or newer."
+      },
+      "unsupported": {
+        "heading": "Agent too old",
+        "text": "lcm-agent {version} is below the minimum version {min}. LCM only offers “Update agent” for this server."
+      },
+      "newer": {
+        "heading": "Agent newer than LCM",
+        "text": "lcm-agent {version} is newer than this LCM ({server}). LCM only offers features it knows itself. Update LCM."
+      }
     },
     "abort": {
       "label": "Abort job",

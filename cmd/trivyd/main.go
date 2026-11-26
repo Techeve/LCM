@@ -139,7 +139,10 @@ func (s *server) handleScanSBOM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	// --skip-db-update wie beim lokalen Lauf: Der Scan wertet aus, was da ist.
 	// Nachgeladen wird ausschliesslich über /db/update - sonst bricht ein Scan

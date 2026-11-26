@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -30,7 +30,11 @@ type Client struct {
 	runner  *Runner
 	log     *slog.Logger
 	version string
-	mqtt    mqtt.Client
+
+	// mqtt ist die aktuelle Verbindung; mit jedem Verbindungsaufbau entsteht
+	// ein neuer paho-Client (connection.go). Zugriff über current/setCurrent.
+	connMu sync.Mutex
+	mqtt   mqtt.Client
 
 	// configPath ist die Datei, in der neu gelernte Pins landen (leer =
 	// nur im Speicher, etwa beim Verbindungstest des Enrollments - das
@@ -46,6 +50,57 @@ type Client struct {
 
 	// tty sind die offenen Web-Konsolen (tty.go).
 	tty *terminals
+
+	// timing sind die Zeiten der Verbindung (timing.go).
+	timing Timing
+
+	// run führt ein Kommando aus (der Runner; in Tests ersetzt).
+	run func(cmd wire.Command, progress func(outputBytes int)) wire.Result
+
+	// delivering hält die Ergebnisse, die gerade zugestellt werden, samt der
+	// Verbindung, auf der es geschieht - damit kein zweiter Weg dasselbe auf
+	// derselben Verbindung noch einmal sendet. Auf einer neuen schon: Das Senden
+	// auf der alten hängt womöglich an einer toten Leitung.
+	deliveryMu sync.Mutex
+	delivering map[string]mqtt.Client
+
+	// stop wird mit Stop geschlossen und beendet Run.
+	stop     chan struct{}
+	stopOnce sync.Once
+	// live hält fest, ob LCM noch pingt (connection.go); beat ist das
+	// Lebenszeichen der Verbindungsschleife an den systemd-Wächter (notify.go).
+	live   liveness
+	beat   heartbeat
+	notify *notifier
+
+	// Rückfall auf das vorige Binary (update.go, health.go): update ist das
+	// Zustandsverzeichnis, health meldet das erste Bereitwerden. exePath ist
+	// das laufende Binary, asPrev: Es ist der Rückfall (nicht das Paket-Binary).
+	// Die übrigen Felder sind Nähte für Tests.
+	update       updateState
+	health       *healthWatch
+	exePath      string
+	asPrev       bool
+	packagedPath string      // Binary des Pakets (debBinaryPath)
+	selfBinary   string      // Quelle der eigenen Kopie (/proc/self/exe)
+	exit         func(int)   // beendet den Prozess (os.Exit)
+	reachable    func() bool // ist LCM per TCP erreichbar? (nil: echter Test)
+	// refused: Beim jüngsten Verbindungsversuch hat LCM den Agent ausdrücklich
+	// abgewiesen (lcmRefused). Dann liegt ein Ausbleiben der Bereitschaft nicht
+	// am Binary.
+	refused atomic.Bool
+
+	// Zustandsdatei (status.go): link ist, was sie über die Verbindung sagt,
+	// unproven: Dieses Binary kam mit einem Update und hat sich noch nicht
+	// bewährt. statusDir leer = keine Datei; statusFailed: Das Schreiben ist schon
+	// einmal gescheitert und gemeldet; statusDone schließt, wenn der Schreiber
+	// im Takt (statusLoop) beendet ist.
+	link         *linkState
+	started      time.Time
+	unproven     atomic.Bool
+	statusDir    string
+	statusFailed bool
+	statusDone   chan struct{}
 }
 
 // NewClient baut den Agent-Client (verbindet noch nicht).
@@ -53,7 +108,13 @@ func NewClient(cfg *Config, log *slog.Logger, version string) *Client {
 	if log == nil {
 		log = slog.Default()
 	}
-	c := &Client{cfg: cfg, runner: NewRunner(), log: log, version: version}
+	c := &Client{cfg: cfg, runner: NewRunner(), log: log, version: version, timing: DefaultTiming(),
+		stop: make(chan struct{}), delivering: map[string]mqtt.Client{},
+		update: updateState{dir: UpdateDir}, health: newHealthWatch(),
+		link: newLinkState(time.Now()), started: time.Now(),
+		packagedPath: debBinaryPath, selfBinary: "/proc/self/exe", exit: os.Exit}
+	c.runner.log = log
+	c.run = c.runner.Run
 	c.tty = newTerminals(c.publishTTY, c.terminalDisabled, log)
 	return c
 }
@@ -74,13 +135,20 @@ func (c *Client) terminalDisabled() bool {
 // drosselt die Bildschirmausgabe auf das Tempo der Leitung.
 func (c *Client) publishTTY(f wire.TTYFrame, wait bool) {
 	payload, err := json.Marshal(f)
-	if err != nil || c.mqtt == nil {
+	cl := c.current()
+	if err != nil || cl == nil {
 		return
 	}
-	token := c.mqtt.Publish(wire.TopicTTYOut(c.cfg.AgentID), 1, false, payload)
+	token := cl.Publish(wire.TopicTTYOut(c.cfg.AgentID), 1, false, payload)
 	if wait {
 		token.WaitTimeout(ttyPublishWait)
 	}
+}
+
+// WithJobsDir legt die Job-Ablage fest (der Dienst: JobsDir; Tests).
+func (c *Client) WithJobsDir(dir string) *Client {
+	c.runner.WithJobsDir(dir)
+	return c
 }
 
 // WithConfigPath legt fest, wohin neu gelernte Pins geschrieben werden
@@ -88,27 +156,6 @@ func (c *Client) publishTTY(f wire.TTYFrame, wait bool) {
 func (c *Client) WithConfigPath(path string) *Client {
 	c.configPath = path
 	return c
-}
-
-// Run verbindet sich (mit endloser Wiederholung) und bedient Kommandos,
-// bis der Prozess beendet wird. Für den Service-Betrieb (lcm-agent run).
-func (c *Client) Run() error {
-	opts, err := c.clientOptions()
-	if err != nil {
-		return err
-	}
-	c.mqtt = mqtt.NewClient(opts)
-	// Vor dem Connect: Mit ConnectRetry wartet der Connect, bis LCM
-	// erreichbar ist - ein neues Binary soll trotzdem übernommen werden.
-	safego.Go("agent-binary-switch", c.switchOnNewBinary)
-	token := c.mqtt.Connect()
-	token.Wait()
-	if err := token.Error(); err != nil {
-		// ConnectRetry ist aktiv - hierher kommt es nur bei endgültigen
-		// Fehlern (z.B. kaputte Broker-URL).
-		return fmt.Errorf("verbindung zum lcm-server: %w", err)
-	}
-	select {} // Dienst läuft, bis systemd ihn beendet
 }
 
 // TestConnection prüft beim Enrollment einmalig, ob Verbindung UND
@@ -134,7 +181,10 @@ func (c *Client) TestConnection(timeout time.Duration) error {
 }
 
 // clientOptions baut die paho-Optionen: wss-Broker, Zugangsdaten aus dem
-// Token, LWT, Auto-Reconnect und die TLS-Prüfung (Pin ODER Systemroots).
+// Token, LWT und die TLS-Prüfung (Pin ODER Systemroots). Den Wiederaufbau
+// übernimmt nicht paho, sondern die Verbindungsschleife (connection.go): Nur
+// so lässt sich die Wartezeit streuen, und nur so gilt der Agent erst nach
+// bestätigtem Abonnement als bereit.
 func (c *Client) clientOptions() (*mqtt.ClientOptions, error) {
 	brokerURL, err := c.cfg.BrokerURL()
 	if err != nil {
@@ -148,11 +198,11 @@ func (c *Client) clientOptions() (*mqtt.ClientOptions, error) {
 		SetUsername(c.cfg.AgentID).
 		SetPassword(c.cfg.Secret).
 		SetCleanSession(true).
-		SetAutoReconnect(true).
-		SetConnectRetry(true).
-		SetConnectRetryInterval(10*time.Second).
-		SetMaxReconnectInterval(2*time.Minute).
-		SetKeepAlive(30*time.Second).
+		SetAutoReconnect(false).
+		SetConnectRetry(false).
+		SetConnectTimeout(c.timing.ConnectTimeout).
+		SetKeepAlive(c.timing.KeepAlive).
+		SetPingTimeout(c.timing.PingTimeout).
 		SetOrderMatters(false).
 		SetBinaryWill(wire.TopicStatus(c.cfg.AgentID), []byte(wire.StatusOffline), 1, true)
 
@@ -168,15 +218,6 @@ func (c *Client) clientOptions() (*mqtt.ClientOptions, error) {
 		})
 	}
 
-	opts.SetOnConnectHandler(func(cl mqtt.Client) {
-		c.log.Info("connected to lcm server", "broker", brokerURL)
-		c.onConnect(cl)
-	})
-	opts.SetConnectionLostHandler(func(cl mqtt.Client, err error) {
-		c.log.Warn("connection lost - reconnecting", "error", err)
-		// LCM hat seine Seite der Konsolen mit der Verbindung verloren.
-		c.tty.closeAll(errors.New("verbindung zu lcm abgerissen"))
-	})
 	return opts, nil
 }
 
@@ -203,9 +244,39 @@ func (c *Client) pins() pins {
 // learn übernimmt neue Pins und schreibt sie in die Konfiguration. Scheitert
 // das Schreiben, gelten sie bis zum nächsten Neustart nur im Speicher - das
 // Protokoll sagt es, die Verbindung steht trotzdem.
+//
+// Hat die Verbindung CA und Schlüssel bestätigt, fällt der Zertifikats-Pin aus
+// dem Token weg (S-02): Er gälte sonst für das allererste Zertifikat von LCM
+// ewig, auch wenn LCM den Schlüssel längst gewechselt hat. Er geht im selben
+// atomaren Schreibvorgang wie der CA-Pin und nur, wenn dieser Vorgang gelingt;
+// scheitert er, bleibt der Zertifikats-Pin und der nächste Verbindungsaufbau
+// versucht es erneut.
 func (c *Client) learn(learned pins) {
 	c.pinMu.Lock()
 	defer c.pinMu.Unlock()
+	changed := c.adoptLearned(learned)
+	dropCert := c.canDropCertPin(learned)
+	if (!changed && !dropCert) || c.configPath == "" {
+		return
+	}
+	next := *c.cfg
+	if dropCert {
+		next.CertFingerprint = ""
+	}
+	if err := next.Save(c.configPath); err != nil {
+		c.log.Warn("certificate pins could not be saved", "error", err)
+		return
+	}
+	c.cfg.CertFingerprint = next.CertFingerprint
+	c.log.Info("pins of the lcm certificate saved - renewed certificates of the lcm ca are accepted")
+	if dropCert {
+		c.log.Info("certificate pin from the token removed - the lcm ca and key pin now vouch for the server")
+	}
+}
+
+// adoptLearned trägt die gelernten Pins in die Konfiguration im Speicher ein
+// und meldet, ob sich etwas geändert hat.
+func (c *Client) adoptLearned(learned pins) bool {
 	changed := false
 	if learned.key != "" && learned.key != c.cfg.KeyPin {
 		c.cfg.KeyPin, changed = learned.key, true
@@ -218,48 +289,33 @@ func (c *Client) learn(learned pins) {
 			changed = true
 		}
 	}
-	if !changed || c.configPath == "" {
-		return
-	}
-	if err := c.cfg.Save(c.configPath); err != nil {
-		c.log.Warn("certificate pins could not be saved", "error", err)
-		return
-	}
-	c.log.Info("pins of the lcm certificate saved - renewed certificates of the lcm ca are accepted")
+	return changed
 }
 
-// onConnect meldet den Agent nach jedem (Re-)Connect an. Reihenfolge ist
-// wichtig: ZUERST das Kommando-Topic abonnieren, DANN Status/Inventar
-// senden. Der Server stößt den Erst-Scan erst beim Eintreffen des Inventars
-// an - so ist die cmd-Subscription garantiert aktiv, bevor das erste
-// Kommando publiziert wird (bei CleanSession gäbe es sonst keine
-// Nachzustellung und das Kommando ginge verloren).
-func (c *Client) onConnect(cl mqtt.Client) {
-	id := c.cfg.AgentID
-	tok := cl.Subscribe(wire.TopicCmd(id), 1, func(_ mqtt.Client, msg mqtt.Message) {
-		c.handleCommand(msg.Payload())
-	})
-	tok.Wait() // sicherstellen, dass die Subscription registriert ist
-	tty := cl.Subscribe(wire.TopicTTY(id), 1, func(_ mqtt.Client, msg mqtt.Message) {
-		var f wire.TTYFrame
-		if err := json.Unmarshal(msg.Payload(), &f); err == nil {
-			c.tty.handle(f)
-		}
-	})
-	tty.Wait()
-	cl.Publish(wire.TopicStatus(id), 1, true, []byte(wire.StatusOnline))
-	if inv, err := json.Marshal(c.inventory()); err == nil {
-		cl.Publish(wire.TopicInv(id), 1, false, inv)
-	}
+// canDropCertPin meldet, ob der Zertifikats-Pin weg kann: Die Verbindung hat
+// CA und Schlüssel bestätigt und beide stehen jetzt in der Konfiguration. Ein
+// Agent, dessen LCM keine CA mitschickt (alt, selbstsigniert, eigenes
+// Zertifikat), lernt keine und behält den Pin.
+func (c *Client) canDropCertPin(learned pins) bool {
+	return c.cfg.CertFingerprint != "" && learned.ca != "" && learned.key != "" &&
+		c.cfg.CAFingerprint == learned.ca && c.cfg.KeyPin == learned.key
 }
 
 // handleCommand führt ein Kommando asynchron aus (bzw. bricht es ab) und
-// stellt das Ergebnis mit Wiederholung zu - auch wenn die Verbindung
-// zwischendurch abreißt, geht ein fertiges Ergebnis nicht verloren. Eine
-// zweite Zustellung derselben ID führt es nicht noch einmal aus.
+// stellt das Ergebnis zu - auch wenn die Verbindung zwischendurch abreißt, geht
+// ein fertiges Ergebnis nicht verloren (deliver). Eine zweite Zustellung
+// derselben ID führt es nicht noch einmal aus.
 func (c *Client) handleCommand(payload []byte) {
 	var cmd wire.Command
-	if err := json.Unmarshal(payload, &cmd); err != nil || cmd.ID == "" {
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		return
+	}
+	c.link.contact(time.Now())
+	if cmd.Ping {
+		c.answerPing()
+		return
+	}
+	if cmd.ID == "" {
 		return
 	}
 	if cmd.Cancel {
@@ -269,60 +325,192 @@ func (c *Client) handleCommand(payload []byte) {
 	}
 	if !c.runner.Claim(cmd.ID) {
 		c.log.Info("command delivered again - ignored", "id", cmd.ID)
+		c.resendStored(cmd.ID)
 		return
 	}
 	if !c.work.begin() {
-		// Der Agent wechselt gerade aufs neue Binary und trennt sich gleich;
-		// LCM erfährt es über die Trennung und lässt das Kommando scheitern.
-		c.log.Warn("switching to the new binary - command not run", "id", cmd.ID)
+		c.refuse(cmd.ID)
 		return
 	}
+	c.link.kick()
 	safego.Go("agent-cmd:"+cmd.ID, func() {
+		defer c.link.kick()
 		defer c.work.end()
 		c.log.Info("command started", "id", cmd.ID)
-		res := c.runner.Run(cmd, func(outputBytes int) {
-			c.publishProgress(cmd.ID, outputBytes)
-		})
+		res := c.runGuarded(cmd)
+		if c.stopped() {
+			return // der Agent wird beendet: das Kommando läuft weiter, der nächste stellt es zu
+		}
 		c.log.Info("command finished", "id", cmd.ID, "exit", res.ExitCode, "truncated", res.Truncated)
-		c.publishResult(res)
+		c.deliver(res, false)
 	})
 }
 
-// publishProgress meldet, dass das Kommando noch arbeitet. Anders als das
-// Ergebnis wird es NICHT wiederholt: Ein verlorenes Lebenszeichen holt das
-// nächste 30 Sekunden später ein, und ein nachgereichtes wäre ohnehin
-// wertlos - es soll ja den aktuellen Zustand belegen.
-func (c *Client) publishProgress(id string, outputBytes int) {
-	payload, err := json.Marshal(wire.Result{ID: id, Progress: true, OutputBytes: outputBytes})
-	if err != nil {
-		return
+// errSwitching ist die Antwort auf ein Kommando, das der Agent beim Wechsel aufs
+// neue Binary nicht mehr annimmt.
+const errSwitching = "agent wechselt gerade auf eine neue version - bitte erneut versuchen"
+
+// refuseWait ist die Zeit, die die Absage des Kommandos hat: Der Wechsel folgt
+// sofort.
+const refuseWait = 2 * time.Second
+
+// refuse sagt LCM ab, dass der Agent das Kommando nicht ausführt: Er wechselt
+// gerade aufs neue Binary und trennt sich gleich. Ohne Antwort wartete der Aufruf,
+// weil das Kommando nie lief und nie ein Ergebnis kommt.
+func (c *Client) refuse(id string) {
+	c.runner.Unclaim(id)
+	c.log.Warn("switching to the new binary - command not run", "id", id)
+	res := wire.Result{ID: id, ExitCode: -1, Error: errSwitching}
+	if err := c.sendResult(c.current(), res, refuseWait); err != nil {
+		c.log.Warn("refusal not delivered - lcm learns it from the next inventory", "id", id, "error", err)
 	}
-	c.mqtt.Publish(wire.TopicRes(c.cfg.AgentID), 1, false, payload)
 }
 
-// publishResult stellt ein Ergebnis zu und wiederholt bei Verbindungs-
-// problemen (bis zu 2 h - danach ist der Job serverseitig längst per
-// Watchdog/Timeout fehlgeschlagen und das Ergebnis wertlos).
-func (c *Client) publishResult(res wire.Result) {
+// resendStored stellt das Ergebnis eines erneut zugestellten Kommandos noch
+// einmal zu, wenn es fertig, aber unbestätigt in der Ablage liegt - nie einen
+// Fehler an seiner Stelle.
+func (c *Client) resendStored(id string) {
+	if res, ok := c.runner.Result(id); ok {
+		safego.Go("agent-resend:"+id, func() { c.deliver(res, true) })
+	}
+}
+
+// runGuarded führt das Kommando aus. Ein Panic im Agent kostet nur dieses
+// Kommando: Er wird mit Stacktrace protokolliert, und LCM bekommt ein
+// Fehlerergebnis, statt bis zur Stille-Frist zu warten.
+func (c *Client) runGuarded(cmd wire.Command) (res wire.Result) {
+	defer safego.Recover("agent-cmd:"+cmd.ID, func(err error) {
+		res = wire.Result{ID: cmd.ID, ExitCode: -1, Error: "interner fehler im agent (panic): " + err.Error()}
+	})
+	return c.run(cmd, func(outputBytes int) {
+		c.publishProgress(cmd.ID, outputBytes)
+	})
+}
+
+// publishProgress meldet, dass das Kommando noch lebt, samt dem, was der Agent
+// daran sieht (Vitals). Anders als das Ergebnis wird es NICHT wiederholt: Ein
+// verlorenes Lebenszeichen holt das nächste 30 Sekunden später ein, und ein
+// nachgereichtes wäre ohnehin wertlos - es soll ja den aktuellen Zustand belegen.
+func (c *Client) publishProgress(id string, outputBytes int) {
+	res := wire.Result{ID: id, Progress: true, OutputBytes: outputBytes}
+	if v, ok := c.runner.Vitals(id); ok {
+		res.Vitals = &v
+	}
 	payload, err := json.Marshal(res)
 	if err != nil {
 		return
 	}
-	deadline := time.Now().Add(2 * time.Hour)
-	for time.Now().Before(deadline) {
-		token := c.mqtt.Publish(wire.TopicRes(c.cfg.AgentID), 1, false, payload)
-		if token.WaitTimeout(30*time.Second) && token.Error() == nil {
-			return
-		}
-		time.Sleep(5 * time.Second)
+	if cl := c.current(); cl != nil {
+		cl.Publish(wire.TopicRes(c.cfg.AgentID), 1, false, payload)
 	}
-	c.log.Warn("result could not be delivered (giving up)", "id", res.ID)
+}
+
+// resultAckWait ist die Zeit, die LCM hat, den Empfang eines Ergebnisses zu
+// bestätigen.
+const resultAckWait = 30 * time.Second
+
+var errNotConnected = errors.New("nicht mit lcm verbunden")
+
+// deliver stellt ein Ergebnis einmal zu (C-6): Es wird gesendet und gilt mit dem
+// PUBACK des Brokers als zugestellt - dann nimmt der Runner den Job aus der
+// Ablage. Scheitert es (keine Verbindung, keine Bestätigung), bleibt der Job in
+// der Ablage, und resendResults stellt ihn nach der nächsten Verbindung zu,
+// auch aus einem neuen Prozess. Eine Wiederholungsschleife gibt es nicht mehr: Sie
+// hielt bis zu zwei Stunden den Wechsel aufs neue Binary auf.
+//
+// Warum das PUBACK genügt: Der Broker von LCM nimmt das Ergebnis in derselben
+// Verarbeitung an, in der er es dem wartenden Aufruf zustellt. Ein Ergebnis, das
+// LCM nach der Bestätigung noch verlöre (Absturz von LCM), hätte keinen
+// Aufrufer mehr, denn der lebte im selben Prozess. Eine eigene Quittung
+// brächte nur einen Nachrichtentyp, den ältere LCM-Fassungen nicht kennen.
+//
+// Das Ergebnis gilt als zugestellt (true), auch wenn gerade ein anderer Weg
+// dasselbe sendet; false nur, wenn das Senden scheiterte.
+func (c *Client) deliver(res wire.Result, recovered bool) bool {
+	cl := c.current()
+	if !c.startDelivery(res.ID, cl) {
+		return true
+	}
+	defer c.endDelivery(res.ID, cl)
+	res.Recovered = recovered
+	if err := c.sendResult(cl, res, resultAckWait); err != nil {
+		c.log.Warn("result not delivered - it stays in the job store and is sent after the next connection",
+			"id", res.ID, "error", err)
+		return false
+	}
+	c.runner.Ack(res.ID)
+	return true
+}
+
+func (c *Client) sendResult(cl mqtt.Client, res wire.Result, wait time.Duration) error {
+	payload, err := json.Marshal(res)
+	if err != nil {
+		return err
+	}
+	if cl == nil {
+		return errNotConnected
+	}
+	return c.await(cl.Publish(wire.TopicRes(c.cfg.AgentID), 1, false, payload), wait)
+}
+
+func (c *Client) startDelivery(id string, cl mqtt.Client) bool {
+	c.deliveryMu.Lock()
+	defer c.deliveryMu.Unlock()
+	if busy, ok := c.delivering[id]; ok && busy == cl {
+		return false
+	}
+	c.delivering[id] = cl
+	return true
+}
+
+func (c *Client) endDelivery(id string, cl mqtt.Client) {
+	c.deliveryMu.Lock()
+	if c.delivering[id] == cl {
+		delete(c.delivering, id)
+	}
+	c.deliveryMu.Unlock()
+}
+
+// resendResults stellt alle noch nicht bestätigten Ergebnisse der Job-Ablage zu.
+// Es läuft nach jedem Verbindungsaufbau und beim Start des Agents.
+func (c *Client) resendResults() {
+	for _, id := range c.runner.Pending() {
+		res, ok := c.runner.Result(id)
+		if !ok {
+			continue
+		}
+		if !c.deliver(res, true) || c.stopped() {
+			return // die Verbindung taugt nicht; die nächste versucht es wieder
+		}
+	}
+}
+
+// adoptJobs nimmt die Jobs wieder auf, die ein früherer Agent-Prozess gestartet
+// hat: Sie laufen weiter, und ihr Ergebnis kommt über deliver an. Bis sie fertig
+// sind, wechselt der Agent nicht aufs neue Binary.
+func (c *Client) adoptJobs() {
+	c.runner.Adopt(func(id string, follow func(progress func(int)) wire.Result) {
+		c.work.begin()
+		safego.Go("agent-adopt:"+id, func() {
+			defer c.work.end()
+			res := follow(func(outputBytes int) { c.publishProgress(id, outputBytes) })
+			if c.stopped() {
+				return
+			}
+			c.log.Info("command finished", "id", id, "exit", res.ExitCode, "truncated", res.Truncated)
+			c.deliver(res, true)
+		})
+	})
 }
 
 // inventory sammelt die Basis-Infos für den LCM-Server (best effort).
 func (c *Client) inventory() wire.Inventory {
 	p := c.pins()
-	inv := wire.Inventory{AgentVersion: c.version, KeyPin: p.key, CAPin: p.ca, Capabilities: c.tty.capabilities()}
+	inv := wire.Inventory{
+		AgentVersion: c.version, ProtocolVersion: wire.ProtocolVersion, KeyPin: p.key, CAPin: p.ca,
+		Capabilities: c.capabilities(),
+		KnownJobs:    c.runner.Known(),
+	}
 	if hn, err := os.Hostname(); err == nil {
 		inv.Hostname = hn
 	}

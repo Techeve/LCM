@@ -365,6 +365,8 @@ func (s *ServerService) computeStatus(server *domain.Server, caps []domain.Serve
 		CVEDB: s.CVEDBStatus(),
 	}
 	in.Capabilities = caps
+	in.Agent = agentReport(server)
+	in.AgentLink = s.agentLink(server)
 	in.PackagesStale, in.PackagesStaleSince = packagesStaleness(server, caps, limits, in.Now)
 	status, insights := server.TrafficLight(in)
 	// Die Docker-Qualifizierung hängt BEWUSST hinter der Farbentscheidung:

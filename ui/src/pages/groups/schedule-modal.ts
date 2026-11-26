@@ -12,7 +12,7 @@ import { cronText } from './cron-describe';
 import './form-modal';
 import { emptyScheduleForm, isFormValid, sameForm, scheduleBody, scheduleFormOf, validateScheduleForm, type ScheduleForm } from './forms';
 
-function cronLabels(): CronLabels {
+export function cronLabels(): CronLabels {
   return {
     presets: t('cron.presets'),
     fields: [t('cron.field.minute'), t('cron.field.hour'), t('cron.field.day'), t('cron.field.month'), t('cron.field.weekday')],
@@ -22,7 +22,7 @@ function cronLabels(): CronLabels {
   };
 }
 
-function cronPresets(): CronPreset[] {
+export function cronPresets(): CronPreset[] {
   return [
     { label: t('cron.preset.quarter'), value: '*/15 * * * *' },
     { label: t('cron.preset.hourly'), value: '0 * * * *' },

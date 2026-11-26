@@ -217,8 +217,7 @@ func scanServerMode(conn sshx.Conn, loginUser string, restricted bool) *scanResu
 	if res.HasACL {
 		res.ACLUsable = strings.Contains(run("acl-probe", aclProbeScript), "acl-ok")
 	}
-	res.Snaps = parseSnapList(run("snaps", "snap list 2>/dev/null || true"))
-	applySnapRefresh(res.Snaps, run("snap-refresh", "snap refresh --list 2>/dev/null || true"))
+	res.Snaps = scanSnaps(run)
 
 	// Docker-Inventar: Container + Images (siehe docker_scan.go).
 	scanDocker(res, loginUser, restricted, run)
@@ -262,10 +261,8 @@ func scanServerMode(conn sshx.Conn, loginUser string, restricted bool) *scanResu
 // detectPackageManager ermittelt die auf dem Zielsystem vorhandene
 // Paketverwaltung (erstes gefundenes Binary gewinnt).
 //
-// pacman und apk werden mit erkannt, obwohl LCM sie nicht bedienen kann: nur
-// so lässt sich dem Anwender sagen, WORAN es liegt ("Paketverwaltung pacman
-// wird nicht unterstützt") statt den Server stillschweigend mit leerem
-// Bestand aufzunehmen. Die Unterstützungsfrage klärt PackageManagerSupported.
+// Welche LCM bedienen kann, klärt PackageManagerSupported; ein leerer Wert
+// heißt, dass keine bekannte Verwaltung da ist.
 func detectPackageManager(run func(label, cmd string) string) string {
 	switch firstLine(run("pkgmgr", "for m in apt-get dnf zypper yum pacman apk; do command -v $m >/dev/null 2>&1 && { echo $m; break; }; done")) {
 	case "apt-get":
@@ -978,6 +975,36 @@ func applyUpgradable(pkgs []domain.Package, out string) {
 			p.CandidateVersion = fields[0]
 			p.Security = strings.Contains(source, "security")
 		}
+	}
+}
+
+// scanSnaps liest die installierten Snaps samt verfügbarer Updates.
+func scanSnaps(run func(label, cmd string) string) []domain.SnapPackage {
+	snaps := parseSnapList(run("snaps", "snap list 2>/dev/null || true"))
+	applySnapRefresh(snaps, run("snap-refresh", "snap refresh --list 2>/dev/null || true"))
+	return snaps
+}
+
+// rescanSnapsInto liest nach einem Paketlauf den Snap-Bestand neu ein. Ohne
+// das zeigte der Reiter „Snaps" nach einem Update weiter den alten Stand bis
+// zum nächsten vollen Scan - das Update sah aus, als wäre es gescheitert.
+// Bricht die Verbindung ab, bleibt der gespeicherte Bestand stehen, statt
+// durch eine leere Liste ersetzt zu werden.
+func rescanSnapsInto(servers *repositories.ServerRepository, conn sshx.Conn, server *domain.Server) {
+	if !server.HasSnap {
+		return
+	}
+	connected := true
+	run := func(_, cmd string) string {
+		out, _, err := conn.Run(cmd)
+		if err != nil {
+			connected = false
+		}
+		return out
+	}
+	snaps := scanSnaps(run)
+	if connected {
+		_ = servers.ReplaceSnapPackages(server.ID, snaps)
 	}
 }
 

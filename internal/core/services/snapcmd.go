@@ -80,12 +80,41 @@ func parseSnapNames(s string) ([]string, error) {
 }
 
 // snapRefreshAllScript aktualisiert alle Snaps.
-func snapRefreshAllScript() string { return "snap refresh" }
+func snapRefreshAllScript() string { return "snap refresh\n" + snapPendingCheck(nil) }
 
 // snapRefreshScript aktualisiert die genannten Snaps. Die Namen sind
 // vorgeprüft (reSnapName) und damit shell-sicher.
 func snapRefreshScript(names []string) string {
-	return "snap refresh " + strings.Join(names, " ")
+	return "snap refresh " + strings.Join(names, " ") + "\n" + snapPendingCheck(names)
+}
+
+// snapPendingCheck prüft nach `snap refresh`, ob wirklich nichts mehr
+// aussteht, und lässt den Lauf sonst scheitern.
+//
+// Grund: Läuft gerade eine Anwendung aus einem Snap, verschiebt snapd dessen
+// Update (refresh-app-awareness) - und `snap refresh` ohne Namen meldet dabei
+// „All snaps up to date." mit Exit-Code 0. LCM zeigte einen grünen Lauf,
+// das Update stand weiter aus. Nachgestellt auf Ubuntu 24.04 mit snapd 2.78.
+//
+// Gezählt werden nur die genannten Snaps (ohne Namen: alle), und keine, die
+// zurückgehalten sind (`snap refresh --hold`, Spalte Notes „held") - die
+// bleiben mit Absicht stehen. Zeilen mit weniger als sechs Spalten („All
+// snaps up to date.") sind keine Snaps. Scheitert `snap refresh --list`
+// selbst (Store nicht erreichbar), bleibt die Liste leer und der Lauf behält
+// seinen eigenen Exit-Code.
+func snapPendingCheck(names []string) string {
+	return `__rc=$?
+__left=$( { snap list 2>/dev/null | sed 's/^/L /'; snap refresh --list 2>/dev/null | sed 's/^/R /'; } | awk -v want="` + strings.Join(names, " ") + `" '
+  BEGIN { n = split(want, w, " "); for (i = 1; i <= n; i++) wanted[w[i]] = 1 }
+  $1 == "L" && $7 ~ /held/ { held[$2] = 1 }
+  $1 == "R" && NF >= 7 && $2 != "Name" && !($2 in held) && (n == 0 || ($2 in wanted)) { printf "%s ", $2 }')
+if [ -n "$__left" ]; then
+  echo "FEHLER: snapd hat diese Snaps nicht aktualisiert: $__left"
+  echo 'Meist laeuft gerade eine Anwendung aus dem Snap. snapd verschiebt das Update dann, ohne einen Fehler zu melden.'
+  echo 'Anwendung beenden und erneut aktualisieren.'
+  [ "$__rc" -eq 0 ] && __rc=1
+fi
+exit $__rc`
 }
 
 // snapRemoveScript entfernt die genannten Snaps.

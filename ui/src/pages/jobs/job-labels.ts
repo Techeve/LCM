@@ -59,6 +59,7 @@ const KIND_KEYS: Record<string, string> = {
   join: 'jobs.kind.join',
   'harden-ssh': 'jobs.kind.harden-ssh',
   'dsm-apply': 'jobs.kind.dsm-apply',
+  'agent-update': 'jobs.kind.agent-update',
 };
 
 export function statusLabel(status: string): string {

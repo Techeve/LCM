@@ -7,10 +7,12 @@ package remote_test
 // Pinning-Logik ist in internal/agent separat gekapselt.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gorilla/websocket"
 
 	"LCM/internal/agent"
 	"LCM/internal/core/domain"
@@ -185,6 +188,35 @@ func connectedAgent(t *testing.T) (*remote.Hub, *repositories.ServerRepository, 
 // trust sagt, ob LCM sie glaubt.
 func connectedAgentVia(t *testing.T, trust *netfilter.ProxyTrustHolder, forwardedFor string) (*remote.Hub, *repositories.ServerRepository, *domain.Server, *fiber.App) {
 	t.Helper()
+	l := listeningHub(t, trust, forwardedFor)
+
+	// Agent-Seite: echter Client (wie `lcm-agent run`), verbindet über ws://.
+	cfg := &agent.Config{URL: l.url, AgentID: l.server.AgentID, Secret: l.secret}
+	jobs := t.TempDir()
+	go func() { _ = agent.NewClient(cfg, slog.Default(), "test").WithJobsDir(jobs).Run() }()
+
+	// Auf den Connect warten (Session-Event füllt die Online-Registry).
+	waitFor(t, 10*time.Second, "agent online", func() bool { return l.hub.Online(l.server.AgentID) })
+	return l.hub, l.servers, l.server, l.app
+}
+
+// hubListener ist ein Hub hinter einem echten Fiber-Listener samt einem
+// angelegten Agent-Server, an dem sich ein Agent (im Prozess oder als eigenes
+// Binary) anmelden kann.
+type hubListener struct {
+	hub     *remote.Hub
+	servers *repositories.ServerRepository
+	server  *domain.Server
+	app     *fiber.App
+	url     string // Basis-Adresse für agent.Config.URL
+	secret  string
+}
+
+// listeningHub startet Hub und Listener (ohne TLS wie --dev) und legt den
+// Agent-Server an. forwardedFor wird dem Upgrade-Request als X-Forwarded-For
+// vorgesetzt (leer = keine Kopfzeile), trust sagt, ob LCM sie glaubt.
+func listeningHub(t *testing.T, trust *netfilter.ProxyTrustHolder, forwardedFor string) hubListener {
+	t.Helper()
 	db, err := storage.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -221,18 +253,7 @@ func connectedAgentVia(t *testing.T, trust *netfilter.ProxyTrustHolder, forwarde
 	}
 	go func() { _ = app.Listener(ln) }()
 	t.Cleanup(func() { _ = app.Shutdown() })
-
-	// Agent-Seite: echter Client (wie `lcm-agent run`), verbindet über ws://.
-	cfg := &agent.Config{
-		URL:     fmt.Sprintf("http://%s", ln.Addr().String()),
-		AgentID: server.AgentID,
-		Secret:  secret,
-	}
-	go func() { _ = agent.NewClient(cfg, slog.Default(), "test").Run() }()
-
-	// Auf den Connect warten (Session-Event füllt die Online-Registry).
-	waitFor(t, 10*time.Second, "agent online", func() bool { return hub.Online(server.AgentID) })
-	return hub, servers, server, app
+	return hubListener{hub: hub, servers: servers, server: server, app: app, url: fmt.Sprintf("http://%s", ln.Addr().String()), secret: secret}
 }
 
 func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool) {
@@ -340,4 +361,31 @@ func mustParse(t *testing.T, entries ...string) netfilter.Allowlist {
 		t.Fatal(err)
 	}
 	return list
+}
+
+// TestUpgradeBeiAusgeschaltetemZugangWirdAusdruecklichAbgewiesen: Ist der Agent-
+// Zugang aus, antwortet LCM dem Upgrade mit 503, statt den Socket zu kappen. Der
+// Agent erkennt daran, dass LCM ihn abweist (kein Rückfall des Agent-Updates).
+func TestUpgradeBeiAusgeschaltetemZugangWirdAusdruecklichAbgewiesen(t *testing.T) {
+	l := listeningHub(t, nil, "")
+	t.Cleanup(l.hub.Close)
+	wsURL := "ws" + strings.TrimPrefix(l.url, "http") + "/mqtt"
+	dial := func() (*http.Response, error) {
+		conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		return resp, err
+	}
+
+	l.hub.SetAccepting(false)
+	resp, err := dial()
+	if !errors.Is(err, websocket.ErrBadHandshake) || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("bei ausgeschaltetem Zugang: err = %v, resp = %v, erwartet 503", err, resp)
+	}
+
+	l.hub.SetAccepting(true)
+	if _, err := dial(); err != nil {
+		t.Fatalf("bei eingeschaltetem Zugang: %v", err)
+	}
 }

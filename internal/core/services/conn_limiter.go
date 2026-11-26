@@ -123,6 +123,14 @@ func (c *limitedConn) Terminal(term string, cols, rows int) (sshx.Terminal, erro
 	return inner.Terminal(term, cols, rows)
 }
 
+// BindJob reicht den Job an die innere Verbindung weiter, sofern sie ihn
+// braucht (nur die des Agents).
+func (c *limitedConn) BindJob(jobID string) {
+	if b, ok := c.Conn.(jobBinder); ok {
+		b.BindJob(jobID)
+	}
+}
+
 func (c *limitedConn) Close() error {
 	err := c.Conn.Close()
 	c.release()

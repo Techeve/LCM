@@ -66,6 +66,11 @@ type terminals struct {
 	// ended merkt sich beendete Sitzungen: Ein verspäteter Rahmen soll keine
 	// neue Sitzung gleichen Namens öffnen.
 	ended *idWindow
+	// notice ist ein Hinweis, den jede neue Konsole nach dem Öffnen sieht (der
+	// Wechsel aufs neue Binary steht an, switch.go). refusing weist neue ab: Der
+	// Wechsel läuft schon.
+	notice   string
+	refusing string
 }
 
 func newTerminals(publish func(wire.TTYFrame, bool), disabled func() bool, log *slog.Logger) *terminals {
@@ -136,9 +141,13 @@ func (ts *terminals) session(id string) *terminal {
 		return nil
 	}
 	t := &terminal{id: id, owner: ts}
-	if len(ts.sessions) >= maxTerminals {
+	if ts.refusing != "" || len(ts.sessions) >= maxTerminals {
+		reason := "zu viele konsolen auf diesem server offen"
+		if ts.refusing != "" {
+			reason = ts.refusing
+		}
 		ts.ended.add(id)
-		safego.Go("agent-tty-refuse", func() { t.send(wire.TTYFrame{Op: wire.TTYClosed, Error: "zu viele konsolen auf diesem server offen"}) })
+		safego.Go("agent-tty-refuse", func() { t.send(wire.TTYFrame{Op: wire.TTYClosed, Error: reason}) })
 		return nil
 	}
 	t.idle = time.AfterFunc(terminalOpenWait, func() { t.finish(errors.New("sitzung nicht geöffnet")) })
@@ -148,6 +157,8 @@ func (ts *terminals) session(id string) *terminal {
 
 // apply führt einen Rahmen in Reihe aus.
 func (t *terminal) apply(f wire.TTYFrame) {
+	// Ein Panic (etwa beim Start der Shell) beendet nur diese Sitzung.
+	defer safego.Recover("agent-tty-frame", t.finish)
 	switch f.Op {
 	case wire.TTYOpen:
 		t.open(f)
@@ -187,6 +198,9 @@ func (t *terminal) open(f wire.TTYFrame) {
 	t.mu.Unlock()
 	t.owner.log.Info("terminal opened", "session", t.id)
 	t.send(wire.TTYFrame{Op: wire.TTYOpened})
+	if notice := t.owner.currentNotice(); notice != "" {
+		t.send(noticeFrame(notice))
+	}
 	safego.Go("agent-tty-read:"+t.id, t.pump)
 }
 
@@ -294,4 +308,57 @@ func (ts *terminals) capabilities() []string {
 		return []string{wire.CapabilityTTYOff}
 	}
 	return []string{wire.CapabilityTTY}
+}
+
+// count ist die Zahl der offenen (und gerade öffnenden) Konsolen.
+func (ts *terminals) count() int {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return len(ts.sessions)
+}
+
+// noticeFrame ist eine Zeile Text im Bildschirmstrom der Konsole: Sie geht an den
+// Browser, nicht in die Shell.
+func noticeFrame(text string) wire.TTYFrame {
+	return wire.TTYFrame{Op: wire.TTYData, Data: []byte("\r\n" + text + "\r\n")}
+}
+
+// setNotice merkt einen Hinweis für Konsolen, die erst jetzt öffnen, und zeigt
+// ihn den offenen. (Die Reihenfolge der Rahmen ordnet deliver.)
+func (ts *terminals) setNotice(text string) {
+	ts.mu.Lock()
+	ts.notice = text
+	ts.mu.Unlock()
+	ts.announce(text)
+}
+
+func (ts *terminals) currentNotice() string {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return ts.notice
+}
+
+// announce schreibt eine Zeile in jede geöffnete Konsole.
+func (ts *terminals) announce(text string) {
+	ts.mu.Lock()
+	open := make([]*terminal, 0, len(ts.sessions))
+	for _, t := range ts.sessions {
+		open = append(open, t)
+	}
+	ts.mu.Unlock()
+	for _, t := range open {
+		t.mu.Lock()
+		running := t.shell != nil && !t.closed
+		t.mu.Unlock()
+		if running {
+			t.send(noticeFrame(text))
+		}
+	}
+}
+
+// refuseNew weist neue Konsolen mit dem Grund ab (der Wechsel aufs neue Binary läuft).
+func (ts *terminals) refuseNew(reason string) {
+	ts.mu.Lock()
+	ts.refusing = reason
+	ts.mu.Unlock()
 }

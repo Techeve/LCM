@@ -106,6 +106,84 @@ function textOrNull(value: unknown): string | null {
   return typeof value === 'string' && value !== '' ? value : null;
 }
 
+/** Wie der Agent gegenüber diesem LCM dasteht: `ok`, `outdated` (kennt Funktionen nicht), `unsupported` (unter der Mindestversion), `newer` (neuer als LCM); leer: noch nie gemeldet. */
+export type AgentState = '' | 'ok' | 'outdated' | 'unsupported' | 'newer';
+export type AgentFeatureReason = '' | 'below_minimum' | 'outdated' | 'disabled';
+
+/** Antwort der zentralen Prüfung im Backend: kann der Agent diese Funktion, und wenn nicht, warum und ab welcher Version? */
+export interface AgentFeature {
+  supported: boolean;
+  reason: AgentFeatureReason;
+  needs_version: string;
+}
+
+/** Einordnung des Agents (nur bei Agent-Servern). Die Oberfläche rechnet nichts nach, sie zeigt diese Antwort. */
+export interface AgentSupport {
+  state: AgentState;
+  agent_version: string;
+  server_version: string;
+  min_version: string;
+  protocol: number;
+  /** Eine neuere Agent-Version würde etwas freischalten – hier hängt der Knopf „Agent aktualisieren“ dran. */
+  update_recommended: boolean;
+  /** Die höchste Version, die für die fehlenden Funktionen nötig ist. */
+  needs_version: string;
+  /** Der Agent liegt (der Nummer nach) hinter diesem LCM: Ein Update bringt ihn auf die passende neuere Version, auch wenn ihm nichts fehlt. */
+  behind: boolean;
+  /** Die Version, von der der Agent nach einem gescheiterten Update zurückgerollt ist; leer, wenn er keins meldet. */
+  rolled_back: string;
+  features: Record<string, AgentFeature>;
+}
+
+/** Verbindungsbilanz des Agents seit dem Start von LCM (nur im Speicher; nur bei Agent-Servern). */
+export interface AgentLink {
+  connects: number;
+  disconnects: number;
+  /** Ungewollte Trennungen der letzten Stunde. */
+  unintended_last_hour: number;
+  /** Ursache der jüngsten davon (ping, network, takeover); leer ohne. */
+  last_cause: string;
+}
+
+export function normaliseAgentLink(raw: unknown): AgentLink | null {
+  if (!isRecord(raw)) return null;
+  return {
+    connects: numberOr(raw.connects, 0),
+    disconnects: numberOr(raw.disconnects, 0),
+    unintended_last_hour: numberOr(raw.unintended_last_hour, 0),
+    last_cause: text(raw.last_cause),
+  };
+}
+
+const AGENT_STATES: readonly AgentState[] = ['ok', 'outdated', 'unsupported', 'newer'];
+const AGENT_REASONS: readonly AgentFeatureReason[] = ['below_minimum', 'outdated', 'disabled'];
+
+function normaliseAgentFeature(raw: unknown): AgentFeature {
+  const r = isRecord(raw) ? raw : {};
+  const reason = AGENT_REASONS.find((known) => known === r.reason) ?? '';
+  return { supported: r.supported === true, reason, needs_version: text(r.needs_version) };
+}
+
+export function normaliseAgentSupport(raw: unknown): AgentSupport | null {
+  if (!isRecord(raw)) return null;
+  const features: Record<string, AgentFeature> = {};
+  if (isRecord(raw.features)) {
+    for (const [name, feature] of Object.entries(raw.features)) features[name] = normaliseAgentFeature(feature);
+  }
+  return {
+    state: AGENT_STATES.find((known) => known === raw.state) ?? '',
+    agent_version: text(raw.agent_version),
+    server_version: text(raw.server_version),
+    min_version: text(raw.min_version),
+    protocol: numberOr(raw.protocol, 1),
+    update_recommended: raw.update_recommended === true,
+    needs_version: text(raw.needs_version),
+    behind: raw.behind === true,
+    rolled_back: text(raw.rolled_back),
+    features,
+  };
+}
+
 export interface ServerGroupRef {
   id: number;
   name: string;
@@ -154,6 +232,10 @@ export interface ServerItem {
   agent_version: string;
   /** Was der Agent beim letzten Verbindungsaufbau als Fähigkeiten gemeldet hat (z.B. tty für die Konsole). */
   agent_capabilities: string[];
+  /** Was der Agent kann und wie er zu diesem LCM passt; null bei SSH-Servern. */
+  agent_support: AgentSupport | null;
+  /** Wie oft die Verbindung des Agents seit dem Start von LCM abriss; null bei SSH-Servern. */
+  agent_link: AgentLink | null;
   console_disabled: boolean;
   user_sync_disabled: boolean;
   // Hardware und Netz
@@ -297,6 +379,8 @@ export function normaliseServer(raw: unknown): ServerItem {
     failed_checks: numberOr(r.failed_checks, 0),
     agent_version: text(r.agent_version),
     agent_capabilities: text(r.agent_capabilities).split(',').filter(Boolean),
+    agent_support: normaliseAgentSupport(r.agent_support),
+    agent_link: normaliseAgentLink(r.agent_link),
     console_disabled: r.console_disabled === true,
     user_sync_disabled: r.user_sync_disabled === true,
     virtualization: text(r.virtualization),
@@ -679,21 +763,44 @@ export function isApiDevice(server: Pick<ServerItem, 'os_id'>): boolean {
   return server.os_id === 'routeros' || server.os_id === 'dsm';
 }
 
-type ConsoleFields = Pick<ServerItem, 'os_id' | 'transport' | 'console_disabled' | 'agent_capabilities' | 'agent_version'>;
+type ConsoleFields = Pick<ServerItem, 'os_id' | 'transport' | 'console_disabled' | 'agent_support' | 'agent_version'>;
 
-/** Eine Konsole gibt es über SSH und über einen Agent, der sie meldet - solange sie am Server nicht abgeschaltet ist. */
+/** Eine Konsole gibt es über SSH und über einen Agent, der sie kann (Antwort des Backends) – solange sie am Server nicht abgeschaltet ist. */
 export function hasConsole(server: ConsoleFields): boolean {
   if (isApiDevice(server) || server.console_disabled) return false;
-  return server.transport !== 'agent' || server.agent_capabilities.includes('tty');
+  return server.transport !== 'agent' || server.agent_support?.features.console?.supported === true;
 }
 
+/** Ein Hinweistext aus dem Katalog samt Platzhaltern. */
+export interface AgentBlock {
+  key: string;
+  params: Record<string, string>;
+}
+
+/** Wie die Konsole, wenn der Betreiber des Servers sie am Agent abgeschaltet hat. */
+const DISABLED_TEXT: Record<string, string> = { console: 'errors.terminal.agent_disabled' };
+
 /**
- * Warum ein Agent-Server keine Konsole anbietet (Übersetzungsschlüssel), sonst leer: abgeschaltet am Server oder Agent zu
- * alt. Ein Agent, der sich noch nie gemeldet hat (keine Version), hat noch nichts gesagt - dann gibt es keinen Grund zu nennen.
+ * Warum ein Agent-Server eine Funktion nicht anbietet, sonst null: Der Agent ist zu alt („Braucht Agent ≥ x.y –
+ * jetzt aktualisieren“) oder der Betreiber hat die Funktion am Server abgeschaltet. Ein Agent, der sich noch nie
+ * gemeldet hat (keine Version), hat noch nichts gesagt – dann gibt es keinen Grund zu nennen.
  */
-export function agentConsoleBlock(server: ConsoleFields): string {
-  if (server.transport !== 'agent' || !server.agent_version || isApiDevice(server) || server.console_disabled || hasConsole(server)) return '';
-  return server.agent_capabilities.includes('tty-off') ? 'errors.terminal.agent_disabled' : 'errors.terminal.agent_outdated';
+export function agentFeatureBlock(server: Pick<ServerItem, 'transport' | 'agent_support' | 'agent_version'>, feature: string): AgentBlock | null {
+  const answer = server.agent_support?.features[feature];
+  if (server.transport !== 'agent' || !server.agent_version || !answer || answer.supported) return null;
+  if (answer.reason === 'disabled') return { key: DISABLED_TEXT[feature] ?? 'serverDetail.agent.disabled', params: {} };
+  return { key: 'serverDetail.agent.needs', params: { version: answer.needs_version } };
+}
+
+/** Warum die Konsole fehlt; für Geräte und abgeschaltete Konsolen gibt es nichts zu erklären. */
+export function agentConsoleBlock(server: ConsoleFields): AgentBlock | null {
+  if (isApiDevice(server) || server.console_disabled || hasConsole(server)) return null;
+  return agentFeatureBlock(server, 'console');
+}
+
+/** Der Agent liegt unter der Mindestversion: LCM bietet für diesen Server nur noch „Agent aktualisieren“ an. */
+export function agentUnsupported(server: Pick<ServerItem, 'agent_support'>): boolean {
+  return server.agent_support?.state === 'unsupported';
 }
 
 /** Die Reiter, die zu diesem Server und zu den Rechten des Benutzers passen (wie in der alten Oberfläche). */

@@ -37,7 +37,7 @@ missing, MCP is off and the switch stays locked until you enter a name under
 
 ## Encryption and address
 
-MCP **always speaks HTTPS**, there is no switch for it any more. LCM picks the
+MCP **always speaks HTTPS**, there is no switch for it. LCM picks the
 certificate from the pool by the name under which the client calls MCP. The
 listener binds to the same address as the web UI (`host` in the `config.json`),
 there is no field of its own for that. Clients call `https://<name>:9330/mcp`,
@@ -145,10 +145,10 @@ Several instances can be registered in parallel - each with its own key:
 ```json
 {
   "mcpServers": {
-    "lcm-prod": {
+    "lcm-main": {
       "type": "http",
       "url": "https://mcp.example.com/mcp",
-      "headers": { "Authorization": "Bearer <PROD_KEY>" }
+      "headers": { "Authorization": "Bearer <MAIN_KEY>" }
     },
     "lcm-lab": {
       "type": "http",
@@ -159,7 +159,7 @@ Several instances can be registered in parallel - each with its own key:
 }
 ```
 
-(The `lcm-prod` URL here stands for mode C on the shared port 443, `lcm-lab` for
+(The `lcm-main` URL here stands for mode C on the shared port 443, `lcm-lab` for
 own ports.)
 
 Test directly (JSON-RPC 2.0 via curl). If the name carries no certificate from a
@@ -200,5 +200,5 @@ curl -s --cacert lcm-ca.pem https://lcm.example.com:9330/mcp \
   Not Allowed**.
 - The switch and the port can be changed at runtime at any time, without
   restarting the application. The port is in *Settings → General*.
-- Through the API (`PUT /api/v1/settings/mcp`) LCM accepts only `enabled` now. It
-  ignores `bind_host`, `port` and `tls` from older clients.
+- Through the API (`PUT /api/v1/settings/mcp`) LCM accepts only `enabled`. It
+  ignores other fields.

@@ -25,9 +25,9 @@ own (scope-checked) servers, but cannot manage the global catalog.
 
 ## Privilege profiles
 
-For a long time a Linux user knew only two states: **sudo** or **no sudo**.
-Anyone who merely had to restart a service got full `NOPASSWD:ALL` - which is
-why far too many accounts carry root privileges in practice.
+Distinguishing only **sudo** and **no sudo** means that anyone who merely has
+to restart a service gets full `NOPASSWD:ALL` - which is why far too many
+accounts carry root privileges in practice.
 
 A **privilege profile** (Linux users → Privilege profiles) instead describes
 exactly what someone may do:
@@ -38,8 +38,7 @@ exactly what someone may do:
 | **Edit file** | `/etc/nginx/sites-available/kunde.conf` | edit as root via `sudoedit` |
 | **Directory permission** | `/srv/www` - read and write | additional access via a POSIX ACL |
 
-Two unchangeable profiles ship with LCM and mirror the previous state:
-**Full administrator** (unrestricted root) and **Standard user** (none).
+Two unchangeable profiles ship with LCM: **Full administrator** (unrestricted root) and **Standard user** (none).
 
 :::caution[The argument is part of the rule]
 sudo matches the **entire** command line. `/usr/bin/systemctl restart nginx`
@@ -313,10 +312,9 @@ issued to its own profile group and carries no `ALL` as a command, and runs
 service user full privileges back through a profile file - exactly what
 restricted mode is meant to prevent.
 
-:::note[Still outstanding]
-The **built-in** profiles still use the previous mechanism (a per-user entry
-with `NOPASSWD:ALL`, or none) - so the update changes nothing on existing
-servers.
+:::note[Built-in profiles]
+The **built-in** profiles do not use a profile group but a per-user entry
+(`NOPASSWD:ALL`, or none).
 :::
 
 ## Self-service activation

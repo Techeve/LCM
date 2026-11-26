@@ -15,7 +15,7 @@ Die Verbindung (`internal/storage/database.go`) aktiviert produktionsrelevante P
 - `busy_timeout(5000)` - wartet statt sofortigem `database is locked`
 - `foreign_keys(1)` - referentielle Integrität
 
-Der DB-Pfad kommt aus der `config.json` (`database_path`, Default `app.db` neben dem Binary). Tests nutzen `:memory:`.
+Der DB-Pfad kommt aus der `config.json` (`database_path`, Default `app.db`, relativ zum Datenverzeichnis, sonst absolut). Tests nutzen `:memory:`.
 
 ## Migrationen
 
@@ -40,7 +40,7 @@ Für alles, was AutoMigrate nicht kann - Daten umschreiben, Backfills, destrukti
 
 Manche Umbauten kann SQLite nicht per `ALTER` und AutoMigrate nicht erkennen - allen voran der **Typwechsel eines Primärschlüssels**. Solche Schritte laufen als idempotente Funktion **vor** `autoMigrate()` in `storage.Migrate()`; sie erkennen das Alt-Schema selbst und sind auf frischen bzw. bereits migrierten Datenbanken ein No-op. Vorbild: `migrateRulesToSchedules` (Schema-Spalte prüfen) und `migrateToUUID`.
 
-**UUID-Migration (v0.2.0, `internal/storage/migrate_uuid.go`):** Die Protokoll- und Bestandstabellen (`jobs`, `audit_logs`, `packages`, `ssh_sessions`, `ssh_commands`; seit v0.10.0 nach demselben Muster auch `alert_events`, siehe `internal/storage/migrate_alert_events.go`) tragen **UUID-Primärschlüssel** statt fortlaufender Zahlen - nicht ratbar, ohne Mengengerüst. Die Migration liest die Alt-Zeilen, verwirft die Tabellen (Kind vor Eltern), legt sie im neuen Schema an und schreibt die Zeilen mit neuen UUIDs zurück; die Fremdschlüssel zwischen ihnen (`ssh_sessions.job_id`, `ssh_commands.ssh_session_id`) werden konsistent umgesetzt - verlustfrei, alles in **einer** Transaktion (`defer_foreign_keys`). Weil UUIDs nicht sortierbar sind, sortieren die Repositories chronologisch nach `created_at`/`opened_at` mit `rowid` als eindeutigem Tiebreaker; das Audit-Log erhält eine monotone `seq`-Spalte (aus der alten id übernommen), die die Reihenfolge der Hash-Kette bewahrt.
+**UUID-Primärschlüssel:** Die Protokoll- und Bestandstabellen (`jobs`, `audit_logs`, `packages`, `ssh_sessions`, `ssh_commands`, `alert_events`) tragen UUIDs statt fortlaufender Zahlen - nicht ratbar, ohne Mengengerüst. Weil UUIDs nicht sortierbar sind, sortieren die Repositories chronologisch nach `created_at`/`opened_at` mit `rowid` als eindeutigem Tiebreaker; das Audit-Log hat eine monotone `seq`-Spalte, die die Reihenfolge der Hash-Kette bewahrt.
 
 ## Update-Migrationssystem (versionsbasiert)
 
@@ -61,7 +61,7 @@ Beim Start (nach `Migrate()`, vor `Seed()`) läuft `storage.RunUpdateMigrations(
 | **Erststart** (keine DB, keine Versionsdatei) | `version.json` wird mit der Binary-Version angelegt. Migrationen laufen nicht - die frische DB ist bereits aktuell (Registry wird als *Baseline* protokolliert). |
 | **Gleiche Version** | Nichts zu tun. |
 | **Neuere Binary-Version** (Update eingespielt) | Update wird geloggt (`update erkannt - von 1.0.0 auf 1.2.0`). Alle noch nicht gelaufenen Migrationen bis einschließlich der neuen Version werden in SemVer-Reihenfolge ausgeführt. Danach wird `version.json` fortgeschrieben. |
-| **DB vorhanden, aber keine Versionsdatei** | Update von einem Stand vor Einführung der Datei - alle ausstehenden Migrationen laufen, die Datei wird angelegt. |
+| **DB vorhanden, aber keine Versionsdatei** | Alle ausstehenden Migrationen laufen, die Datei wird angelegt. |
 
 **Übersprungene Versionen sind kein Problem:** Beim Sprung von 1.0.0 direkt auf 1.3.0 laufen die Migrationen für 1.1.0, 1.2.0 und 1.3.0 nacheinander. Jede Migration läuft in einer eigenen Transaktion zusammen mit ihrem Protokoll-Eintrag in der Tabelle `update_migrations` - schlägt sie fehl, bricht der Start ab und nichts ist halb angewendet. Das DB-Protokoll ist die zweite Sicherung neben der Versionsdatei: Selbst wenn `version.json` gelöscht wird, läuft keine Migration doppelt.
 
@@ -83,7 +83,7 @@ Mit der Zeit kommen immer mehr Skripte dazu; die SemVer-Sortierung garantiert di
 
 Typischer Ablauf beim Release einer neuen Version, die Datenanpassungen braucht - als konkretes Beispiel der echte v0.5.0-Fall (Speicher-Verlauf: bestehende Installationen bekommen den Retention-Default):
 
-1. Ziel-Version ermitteln: `make next-version` zeigt, welche Version die Release-Pipeline aus den Conventional Commits berechnen wird (die `VERSION`-Datei selbst pflegt der Release-Bot automatisch, siehe [CI & Release](/reference/ci-release/)). Eine Migration gehört zu einem `feat:`- oder `feat!:`-Commit - die Ziel-Version ist also die nächste Minor- bzw. Major-Version.
+1. Ziel-Version ermitteln: `make next-version` zeigt, welche Version die Release-Pipeline aus den Conventional Commits berechnen wird. Eine Migration gehört zu einem `feat:`- oder `feat!:`-Commit - die Ziel-Version ist also die nächste Minor- bzw. Major-Version.
 2. Schema-Änderung im Domain-Struct machen (Feld `StorageHistoryRetentionDays` in `domain.Settings`) - die neuen Spalten legt AutoMigrate beim Start automatisch an.
 3. Neue Datei im Migrationsordner anlegen, `v0_5_0_storage.go`, die sich per `init()` registriert:
 

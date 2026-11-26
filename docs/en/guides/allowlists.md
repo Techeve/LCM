@@ -48,8 +48,7 @@ selection is the union of their IPs:
 
 - **Firewall rule** (server firewall dialog / group rule): selecting an
   allowlist on a rule opens the port **only for the source IPs of those lists**
-  - nobody else. Without an allowlist the rule applies to all sources as
-  before. Rendered as `ufw allow … from …`, firewalld `source address="…"` or
+  - nobody else. Without an allowlist the rule applies to all sources. Rendered as `ufw allow … from …`, firewalld `source address="…"` or
   nftables `ip/ip6 saddr { … }`. On the same rule you can additionally enter
   **your own IPs/networks** directly - they are unioned with the allowlist IPs
   (see [Firewall](/en/guides/firewall)).

@@ -19,14 +19,16 @@ type fakeHub struct {
 	online        map[string]bool
 	disconnected  []string
 	connRequested []string
+	links         map[string]domain.AgentLink
 }
 
 func (f *fakeHub) Conn(server *domain.Server) (sshx.Conn, error) {
 	f.connRequested = append(f.connRequested, server.AgentID)
 	return nil, services.ErrAgentOffline
 }
-func (f *fakeHub) Online(agentID string) bool { return f.online[agentID] }
-func (f *fakeHub) Disconnect(agentID string)  { f.disconnected = append(f.disconnected, agentID) }
+func (f *fakeHub) Online(agentID string) bool                { return f.online[agentID] }
+func (f *fakeHub) Disconnect(agentID string)                 { f.disconnected = append(f.disconnected, agentID) }
+func (f *fakeHub) LinkStats(agentID string) domain.AgentLink { return f.links[agentID] }
 
 // TestAgentDownloadPin: Ohne Pin (nicht verdrahtet oder Zertifikat nicht
 // lesbar) bleibt er leer - der Join-Befehl prüft dann normal, statt mit -k

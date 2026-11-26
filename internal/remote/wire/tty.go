@@ -32,6 +32,14 @@ const MaxTTYChunk = 32 * 1024
 // (QoS 1 über eine TCP-Verbindung); reißt sie ab, enden die Sitzungen ohnehin.
 const maxHeldFrames = 256
 
+// maxHeldBytes begrenzt die Nutzdaten, die ein Sequencer insgesamt zurückhält.
+// Die Zahl der Rahmen allein reicht nicht: Ein Rahmen darf bis zur Paketgröße
+// (MaxPacketSize) reichen, 256 davon wären 2 GiB, die ein Gegenüber mit
+// absichtlich fehlender Nummer 1 aufstauen könnte. Ein ehrlicher Absender
+// schickt höchstens MaxTTYChunk je Rahmen, die Grenze liegt also genau bei
+// maxHeldFrames solchen Rahmen.
+const maxHeldBytes = maxHeldFrames * MaxTTYChunk
+
 // ErrTTYGap: Ein Rahmen fehlt dauerhaft, die Sitzung ist nicht mehr in Reihe.
 var ErrTTYGap = errors.New("terminal-daten unvollständig (rahmen verloren)")
 
@@ -53,6 +61,8 @@ type TTYFrame struct {
 type Sequencer struct {
 	next uint64
 	held map[uint64]TTYFrame
+	// bytes sind die Nutzdaten aller gehaltenen Rahmen.
+	bytes int
 }
 
 // Push nimmt einen Rahmen an und liefert alle, die jetzt in Reihe sind (auch
@@ -66,10 +76,14 @@ func (s *Sequencer) Push(f TTYFrame) ([]TTYFrame, error) {
 		return nil, nil
 	}
 	if f.Seq > s.next {
-		if len(s.held) >= maxHeldFrames {
+		if _, dup := s.held[f.Seq]; dup {
+			return nil, nil
+		}
+		if len(s.held) >= maxHeldFrames || s.bytes+len(f.Data) > maxHeldBytes {
 			return nil, ErrTTYGap
 		}
 		s.held[f.Seq] = f
+		s.bytes += len(f.Data)
 		return nil, nil
 	}
 	ready := []TTYFrame{f}
@@ -80,6 +94,7 @@ func (s *Sequencer) Push(f TTYFrame) ([]TTYFrame, error) {
 			return ready, nil
 		}
 		delete(s.held, s.next)
+		s.bytes -= len(held.Data)
 		ready = append(ready, held)
 		s.next++
 	}
@@ -94,3 +109,6 @@ func (c *Counter) Next() uint64 {
 	c.last++
 	return c.last
 }
+
+// heldBytes sind die Nutzdaten, die der Sequencer gerade zurückhält (Tests).
+func (s *Sequencer) heldBytes() int { return s.bytes }

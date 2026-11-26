@@ -69,9 +69,8 @@ Punkt - den Unterschied zum vorhergehenden Lauf:
 | **Verwendete Werkzeuge** | ein Lauf ohne Lynis deckt deutlich weniger ab; das erklärt Sprünge in der Befundzahl |
 
 Ein Klick auf einen Lauf öffnet seine Befunde, nach Kategorie gruppiert; neue
-Befunde sind einzeln als **neu** markiert. Damit lässt sich beantworten, was
-eine flache Liste nie beantworten konnte: *Habe ich seit dem letzten Mal etwas
-erreicht?* Beim allerersten Lauf bleiben beide Kennzeichen leer - dort gibt es
+Befunde sind einzeln als **neu** markiert. Damit lässt sich beantworten:
+*Habe ich seit dem letzten Mal etwas erreicht?* Beim allerersten Lauf bleiben beide Kennzeichen leer - dort gibt es
 nichts zu vergleichen.
 
 Aufbewahrt werden die **jüngsten 40 Läufe je Server**; die Log-Bereinigung
@@ -99,7 +98,7 @@ Konfiguration. Steht in `/etc/ssh/sshd_config` ein `PermitRootLogin yes`
 `sshd -t` abgenommen wurde. Viele Cloud- und Hoster-Images liefern genau diese
 Zeile mit.
 
-**LCM löst das inzwischen selbst.** Beim Sperren des Root-Logins prüft es die
+**LCM löst das selbst.** Beim Sperren des Root-Logins prüft es die
 Wirkung; greift sie nicht, legt es die vorrangigen Zeilen der Hauptdatei mit
 einer Markierung still:
 

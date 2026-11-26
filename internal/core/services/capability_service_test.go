@@ -92,6 +92,17 @@ func storedCapability(t *testing.T, repo *repositories.CapabilityRepository, cat
 	return c
 }
 
+// mustStoredCapability ist storedCapability für Tests, die die Zeile
+// voraussetzen: Fehlt sie, scheitert der Test mit Meldung statt mit Panik.
+func mustStoredCapability(t *testing.T, repo *repositories.CapabilityRepository, category string) *domain.ServerCapability {
+	t.Helper()
+	c := storedCapability(t, repo, category)
+	if c == nil {
+		t.Fatalf("keine Zeile für %s", category)
+	}
+	return c
+}
+
 func requireState(t *testing.T, repo *repositories.CapabilityRepository, category, state string) *domain.ServerCapability {
 	t.Helper()
 	c := storedCapability(t, repo, category)
@@ -160,7 +171,7 @@ func TestUpdateHeiltFehlgeschlagenesSecurity(t *testing.T) {
 func TestWiederholterFehlschlagZaehltWeiterOhneFailingSinceZuAendern(t *testing.T) {
 	svc, repo, _ := newCapabilityTest(t)
 	svc.RecordJob(failedJob(domain.RuleTypeUpdate, brokenDepsOutput, 100))
-	first := storedCapability(t, repo, domain.CapabilityPackages).FailingSince
+	first := mustStoredCapability(t, repo, domain.CapabilityPackages).FailingSince
 
 	svc.RecordJob(failedJob(domain.RuleTypeUpdate, brokenDepsOutput, 100))
 
@@ -326,7 +337,7 @@ func TestVerbindungsHeilungSchreibtNichtBeiJedemPing(t *testing.T) {
 	first := requireState(t, repo, domain.CapabilityConnection, domain.CapabilityOK)
 
 	svc.RecordJob(successJob(domain.RuleTypeHealth, "lcm-health-ok"))
-	second := storedCapability(t, repo, domain.CapabilityConnection)
+	second := mustStoredCapability(t, repo, domain.CapabilityConnection)
 	if !second.LastSuccessAt.Equal(*first.LastSuccessAt) {
 		t.Errorf("zweiter Ping schrieb LastSuccessAt neu: %v -> %v", first.LastSuccessAt, second.LastSuccessAt)
 	}
@@ -338,7 +349,7 @@ func TestVerbindungsHeilungSchreibtNichtBeiJedemPing(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc.RecordJob(successJob(domain.RuleTypeHealth, "lcm-health-ok"))
-	third := storedCapability(t, repo, domain.CapabilityConnection)
+	third := mustStoredCapability(t, repo, domain.CapabilityConnection)
 	if !third.LastSuccessAt.After(old.Add(connectionHealInterval)) {
 		t.Errorf("alter Erfolg wurde nicht fortgeschrieben: %v", third.LastSuccessAt)
 	}
@@ -362,19 +373,19 @@ E: The repository 'https://ppa.example.org/foo/ubuntu jammy InRelease' is not si
 	// Bloße apt-Warnung: anderer Hinweis.
 	svc.RecordJob(successJob(domain.RuleTypePackageScan,
 		"Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease\nW: Skipping acquire of configured file 'main/binary-i386/Packages'\n"))
-	c = storedCapability(t, repo, domain.CapabilityPackages)
+	c = mustStoredCapability(t, repo, domain.CapabilityPackages)
 	if c.WarningClass != warningAptNotice || !strings.HasPrefix(c.WarningMessage, "W: Skipping") {
 		t.Errorf("apt-Warnung falsch: %q / %q", c.WarningClass, c.WarningMessage)
 	}
 
 	// Anderer Paket-Job lässt die Warnung stehen ...
 	svc.RecordJob(successJob(domain.RuleTypeUpdate, "done"))
-	if c = storedCapability(t, repo, domain.CapabilityPackages); c.WarningClass != warningAptNotice {
+	if c = mustStoredCapability(t, repo, domain.CapabilityPackages); c.WarningClass != warningAptNotice {
 		t.Errorf("Update hat die Warnung verändert: %q", c.WarningClass)
 	}
 	// ... ein sauberer Paketlisten-Lauf räumt sie ab.
 	svc.RecordJob(successJob(domain.RuleTypePackageScan, "Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease\n"))
-	if c = storedCapability(t, repo, domain.CapabilityPackages); c.WarningClass != "" || c.WarningMessage != "" {
+	if c = mustStoredCapability(t, repo, domain.CapabilityPackages); c.WarningClass != "" || c.WarningMessage != "" {
 		t.Errorf("Warnung nicht abgeräumt: %q / %q", c.WarningClass, c.WarningMessage)
 	}
 }
@@ -390,7 +401,7 @@ func TestZypperPaketlisteSetztQuellenWarnung(t *testing.T) {
 
 	// Ein sauberer Lauf räumt sie ab.
 	svc.RecordJob(successJob(domain.RuleTypePackageScan, "Repository 'repo-oss (16.0)' is up to date.\nAll repositories have been refreshed.\n"))
-	if c = storedCapability(t, repo, domain.CapabilityPackages); c.WarningClass != "" || c.WarningMessage != "" {
+	if c = mustStoredCapability(t, repo, domain.CapabilityPackages); c.WarningClass != "" || c.WarningMessage != "" {
 		t.Errorf("Warnung nicht abgeräumt: %q / %q", c.WarningClass, c.WarningMessage)
 	}
 }

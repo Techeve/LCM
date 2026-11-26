@@ -36,16 +36,6 @@ Server detail → **Firewall**. Each rule consists of:
 - **note** (optional) - what this rule is for. Where the tool supports
   comments (ufw, nftables) it also ends up in the rule set on the target.
 
-:::note[No bind/destination address any more]
-Up to LCM 1.13.0 there also was a bind/destination address: "on which local
-address is the port open". Next to the allowed sources ("who may connect")
-this caused more confusion than it was worth - both fields sounded alike and
-meant different things. The field is gone; the question you actually want to
-answer is answered by the sources. A "bind" in an older stored rule set is
-ignored when read: the port is then open on all local addresses, while the
-sources keep applying as stored.
-:::
-
 The **SSH port is always open** (lockout protection); everything else is
 blocked when enabled. Applying runs as a job - including installing the tool
 when missing, and verifying that the firewall is actually active afterwards.
@@ -108,8 +98,7 @@ table `inet lcm` - foreign tables, `include` or `flush` are refused.
 Under **Groups**, the firewall can be defined as a **policy rule** (enforce) -
 with the same rule editor. On every connection LCM checks the actual state
 (a cheap hash/set comparison per backend) and only re-applies the ruleset on
-drift; a missing tool is installed along the way. Existing rules in the old
-format (port list `80,443`) keep working unchanged.
+drift; a missing tool is installed along the way.
 
 :::note[Docker & Proxmox]
 Container ports **published by Docker** bypass the host firewall (Docker
@@ -131,7 +120,7 @@ freely:
 
 With at least one source set, the rule opens the port **only for the union of
 those source IPs** - all other sources are blocked. Without sources the rule
-applies to all, as before. Rendered as `ufw allow … from …`, firewalld
+applies to all. Rendered as `ufw allow … from …`, firewalld
 `source address="…"` or nftables `ip/ip6 saddr { … }`. When list contents
 change, the firewall policy rule re-applies the ruleset automatically on its
 next run.
@@ -211,9 +200,8 @@ A packet filter knows two independent axes, and they are easily mixed up:
 
 LCM only offers the source. The reason is practice: whoever wants a service
 "reachable internally only" almost always means "only from the internal
-network" - the source. Two similar-sounding fields side by side regularly led
-to the wrong one being filled in, leaving a port open to everyone while it
-looked restricted.
+network" - the source. Two similar-sounding fields side by side invite filling
+in the wrong one, leaving a port open to everyone while it looks restricted.
 
 Only one special case is really lost: the same sender may reach a service on
 one local address but not on another. If you need that, bind the service

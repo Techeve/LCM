@@ -119,7 +119,9 @@ func (l *localRunner) scanSBOM(ctx context.Context, sbom []byte) ([]byte, error)
 		f.Close()
 		return nil, err
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, l.timeout)
 	defer cancel()

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"LCM/internal/core/agentcaps"
 	"LCM/internal/core/domain"
 	"LCM/internal/core/events"
 	"LCM/internal/storage/repositories"
@@ -612,7 +613,7 @@ func (s *JobService) complete(job *domain.Job, output string, exitCode *int, run
 		if output != "" {
 			job.Output = output + "\n"
 		}
-		job.Output += "FEHLER: " + runErr.Error()
+		job.Output += "FEHLER: " + redactSecrets(runErr.Error())
 	} else {
 		job.Status = domain.JobStatusSuccess
 	}
@@ -916,6 +917,14 @@ func (s *JobService) FailInterruptedOnStartup(self *SelfUpdateRecovery) {
 		case self != nil && self.Match != nil && self.Match(job):
 			self.complete(job)
 			selfUpdate++
+		case job.AgentRequestID != "":
+			// Der Agent führt das Kommando zu Ende; die Kennung bleibt stehen,
+			// damit sein Ergebnis den Job findet (LateResult). Fehlgeschlagen
+			// gilt er trotzdem - nur so wird die Server-Sperre frei.
+			job.Status = domain.JobStatusFailed
+			job.Output += "UNTERBROCHEN: LCM wurde neu gestartet, während der Agent das Kommando ausführte. " +
+				"Der Agent führt es zu Ende; sein Ergebnis wird hier nachgetragen, sobald er sich wieder meldet."
+			failed++
 		default:
 			job.Status = domain.JobStatusFailed
 			job.Output += "ABGEBROCHEN: Vom Dienst-Neustart unterbrochen - die Server-Sperre wurde aufgehoben."
@@ -951,8 +960,23 @@ const DefaultJobIdleTimeout = 30 * time.Minute
 // erlaubte Stille eines Jobs aus den globalen Einstellungen - für Jobs auf
 // schwacher Hardware den größeren Wert, weil dort lange stille Phasen zum
 // Normalbetrieb gehören (siehe domain.Server.IsSlowHardware).
+//
+// Jobs auf Agent-Servern mit dauerhaften Jobs (jobs-v2) überwacht der Watchdog
+// nicht: Dort beurteilt der Agent selbst, ob ein Kommando noch arbeitet (er
+// sieht den Prozess), und ein laufendes Kommando wird nie von LCM abgebrochen.
+// Die Frist gilt für SSH und für ältere Agenten, deren hängendes Kommando den
+// Server sonst für immer festhielte.
 func JobIdleLimit(settings *repositories.SettingsRepository, servers *repositories.ServerRepository) func(*domain.Job) time.Duration {
 	return func(job *domain.Job) time.Duration {
+		var server *domain.Server
+		if job.ServerID != nil {
+			if found, err := servers.FindByIDUnscoped(*job.ServerID); err == nil {
+				server = found
+			}
+		}
+		if server != nil && server.IsAgent() && server.Agent().Supports(agentcaps.FeatureDurableJobs) {
+			return 0
+		}
 		st, err := settings.Get()
 		if err != nil {
 			return DefaultJobIdleTimeout
@@ -961,10 +985,8 @@ func JobIdleLimit(settings *repositories.SettingsRepository, servers *repositori
 			return 0 // Watchdog aus
 		}
 		minutes := st.JobIdleTimeoutMinutes
-		if job.ServerID != nil {
-			if server, err := servers.FindByIDUnscoped(*job.ServerID); err == nil && server.IsSlowHardware() {
-				minutes = st.JobIdleTimeoutSlowMinutes
-			}
+		if server != nil && server.IsSlowHardware() {
+			minutes = st.JobIdleTimeoutSlowMinutes
 		}
 		return time.Duration(domain.ClampJobIdleTimeout(minutes)) * time.Minute
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"LCM/internal/infrastructure/trivy"
 )
@@ -234,7 +232,10 @@ func TestImageScanLaedtKeineDatenbankNach(t *testing.T) {
 	}
 }
 
-// Scans warten nicht auf den Download: Er läuft an s.mu vorbei.
+// Scans warten nicht auf den Download: Er läuft an s.mu vorbei. Der Test hält
+// s.mu selbst; griffe downloadDB danach, hinge er bis zum Test-Timeout (mit
+// Stack von downloadDB im Abbruch). Eine eigene Frist prüft das nicht besser -
+// Lock achtet auf keinen Context - und brach unter Last nur den Fake-Trivy ab.
 func TestDatenbankDownloadBrauchtKeinenScanPlatz(t *testing.T) {
 	bin, argsFile := fakeTrivy(t, "", 0)
 	s := newServer(bin, t.TempDir(), "test-token")
@@ -242,9 +243,7 @@ func TestDatenbankDownloadBrauchtKeinenScanPlatz(t *testing.T) {
 	defer s.mu.Unlock()
 	cacheDir := t.TempDir()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := s.downloadDB(ctx, cacheDir); err != nil {
+	if _, err := s.downloadDB(t.Context(), cacheDir); err != nil {
 		t.Fatal(err)
 	}
 	args, err := os.ReadFile(argsFile)

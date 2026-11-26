@@ -71,7 +71,11 @@ func (r *runner) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer w.Close()
+	defer func() {
+		if err := w.Close(); err != nil {
+			slog.Warn("journal could not be closed", "error", err)
+		}
+	}()
 	r.w = w
 	// Jede Tagesdatei beginnt mit der Herkunft, und ihre erste Momentaufnahme
 	// steht vollständig da (writeSnapshot), damit sie für sich lesbar ist.
@@ -111,7 +115,7 @@ func (r *runner) run(ctx context.Context) error {
 func (r *runner) sampleHost() {
 	now, mono := time.Now(), monotonic()
 	sample := r.sampler.Sample(mono)
-	line := journal.HostLine{Head: r.headAt(journal.TypeHost, now, mono), Sample: sample, Self: r.self(mono)}
+	line := journal.HostLine{Head: r.headAt(journal.TypeHost, now, mono), Sample: sample, Self: r.self()}
 	if r.lastMono > 0 {
 		line.DT = (mono - r.lastMono).Milliseconds()
 	}
@@ -119,9 +123,9 @@ func (r *runner) sampleHost() {
 	r.write(line)
 }
 
-func (r *runner) self(mono time.Duration) journal.Self {
+func (r *runner) self() journal.Self {
 	return journal.Self{
-		CPUMS: r.usage.cpuSince(mono), RSS: rss(),
+		CPUMS: r.usage.cpuSince(), RSS: rss(),
 		SyncMS:  float64(r.w.LastSync().Microseconds()) / 1000,
 		Written: r.w.Written(),
 	}

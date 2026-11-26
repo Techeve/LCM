@@ -85,12 +85,23 @@ func IsRelease(v string) bool {
 	return pre == "" && (nums[0] > 0 || nums[1] > 0 || nums[2] > 0)
 }
 
+// Core liefert die reine Versionsnummer ohne den Zusatz, den version.String()
+// anhängt: "2.3.0 (Build 412, a1b2c3d4)" wird "2.3.0". So melden sich Agenten
+// im Inventar; ohne diesen Schnitt läse jeder Vergleich sie als 0.0.0.
+func Core(v string) string {
+	v = strings.TrimSpace(v)
+	if i := strings.IndexAny(v, " \t("); i >= 0 {
+		v = v[:i]
+	}
+	return v
+}
+
 // parse zerlegt "1.2.3-rc1" in [1 2 3] und "rc1" - und ebenso die
 // Debian-Schreibweise "1.2.3~rc1", in der das apt-Repository seine Vorabversionen
-// führt.
+// führt. Ein Build-Zusatz („2.3.0 (Build 412)“) zählt nicht (siehe Core).
 func parse(v string) ([3]int, string) {
 	var nums [3]int
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	v = strings.TrimPrefix(Core(v), "v")
 	// Was zuerst kommt, trennt: beide Zeichen leiten dasselbe ein.
 	trenner := strings.IndexAny(v, "-~")
 	core, pre := v, ""

@@ -1,6 +1,8 @@
 package repositories
 
 import (
+	"errors"
+
 	"gorm.io/gorm"
 
 	"LCM/internal/core/domain"
@@ -42,7 +44,7 @@ func (r *RoleRepository) EnsurePermission(code, description string) (*domain.Per
 	if err == nil {
 		return &perm, nil
 	}
-	if err != gorm.ErrRecordNotFound {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	perm = domain.Permission{Code: code, Description: description}

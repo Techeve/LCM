@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -55,6 +56,36 @@ type Config struct {
 	// LCM-CA nicht überschreibt (siehe learnFrom). Höchstens
 	// MaxCustomCAPins, die ältesten fallen heraus.
 	CustomCAFingerprints []string `json:"custom_ca_fingerprints,omitempty"`
+	// LogLevel ist die Stufe des Journals: debug, info oder warn (leer = info).
+	// Der Schalter --log-level beim Start geht vor. Trennungen, Wiederverbindungen
+	// und der Wechsel des Binarys stehen auch auf warn im Journal.
+	LogLevel string `json:"log_level,omitempty"`
+}
+
+// ParseLogLevel liest eine Stufe des Journals: debug, info, warn (Groß- und
+// Kleinschreibung egal, leer = info).
+func ParseLogLevel(name string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "info":
+		return slog.LevelInfo, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	}
+	return slog.LevelInfo, fmt.Errorf("unknown log level %q (debug, info or warn)", name)
+}
+
+// ResolveLogLevel bestimmt die Stufe: Der Schalter geht vor der Konfiguration. Eine
+// unbrauchbare Angabe bricht den Dienst nicht ab (er ist oft der einzige Weg auf
+// den Server), sie fällt auf info zurück; problem sagt, was war.
+func ResolveLogLevel(flagValue, configValue string) (level slog.Level, problem error) {
+	name := configValue
+	if flagValue != "" {
+		name = flagValue
+	}
+	level, problem = ParseLogLevel(name)
+	return level, problem
 }
 
 // MaxCustomCAPins ist die Obergrenze der gepinnten CAs eigener Zertifikate.
@@ -124,7 +155,8 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // Save schreibt die Konfiguration (Verzeichnis 0700, Datei 0600 - sie
-// enthält das Secret).
+// enthält das Secret). Das Schreiben ist atomar (writeFileDurable): Bricht es
+// ab, bleibt die alte Datei, nie eine halbe.
 func (c *Config) Save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -133,7 +165,79 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(raw, '\n'), 0o600)
+	return writeFileDurable(path, append(raw, '\n'), 0o600)
+}
+
+// writeTemp schreibt den Inhalt in die Zwischendatei. Eine Variable, damit ein
+// Test einen Abbruch mitten im Schreiben einspielen kann.
+var writeTemp = func(f *os.File, data []byte) error {
+	_, err := f.Write(data)
+	return err
+}
+
+// writeFileDurable ersetzt die Datei in einem Schritt: Zwischendatei im selben
+// Verzeichnis, schreiben, fsync, rename, fsync des Verzeichnisses. Fällt der
+// Strom irgendwo aus, liegt dort entweder der alte oder der neue Inhalt. Die
+// Rechte der bestehenden Datei bleiben, eine neue bekommt newMode.
+func writeFileDurable(path string, data []byte, newMode os.FileMode) error {
+	mode := newMode
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	if err := fillTemp(tmp, data, mode); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return syncDir(dir)
+}
+
+// fillTemp setzt die Rechte, schreibt, sichert auf den Datenträger und schließt.
+func fillTemp(tmp *os.File, data []byte, mode os.FileMode) error {
+	err := tmp.Chmod(mode)
+	if err == nil {
+		err = writeTemp(tmp, data)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+// syncDir sichert den Verzeichniseintrag der umbenannten Datei.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if closeErr := d.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+// WarnLooseMode schreibt eine Warnung ins Journal, wenn Gruppe oder andere die
+// Konfiguration lesen können: Sie enthält das Secret des Agents. Die Rechte
+// werden nicht von selbst geändert - wer sie gesetzt hat, soll es wissen.
+func WarnLooseMode(path string, log *slog.Logger) {
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm()&0o077 == 0 {
+		return
+	}
+	log.Warn("agent config is readable by group or others - it holds the connection secret, run chmod 600",
+		"path", path, "mode", fmt.Sprintf("%04o", info.Mode().Perm()))
 }
 
 // NormalizeServerURL ergänzt ein fehlendes Schema (https) und entfernt
@@ -153,7 +257,7 @@ func NormalizeServerURL(raw string) (string, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "", fmt.Errorf("server-adresse %q: nur http(s) erlaubt", raw)
 	}
-	if u.Host == "" {
+	if u.Hostname() == "" {
 		return "", fmt.Errorf("server-adresse %q: host fehlt", raw)
 	}
 	u.Path, u.RawQuery, u.Fragment = "", "", ""

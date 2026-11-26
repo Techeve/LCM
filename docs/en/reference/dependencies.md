@@ -30,9 +30,9 @@ publishing process?
 |:-:|---|---|
 | 5 | Go team at Google or equivalent: multi-stage review, public history, security team | `golang.org/x/*`, `google/uuid`, `lit`, `vite`, `@playwright/test` |
 | 4 | Organization with several active maintainers and a release process | `gofiber/fiber`, `gorm.io/gorm`, `golang-jwt/jwt`, `eclipse/paho.mqtt.golang`, `@xterm/xterm` |
-| 3 | Small organization or a well-regarded individual, demonstrably active | `mochi-mqtt/server`, `fasthttp/websocket`, `simple-icons`, `filippo.io/age` |
-| 2 | Individual, sporadic releases, bus factor 1 | `glebarez/sqlite` |
-| 1 | Individual, inactive for years, no release process, untagged versions | - (deliberately empty, see below) |
+| 3 | Small organization or a well-regarded individual, demonstrably active | `mochi-mqtt/server`, `fasthttp/websocket`, `simple-icons`, `filippo.io/age`, `go-landlock`, `klauspost/compress`, `modernc.org/sqlite` |
+| 2 | Individual, sporadic releases, bus factor 1 | `glebarez/sqlite`, `alexedwards/argon2id`; transitively `molecule-man/go-brrr` (via fasthttp) |
+| 1 | Individual, inactive for years, no release process, untagged versions | - (empty) |
 
 Level 1 is deliberately empty: such dependencies are not taken on, and existing
 ones get replaced.
@@ -91,10 +91,14 @@ version.** Three rules follow, and all three are wired into the repo:
 - **Cooling-off period.** [renovate.json](https://gitlab.techeve.de/techeve/lcm/-/blob/community/renovate.json?mtm_campaign=linking&mtm_kwd=doc)
   sets `minimumReleaseAge` to seven days - the window in which compromised
   packages are usually discovered and pulled.
-- **Automerge only for levels 4 and 5.** Patch updates merge on their own only
-  for publishers with a solid release process. Everything else needs a human
-  look, patches included. Security updates (`vulnerabilityAlerts`) never
-  automerge.
+- **Automerge after the waiting period and a green pipeline.** Minor and patch
+  updates merge on their own once the seven days are over and the full MR
+  pipeline is green - regardless of backing; the waiting period is the barrier
+  against a fresh attack. Major
+  updates come only after approval in the dependency dashboard, and `enterprise`
+  gets patch and security updates only. Backing decides only whether a
+  dependency is accepted at all. Security updates (`vulnerabilityAlerts`) skip
+  the waiting period and merge once the pipeline is green.
 - **No install scripts.** CI and `make` install npm packages with
   `--ignore-scripts`. `postinstall` scripts are the most-used attack path in npm,
   and they run on the runner with access to CI variables and signing keys.
@@ -129,25 +133,13 @@ The switch only touches `internal/storage/database.go`; the repository layer is
 unaffected. Before switching, test migrations and backup/restore against an
 existing database - the drivers differ in details of type conversion.
 
-**2026-11-09: `robfig/cron` (level 1, last tag v3.0.1 from 2020) replaced.**
-Its place is taken by our own package `internal/cron`: a parser for five fields
-plus descriptors (`@daily`, `@every 1h`, `CRON_TZ=` prefix) and a small
-scheduler. The job fell into the build-it-ourselves category: no cryptography,
-the expressions come from the administrator, and an error shows up in the
-schedule immediately. Stored expressions keep working unchanged: a golden test
-records the old library's behaviour for every form of expression, including
-error messages and daylight saving changes. Its generator lives as a separate
-module under `internal/cron/testdata/gen` and is not part of LCM's dependency
-graph. The only difference: a time zone prefix without a following space
-(`TZ=UTC`) is an error instead of a panic.
-
 **Watch `mochi-mqtt/server`:** the broker is indispensable for the agent
 connection and is protocol parsing, so not something to build ourselves. Last
 release 03/2025, many open issues - trending towards level 2. A way out would be
 an agent channel over WebSocket (`fasthttp/websocket` is in the tree anyway).
 
-**Watch `molecule-man/go-brrr`:** arrives transitively since fasthttp 1.75
-(replaces `andybalholm/brotli`). Pure Go, fuzz-tested, co-maintained by the
+**Watch `molecule-man/go-brrr`:** arrives transitively via fasthttp.
+Pure Go, fuzz-tested, co-maintained by the
 fasthttp maintainer, but young and with a bus factor of 1.
 
 **uPlot is embedded as a file in `lcm-probe`** (1.6.32, MIT, Leon Sorokin,

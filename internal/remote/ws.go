@@ -37,7 +37,7 @@ func WSHandler(hub *Hub, trust *netfilter.ProxyTrustHolder) fiber.Handler {
 		// (kein Browser), der sichere Default lässt sie durch und blockt
 		// Cross-Origin-Versuche aus Browsern.
 	}
-	limiter := newUpgradeLimiter(10, time.Minute)
+	limiter := newUpgradeLimiter(hub.knownIPs)
 
 	return func(c fiber.Ctx) error {
 		// Hinter einem TLS-terminierenden Proxy wäre die Peer-Adresse für
@@ -51,6 +51,15 @@ func WSHandler(hub *Hub, trust *netfilter.ProxyTrustHolder) fiber.Handler {
 		}
 		if !limiter.allow(ip) {
 			return apierr.TooManyRequests
+		}
+		// Ausdrücklich abweisen statt den Socket nach dem Upgrade zu kappen: Der
+		// Agent erkennt an der HTTP-Antwort, dass LCM ihn abweist (und nicht das
+		// Netz oder sein eigenes Binary versagt).
+		if !hub.accepting() {
+			return c.Status(fiber.StatusServiceUnavailable).SendString("agent access is switched off")
+		}
+		if hub.PreAuthFull() {
+			return c.Status(fiber.StatusServiceUnavailable).SendString("too many connections waiting for login")
 		}
 		remote := clientAddr(c.RequestCtx().RemoteAddr(), ip)
 		err := upgrader.Upgrade(c.RequestCtx(), func(ws *websocket.Conn) {
@@ -71,12 +80,85 @@ func WSHandler(hub *Hub, trust *netfilter.ProxyTrustHolder) fiber.Handler {
 	}
 }
 
+// Limits des Upgrade-Ratelimits (Upgrades je Minute und Client-IP).
+//
+// Unbekannte Quellen bleiben knapp gehalten: Das Upgrade läuft VOR der
+// Authentifizierung (AgentID + Token im MQTT-CONNECT), also schützt nur dieses
+// Limit vor Upgrade-Fluten. Wer sich schon einmal erfolgreich angemeldet hat
+// (bekannte Agent-IP), darf deutlich öfter kommen: ein flatternder Agent oder
+// viele Agents hinter einem NAT bzw. Proxy sperren sich sonst selbst aus. Direkt
+// nach dem Start ist die Menge der bekannten IPs leer (nur im Speicher), und
+// alle Agents melden sich gleichzeitig zurück - deshalb gilt in der Karenzzeit
+// auch für unbekannte IPs ein höheres Limit.
+const (
+	upgradeWindow        = time.Minute
+	upgradeLimitUnknown  = 10
+	upgradeLimitGrace    = 120 // unbekannte IPs in den ersten upgradeGracePeriod nach dem Start
+	upgradeLimitKnown    = 600
+	upgradeGracePeriod   = 10 * time.Minute
+	knownAgentIPLifetime = 24 * time.Hour
+	knownAgentIPMax      = 50_000
+)
+
+// knownAgentIPs merkt sich die Client-IPs, von denen sich ein Agent erfolgreich
+// authentifiziert hat (Hook OnConnectAuthenticate), für knownAgentIPLifetime.
+// Nur im Speicher und in der Größe begrenzt.
+type knownAgentIPs struct {
+	now func() time.Time
+
+	mu      sync.Mutex
+	expires map[netip.Addr]time.Time
+}
+
+func newKnownAgentIPs() *knownAgentIPs {
+	return &knownAgentIPs{now: time.Now, expires: map[netip.Addr]time.Time{}}
+}
+
+// markRemote trägt die IP einer Gegenadresse ("ip:port") ein. Nicht lesbare
+// Adressen werden ignoriert.
+func (k *knownAgentIPs) markRemote(remote string) {
+	ap, err := netip.ParseAddrPort(remote)
+	if err != nil {
+		return
+	}
+	k.mark(ap.Addr())
+}
+
+func (k *knownAgentIPs) mark(addr netip.Addr) {
+	addr = addr.Unmap()
+	now := k.now()
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if _, known := k.expires[addr]; !known && len(k.expires) >= knownAgentIPMax {
+		k.pruneLocked(now)
+		if len(k.expires) >= knownAgentIPMax {
+			return // voll: diese IP bleibt beim normalen Limit
+		}
+	}
+	k.expires[addr] = now.Add(knownAgentIPLifetime)
+}
+
+func (k *knownAgentIPs) has(addr netip.Addr) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.now().Before(k.expires[addr.Unmap()])
+}
+
+func (k *knownAgentIPs) pruneLocked(now time.Time) {
+	for addr, exp := range k.expires {
+		if !now.Before(exp) {
+			delete(k.expires, addr)
+		}
+	}
+}
+
 // upgradeLimiter ist ein kleines Fixed-Window-Ratelimit pro Client-IP
 // (Muster middlewares.APIKeyRateLimit, hier lokal, da paketübergreifend
-// kein generischer Limiter existiert).
+// kein generischer Limiter existiert). Das Limit hängt davon ab, ob die IP
+// als Agent-IP bekannt ist und ob die Karenzzeit nach dem Start noch läuft.
 type upgradeLimiter struct {
-	max    int
-	window time.Duration
+	known      *knownAgentIPs
+	graceUntil time.Time
 
 	mu      sync.Mutex
 	buckets map[string]*limiterWindow
@@ -87,20 +169,37 @@ type limiterWindow struct {
 	count int
 }
 
-func newUpgradeLimiter(max int, window time.Duration) *upgradeLimiter {
-	return &upgradeLimiter{max: max, window: window, buckets: map[string]*limiterWindow{}}
+// newUpgradeLimiter startet die Karenzzeit mit der Uhr von known.
+func newUpgradeLimiter(known *knownAgentIPs) *upgradeLimiter {
+	return &upgradeLimiter{
+		known:      known,
+		graceUntil: known.now().Add(upgradeGracePeriod),
+		buckets:    map[string]*limiterWindow{},
+	}
+}
+
+// limitFor liefert die erlaubten Upgrades je Fenster für diese IP.
+func (l *upgradeLimiter) limitFor(ip string, now time.Time) int {
+	if addr, err := netip.ParseAddr(ip); err == nil && l.known.has(addr) {
+		return upgradeLimitKnown
+	}
+	if now.Before(l.graceUntil) {
+		return upgradeLimitGrace
+	}
+	return upgradeLimitUnknown
 }
 
 func (l *upgradeLimiter) allow(ip string) bool {
-	now := time.Now()
+	now := l.known.now()
+	max := l.limitFor(ip, now)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	w := l.buckets[ip]
-	if w == nil || now.Sub(w.start) >= l.window {
+	if w == nil || now.Sub(w.start) >= upgradeWindow {
 		// Abgelaufene Fenster gelegentlich aufräumen (Map-Wachstum).
 		if len(l.buckets) > 10_000 {
 			for k, v := range l.buckets {
-				if now.Sub(v.start) >= l.window {
+				if now.Sub(v.start) >= upgradeWindow {
 					delete(l.buckets, k)
 				}
 			}
@@ -109,7 +208,7 @@ func (l *upgradeLimiter) allow(ip string) bool {
 		return true
 	}
 	w.count++
-	return w.count <= l.max
+	return w.count <= max
 }
 
 // wsNetConn adaptiert die WebSocket-Verbindung auf net.Conn für den Broker

@@ -52,6 +52,13 @@ type JobLink interface {
 	MarkActivity(jobID string)
 }
 
+// jobBinder ist die Fähigkeit einer Verbindung, den Job zu erfahren, für den
+// sie geöffnet wurde. Nur die Agent-Verbindung hat sie: Sie meldet dem Hub, zu
+// welchem Job ihre Kommandos gehören, damit ein spätes Ergebnis ihn findet.
+type jobBinder interface {
+	BindJob(jobID string)
+}
+
 func NewSSHRecorder(logs *repositories.SSHLogRepository) *SSHRecorder {
 	return &SSHRecorder{logs: logs}
 }
@@ -73,6 +80,9 @@ func (r *SSHRecorder) Record(conn sshx.Conn, ctx SessionContext) sshx.Conn {
 	if ctx.JobID != nil && r.jobs != nil {
 		jobID := *ctx.JobID
 		r.jobs.AttachCloser(jobID, conn)
+		if b, ok := conn.(jobBinder); ok {
+			b.BindJob(jobID)
+		}
 		// Ab hier gilt der Job als überwacht: Er hat ein Kommando auf der
 		// Gegenseite, das hängen kann - und mit den Lebenszeichen dieser
 		// Verbindung die Grundlage, das zu erkennen.

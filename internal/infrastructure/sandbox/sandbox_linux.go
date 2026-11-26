@@ -216,7 +216,7 @@ func apply(spec Spec) error {
 	// nur, das vorhandene freizugeben. Unter systemd ist es dank PrivateTmp
 	// immerhin schon vom übrigen System getrennt.
 	if spec.ScratchTmp {
-		rules = append(rules, landlock.RWDirs(os.TempDir()).IgnoreIfMissing())
+		rules = append(rules, landlock.RWDirs(TempDir()).IgnoreIfMissing())
 	}
 
 	cfg := landlock.V4.BestEffort()

@@ -1,0 +1,91 @@
+[
+  {
+    "label": "Erste Schritte",
+    "translations": { "en": "Getting started" },
+    "items": [
+      "getting-started/overview",
+      "getting-started/installation",
+      "getting-started/quickstart",
+      "reference/supported-systems",
+      "examples"
+    ]
+  },
+  {
+    "label": "Server verwalten",
+    "translations": { "en": "Managing servers" },
+    "items": [
+      {
+        "label": "Monitoring",
+        "translations": { "en": "Monitoring" },
+        "items": [
+          "guides/monitoring",
+          "guides/status",
+          "guides/deep-scan",
+          "guides/apps",
+          "guides/docker",
+          "guides/alerts"
+        ]
+      },
+      {
+        "label": "Sicherheit",
+        "translations": { "en": "Security" },
+        "items": [
+          "guides/security-cve",
+          "guides/security-tools",
+          "guides/firewall",
+          "guides/allowlists"
+        ]
+      },
+      {
+        "label": "System",
+        "translations": { "en": "System" },
+        "items": [
+          "guides/linux-users",
+          "guides/time",
+          "guides/dns",
+          "guides/apt-cache"
+        ]
+      },
+      {
+        "label": "Automatisierung",
+        "translations": { "en": "Automation" },
+        "items": ["guides/groups-rules"]
+      }
+    ]
+  },
+  {
+    "label": "Anbindung",
+    "translations": { "en": "Connecting devices" },
+    "items": ["guides/ssh", "guides/remote", "guides/routeros", "guides/dsm"]
+  },
+  {
+    "label": "LCM betreiben",
+    "translations": { "en": "Running LCM" },
+    "items": [
+      "guides/config-json",
+      "guides/adressen",
+      "guides/zertifikate",
+      "guides/reverse-proxy",
+      "guides/netzbereiche",
+      "guides/backups",
+      "guides/mcp",
+      "guides/keyboard"
+    ]
+  },
+  {
+    "label": "Referenz",
+    "translations": { "en": "Reference" },
+    "collapsed": true,
+    "items": [
+      "reference/architecture",
+      "reference/security-model",
+      "reference/rest-api",
+      "reference/api",
+      "reference/database",
+      "reference/packaging",
+      "reference/repo-channels",
+      "reference/dependencies",
+      "reference/monitoring"
+    ]
+  }
+]

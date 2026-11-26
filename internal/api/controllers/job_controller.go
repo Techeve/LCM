@@ -161,7 +161,7 @@ var jobTypes = []string{
 	domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
 	domain.RuleTypeDNSTest, domain.RuleTypeDeepScan,
 	domain.RuleTypeACLSetup, domain.RuleTypePermSync,
-	domain.JobTypeJoin, domain.JobTypeReconnect, domain.JobTypeHardenSSH,
+	domain.JobTypeJoin, domain.JobTypeReconnect, domain.JobTypeHardenSSH, domain.JobTypeAgentUpdate,
 	services.JobTypeHardwareRefresh, services.JobTypeFullRefresh,
 	services.JobTypeRepairDpkg, services.JobTypeRepairDeps,
 	services.JobTypePortScan, services.JobTypeDSMApply,

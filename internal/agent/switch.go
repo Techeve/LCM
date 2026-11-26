@@ -5,6 +5,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 // Nach einem Paket-Upgrade läuft noch das alte Binary. Ein Neustart von
@@ -26,6 +28,11 @@ const (
 type binaryWatch struct {
 	path string
 	orig os.FileInfo
+	// Ab dem Fund des neuen Binarys: seit wann der Wechsel ansteht und welche
+	// Hinweise die offenen Web-Konsolen schon bekamen.
+	pendingSince time.Time
+	noticed      bool // „Wechsel steht an"
+	noticedNow   bool // „Wechsel jetzt"
 }
 
 func newBinaryWatch(path string) (*binaryWatch, error) {
@@ -86,7 +93,7 @@ func (s *workState) claimIdle(quiet time.Duration) bool {
 // switchOnNewBinary prüft im Takt, ob ein neues Binary da ist, und wechselt
 // in Ruhe darauf. Kehrt nur zurück, wenn der Pfad des Binaries unbekannt ist.
 func (c *Client) switchOnNewBinary() {
-	path, err := os.Executable()
+	path, err := c.watchedBinary()
 	var w *binaryWatch
 	if err == nil {
 		w, err = newBinaryWatch(path)
@@ -104,20 +111,102 @@ func (c *Client) switchOnNewBinary() {
 	}
 }
 
-// readyToSwitch: neues Binary auf der Platte und der Agent in Ruhe.
+// watchedBinary ist das Binary, dessen Austausch den Wechsel auslöst: das des
+// Pakets. Läuft der Agent als Rückfall (lcm-agent.prev), liegt er an einem Pfad,
+// den kein Paket je ersetzt - dann zählt das Binary des Pakets, damit ein
+// erneutes Update ihn von dort holt.
+func (c *Client) watchedBinary() (string, error) {
+	if c.asPrev {
+		return c.packagedPath, nil
+	}
+	return os.Executable()
+}
+
+// readyToSwitch: neues Binary auf der Platte und der Agent in Ruhe. Offene
+// Web-Konsolen halten den Wechsel auf, höchstens ConsoleWait lang: Sie beendet
+// der Wechsel, und wer gerade tippt, soll das nicht mitten im Satz erleben. Sie
+// erfahren es in der Konsole selbst - beim Fund, bei später geöffneten gleich nach
+// dem Öffnen, und noch einmal unmittelbar vor dem Wechsel.
 func (c *Client) readyToSwitch(w *binaryWatch) bool {
-	return w.replaced() && c.work.claimIdle(switchQuiet)
+	if !w.replaced() {
+		return false
+	}
+	if w.pendingSince.IsZero() {
+		w.pendingSince = time.Now()
+	}
+	if c.tty.count() > 0 {
+		if time.Since(w.pendingSince) < c.timing.ConsoleWait {
+			if !w.noticed {
+				w.noticed = true
+				c.tty.setNotice(switchPendingNotice(c.timing.ConsoleWait))
+			}
+			return false
+		}
+		if !w.noticedNow {
+			w.noticedNow = true
+			c.tty.setNotice(switchNowNotice())
+		}
+	}
+	if !c.work.claimIdle(switchQuiet) {
+		return false
+	}
+	c.tty.refuseNew(errSwitching)
+	return true
+}
+
+// switchTarget bestimmt, was exec startet: Das Binary des Pakets startet über das
+// Startskript, damit es den Start zählt und den Rückfall kennt (update.go);
+// sonst (Selbstinstallation, Tests) das Binary selbst.
+func (c *Client) switchTarget(path string) (string, []string) {
+	if path == c.packagedPath && guardInstalled() {
+		return guardScriptPath, append([]string{guardScriptPath}, os.Args[1:]...)
+	}
+	return path, os.Args
+}
+
+// disconnectWait ist die längste Zeit, die das Trennen vor dem exec hat. paho
+// wartet bei einer hängenden Leitung auf den Broker; der Wechsel darf deshalb
+// nicht von ihm abhängen - mit dem exec endet die Verbindung ohnehin.
+const disconnectWait = time.Second
+
+// disconnectWithin trennt cl sauber, wartet aber höchstens d darauf.
+func disconnectWithin(cl mqtt.Client, d time.Duration) {
+	if cl == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		cl.Disconnect(sessionQuiesce)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
+}
+
+// logSwitch hält den Wechsel mit Grund im Journal fest. Warn, damit er auch bei
+// log_level warn dort steht.
+func (c *Client) logSwitch(path string) {
+	c.log.Warn("disconnecting from lcm - switching to the new lcm-agent binary",
+		"reason", "new binary installed", "path", path, "from_version", c.version)
 }
 
 // execNewBinary trennt sauber vom Broker und ersetzt den Prozess durch das
 // neue Binary. Scheitert das exec, beendet sich der Agent - der
 // Dienstverwalter startet ihn dann frisch.
 func (c *Client) execNewBinary(path string) {
-	c.log.Info("new lcm-agent binary installed - switching to it", "path", path)
-	if c.mqtt != nil {
-		c.mqtt.Disconnect(250)
+	c.logSwitch(path)
+	// Bewusst kein Stop: Es ließe Run zurückkehren und den Prozess enden, bevor
+	// das exec läuft. Ein gewolltes Trennen löst keinen Wiederaufbau aus.
+	disconnectWithin(c.current(), disconnectWait)
+	c.disarmWatchdog()
+	target, argv := c.switchTarget(path)
+	err := syscall.Exec(target, argv, os.Environ())
+	if err != nil && target != path {
+		c.log.Error("start script could not be executed - starting the binary directly", "error", err)
+		err = syscall.Exec(path, os.Args, os.Environ())
 	}
-	err := syscall.Exec(path, os.Args, os.Environ())
 	c.log.Error("switch to the new binary failed - exiting", "error", err)
 	os.Exit(1)
 }

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,7 +43,8 @@ func runUfwScript(t *testing.T, script, ipv6 string) (string, int, string) {
 	cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", "UFW_LOG=" + dir + "/log", "UFW_DEFAULT=" + defaults}
 	out, err := cmd.CombinedOutput()
 	code := 0
-	if exit, ok := err.(*exec.ExitError); ok {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
 		code = exit.ExitCode()
 	} else if err != nil {
 		t.Fatal(err)

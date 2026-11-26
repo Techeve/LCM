@@ -54,10 +54,7 @@ SSH connections; the managed servers need no agent.
   the switch, LCM rolls the change back. The switch is **reversible**: LCM keeps the backup copies of the source files under
   `/var/backups/lcm-apt-https` and therefore still knows later which source
   used to be http. Reverting affects **only those** - a third-party source
-  that speaks https on its own stays untouched. On servers switched before
-  LCM&nbsp;1.27 no such record exists; there LCM offers the distribution
-  mirrors (`*.debian.org`, `*.ubuntu.com`, `*.raspberrypi.org`) for reverting.
-  The confirmation shows which sources are affected before anything runs.
+  that speaks https on its own stays untouched. The confirmation shows which sources are affected before anything runs.
 - **Docker** - containers (including Compose projects) and images, see
   [Docker Monitoring](/en/guides/docker/).
 - **Applications** - software installed outside the package manager (AdGuard
@@ -233,8 +230,7 @@ count it anyway.
 :::note[Independent of the traffic light]
 The marker only says the server does not answer - not how bad that is. Whether
 the unreachability is tolerated controls the **colour** (see below), not the
-fact. Previously the marker was tied to that setting and was missing precisely
-on servers that had plainly failed.
+fact.
 :::
 
 ## Unreachability non-critical
@@ -271,8 +267,7 @@ whose resources are needed elsewhere for now.
 
 :::note[Why this is more than cosmetics]
 Without this state, "off" counts as "broken". A single decommissioned system
-then produces an unreachable warning every 15 minutes - in practice that was
-over a thousand lines for one server in a single week, and the real faults drown
+then produces an unreachable warning every 15 minutes, and the real faults drown
 in that noise.
 :::
 
@@ -312,7 +307,7 @@ contact.
 
 At most **one** job runs on a server at a time - two concurrent accesses to the
 same package manager would be a system conflict. When a schedule hits a busy
-server, its run is therefore no longer discarded but **queued**: it shows up as
+server, its run is therefore **queued**: it shows up as
 `pending` in the job list and starts as soon as the running job finishes.
 
 The order in the queue:
@@ -381,9 +376,7 @@ schedule keeps the package set of entire server groups lean over time (see
 
 ### Refreshing and removing snaps
 
-Snaps used to be a list only - the "update" column showed that one was
-waiting, but installing it meant the console. The **Snaps** tab now offers the
-same actions as the package view: **refresh all** (`snap refresh`), refresh a
+The **Snaps** tab offers the same actions as the package view: **refresh all** (`snap refresh`), refresh a
 **single** one, and **remove**.
 
 Two deliberate differences to apt:
@@ -398,6 +391,16 @@ Two deliberate differences to apt:
 
 Removal runs without `--purge` - snapd takes a snapshot of the snap's data
 first, which `snap restore` can bring back.
+
+While an application from a snap is running, snapd postpones that snap's
+update and still reports success for "refresh all". LCM therefore checks with
+`snap refresh --list` after every run whether anything is still pending and
+fails the run, naming the snap. Close the application and refresh again. Held
+snaps (`snap refresh --hold`) do not count. After every package run LCM reads
+the snap inventory again.
+
+Snaps are not checked for CVEs: there is no vulnerability database for snaps
+that Trivy could evaluate.
 
 ### Removing old kernels
 
@@ -420,13 +423,6 @@ the target; the running kernel is excluded a second time inside the script, in
 case the machine rebooted since the last inventory. Currently apt systems only
 (Debian, Ubuntu, Proxmox); restricted sudo mode is enough, because the script
 only reads and runs `apt-get purge`.
-
-:::note[The kernel list used to be too short]
-Up to 1.26 the kernel inventory was only refreshed by a **full** server scan.
-On regularly updated servers the card therefore showed too few kernels
-permanently - the ones installed in between were missing. Since 1.27 every
-package action carries the inventory along.
-:::
 
 ### Package pins: what the cleanup must NOT touch
 

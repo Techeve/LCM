@@ -71,7 +71,8 @@ func (s *ProvisioningService) ReconcileServer(server *domain.Server, before []st
 	if tasks == nil {
 		return
 	}
-	go s.reconcileAsync(*server, tasks, actor)
+	srv := *server
+	s.reconciles.Go(func() { s.reconcileAsync(srv, tasks, actor) })
 }
 
 // ReconcileServers ist ReconcileServer für mehrere Server; before ordnet je
@@ -243,7 +244,7 @@ func (s *ProvisioningService) clear(entry *domain.PendingUserSync) {
 	if s.pending == nil || entry.ID == 0 {
 		return
 	}
-	if err := s.pending.Delete(entry.ID); err != nil {
+	if err := s.pending.Clear(entry); err != nil {
 		slog.Error("user sync: backlog entry not cleared", "id", entry.ID, "error", err)
 	}
 }

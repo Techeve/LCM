@@ -45,13 +45,13 @@ func Tail(path string, limit int, minLevel, query string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	min := ParseLevel(strings.ToLower(minLevel))
+	minRank := ParseLevel(strings.ToLower(minLevel))
 	q := strings.ToLower(query)
 
 	out := make([]Entry, 0, limit)
 	for _, line := range lines {
 		e := parseLine(line)
-		if minLevel != "" && e.Level != "" && ParseLevel(strings.ToLower(e.Level)) < min {
+		if minLevel != "" && e.Level != "" && ParseLevel(strings.ToLower(e.Level)) < minRank {
 			continue
 		}
 		if q != "" && !strings.Contains(strings.ToLower(line), q) {

@@ -36,6 +36,12 @@ type PendingUserSync struct {
 	// statt ihn stumm im Kreis laufen zu lassen.
 	Attempts  int    `json:"attempts"`
 	LastError string `json:"last_error"`
+
+	// Revision zählt, wie oft derselbe Auftrag erneut eingestellt wurde. Ein
+	// Abgleich, der den Eintrag vorher gelesen hat, löscht ihn nur bei
+	// unveränderter Revision: Eine Änderung, die währenddessen dazukam, hat er
+	// womöglich nicht mehr gesehen - sie muss liegen bleiben.
+	Revision int `gorm:"not null;default:0" json:"-"`
 }
 
 // Removal meldet, ob der Eintrag ein Konto entfernt (statt zu verteilen).

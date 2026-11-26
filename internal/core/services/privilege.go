@@ -338,25 +338,36 @@ func privRun(server *domain.Server, cmd string) string {
 // root, und eine Root-Shell gibt der eingeschränkte Modus nicht her.
 func restrictedSkipNote(ruleType string) string {
 	const prefix = "im eingeschränkten Modus übersprungen - "
-	if ruleType == domain.RuleTypeScript {
+	switch ruleType {
+	case domain.RuleTypeScript:
 		return prefix + "ein Skript läuft als root und braucht dafür eine Root-Shell, " +
 			"die der Management-Benutzer dieses Servers nicht hat. " +
 			"Skripte laufen nur auf Servern mit vollem sudo."
+	case domain.RuleTypeDockerContainerUpdate:
+		return prefix + "die Container-Regel erstellt Container über den Docker-Socket neu (curl), " +
+			"und diesen Zugriff hat der Management-Benutzer dieses Servers nicht. " +
+			"Compose-Projekte aktualisiert die Regel docker-compose-update auch hier; " +
+			"die Container-Regel läuft nur auf Servern mit vollem sudo."
 	}
 	return prefix + "der Management-Benutzer dieses Servers hat keine Rechte für den Aktionstyp „" + ruleType + "“"
 }
 
 // restrictedAllowsRule meldet, ob ein Rule-Typ mit dem eingeschränkten
-// Service-User ausführbar ist: Paketverwaltung, Docker-Prune, Firewall (ufw
-// direkt, firewalld und nftables über den Helper),
-// Benutzer-Sync, apt-Cache-Anbindung und Neustart (alle über den validierenden
-// LCM-Helper) sowie der reine Verfügbarkeits-Check. Gesperrt bleiben
-// script/custom (beliebige Kommandos) - sie brauchen eine Root-Shell.
+// Service-User ausführbar ist: Paketverwaltung, Docker (Prune, Image-Updates,
+// Compose-Updates und die Docker-Aktionen der Server-Detailansicht - alles über
+// `docker` auf der Whitelist), Firewall (ufw direkt, firewalld und nftables
+// über den Helper), Benutzer-Sync, apt-Cache-Anbindung und Neustart (alle über
+// den validierenden LCM-Helper) sowie der reine Verfügbarkeits-Check. Gesperrt
+// bleiben script/custom (beliebige Kommandos) - sie brauchen eine Root-Shell -
+// und docker-container-update: Es erstellt Container über die Engine-API am
+// Docker-Socket neu (curl, siehe recreateScript), und curl steht nicht auf der
+// Whitelist, weil ein root-curl beliebige Dateien läse und schriebe.
 func restrictedAllowsRule(ruleType string) bool {
 	switch ruleType {
 	case domain.RuleTypeUpdate, domain.RuleTypePackages, domain.RuleTypeSecurity,
 		domain.RuleTypePackageScan, domain.RuleTypeAutoremove, domain.RuleTypeDockerPrune,
-		domain.RuleTypeDockerUpdateUnused,
+		domain.RuleTypeDockerUpdateUnused, domain.RuleTypeDockerComposeUpdate,
+		domain.RuleTypeDockerUpdate,
 		domain.RuleTypeFirewall, domain.RuleTypeHealth,
 		domain.RuleTypeSync, domain.RuleTypeAptProxy,
 		domain.RuleTypeReboot, domain.RuleTypeRebootIfNeeded,
